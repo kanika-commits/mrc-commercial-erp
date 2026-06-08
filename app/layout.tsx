@@ -23,11 +23,87 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col">{children}</body>
-    </html>
-  );
+  <html
+    lang="en"
+    className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+  >
+    <body className="min-h-screen bg-gray-100">
+      <div className="flex min-h-screen">
+        {/* Sidebar */}
+        <aside className="w-64 bg-slate-900 text-white p-6">
+          <h1 className="text-2xl font-bold mb-8">
+            MRC Commercial
+          </h1>
+
+          <nav className="space-y-2">
+            <a href="/" className="block hover:text-blue-300">
+              Dashboard
+            </a>
+
+            <a
+              href="/work-orders"
+              className="block hover:text-blue-300"
+            >
+              Work Orders
+            </a>
+
+            <a
+              href="/ra-bills"
+              className="block hover:text-blue-300"
+            >
+              RA Bills
+            </a>
+
+            <a
+              href="/invoices"
+              className="block hover:text-blue-300"
+            >
+              Invoices
+            </a>
+
+            <a
+              href="/payments"
+              className="block hover:text-blue-300"
+            >
+              Payments
+            </a>
+
+            <a
+              href="/vendors"
+              className="block hover:text-blue-300"
+            >
+              Vendors
+            </a>
+
+            <a
+              href="/reports"
+              className="block hover:text-blue-300"
+            >
+              Reports
+            </a>
+          </nav>
+        </aside>
+
+        {/* Main Area */}
+        <main className="flex-1">
+          <header className="bg-white border-b px-8 py-4">
+            <div className="flex justify-between items-center">
+              <h2 className="font-semibold">
+                MRC Commercial ERP
+              </h2>
+
+              <div className="text-sm text-gray-500">
+                Platform Owner
+              </div>
+            </div>
+          </header>
+
+          <div className="p-8">
+            {children}
+          </div>
+        </main>
+      </div>
+    </body>
+  </html>
+);
 }
