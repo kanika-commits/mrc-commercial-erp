@@ -7,17 +7,13 @@ import { supabase } from "@/lib/supabase";
 type Site = {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   site_name: string;
   site_code: string;
-  location: string;
-  state: string;
-  status: string;
+  location: string | null;
+  state: string | null;
+  status: string | null;
   created_at: string;
-  companies?: {
-    company_name: string;
-    company_code: string;
-  } | null;
 };
 
 export default function SitesPage() {
@@ -44,13 +40,9 @@ export default function SitesPage() {
         location,
         state,
         status,
-        created_at,
-        companies (
-          company_name,
-          company_code
-        )
+        created_at
       `)
-      .order("created_at", { ascending: false });
+      .order("site_name", { ascending: true });
 
     if (error) {
       setMessage(error.message);
@@ -58,7 +50,7 @@ export default function SitesPage() {
       return;
     }
 
-    setSites(((data || []) as unknown as Site[]));
+    setSites((data || []) as Site[]);
     setLoading(false);
   }
 
@@ -67,10 +59,15 @@ export default function SitesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Sites</h1>
-          <p className="text-gray-500">Manage construction sites by company.</p>
+          <p className="text-gray-500">
+            Manage construction sites across MRC group companies.
+          </p>
         </div>
 
-        <Link href="/sites/new" className="rounded-lg bg-blue-600 px-4 py-2 text-white">
+        <Link
+          href="/sites/new"
+          className="rounded-lg bg-blue-600 px-4 py-2 text-white"
+        >
           Add Site
         </Link>
       </div>
@@ -87,7 +84,6 @@ export default function SitesPage() {
             <tr>
               <th className="p-3 text-left">Site Name</th>
               <th className="p-3 text-left">Site Code</th>
-              <th className="p-3 text-left">Company</th>
               <th className="p-3 text-left">Location</th>
               <th className="p-3 text-left">State</th>
               <th className="p-3 text-left">Status</th>
@@ -97,13 +93,13 @@ export default function SitesPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td className="p-3" colSpan={6}>
+                <td className="p-3" colSpan={5}>
                   Loading...
                 </td>
               </tr>
             ) : sites.length === 0 ? (
               <tr>
-                <td className="p-3" colSpan={6}>
+                <td className="p-3" colSpan={5}>
                   No sites found.
                 </td>
               </tr>
@@ -112,12 +108,9 @@ export default function SitesPage() {
                 <tr key={site.id} className="border-t">
                   <td className="p-3 font-medium">{site.site_name}</td>
                   <td className="p-3">{site.site_code}</td>
-                  <td className="p-3">
-                    {site.companies?.company_name || "-"}
-                  </td>
                   <td className="p-3">{site.location || "-"}</td>
                   <td className="p-3">{site.state || "-"}</td>
-                  <td className="p-3">{site.status}</td>
+                  <td className="p-3">{site.status || "active"}</td>
                 </tr>
               ))
             )}
