@@ -299,7 +299,7 @@ if (!linkedVendor?.id) {
     try {
       setSaving(true);
 
-      const organizationId = "7208169c-4e3f-4d6b-b068-31931a39120f";
+      const organizationId = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
 
       const { data: invoice, error: invoiceError } = await supabase
         .from("invoices")
