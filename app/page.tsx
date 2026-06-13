@@ -174,7 +174,7 @@ supabase
   ["Active Work Orders", String(activeWorkOrders), "/work-orders"],
 ];
 
-  const financialCards = [
+  const financialCards: [string, string, string?][] = [
     ["Total WO Value", money(totalWOValue)],
     ["Approved RA Value", money(approvedRAValue)],
     ["Invoice Value", money(invoiceValue)],

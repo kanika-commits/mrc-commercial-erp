@@ -151,10 +151,15 @@ export default function NewRABillPage() {
     const primaryVendor =
       vendorData?.find((row: any) => row.is_primary) || vendorData?.[0];
 
-    if (!primaryVendor?.vendors?.id) {
-      setMessage("No vendor is linked to this Work Order.");
-      return;
-    }
+    const vendorRelation: any = primaryVendor?.vendors;
+const linkedVendor = Array.isArray(vendorRelation)
+  ? vendorRelation[0]
+  : vendorRelation;
+
+if (!linkedVendor?.id) {
+  setMessage("No vendor is linked to this Work Order.");
+  return;
+}
 
     setLinkedVendor(primaryVendor);
 
@@ -188,7 +193,7 @@ export default function NewRABillPage() {
     setForm((prev) => ({
       ...prev,
       work_order_id: workOrderId,
-      vendor_id: primaryVendor.vendors.id,
+      vendor_id: linkedVendor.id,
       ra_number: suggestedNumber,
     }));
   }

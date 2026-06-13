@@ -158,12 +158,19 @@ export default function NewPaymentPage() {
     setRows((prev) =>
       prev.map((row, i) =>
         i === index
-          ? {
-              ...row,
-              vendor_id: data?.vendors?.id || "",
-              vendor_name: data?.vendors?.vendor_name || "",
-            }
-          : row
+          ? (() => {
+    const vendorRelation: any = data?.vendors;
+    const linkedVendor = Array.isArray(vendorRelation)
+      ? vendorRelation[0]
+      : vendorRelation;
+
+    return {
+      ...row,
+      vendor_id: linkedVendor?.id || "",
+      vendor_name: linkedVendor?.vendor_name || "",
+    };
+  })()
+: row
       )
     );
   }

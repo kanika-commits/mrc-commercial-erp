@@ -123,10 +123,14 @@ export default function NewDebitNotePage() {
     const primaryVendor =
       vendorData?.find((row: any) => row.is_primary) || vendorData?.[0];
 
-    if (!primaryVendor?.vendors?.id) {
-      setMessage("No vendor is linked to this Work Order.");
-      return;
-    }
+   const linkedVendor = Array.isArray(primaryVendor?.vendors)
+  ? primaryVendor.vendors[0]
+  : primaryVendor?.vendors;
+
+if (!linkedVendor?.id) {
+  setMessage("No vendor is linked to this Work Order.");
+  return;
+}
 
     setLinkedVendor(primaryVendor);
 
@@ -149,7 +153,7 @@ export default function NewDebitNotePage() {
     setForm((prev) => ({
       ...prev,
       work_order_id: workOrderId,
-      vendor_id: primaryVendor.vendors.id,
+      vendor_id: linkedVendor.id,
       debit_note_number: suggestedNumber,
     }));
   }

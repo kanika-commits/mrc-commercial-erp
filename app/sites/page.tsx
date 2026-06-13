@@ -58,7 +58,7 @@ export default function SitesPage() {
       return;
     }
 
-    setSites((data as Site[]) || []);
+    setSites(((data || []) as unknown as Site[]));
     setLoading(false);
   }
 
