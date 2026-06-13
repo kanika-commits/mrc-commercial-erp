@@ -1,236 +1,331 @@
-import { Badge } from "@/components/ui/badge";
+"use client";
+
+import Link from "next/link";
+import { ClipboardList, Search } from "lucide-react";
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { getCurrentUserAccess, can } from "@/lib/accessControl";
 
-const sidebarSections = [
-  {
-    title: "Dashboard",
-    items: ["Command Center"],
-  },
-  {
-    title: "Contract Management",
-    items: [
-      "Work Order Register",
-      "RA Bills",
-      "Invoices & ITC",
-      "Payments",
-      "Debit Notes",
-      "Commercial Ledger",
-    ],
-  },
-  {
-    title: "Vendor Management",
-    items: ["Vendor Master", "Vendor KYC", "Vendor Documents", "Vendor Performance"],
-  },
-  {
-    title: "Reports",
-    items: [
-      "Commercial Reports",
-      "Vendor Reports",
-      "Finance Reports",
-      "Invoice & ITC Reports",
-    ],
-  },
-  {
-    title: "Masters",
-    items: [
-      "Companies",
-      "Sites / Projects",
-      "Work Categories",
-      "Cost Codes",
-      "Document Types",
-      "Tax Codes",
-    ],
-  },
-  {
-    title: "Administration",
-    items: ["Users", "Roles", "Permission Matrix", "User Scope Assignment"],
-  },
-];
-
-const kpis = [
-  ["Pending Approvals", "18"],
-  ["Pending RA Bills", "12"],
-  ["Pending ITC Review", "8"],
-  ["Pending Payments", "5"],
-];
-
-const managementCards = [
-  ["Total Contract Value", "₹12.4 Cr"],
-  ["Outstanding Payable", "₹82 L"],
-  ["Active Projects", "9"],
-  ["Active Vendors", "48"],
-];
-
-const recentWorkOrders = [
-  ["CRPF/MRC/101", "CRPF HQ", "ABC Contractors", "₹22.4L", "Active"],
-  ["IIIT/MRC/204", "IIIT Sonipat", "Sharma Civil", "₹18.2L", "Pending RA"],
-  ["BUS/MRC/044", "Bus Stand", "KP Interiors", "₹31.7L", "Approved"],
-];
-
-const pendingApprovals = [
-  ["RA Bill", "RA-01", "CRPF HQ", "₹8.2L"],
-  ["Debit Note", "DN-07", "IIIT Sonipat", "₹48K"],
-  ["Work Order", "WO-118", "Railway Station", "₹14.5L"],
-];
+function money(value: any) {
+  return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
+}
 
 export default function Home() {
+  const [permissions, setPermissions] = useState<any[]>([]);
+
+  const [pendingRA, setPendingRA] = useState(0);
+  const [pendingDebitNotes, setPendingDebitNotes] = useState(0);
+  const [pendingITC, setPendingITC] = useState(0);
+  const [activeWorkOrders, setActiveWorkOrders] = useState(0);
+
+  const [totalWOValue, setTotalWOValue] = useState(0);
+  const [approvedRAValue, setApprovedRAValue] = useState(0);
+  const [invoiceValue, setInvoiceValue] = useState(0);
+  const [paymentValue, setPaymentValue] = useState(0);
+
+  const [totalVendors, setTotalVendors] = useState(0);
+  const [panAadhaarPending, setPanAadhaarPending] = useState(0);
+  const [blockedVendors, setBlockedVendors] = useState(0);
+  const [inactiveVendors, setInactiveVendors] = useState(0);
+
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadDashboard();
+  }, []);
+
+  async function loadDashboard() {
+    setLoading(true);
+
+    try {
+      const [
+        access,
+        pendingRARes,
+        pendingDebitRes,
+        pendingITCRes,
+        activeWORes,
+        vendorCountRes,
+        panCountRes,
+        blockedCountRes,
+        inactiveCountRes,
+        woValueRes,
+        approvedRARes,
+        invoiceValueRes,
+        paymentValueRes,
+      ] = await Promise.all([
+        getCurrentUserAccess(),
+
+        supabase
+          .from("ra_bills")
+          .select("*", { count: "exact", head: true })
+          .in("approval_status", ["pending", "Pending"]),
+
+        supabase
+          .from("debit_notes")
+          .select("*", { count: "exact", head: true })
+          .in("approval_status", ["pending", "Pending"]),
+
+       supabase
+  .from("invoices")
+  .select("*", { count: "exact", head: true })
+  .is("itc_status", null),
+
+        supabase
+          .from("work_orders")
+          .select("*", { count: "exact", head: true })
+          .eq("status", "active"),
+
+        supabase
+  .from("vendors")
+  .select("*", { count: "exact", head: true })
+  .neq("status", "deleted"),
+
+     supabase
+  .from("vendors")
+  .select("*", { count: "exact", head: true })
+  .neq("status", "deleted")
+  .neq("pan_aadhaar_link_status", "Yes"),
+
+        supabase
+          .from("vendors")
+          .select("*", { count: "exact", head: true })
+          .eq("status", "blocked"),
+
+        supabase
+          .from("vendors")
+          .select("*", { count: "exact", head: true })
+          .eq("status", "inactive"),
+
+       supabase
+  .from("work_orders")
+  .select("wo_value")
+  .eq("status", "active"),
+
+supabase
+  .from("ra_bills")
+  .select("net_amount, approval_status")
+  .eq("status", "active")
+  .in("approval_status", ["approved", "Approved"]),
+
+        supabase
+  .from("invoices")
+  .select("invoice_amount")
+  .eq("status", "active"),
+
+        supabase
+  .from("payments")
+  .select("transferred_amount, payment_amount")
+  .eq("status", "active"),
+      ]);
+
+      setPermissions(access.permissions || []);
+
+      setPendingRA(pendingRARes.count || 0);
+      setPendingDebitNotes(pendingDebitRes.count || 0);
+      setPendingITC(pendingITCRes.count || 0);
+      setActiveWorkOrders(activeWORes.count || 0);
+
+      setTotalVendors(vendorCountRes.count || 0);
+      setPanAadhaarPending(panCountRes.count || 0);
+      setBlockedVendors(blockedCountRes.count || 0);
+      setInactiveVendors(inactiveCountRes.count || 0);
+
+      setTotalWOValue(
+        (woValueRes.data || []).reduce(
+          (sum: number, item: any) => sum + Number(item.wo_value || 0),
+          0
+        )
+      );
+
+      setApprovedRAValue(
+        (approvedRARes.data || []).reduce(
+          (sum: number, item: any) => sum + Number(item.net_amount || 0),
+          0
+        )
+      );
+
+      setInvoiceValue(
+        (invoiceValueRes.data || []).reduce(
+          (sum: number, item: any) => sum + Number(item.invoice_amount || 0),
+          0
+        )
+      );
+
+      setPaymentValue(
+        (paymentValueRes.data || []).reduce(
+          (sum: number, item: any) =>
+            sum + Number(item.transferred_amount || item.payment_amount || 0),
+          0
+        )
+      );
+    } catch (error) {
+      console.error("Dashboard load failed:", error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const actionCards: [string, string, string][] = [
+  ["Pending RA Approval", String(pendingRA), "/approvals"],
+  ["Pending Debit Notes", String(pendingDebitNotes), "/approvals"],
+  ["Pending ITC Review", String(pendingITC), "/invoices/itc"],
+  ["Active Work Orders", String(activeWorkOrders), "/work-orders"],
+];
+
+  const financialCards = [
+    ["Total WO Value", money(totalWOValue)],
+    ["Approved RA Value", money(approvedRAValue)],
+    ["Invoice Value", money(invoiceValue)],
+    ["Payments Made", money(paymentValue)],
+  ];
+
+ const managementCards: [string, string, string][] = [
+  ["Total Vendors", String(totalVendors || 0), "/vendors"],
+  ["PAN-Aadhaar Pending", String(panAadhaarPending || 0), "/vendors"],
+  ["Blocked Vendors", String(blockedVendors || 0), "/vendors"],
+  ["Inactive Vendors", String(inactiveVendors || 0), "/vendors"],
+];
+
+  if (loading) {
+    return <p className="text-gray-500">Loading dashboard...</p>;
+  }
+
   return (
-    <main className="min-h-screen bg-slate-50">
-      <div className="flex">
-        <aside className="min-h-screen w-80 border-r bg-slate-950 px-5 py-6 text-white">
-          <div className="mb-8">
-            <h1 className="text-2xl font-bold">MRC Commercial</h1>
-            <p className="text-sm text-slate-400">Construction Contract ERP</p>
+    <section className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white">
+            <ClipboardList className="h-3.5 w-3.5" />
+            Command Center
           </div>
 
-          <nav className="space-y-6">
-            {sidebarSections.map((section) => (
-              <div key={section.title}>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {section.title}
-                </p>
-                <div className="space-y-1">
-                  {section.items.map((item, index) => (
-                    <div
-                      key={item}
-                      className={`rounded-lg px-3 py-2 text-sm font-medium ${
-                        section.title === "Dashboard" && index === 0
-                          ? "bg-white text-slate-950"
-                          : "text-slate-300 hover:bg-slate-800 hover:text-white"
-                      }`}
-                    >
-                      {item}
-                    </div>
-                  ))}
+          <h1 className="text-3xl font-bold text-slate-950">
+            ConstructIQ Dashboard
+          </h1>
+
+          <p className="text-sm text-slate-500">
+            Live commercial overview for MRC ERP.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+            <input
+              className="h-10 w-72 rounded-xl border bg-white pl-9 pr-3 text-sm shadow-sm outline-none focus:border-slate-400"
+              placeholder="Search WO, vendor, invoice..."
+            />
+          </div>
+
+          {can(permissions, "vendors", "add") && (
+            <Link href="/vendors/new">
+              <Button>Add Vendor</Button>
+            </Link>
+          )}
+        </div>
+      </div>
+
+      <DashboardSection title="Pending Work" cards={actionCards} />
+
+      <DashboardSection title="Commercial Summary" cards={financialCards} />
+
+     <div className="grid gap-4 md:grid-cols-4">
+  {managementCards.map(([label, value, href]) => {
+    const cardClass =
+      label === "PAN-Aadhaar Pending"
+        ? "border-yellow-200 bg-yellow-50 shadow-sm transition hover:shadow-md"
+        : label === "Blocked Vendors"
+        ? "border-red-200 bg-red-50 shadow-sm transition hover:shadow-md"
+        : "border-0 shadow-sm transition hover:shadow-md";
+
+    return (
+      <Link key={label} href={href}>
+        <Card className={cardClass}>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-slate-500">
+              {label}
+            </CardTitle>
+          </CardHeader>
+
+          <CardContent>
+            <div className="text-2xl font-bold">{value}</div>
+          </CardContent>
+        </Card>
+      </Link>
+    );
+  })}
+</div>
+
+      <Card className="border-0 shadow-sm">
+        <CardHeader>
+          <CardTitle>Commercial Flow</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-center gap-3">
+            {[
+              "Work Order",
+              "RA Bill",
+              "Invoice / ITC",
+              "Payment",
+              "Debit Note",
+              "Vendor Ledger",
+              "WO Ledger",
+            ].map((step, index, arr) => (
+              <div key={step} className="flex items-center gap-3">
+                <div className="rounded-2xl border bg-white px-5 py-3 text-center text-sm font-semibold shadow-sm">
+                  {step}
                 </div>
+                {index < arr.length - 1 && (
+                  <span className="text-slate-300">→</span>
+                )}
               </div>
             ))}
-          </nav>
-        </aside>
+          </div>
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+function DashboardSection({
+  title,
+  cards,
+}: {
+  title: string;
+  cards: [string, string, string?][];
+}) {
+  return (
+    <section className="space-y-3">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+        {title}
+      </h2>
 
-        <section className="flex-1">
-          <header className="flex items-center justify-between border-b bg-white px-8 py-5">
-            <div>
-              <h2 className="text-2xl font-bold text-slate-900">Command Center</h2>
-              <p className="text-sm text-slate-500">
-                MRC Group · Contract Management · SaaS-ready foundation
-              </p>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <input
-                className="h-10 w-72 rounded-md border bg-white px-3 text-sm"
-                placeholder="Search WO, vendor, invoice..."
-              />
-              <Badge variant="secondary">Platform Owner</Badge>
-              <Button>Create Work Order</Button>
-            </div>
-          </header>
-
-          <div className="space-y-6 p-8">
-            <div className="grid gap-4 md:grid-cols-4">
-              {kpis.map(([label, value]) => (
-                <Card key={label}>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium text-slate-500">
-                      {label}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-3xl font-bold">{value}</div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-4">
-              {managementCards.map(([label, value]) => (
-                <Card key={label}>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium text-slate-500">
-                      {label}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">{value}</div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Contract Flow</CardTitle>
+      <div className="grid gap-4 md:grid-cols-4">
+        {cards.map(([label, value, href]) => {
+          const card = (
+            <Card className="border-0 shadow-sm transition hover:shadow-md">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-slate-500">
+                  {label}
+                </CardTitle>
               </CardHeader>
+
               <CardContent>
-                <div className="grid gap-3 md:grid-cols-6">
-                  {[
-                    "Work Order",
-                    "RA Bill",
-                    "Invoice / ITC",
-                    "Payment",
-                    "Debit Note",
-                    "Ledger",
-                  ].map((step) => (
-                    <div
-                      key={step}
-                      className="rounded-xl border bg-white p-4 text-center text-sm font-semibold"
-                    >
-                      {step}
-                    </div>
-                  ))}
-                </div>
+                <div className="text-3xl font-bold">{value}</div>
               </CardContent>
             </Card>
+          );
 
-            <div className="grid gap-4 lg:grid-cols-2">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Recent Work Orders</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    {recentWorkOrders.map(([wo, site, vendor, value, status]) => (
-                      <div
-                        key={wo}
-                        className="grid grid-cols-5 items-center rounded-lg border p-3 text-sm"
-                      >
-                        <div className="font-semibold">{wo}</div>
-                        <div className="text-slate-500">{site}</div>
-                        <div className="text-slate-500">{vendor}</div>
-                        <div className="font-medium">{value}</div>
-                        <Badge variant="outline">{status}</Badge>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Pending Approval Queue</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    {pendingApprovals.map(([type, number, site, value]) => (
-                      <div
-                        key={number}
-                        className="grid grid-cols-4 items-center rounded-lg border p-3 text-sm"
-                      >
-                        <Badge variant="secondary">{type}</Badge>
-                        <div className="font-semibold">{number}</div>
-                        <div className="text-slate-500">{site}</div>
-                        <div className="font-medium">{value}</div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </div>
-        </section>
+          return href ? (
+            <Link key={label} href={href}>
+              {card}
+            </Link>
+          ) : (
+            <div key={label}>{card}</div>
+          );
+        })}
       </div>
-    </main>
+    </section>
   );
 }

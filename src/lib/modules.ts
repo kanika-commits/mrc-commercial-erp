@@ -1,0 +1,17 @@
+export const MODULES = [
+  "companies",
+  "sites",
+  "vendors",
+  "work_orders",
+  "wo_approval",
+  "ra_bills",
+  "ra_approval",
+  "invoices",
+  "itc_claims",
+  "payments",
+  "debit_notes",
+  "reports",
+  "users",
+  "roles",
+  "permissions",
+] as const;
