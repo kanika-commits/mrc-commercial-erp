@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   BarChart3,
   Bell,
@@ -14,18 +15,60 @@ import {
   Settings,
 } from "lucide-react";
 import UserHeader from "@/components/UserHeader";
+import { can, getCurrentUserAccess, type UserPermission } from "@/lib/accessControl";
 
 const sidebarItems = [
-  { label: "Dashboard", href: "/", icon: Home },
-  { label: "Modules", href: "/modules", icon: LayoutGrid },
-  { label: "Master Setup", href: "/modules/master-setup", icon: Building2 },
-  { label: "Contract Management", href: "/modules/contract-management", icon: FileText },
-  { label: "Reports", href: "/modules/reports", icon: BarChart3 },
-  { label: "Administration", href: "/modules/administration", icon: Settings },
+  { label: "Dashboard", href: "/", icon: Home, groupCode: "dashboard" },
+  { label: "Modules", href: "/modules", icon: LayoutGrid, alwaysShow: true },
+  { label: "Master Setup", href: "/modules/master-setup", icon: Building2, groupCode: "master_setup" },
+  { label: "Contract Management", href: "/modules/contract-management", icon: FileText, groupCode: "contract_management" },
+  { label: "Reports", href: "/modules/reports", icon: BarChart3, groupCode: "reports" },
+  { label: "Administration", href: "/modules/administration", icon: Settings, groupCode: "administration" },
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [visibleGroupCodes, setVisibleGroupCodes] = useState<Set<string>>(new Set());
+  const [permissions, setPermissions] = useState<UserPermission[]>([]);
+
+  useEffect(() => {
+    async function loadNavigationAccess() {
+      const [access, navigationResponse] = await Promise.all([
+        getCurrentUserAccess(),
+        fetch("/api/admin/module-navigation"),
+      ]);
+
+      setPermissions(access.permissions || []);
+
+      if (!navigationResponse.ok) {
+        setVisibleGroupCodes(new Set());
+        return;
+      }
+
+      const navigation = await navigationResponse.json();
+      const modules = navigation.modules || [];
+      const nextVisibleGroups = new Set<string>();
+
+      modules.forEach((module: any) => {
+        if (can(access.permissions, module.module_code, "view")) {
+          nextVisibleGroups.add(module.module_group);
+        }
+      });
+
+      setVisibleGroupCodes(nextVisibleGroups);
+    }
+
+    loadNavigationAccess();
+  }, []);
+
+  const visibleSidebarItems = sidebarItems.filter((item) => {
+    if (item.alwaysShow) return true;
+    if (item.groupCode === "dashboard") {
+      return can(permissions, "dashboard", "view") || permissions.length === 0;
+    }
+    if (!item.groupCode) return true;
+    return visibleGroupCodes.has(item.groupCode);
+  });
 
   return (
     <div className="min-h-screen bg-[#f3f6f8]">
@@ -38,16 +81,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </Link>
 
         <nav className="space-y-2">
-          {sidebarItems.map((item, index) => {
+          {visibleSidebarItems.map((item) => {
             const Icon = item.icon;
             const active =
               item.href === "/"
                 ? pathname === "/"
                 : pathname.startsWith(item.href);
+            const showDivider = item.groupCode === "master_setup";
 
             return (
               <div key={item.href}>
-                {index === 2 && (
+                {showDivider && (
                   <div className="my-5 border-t border-white/10" />
                 )}
 
@@ -68,13 +112,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="mt-auto space-y-2 border-t border-white/10 pt-7">
-          <Link
-            href="/modules/administration"
-            className="flex h-12 items-center gap-4 rounded-md px-5 text-sm font-bold text-white/55 transition hover:bg-white/10 hover:text-white"
-          >
-            <Settings className="h-5 w-5" />
-            Settings
-          </Link>
+          {visibleGroupCodes.has("administration") && (
+            <Link
+              href="/modules/administration"
+              className="flex h-12 items-center gap-4 rounded-md px-5 text-sm font-bold text-white/55 transition hover:bg-white/10 hover:text-white"
+            >
+              <Settings className="h-5 w-5" />
+              Settings
+            </Link>
+          )}
           <div className="flex h-12 items-center gap-4 rounded-md px-5 text-sm font-bold text-white/55">
             <span className="grid h-5 w-5 place-items-center rounded-full border border-white/55 text-xs">
               ?
@@ -96,9 +142,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </div>
 
             <div className="flex items-center gap-7 text-sm font-bold text-slate-700">
-              <Link href="/modules/master-setup">Directory</Link>
-              <Link href="/modules/reports">Reports</Link>
-              <Link href="/approvals">Archives</Link>
+              {visibleGroupCodes.has("master_setup") && (
+                <Link href="/modules/master-setup">Directory</Link>
+              )}
+              {visibleGroupCodes.has("reports") && (
+                <Link href="/modules/reports">Reports</Link>
+              )}
+              {can(permissions, "approvals", "view") && (
+                <Link href="/approvals">Archives</Link>
+              )}
             </div>
 
             <div className="flex items-center gap-5">

@@ -66,6 +66,24 @@ const moduleCards = [
   },
 ];
 
+const groupMeta: Record<string, (typeof moduleCards)[number]> = {
+  master_setup: moduleCards[0],
+  construction_management: moduleCards[0],
+  contract_management: moduleCards[1],
+  accounts: {
+    title: "Accounts",
+    href: "/modules/accounts",
+    description: "Accounts and finance workflows.",
+    checkModules: [],
+    icon: FileText,
+    tone: "orange",
+    status: "Active",
+    meta: "Finance Access",
+  },
+  reports: moduleCards[2],
+  administration: moduleCards[3],
+};
+
 const toneClasses = {
   emerald: {
     iconShell: "bg-emerald-50",
@@ -95,12 +113,25 @@ const toneClasses = {
 
 export default function ModulesPage() {
   const [permissions, setPermissions] = useState<UserPermission[]>([]);
+  const [groups, setGroups] = useState<any[]>([]);
+  const [modules, setModules] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadAccess() {
-      const access = await getCurrentUserAccess();
+      const [access, navigationResponse] = await Promise.all([
+        getCurrentUserAccess(),
+        fetch("/api/admin/module-navigation"),
+      ]);
+
       setPermissions(access.permissions || []);
+
+      if (navigationResponse.ok) {
+        const navigation = await navigationResponse.json();
+        setGroups(navigation.groups || []);
+        setModules(navigation.modules || []);
+      }
+
       setLoading(false);
     }
 
@@ -115,9 +146,23 @@ export default function ModulesPage() {
     );
   }
 
-  const visibleCards = moduleCards.filter((card) =>
-    card.checkModules.some((moduleCode) => can(permissions, moduleCode, "view"))
-  );
+  const visibleCards = groups
+    .filter((group) =>
+      modules.some(
+        (module) =>
+          module.module_group === group.module_code &&
+          can(permissions, module.module_code, "view")
+      )
+    )
+    .map((group) => {
+      const meta = groupMeta[group.module_code] || moduleCards[0];
+
+      return {
+        ...meta,
+        title: group.module_name || meta.title,
+        href: group.route || meta.href,
+      };
+    });
 
   const quickActions = [
     {

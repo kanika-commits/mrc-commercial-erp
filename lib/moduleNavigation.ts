@@ -1,26 +1,32 @@
-import { supabase } from "@/lib/supabase";
 import { can, getCurrentUserAccess } from "@/lib/accessControl";
+
+type ModuleGroupRow = {
+  module_code: string;
+  [key: string]: any;
+};
+
+type ModuleRow = {
+  module_group: string;
+  module_code: string;
+  [key: string]: any;
+};
 
 export async function getVisibleModuleGroups() {
   const { permissions } = await getCurrentUserAccess();
 
-  const { data: groups } = await supabase
-    .from("erp_module_groups")
-    .select("*")
-    .eq("status", "active")
-    .order("sort_order");
+  const response = await fetch("/api/admin/module-navigation");
 
-  const { data: modules } = await supabase
-    .from("erp_modules")
-    .select("*")
-    .eq("status", "active")
-    .order("sort_order");
+  if (!response.ok) return [];
 
-  const visibleModules = (modules ?? []).filter((module) =>
+  const { groups = [], modules = [] } = await response.json();
+  const moduleGroups = groups as ModuleGroupRow[];
+  const moduleRows = modules as ModuleRow[];
+
+  const visibleModules = (moduleRows ?? []).filter((module) =>
     can(permissions, module.module_code, "view")
   );
 
-  return (groups ?? [])
+  return (moduleGroups ?? [])
     .filter((group) => group.module_code !== "dashboard")
     .filter((group) =>
       visibleModules.some(
@@ -38,12 +44,14 @@ export async function getVisibleModuleGroups() {
 export async function getVisibleModulePages(groupCode: string) {
   const { permissions } = await getCurrentUserAccess();
 
-  const { data } = await supabase
-    .from("erp_modules")
-    .select("*")
-    .eq("status", "active")
-    .eq("module_group", groupCode)
-    .order("sort_order");
+  const response = await fetch("/api/admin/module-navigation");
+
+  if (!response.ok) return [];
+
+  const { modules = [] } = await response.json();
+  const data = (modules as ModuleRow[]).filter(
+    (module) => module.module_group === groupCode
+  );
 
   return (data ?? []).filter((module) =>
     can(permissions, module.module_code, "view")

@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getCurrentUserAccess, can } from "@/lib/accessControl";
-import { supabase } from "@/lib/supabase";
 
 type ModuleRow = {
   id: string;
@@ -135,22 +134,20 @@ export default function ModulePage({
   useEffect(() => {
     async function loadPages() {
       const access = await getCurrentUserAccess();
+      const response = await fetch("/api/admin/module-navigation");
 
-      const { data, error } = await supabase
-        .from("erp_modules")
-        .select("id, module_group, module_code, module_name, route, sort_order")
-        .eq("status", "active")
-        .eq("module_group", groupCode)
-        .order("sort_order");
-
-      if (error) {
-        console.error(error.message);
+      if (!response.ok) {
         setPages([]);
         setLoading(false);
         return;
       }
 
-      const visiblePages = (data ?? []).filter((page) =>
+      const navigation = await response.json();
+      const data = ((navigation.modules || []) as ModuleRow[]).filter(
+        (module: ModuleRow) => module.module_group === groupCode
+      );
+
+      const visiblePages = (data ?? []).filter((page: ModuleRow) =>
         can(access.permissions, page.module_code, "view")
       );
 

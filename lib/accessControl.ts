@@ -32,6 +32,24 @@ export async function getCurrentUserAccess(): Promise<CurrentUserAccess> {
     };
   }
 
+  if (typeof window !== "undefined") {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (session?.access_token) {
+      const response = await fetch("/api/admin/current-access", {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+
+      if (response.ok) {
+        return response.json();
+      }
+    }
+  }
+
   const [
     { data: userRoles },
     { data: userPermissionRows },
