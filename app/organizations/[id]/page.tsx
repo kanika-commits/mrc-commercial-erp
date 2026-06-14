@@ -1,5 +1,16 @@
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
+import { createClient } from "@supabase/supabase-js";
+
+function adminClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+  if (!serviceRoleKey) {
+    throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY.");
+  }
+
+  return createClient(supabaseUrl, serviceRoleKey);
+}
 
 export default async function OrganizationDetailPage({
   params,
@@ -7,6 +18,7 @@ export default async function OrganizationDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const supabase = adminClient();
 
   const { data: organization, error } = await supabase
     .from("organizations")
@@ -28,17 +40,58 @@ export default async function OrganizationDetailPage({
     .eq("organization_id", id)
     .order("company_name");
 
-  const { data: users } = await supabase
+  const { data: accessRows } = await supabase
     .from("user_access_assignments")
-    .select(`
-      user_id,
-      profiles (
-        email,
-        full_name,
-        status
-      )
-    `)
+    .select("user_id")
     .eq("organization_id", id);
+
+  const userIds = Array.from(
+    new Set((accessRows || []).map((row: any) => row.user_id).filter(Boolean))
+  );
+
+  const { data: profileRows } = userIds.length
+    ? await supabase
+        .from("profiles")
+        .select("id, email, full_name, status")
+        .in("id", userIds)
+    : { data: [] };
+
+  const { data: userRoleRows } = userIds.length
+    ? await supabase
+        .from("user_roles")
+        .select("user_id, role_id")
+        .in("user_id", userIds)
+    : { data: [] };
+
+  const roleIds = Array.from(
+    new Set((userRoleRows || []).map((row: any) => row.role_id).filter(Boolean))
+  );
+
+  const { data: roleRows } = roleIds.length
+    ? await supabase
+        .from("roles")
+        .select("id, role_name, role_code")
+        .in("id", roleIds)
+    : { data: [] };
+
+  const rolesById = new Map((roleRows || []).map((role: any) => [role.id, role]));
+  const rolesByUserId = new Map<string, string[]>();
+
+  (userRoleRows || []).forEach((row: any) => {
+    const role = rolesById.get(row.role_id);
+    const roleNames = rolesByUserId.get(row.user_id) || [];
+
+    if (role) {
+      roleNames.push(role.role_name || role.role_code);
+    }
+
+    rolesByUserId.set(row.user_id, roleNames);
+  });
+
+  const users = (profileRows || []).map((profile: any) => ({
+    ...profile,
+    roles: rolesByUserId.get(profile.id) || [],
+  }));
 
   return (
     <div className="space-y-6">
@@ -108,28 +161,32 @@ export default async function OrganizationDetailPage({
               <tr>
                 <th className="p-3 text-left">Name</th>
                 <th className="p-3 text-left">Email</th>
+                <th className="p-3 text-left">Roles</th>
                 <th className="p-3 text-left">Status</th>
               </tr>
             </thead>
 
             <tbody>
-              {users?.map((item: any, index: number) => (
-                <tr key={`${item.user_id}-${index}`} className="border-t">
+              {users?.map((user: any) => (
+                <tr key={user.id} className="border-t">
                   <td className="p-3">
-                    {item.profiles?.full_name || "-"}
+                    {user.full_name || "-"}
                   </td>
                   <td className="p-3">
-                    {item.profiles?.email || "-"}
+                    {user.email || "-"}
                   </td>
                   <td className="p-3">
-                    {item.profiles?.status || "active"}
+                    {user.roles?.join(", ") || "-"}
+                  </td>
+                  <td className="p-3">
+                    {user.status || "active"}
                   </td>
                 </tr>
               ))}
 
               {users?.length === 0 && (
                 <tr>
-                  <td colSpan={3} className="p-6 text-center text-gray-500">
+                  <td colSpan={4} className="p-6 text-center text-gray-500">
                     No users assigned.
                   </td>
                 </tr>

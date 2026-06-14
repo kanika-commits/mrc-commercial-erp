@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+function uniqueRows<T>(rows: T[], keyFor: (row: T) => string) {
+  return Array.from(new Map(rows.map((row) => [keyFor(row), row])).values());
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -42,44 +50,81 @@ export async function POST(request: Request) {
 
     const adminSupabase = createClient(supabaseUrl, serviceRoleKey);
 
-    const { data: organization, error: orgError } = await adminSupabase
+    const orgCode = String(organization_code).trim();
+    const companyCode = String(company_code).trim();
+    const adminEmail = normalizeEmail(admin_email);
+
+    let { data: organization, error: orgLookupError } = await adminSupabase
       .from("organizations")
-      .insert({
-        name: organization_name,
-        code: organization_code,
-        status: "active",
-      })
       .select("id")
-      .single();
+      .eq("code", orgCode)
+      .maybeSingle();
 
-    if (orgError) throw orgError;
+    if (orgLookupError) throw orgLookupError;
 
-    const { data: company, error: companyError } = await adminSupabase
+    if (!organization) {
+      const { data, error } = await adminSupabase
+        .from("organizations")
+        .insert({
+          name: organization_name,
+          code: orgCode,
+          status: "active",
+        })
+        .select("id")
+        .single();
+
+      if (error) throw error;
+      organization = data;
+    }
+
+    let { data: company, error: companyLookupError } = await adminSupabase
       .from("companies")
-      .insert({
-        organization_id: organization.id,
-        company_name,
-        company_code,
-        status: "active",
-      })
       .select("id")
-      .single();
+      .eq("organization_id", organization.id)
+      .eq("company_code", companyCode)
+      .maybeSingle();
 
-    if (companyError) throw companyError;
+    if (companyLookupError) throw companyLookupError;
 
-    const { data: authData, error: authError } =
-      await adminSupabase.auth.admin.createUser({
-        email: admin_email,
-        password: admin_password,
-        email_confirm: true,
-        user_metadata: {
-          full_name: admin_name,
-        },
-      });
+    if (!company) {
+      const { data, error } = await adminSupabase
+        .from("companies")
+        .insert({
+          organization_id: organization.id,
+          company_name,
+          company_code: companyCode,
+          status: "active",
+        })
+        .select("id")
+        .single();
 
-    if (authError) throw authError;
+      if (error) throw error;
+      company = data;
+    }
 
-    const user = authData.user;
+    const { data: existingUsers, error: listUsersError } =
+      await adminSupabase.auth.admin.listUsers();
+
+    if (listUsersError) throw listUsersError;
+
+    let user = existingUsers.users.find(
+      (item) => item.email?.toLowerCase() === adminEmail
+    );
+
+    if (!user) {
+      const { data: authData, error: authError } =
+        await adminSupabase.auth.admin.createUser({
+          email: adminEmail,
+          password: admin_password,
+          email_confirm: true,
+          user_metadata: {
+            full_name: admin_name,
+          },
+        });
+
+      if (authError) throw authError;
+      user = authData.user || undefined;
+    }
 
     if (!user) {
       throw new Error("Super Admin user was not created.");
@@ -89,7 +134,7 @@ export async function POST(request: Request) {
       .from("profiles")
       .upsert({
         id: user.id,
-        email: admin_email,
+        email: adminEmail,
         full_name: admin_name,
         status: "active",
       });
@@ -104,18 +149,27 @@ export async function POST(request: Request) {
 
     if (roleError) throw roleError;
 
-    const { error: userRoleError } = await adminSupabase
+    const { data: existingRoles, error: existingRoleError } = await adminSupabase
       .from("user_roles")
-      .insert({
-        user_id: user.id,
-        role_id: superAdminRole.id,
-      });
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("role_id", superAdminRole.id);
 
-    if (userRoleError) throw userRoleError;
+    if (existingRoleError) throw existingRoleError;
 
-    const { error: accessError } = await adminSupabase
-      .from("user_access_assignments")
-      .insert([
+    if ((existingRoles || []).length === 0) {
+      const { error: userRoleError } = await adminSupabase
+        .from("user_roles")
+        .insert({
+          user_id: user.id,
+          role_id: superAdminRole.id,
+        });
+
+      if (userRoleError) throw userRoleError;
+    }
+
+    const accessRows = uniqueRows(
+      [
         {
           user_id: user.id,
           organization_id: organization.id,
@@ -128,9 +182,38 @@ export async function POST(request: Request) {
           company_id: company.id,
           site_id: null,
         },
-      ]);
+      ],
+      (row) => `${row.user_id}.${row.organization_id || ""}.${row.company_id || ""}.${row.site_id || ""}`
+    );
 
-    if (accessError) throw accessError;
+    const { data: existingAccess, error: existingAccessError } =
+      await adminSupabase
+        .from("user_access_assignments")
+        .select("organization_id, company_id, site_id")
+        .eq("user_id", user.id);
+
+    if (existingAccessError) throw existingAccessError;
+
+    const existingAccessKeys = new Set(
+      (existingAccess || []).map(
+        (row) => `${row.organization_id || ""}.${row.company_id || ""}.${row.site_id || ""}`
+      )
+    );
+
+    const newAccessRows = accessRows.filter(
+      (row) =>
+        !existingAccessKeys.has(
+          `${row.organization_id || ""}.${row.company_id || ""}.${row.site_id || ""}`
+        )
+    );
+
+    if (newAccessRows.length > 0) {
+      const { error: accessError } = await adminSupabase
+        .from("user_access_assignments")
+        .insert(newAccessRows);
+
+      if (accessError) throw accessError;
+    }
 
     return NextResponse.json({
       organization_id: organization.id,

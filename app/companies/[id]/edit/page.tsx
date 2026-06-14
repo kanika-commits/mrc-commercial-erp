@@ -4,13 +4,13 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { can, getCurrentUserAccess } from "@/lib/accessControl";
 
 export default function EditCompanyPage() {
   const params = useParams();
   const router = useRouter();
   const id = params.id as string;
 
-  const [organizations, setOrganizations] = useState<any[]>([]);
   const [form, setForm] = useState({
     company_name: "",
     company_code: "",
@@ -30,11 +30,24 @@ export default function EditCompanyPage() {
     setLoading(true);
     setMessage("");
 
+    const access = await getCurrentUserAccess();
+    const canEditCompany =
+      access.roleCodes.includes("platform_owner") ||
+      access.roleCodes.includes("super_admin") ||
+      can(access.permissions, "companies", "edit");
+
+    if (!canEditCompany) {
+      setMessage("You do not have permission to edit companies.");
+      setLoading(false);
+      return;
+    }
+
     const { data: company, error } = await supabase
       .from("companies")
       .select("id, company_name, company_code, organization_id, status")
       .eq("id", id)
-      .single();
+      .limit(1)
+      .maybeSingle();
 
     if (error) {
       setMessage(error.message);
@@ -42,19 +55,12 @@ export default function EditCompanyPage() {
       return;
     }
 
-    const { data: orgData, error: orgError } = await supabase
-      .from("organizations")
-      .select("id, name, code")
-      .eq("status", "active")
-      .order("name");
-
-    if (orgError) {
-      setMessage(orgError.message);
+    if (!company) {
+      setMessage("Company was not found.");
       setLoading(false);
       return;
     }
 
-    setOrganizations(orgData || []);
     setForm({
       company_name: company.company_name || "",
       company_code: company.company_code || "",
@@ -79,8 +85,8 @@ export default function EditCompanyPage() {
       setSaving(true);
       setMessage("");
 
-      if (!form.company_name || !form.company_code || !form.organization_id) {
-        setMessage("Company name, code and organization are required.");
+      if (!form.company_name || !form.company_code) {
+        setMessage("Company name and code are required.");
         return;
       }
 
@@ -89,7 +95,6 @@ export default function EditCompanyPage() {
         .update({
           company_name: form.company_name,
           company_code: form.company_code,
-          organization_id: form.organization_id,
           status: form.status,
         })
         .eq("id", id);
@@ -97,7 +102,7 @@ export default function EditCompanyPage() {
       if (error) throw error;
 
       setMessage("Company updated successfully.");
-      router.refresh();
+      router.push("/companies");
     } catch (error: any) {
       setMessage(error.message || "Failed to update company.");
     } finally {
@@ -117,11 +122,11 @@ export default function EditCompanyPage() {
         <div>
           <h1 className="text-3xl font-bold">Edit Company</h1>
           <p className="text-gray-500">
-            Update company details and organization mapping.
+            Update company name, code and status.
           </p>
         </div>
 
-        <Link href={`/companies/${id}`} className="rounded-lg border px-4 py-2">
+        <Link href="/companies" className="rounded-lg border px-4 py-2">
           Back
         </Link>
       </div>
@@ -158,25 +163,6 @@ export default function EditCompanyPage() {
               onChange={handleChange}
               className={inputClass}
             />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-medium">
-              Organization *
-            </label>
-            <select
-              name="organization_id"
-              value={form.organization_id}
-              onChange={handleChange}
-              className={inputClass}
-            >
-              <option value="">Select Organization</option>
-              {organizations.map((org) => (
-                <option key={org.id} value={org.id}>
-                  {org.name} - {org.code}
-                </option>
-              ))}
-            </select>
           </div>
 
           <div>

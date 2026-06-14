@@ -1,6 +1,26 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+type RoleRow = {
+  user_id: string;
+  role_id: string;
+};
+
+type AccessRow = {
+  user_id: string;
+  organization_id: string | null;
+  company_id: string | null;
+  site_id: string | null;
+};
+
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+function uniqueRows<T>(rows: T[], keyFor: (row: T) => string) {
+  return Array.from(new Map(rows.map((row) => [keyFor(row), row])).values());
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -39,21 +59,39 @@ export async function POST(request: Request) {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
+    if (!serviceRoleKey) {
+      return NextResponse.json(
+        { error: "Missing SUPABASE_SERVICE_ROLE_KEY." },
+        { status: 500 }
+      );
+    }
+
     const adminSupabase = createClient(supabaseUrl, serviceRoleKey);
+    const normalizedEmail = normalizeEmail(email);
 
-    const { data: authData, error: authError } =
-      await adminSupabase.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true,
-        user_metadata: {
-          full_name,
-        },
-      });
+    const { data: existingUsers, error: listUsersError } =
+      await adminSupabase.auth.admin.listUsers();
 
-    if (authError) throw authError;
+    if (listUsersError) throw listUsersError;
 
-    const user = authData.user;
+    let user = existingUsers.users.find(
+      (item) => item.email?.toLowerCase() === normalizedEmail
+    );
+
+    if (!user) {
+      const { data: authData, error: authError } =
+        await adminSupabase.auth.admin.createUser({
+          email: normalizedEmail,
+          password,
+          email_confirm: true,
+          user_metadata: {
+            full_name,
+          },
+        });
+
+      if (authError) throw authError;
+      user = authData.user || undefined;
+    }
 
     if (!user) {
       throw new Error("User was not created.");
@@ -63,17 +101,22 @@ export async function POST(request: Request) {
       .from("profiles")
       .upsert({
         id: user.id,
-        email,
+        email: normalizedEmail,
         full_name,
         status: "active",
       });
 
     if (profileError) throw profileError;
 
-    const roleRows = role_ids.map((roleId: string) => ({
-      user_id: user.id,
-      role_id: roleId,
-    }));
+    await adminSupabase.from("user_roles").delete().eq("user_id", user.id);
+
+    const roleRows = uniqueRows<RoleRow>(
+      role_ids.map((roleId: string) => ({
+        user_id: user.id,
+        role_id: roleId,
+      })),
+      (row) => `${row.user_id}.${row.role_id}`
+    );
 
     const { error: roleError } = await adminSupabase
       .from("user_roles")
@@ -81,9 +124,37 @@ export async function POST(request: Request) {
 
     if (roleError) throw roleError;
 
-    const accessRows: any[] = [];
+    const { data: siteData, error: siteError } = (site_ids || []).length
+      ? await adminSupabase
+          .from("sites")
+          .select("id, company_id")
+          .in("id", site_ids || [])
+      : { data: [], error: null };
 
-    organization_ids.forEach((orgId: string) => {
+    if (siteError) throw siteError;
+
+    const companyIds = Array.from(
+      new Set([
+        ...(company_ids || []),
+        ...(siteData || []).map((site) => site.company_id).filter(Boolean),
+      ])
+    );
+
+    const { data: companyData, error: companyError } = companyIds.length
+      ? await adminSupabase
+          .from("companies")
+          .select("id, organization_id")
+          .in("id", companyIds)
+      : { data: [], error: null };
+
+    if (companyError) throw companyError;
+
+    const companyById = new Map((companyData || []).map((item) => [item.id, item]));
+    const siteById = new Map((siteData || []).map((item) => [item.id, item]));
+
+    const accessRows: AccessRow[] = [];
+
+    (organization_ids || []).forEach((orgId: string) => {
       accessRows.push({
         user_id: user.id,
         organization_id: orgId,
@@ -92,28 +163,45 @@ export async function POST(request: Request) {
       });
     });
 
-    company_ids.forEach((companyId: string) => {
+    (company_ids || []).forEach((companyId: string) => {
+      const company = companyById.get(companyId);
+
       accessRows.push({
         user_id: user.id,
-        organization_id: null,
+        organization_id: company?.organization_id || null,
         company_id: companyId,
         site_id: null,
       });
     });
 
-    site_ids.forEach((siteId: string) => {
+    (site_ids || []).forEach((siteId: string) => {
+      const site = siteById.get(siteId);
+      const company = site ? companyById.get(site.company_id) : null;
+      const fallbackOrganizationId =
+        company?.organization_id || organization_ids?.[0] || null;
+
       accessRows.push({
         user_id: user.id,
-        organization_id: null,
-        company_id: null,
+        organization_id: fallbackOrganizationId,
+        company_id: site?.company_id || null,
         site_id: siteId,
       });
     });
 
-    if (accessRows.length > 0) {
+    const uniqueAccessRows = uniqueRows<AccessRow>(
+      accessRows,
+      (row) => `${row.user_id}.${row.organization_id || ""}.${row.company_id || ""}.${row.site_id || ""}`
+    );
+
+    await adminSupabase
+      .from("user_access_assignments")
+      .delete()
+      .eq("user_id", user.id);
+
+    if (uniqueAccessRows.length > 0) {
       const { error: accessError } = await adminSupabase
         .from("user_access_assignments")
-        .insert(accessRows);
+        .insert(uniqueAccessRows);
 
       if (accessError) throw accessError;
     }

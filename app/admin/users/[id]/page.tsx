@@ -43,103 +43,35 @@ export default function UserAccessPage() {
       setLoading(true);
       setMessage("");
 
-      const { data: profileData, error: profileError } = await supabase
-        .from("profiles")
-        .select("id, email, full_name, status")
-        .eq("id", userId)
-        .single();
+      const response = await fetch(`/api/admin/users/${userId}`);
+      const result = await response.json();
 
-      if (profileError) throw profileError;
-
-      const { data: roleData, error: roleError } = await supabase
-        .from("roles")
-        .select("id, role_name, role_code, status")
-        .eq("status", "active")
-        .order("role_name");
-
-      if (roleError) throw roleError;
-
-      const { data: orgData, error: orgError } = await supabase
-        .from("organizations")
-        .select("id, name, code, status")
-        .eq("status", "active")
-        .order("name");
-
-      if (orgError) throw orgError;
-
-      const { data: companyData, error: companyError } = await supabase
-        .from("companies")
-        .select("id, organization_id, company_name, company_code, status")
-        .eq("status", "active")
-        .order("company_name");
-
-      if (companyError) throw companyError;
-
-      const { data: siteData, error: siteError } = await supabase
-        .from("sites")
-        .select("id, company_id, site_name, site_code, status")
-        .eq("status", "active")
-        .order("site_name");
-
-      if (siteError) throw siteError;
-
-      const { data: moduleData, error: moduleError } = await supabase
-        .from("erp_modules")
-        .select("id, module_group, module_code, module_name, sort_order")
-        .eq("status", "active");
-
-      if (moduleError) throw moduleError;
-
-      const { data: userRoleData, error: userRoleError } = await supabase
-        .from("user_roles")
-        .select("role_id")
-        .eq("user_id", userId);
-
-      if (userRoleError) throw userRoleError;
-
-      const roleIds = (userRoleData || []).map((item: any) => item.role_id);
-
-      const { data: accessData, error: accessError } = await supabase
-        .from("user_access_assignments")
-        .select("organization_id, company_id, site_id")
-        .eq("user_id", userId);
-
-      if (accessError) throw accessError;
-
-      const { data: userPermissionData, error: userPermissionError } = await supabase
-      
-        .from("user_permissions")
-        .select("module_code, action_code, allowed")
-        .eq("user_id", userId);
-setPermissionsSaved((userPermissionData || []).length > 0);
-      if (userPermissionError) throw userPermissionError;
-
-      let initialPermissions: Record<string, boolean> = {};
-
-      if ((userPermissionData || []).length > 0) {
-        (userPermissionData || []).forEach((item: any) => {
-          initialPermissions[key(item.module_code, item.action_code)] = item.allowed === true;
-        });
-      } else if (roleIds.length > 0) {
-        const { data: rolePermissionData } = await supabase
-          .from("role_permissions")
-          .select("module_code, action_code, allowed")
-          .in("role_id", roleIds);
-
-        (rolePermissionData || []).forEach((item: any) => {
-          if (item.allowed === true) {
-            initialPermissions[key(item.module_code, item.action_code)] = true;
-          }
-        });
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to load user access.");
       }
 
-      setProfile(profileData);
-      setRoles((roleData || []).filter((role: any) => role.role_code !== "platform_owner"));
-      setOrganizations(orgData || []);
-      setCompanies(companyData || []);
-      setSites(siteData || []);
+      if (!result.profile) {
+        throw new Error("User profile was not found.");
+      }
+
+      const roleIds = (result.userRoles || []).map((item: any) => item.role_id);
+      const userPermissionData = result.userPermissions || [];
+
+      setPermissionsSaved(userPermissionData.length > 0);
+
+      const initialPermissions: Record<string, boolean> = {};
+
+      userPermissionData.forEach((item: any) => {
+        initialPermissions[key(item.module_code, item.action_code)] = item.allowed === true;
+      });
+
+      setProfile(result.profile);
+      setRoles(result.roles || []);
+      setOrganizations(result.organizations || []);
+      setCompanies(result.companies || []);
+      setSites(result.sites || []);
       setModules(
-        (moduleData || []).sort((a: any, b: any) => {
+        (result.modules || []).sort((a: any, b: any) => {
           if (a.module_group === b.module_group) {
             return Number(a.sort_order || 0) - Number(b.sort_order || 0);
           }
@@ -150,15 +82,15 @@ setPermissionsSaved((userPermissionData || []).length > 0);
       setSelectedRoleIds(roleIds);
 
       setSelectedOrganizationIds(
-        Array.from(new Set((accessData || []).map((x: any) => x.organization_id).filter(Boolean)))
+        Array.from(new Set((result.accessRows || []).map((x: any) => x.organization_id).filter(Boolean)))
       );
 
       setSelectedCompanyIds(
-        Array.from(new Set((accessData || []).map((x: any) => x.company_id).filter(Boolean)))
+        Array.from(new Set((result.accessRows || []).map((x: any) => x.company_id).filter(Boolean)))
       );
 
       setSelectedSiteIds(
-        Array.from(new Set((accessData || []).map((x: any) => x.site_id).filter(Boolean)))
+        Array.from(new Set((result.accessRows || []).map((x: any) => x.site_id).filter(Boolean)))
       );
 
       setPermissionMap(initialPermissions);
@@ -177,6 +109,12 @@ setPermissionsSaved((userPermissionData || []).length > 0);
 
   const filteredSites = useMemo(() => {
     return sites.filter((site) => selectedCompanyIds.includes(site.company_id));
+  }, [sites, selectedCompanyIds]);
+
+  const unassignedSites = useMemo(() => {
+    if (selectedCompanyIds.length === 0) return [];
+
+    return sites.filter((site) => !site.company_id);
   }, [sites, selectedCompanyIds]);
 
   const groupedModules = useMemo(() => {
@@ -308,71 +246,6 @@ setPermissionsSaved((userPermissionData || []).length > 0);
         return;
       }
 
-      await supabase.from("user_roles").delete().eq("user_id", userId);
-
-      const roleRows = selectedRoleIds.map((roleId) => ({
-        user_id: userId,
-        role_id: roleId,
-      }));
-
-      const { error: roleError } = await supabase.from("user_roles").insert(roleRows);
-      if (roleError) throw roleError;
-
-      await supabase.from("user_access_assignments").delete().eq("user_id", userId);
-
-      const accessRows: any[] = [];
-
-      selectedOrganizationIds.forEach((orgId) => {
-        accessRows.push({
-          user_id: userId,
-          organization_id: orgId,
-          company_id: null,
-          site_id: null,
-        });
-      });
-
-      selectedCompanyIds.forEach((companyId) => {
-        const company = companies.find((item) => item.id === companyId);
-
-        accessRows.push({
-          user_id: userId,
-          organization_id: company?.organization_id || null,
-          company_id: companyId,
-          site_id: null,
-        });
-      });
-
-      selectedSiteIds.forEach((siteId) => {
-        const site = sites.find((item) => item.id === siteId);
-        const company = companies.find((item) => item.id === site?.company_id);
-
-        accessRows.push({
-          user_id: userId,
-          organization_id: company?.organization_id || null,
-          company_id: company?.id || null,
-          site_id: siteId,
-        });
-      });
-
-      const uniqueAccessRows = Array.from(
-        new Map(
-          accessRows.map((row) => [
-            `${row.organization_id || ""}.${row.company_id || ""}.${row.site_id || ""}`,
-            row,
-          ])
-        ).values()
-      );
-
-      if (uniqueAccessRows.length > 0) {
-        const { error: accessError } = await supabase
-          .from("user_access_assignments")
-          .insert(uniqueAccessRows);
-
-        if (accessError) throw accessError;
-      }
-
-      await supabase.from("user_permissions").delete().eq("user_id", userId);
-
       const permissionRows: any[] = [];
 
       modules.forEach((module) => {
@@ -388,19 +261,31 @@ setPermissionsSaved((userPermissionData || []).length > 0);
   });
 });
 
-      if (permissionRows.length > 0) {
-        const { error: permissionError } = await supabase
-          .from("user_permissions")
-          .insert(permissionRows);
+      const response = await fetch(`/api/admin/users/${userId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          role_ids: selectedRoleIds,
+          organization_ids: selectedOrganizationIds,
+          company_ids: selectedCompanyIds,
+          site_ids: selectedSiteIds,
+          user_permissions: permissionRows,
+        }),
+      });
 
-        if (permissionError) throw permissionError;
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to save user access.");
       }
 
       await loadData();
       setPermissionsSaved(true);
       setMessage(
-  `User access saved successfully. ${permissionRows.length} permissions updated.`
-);
+        `User access saved successfully. ${result.permissions_saved || 0} explicit user permission overrides saved.`
+      );
     } catch (error: any) {
       setMessage(error.message || "Failed to save user access.");
     } finally {
@@ -455,7 +340,7 @@ setPermissionsSaved((userPermissionData || []).length > 0);
       )}
 {!permissionsSaved && (
   <div className="rounded-lg border border-orange-300 bg-orange-50 p-3 text-sm text-orange-800">
-    This user has no saved user permissions yet. The checked permissions below are copied from the selected role defaults. Click Save User Access to apply them to this user.
+    This user has no explicit user permission overrides. Role permissions will apply automatically until you save overrides here.
   </div>
 )}
       <section className="rounded-lg border bg-white p-6">
@@ -551,19 +436,43 @@ setPermissionsSaved((userPermissionData || []).length > 0);
         {selectedCompanyIds.length === 0 ? (
           <p className="text-gray-500">Select companies first.</p>
         ) : (
-          <div className="grid gap-3 md:grid-cols-2">
-            {filteredSites.map((site) => (
-              <label key={site.id} className="flex items-center gap-2 rounded border p-3">
-                <input
-                  type="checkbox"
-                  checked={selectedSiteIds.includes(site.id)}
-                  onChange={() => toggleSite(site.id)}
-                />
-                <span>
-                  {site.site_name} - {site.site_code || "-"}
-                </span>
-              </label>
-            ))}
+          <div className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              {filteredSites.map((site) => (
+                <label key={site.id} className="flex items-center gap-2 rounded border p-3">
+                  <input
+                    type="checkbox"
+                    checked={selectedSiteIds.includes(site.id)}
+                    onChange={() => toggleSite(site.id)}
+                  />
+                  <span>
+                    {site.site_name} - {site.site_code || "-"}
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            {unassignedSites.length > 0 && (
+              <div>
+                <h3 className="mb-3 text-sm font-semibold text-gray-600">
+                  Unassigned Sites
+                </h3>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {unassignedSites.map((site) => (
+                    <label key={site.id} className="flex items-center gap-2 rounded border p-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedSiteIds.includes(site.id)}
+                        onChange={() => toggleSite(site.id)}
+                      />
+                      <span>
+                        {site.site_name} - {site.site_code || "-"}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </section>
@@ -573,7 +482,7 @@ setPermissionsSaved((userPermissionData || []).length > 0);
           <div>
             <h2 className="text-xl font-semibold">User Permissions</h2>
             <p className="text-sm text-gray-500">
-              Checked means this user has permission. Unchecked means no permission.
+              Checked permissions are explicit user overrides. Leave empty to inherit role permissions.
             </p>
           </div>
 

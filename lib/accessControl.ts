@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import type { User } from "@supabase/supabase-js";
 
 export type UserPermission = {
   module_code: string;
@@ -6,7 +7,16 @@ export type UserPermission = {
   allowed: boolean;
 };
 
-export async function getCurrentUserAccess() {
+export type CurrentUserAccess = {
+  user: User | null;
+  roleCodes: string[];
+  permissions: UserPermission[];
+  organizations: string[];
+  companies: string[];
+  sites: string[];
+};
+
+export async function getCurrentUserAccess(): Promise<CurrentUserAccess> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -14,7 +24,9 @@ export async function getCurrentUserAccess() {
   if (!user) {
     return {
       user: null,
+      roleCodes: [],
       permissions: [],
+      organizations: [],
       companies: [],
       sites: [],
     };
@@ -34,7 +46,7 @@ export async function getCurrentUserAccess() {
 
     supabase
       .from("user_access_assignments")
-      .select("company_id, site_id")
+      .select("organization_id, company_id, site_id")
       .eq("user_id", user.id),
   ]);
 
@@ -57,10 +69,12 @@ export async function getCurrentUserAccess() {
     rolePermissionRows = rolePermissions || [];
   }
 
-  if (roleCodes.includes("platform_owner")) {
+  if (roleCodes.includes("platform_owner") || roleCodes.includes("super_admin")) {
     return {
       user,
+      roleCodes,
       permissions: [{ module_code: "*", action_code: "*", allowed: true }],
+      organizations: [],
       companies: [],
       sites: [],
     };
@@ -79,7 +93,11 @@ export async function getCurrentUserAccess() {
 
   return {
     user,
+    roleCodes,
     permissions,
+    organizations: Array.from(
+      new Set((accessRows || []).map((row) => row.organization_id).filter(Boolean))
+    ),
     companies: Array.from(
       new Set((accessRows || []).map((row) => row.company_id).filter(Boolean))
     ),

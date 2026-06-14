@@ -1,18 +1,33 @@
+"use client";
+
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
+import { useEffect, useState } from "react";
 
-export default async function RolesPage() {
-  const { data: roles, error } = await supabase
-    .from("roles")
-    .select("id, role_name, role_code, status, is_system_role, created_at")
-    .order("created_at", { ascending: true });
+export default function RolesPage() {
+  const [roles, setRoles] = useState<any[]>([]);
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(true);
 
-  if (error) {
-    return (
-      <div className="rounded-lg border bg-red-50 p-4 text-red-700">
-        Failed to load roles: {error.message}
-      </div>
-    );
+  useEffect(() => {
+    loadRoles();
+  }, []);
+
+  async function loadRoles() {
+    setLoading(true);
+    setMessage("");
+
+    const response = await fetch("/api/admin/roles");
+    const result = await response.json();
+
+    if (!response.ok) {
+      setMessage(result.error || "Failed to load roles.");
+      setRoles([]);
+      setLoading(false);
+      return;
+    }
+
+    setRoles(result.roles || []);
+    setLoading(false);
   }
 
   return (
@@ -33,6 +48,12 @@ export default async function RolesPage() {
         </Link>
       </div>
 
+      {message && (
+        <div className="rounded-lg border bg-red-50 p-4 text-red-700">
+          {message}
+        </div>
+      )}
+
       <div className="overflow-hidden rounded-lg border bg-white">
         <table className="w-full text-sm">
           <thead className="bg-gray-100">
@@ -46,29 +67,35 @@ export default async function RolesPage() {
           </thead>
 
           <tbody>
-            {roles?.map((role) => (
-              <tr key={role.id} className="border-t">
-                <td className="p-3 font-medium">{role.role_name}</td>
-                <td className="p-3">{role.role_code}</td>
-                <td className="p-3">{role.is_system_role ? "Yes" : "No"}</td>
-                <td className="p-3">{role.status || "active"}</td>
-                <td className="p-3">
-                  <Link
-                    href={`/admin/permissions?role_id=${role.id}`}
-                    className="rounded border px-3 py-1"
-                  >
-                    Permissions
-                  </Link>
+            {loading ? (
+              <tr>
+                <td colSpan={5} className="p-6 text-center text-gray-500">
+                  Loading roles...
                 </td>
               </tr>
-            ))}
-
-            {roles?.length === 0 && (
+            ) : roles.length === 0 ? (
               <tr>
                 <td colSpan={5} className="p-6 text-center text-gray-500">
                   No roles found.
                 </td>
               </tr>
+            ) : (
+              roles.map((role) => (
+                <tr key={role.id} className="border-t">
+                  <td className="p-3 font-medium">{role.role_name}</td>
+                  <td className="p-3">{role.role_code}</td>
+                  <td className="p-3">{role.is_system_role ? "Yes" : "No"}</td>
+                  <td className="p-3">{role.status || "active"}</td>
+                  <td className="p-3">
+                    <Link
+                      href={`/admin/permissions?role_id=${role.id}`}
+                      className="rounded border px-3 py-1"
+                    >
+                      Permissions
+                    </Link>
+                  </td>
+                </tr>
+              ))
             )}
           </tbody>
         </table>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
@@ -21,77 +21,21 @@ export default function AdminUsersPage() {
   async function loadData() {
     setMessage("");
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const response = await fetch("/api/admin/users");
+    const result = await response.json();
 
-    const currentUserEmail = user?.email || "";
-    const isPlatformOwner = currentUserEmail === "kanika@mrcgroup.in";
-
-    const { data: profileData, error: profileError } = await supabase
-      .from("profiles")
-      .select("id, email, full_name, status, created_at")
-      .order("created_at", { ascending: false });
-
-    if (profileError) {
-      setMessage(profileError.message);
+    if (!response.ok) {
+      setMessage(result.error || "Failed to load admin users.");
       return;
     }
 
-    const { data: roleData, error: roleError } = await supabase
-      .from("roles")
-      .select("id, role_name, role_code")
-      .eq("status", "active")
-      .order("role_name");
-
-    if (roleError) {
-      setMessage(roleError.message);
-      return;
-    }
-
-    const { data: userRoleData, error: userRoleError } = await supabase
-      .from("user_roles")
-      .select("id, user_id, role_id");
-
-    if (userRoleError) {
-      setMessage(userRoleError.message);
-      return;
-    }
-
-    const { data: accessData, error: accessError } = await supabase
-      .from("user_access_assignments")
-      .select("user_id, organization_id, company_id, site_id");
-
-    if (accessError) {
-      setMessage(accessError.message);
-      return;
-    }
-
-    const { data: orgData } = await supabase
-      .from("organizations")
-      .select("id, name, code");
-
-    const { data: companyData } = await supabase
-      .from("companies")
-      .select("id, company_name, company_code");
-
-    const { data: siteData } = await supabase
-      .from("sites")
-      .select("id, site_name, site_code");
-
-    const safeProfiles = isPlatformOwner
-      ? profileData || []
-      : (profileData || []).filter(
-          (profile: any) => profile.email !== "kanika@mrcgroup.in"
-        );
-
-    setProfiles(safeProfiles);
-    setRoles(roleData || []);
-    setUserRoles(userRoleData || []);
-    setAccessRows(accessData || []);
-    setOrganizations(orgData || []);
-    setCompanies(companyData || []);
-    setSites(siteData || []);
+    setProfiles(result.profiles || []);
+    setRoles(result.roles || []);
+    setUserRoles(result.userRoles || []);
+    setAccessRows(result.accessRows || []);
+    setOrganizations(result.organizations || []);
+    setCompanies(result.companies || []);
+    setSites(result.sites || []);
   }
 
   function getUserRoles(userId: string) {

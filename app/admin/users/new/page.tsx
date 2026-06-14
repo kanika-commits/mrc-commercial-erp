@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
 
 export default function NewUserPage() {
   const router = useRouter();
@@ -32,35 +31,18 @@ export default function NewUserPage() {
   }, []);
 
   async function loadData() {
-    const { data: roleData } = await supabase
-      .from("roles")
-      .select("id, role_name, role_code")
-      .eq("status", "active")
-      .neq("role_code", "platform_owner")
-      .order("role_name");
+    const response = await fetch("/api/admin/access-options");
+    const result = await response.json();
 
-    const { data: orgData } = await supabase
-      .from("organizations")
-      .select("id, name, code")
-      .eq("status", "active")
-      .order("name");
+    if (!response.ok) {
+      setMessage(result.error || "Failed to load access options.");
+      return;
+    }
 
-    const { data: companyData } = await supabase
-      .from("companies")
-      .select("id, organization_id, company_name, company_code")
-      .eq("status", "active")
-      .order("company_name");
-
-    const { data: siteData } = await supabase
-      .from("sites")
-      .select("id, company_id, site_name, site_code")
-      .eq("status", "active")
-      .order("site_name");
-
-    setRoles(roleData || []);
-    setOrganizations(orgData || []);
-    setCompanies(companyData || []);
-    setSites(siteData || []);
+    setRoles((result.roles || []).filter((role: any) => role.role_code !== "platform_owner"));
+    setOrganizations(result.organizations || []);
+    setCompanies(result.companies || []);
+    setSites(result.sites || []);
   }
 
   const filteredCompanies = useMemo(() => {
@@ -75,6 +57,12 @@ export default function NewUserPage() {
     if (selectedCompanyIds.length === 0) return [];
 
     return sites.filter((site) => selectedCompanyIds.includes(site.company_id));
+  }, [sites, selectedCompanyIds]);
+
+  const unassignedSites = useMemo(() => {
+    if (selectedCompanyIds.length === 0) return [];
+
+    return sites.filter((site) => !site.company_id);
   }, [sites, selectedCompanyIds]);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -317,19 +305,43 @@ export default function NewUserPage() {
         {selectedCompanyIds.length === 0 ? (
           <p className="text-gray-500">Select companies first.</p>
         ) : (
-          <div className="grid gap-3 md:grid-cols-2">
-            {filteredSites.map((site) => (
-              <label key={site.id} className="flex items-center gap-2 rounded border p-3">
-                <input
-                  type="checkbox"
-                  checked={selectedSiteIds.includes(site.id)}
-                  onChange={() => toggleSite(site.id)}
-                />
-                <span>
-                  {site.site_name} - {site.site_code || "-"}
-                </span>
-              </label>
-            ))}
+          <div className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              {filteredSites.map((site) => (
+                <label key={site.id} className="flex items-center gap-2 rounded border p-3">
+                  <input
+                    type="checkbox"
+                    checked={selectedSiteIds.includes(site.id)}
+                    onChange={() => toggleSite(site.id)}
+                  />
+                  <span>
+                    {site.site_name} - {site.site_code || "-"}
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            {unassignedSites.length > 0 && (
+              <div>
+                <h3 className="mb-3 text-sm font-semibold text-gray-600">
+                  Unassigned Sites
+                </h3>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {unassignedSites.map((site) => (
+                    <label key={site.id} className="flex items-center gap-2 rounded border p-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedSiteIds.includes(site.id)}
+                        onChange={() => toggleSite(site.id)}
+                      />
+                      <span>
+                        {site.site_name} - {site.site_code || "-"}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </section>
