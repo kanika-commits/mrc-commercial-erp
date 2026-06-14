@@ -1,16 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { ClipboardList, Search } from "lucide-react";
+import {
+  Plus,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUserAccess, can } from "@/lib/accessControl";
-
-function money(value: any) {
-  return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
-}
 
 export default function Home() {
   const [permissions, setPermissions] = useState<any[]>([]);
@@ -20,10 +18,10 @@ export default function Home() {
   const [pendingITC, setPendingITC] = useState(0);
   const [activeWorkOrders, setActiveWorkOrders] = useState(0);
 
-  const [totalWOValue, setTotalWOValue] = useState(0);
-  const [approvedRAValue, setApprovedRAValue] = useState(0);
-  const [invoiceValue, setInvoiceValue] = useState(0);
-  const [paymentValue, setPaymentValue] = useState(0);
+  const [, setTotalWOValue] = useState(0);
+  const [, setApprovedRAValue] = useState(0);
+  const [, setInvoiceValue] = useState(0);
+  const [, setPaymentValue] = useState(0);
 
   const [totalVendors, setTotalVendors] = useState(0);
   const [panAadhaarPending, setPanAadhaarPending] = useState(0);
@@ -167,165 +165,311 @@ supabase
     }
   }
 
-  const actionCards: [string, string, string][] = [
-  ["Pending RA Approval", String(pendingRA), "/approvals"],
-  ["Pending Debit Notes", String(pendingDebitNotes), "/approvals"],
-  ["Pending ITC Review", String(pendingITC), "/invoices/itc"],
-  ["Active Work Orders", String(activeWorkOrders), "/work-orders"],
-];
-
-  const financialCards: [string, string, string?][] = [
-    ["Total WO Value", money(totalWOValue)],
-    ["Approved RA Value", money(approvedRAValue)],
-    ["Invoice Value", money(invoiceValue)],
-    ["Payments Made", money(paymentValue)],
-  ];
-
- const managementCards: [string, string, string][] = [
+  const managementCards: [string, string, string][] = [
   ["Total Vendors", String(totalVendors || 0), "/vendors"],
   ["PAN-Aadhaar Pending", String(panAadhaarPending || 0), "/vendors"],
   ["Blocked Vendors", String(blockedVendors || 0), "/vendors"],
   ["Inactive Vendors", String(inactiveVendors || 0), "/vendors"],
 ];
 
+  const metricCards: MetricCardData[] = [
+    {
+      label: "Pending RA Bills",
+      value: String(pendingRA),
+      href: "/approvals",
+      accent: "teal",
+      status: "In Progress",
+    },
+    {
+      label: "Active Work Orders",
+      value: String(activeWorkOrders),
+      href: "/work-orders",
+      accent: "ink",
+    },
+    {
+      label: "Pending Debit Notes",
+      value: String(pendingDebitNotes),
+      href: "/approvals",
+      accent: "ink",
+    },
+    {
+      label: "Pending Invoices (ITC Review)",
+      value: String(pendingITC),
+      href: "/invoices/itc",
+      accent: "teal",
+    },
+    {
+      label: "Blocked Vendors",
+      value: String(blockedVendors),
+      href: "/vendors",
+      accent: "ink",
+    },
+  ];
+
+  const approvalRows = [
+    {
+      id: "RA Queue",
+      subtitle: "Running Account Bills",
+      type: "RA Bill",
+      value: String(pendingRA),
+      href: "/approvals",
+    },
+    {
+      id: "Debit Notes",
+      subtitle: "Commercial Adjustments",
+      type: "Debit Note",
+      value: String(pendingDebitNotes),
+      href: "/approvals",
+    },
+    {
+      id: "ITC Review",
+      subtitle: "Invoice Compliance",
+      type: "Invoice",
+      value: String(pendingITC),
+      href: "/invoices/itc",
+    },
+    {
+      id: "Work Orders",
+      subtitle: "Active Contracts",
+      type: "WO",
+      value: String(activeWorkOrders),
+      href: "/work-orders",
+    },
+  ];
+
+  const vendorRows = managementCards.map(([label, value, href]) => ({
+    label,
+    value,
+    href,
+    status:
+      label === "Blocked Vendors"
+        ? "Blocked"
+        : label === "Inactive Vendors"
+        ? "Inactive"
+        : label === "PAN-Aadhaar Pending"
+        ? "Review"
+        : "Active",
+  }));
+
   if (loading) {
-    return <p className="text-gray-500">Loading dashboard...</p>;
+    return (
+      <div className="min-h-[60vh] bg-[#f3f6f8] p-8 text-sm font-medium text-slate-500">
+        Loading dashboard...
+      </div>
+    );
   }
 
   return (
-    <section className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white">
-            <ClipboardList className="h-3.5 w-3.5" />
-            Command Center
-          </div>
+    <section className="min-h-screen bg-[#f3f6f8] text-[#111316]">
+      <main className="mx-auto max-w-[1180px] px-5 py-9 md:px-10">
+            <div className="mb-9 flex flex-wrap items-start justify-between gap-5">
+              <div>
+                <h1 className="text-4xl font-black tracking-tight text-black">
+                  Dashboard Overview
+                </h1>
+                <p className="mt-2 text-lg font-medium text-slate-600">
+                  Real-time enterprise metrics for MRC Commercial ERP
+                </p>
+              </div>
 
-          <h1 className="text-3xl font-bold text-slate-950">
-            ConstructIQ Dashboard
-          </h1>
-
-          <p className="text-sm text-slate-500">
-            Live commercial overview for MRC ERP.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-            <input
-              className="h-10 w-72 rounded-xl border bg-white pl-9 pr-3 text-sm shadow-sm outline-none focus:border-slate-400"
-              placeholder="Search WO, vendor, invoice..."
-            />
-          </div>
-
-          {can(permissions, "vendors", "add") && (
-            <Link href="/vendors/new">
-              <Button>Add Vendor</Button>
-            </Link>
-          )}
-        </div>
-      </div>
-
-      <DashboardSection title="Pending Work" cards={actionCards} />
-
-      <DashboardSection title="Commercial Summary" cards={financialCards} />
-
-     <div className="grid gap-4 md:grid-cols-4">
-  {managementCards.map(([label, value, href]) => {
-    const cardClass =
-      label === "PAN-Aadhaar Pending"
-        ? "border-yellow-200 bg-yellow-50 shadow-sm transition hover:shadow-md"
-        : label === "Blocked Vendors"
-        ? "border-red-200 bg-red-50 shadow-sm transition hover:shadow-md"
-        : "border-0 shadow-sm transition hover:shadow-md";
-
-    return (
-      <Link key={label} href={href}>
-        <Card className={cardClass}>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-slate-500">
-              {label}
-            </CardTitle>
-          </CardHeader>
-
-          <CardContent>
-            <div className="text-2xl font-bold">{value}</div>
-          </CardContent>
-        </Card>
-      </Link>
-    );
-  })}
-</div>
-
-      <Card className="border-0 shadow-sm">
-        <CardHeader>
-          <CardTitle>Commercial Flow</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap items-center gap-3">
-            {[
-              "Work Order",
-              "RA Bill",
-              "Invoice / ITC",
-              "Payment",
-              "Debit Note",
-              "Vendor Ledger",
-              "WO Ledger",
-            ].map((step, index, arr) => (
-              <div key={step} className="flex items-center gap-3">
-                <div className="rounded-2xl border bg-white px-5 py-3 text-center text-sm font-semibold shadow-sm">
-                  {step}
-                </div>
-                {index < arr.length - 1 && (
-                  <span className="text-slate-300">→</span>
+              <div className="flex items-center gap-3">
+                {can(permissions, "vendors", "add") && (
+                  <Button asChild className="h-14 rounded-md bg-[#04779e] px-5">
+                    <Link href="/vendors/new">
+                      <Plus className="h-4 w-4" />
+                      Add Vendor
+                    </Link>
+                  </Button>
                 )}
               </div>
+            </div>
+
+            <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-5">
+              {metricCards.map((card) => (
+                <MetricCard key={card.label} card={card} />
+              ))}
+            </div>
+
+            <div className="mt-10 grid gap-7 xl:grid-cols-[1fr_1fr]">
+              <Panel
+                title="Pending Approvals"
+                badge={`${String(
+                  pendingRA + pendingDebitNotes + pendingITC
+                ).padStart(2, "0")} urgent`}
+              >
+                <div className="-mx-6 -mb-6 mt-1 overflow-hidden">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-[#f2eef0] text-[11px] font-black uppercase text-slate-500">
+                      <tr>
+                        <th className="px-5 py-4">Project ID</th>
+                        <th className="px-5 py-4">Type</th>
+                        <th className="px-5 py-4">Value</th>
+                        <th className="px-5 py-4">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {approvalRows.map((row) => (
+                        <tr key={row.id} className="border-t border-slate-200">
+                          <td className="px-5 py-5">
+                            <p className="text-base font-black">{row.id}</p>
+                            <p className="text-xs font-medium text-slate-500">
+                              {row.subtitle}
+                            </p>
+                          </td>
+                          <td className="px-5 py-5">
+                            <span className="rounded bg-[#e7e4e6] px-2 py-1 text-xs font-bold">
+                              {row.type}
+                            </span>
+                          </td>
+                          <td className="px-5 py-5 font-bold">{row.value}</td>
+                          <td className="px-5 py-5">
+                            <Link
+                              href={row.href}
+                              className="text-xs font-black uppercase text-[#04779e]"
+                            >
+                              Open
+                            </Link>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <Link
+                    href="/approvals"
+                    className="block bg-[#f2eef0] px-6 py-5 text-center font-serif text-sm font-bold uppercase text-slate-700"
+                  >
+                    See all pending approvals
+                  </Link>
+                </div>
+              </Panel>
+
+              <Panel
+                title="Vendor Control"
+                badge={`${totalVendors} records`}
+              >
+                <div className="-mx-6 -mb-6 mt-1 overflow-hidden">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-[#f2eef0] text-[11px] font-black uppercase text-slate-500">
+                      <tr>
+                        <th className="px-5 py-4">Metric</th>
+                        <th className="px-5 py-4">Count</th>
+                        <th className="px-5 py-4">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {vendorRows.map((row) => (
+                        <tr key={row.label} className="border-t border-slate-200">
+                          <td className="px-5 py-5">
+                            <Link
+                              href={row.href}
+                              className="text-base font-black hover:text-[#04779e]"
+                            >
+                              {row.label}
+                            </Link>
+                          </td>
+                          <td className="px-5 py-5 text-[#04779e] font-bold">
+                            {row.value}
+                          </td>
+                          <td className="px-5 py-5">
+                            <span className="rounded bg-[#e7e4e6] px-2 py-1 text-xs font-bold">
+                              {row.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <Link
+                    href="/vendors"
+                    className="block bg-[#f2eef0] px-6 py-5 text-center font-serif text-sm font-bold uppercase text-slate-700"
+                  >
+                    View vendor master
+                  </Link>
+                </div>
+              </Panel>
+            </div>
+      </main>
+    </section>
+  );
+}
+
+type MetricCardData = {
+  label: string;
+  value: string;
+  href: string;
+  accent: "teal" | "ink";
+  status?: string;
+};
+
+function MetricCard({ card }: { card: MetricCardData }) {
+  const borderClass =
+    card.accent === "teal"
+      ? "border-[#04779e] border-l-[4px]"
+      : "border-black border-l-[4px]";
+
+  const bars =
+    card.accent === "teal"
+      ? ["bg-[#04779e]", "bg-[#04779e]", "bg-[#c9dce4]", "bg-[#c9dce4]"]
+      : ["bg-black", "bg-black/10"];
+
+  return (
+    <Link href={card.href}>
+      <Card
+        className={`h-40 rounded-none border bg-white p-0 shadow-none transition hover:-translate-y-0.5 hover:shadow-md ${borderClass}`}
+      >
+        <CardContent className="flex h-full flex-col justify-between p-6">
+          <div>
+            <p className="font-serif text-[11px] font-black uppercase leading-5 text-slate-600">
+              {card.label}
+            </p>
+            <div className="mt-3 flex items-end gap-3">
+              <p className="text-3xl font-black tracking-tight text-black">
+                {card.value}
+              </p>
+              {card.status && (
+                <span className="pb-1 text-[10px] font-black text-[#04779e]">
+                  {card.status}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex gap-1.5">
+            {bars.map((bar, index) => (
+              <span key={index} className={`h-1 w-7 rounded-full ${bar}`} />
             ))}
           </div>
         </CardContent>
       </Card>
-    </section>
+    </Link>
   );
 }
-function DashboardSection({
+
+function Panel({
   title,
-  cards,
+  children,
+  action,
+  badge,
 }: {
   title: string;
-  cards: [string, string, string?][];
+  children: React.ReactNode;
+  action?: React.ReactNode;
+  badge?: string;
 }) {
   return (
-    <section className="space-y-3">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-        {title}
-      </h2>
-
-      <div className="grid gap-4 md:grid-cols-4">
-        {cards.map(([label, value, href]) => {
-          const card = (
-            <Card className="border-0 shadow-sm transition hover:shadow-md">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-slate-500">
-                  {label}
-                </CardTitle>
-              </CardHeader>
-
-              <CardContent>
-                <div className="text-3xl font-bold">{value}</div>
-              </CardContent>
-            </Card>
-          );
-
-          return href ? (
-            <Link key={label} href={href}>
-              {card}
-            </Link>
-          ) : (
-            <div key={label}>{card}</div>
-          );
-        })}
-      </div>
-    </section>
+    <Card className="rounded-none border border-slate-200 bg-white shadow-none">
+      <CardHeader className="flex-row items-center justify-between border-b-0 pb-3">
+        <CardTitle className="text-lg font-black">{title}</CardTitle>
+        {action && (
+          <div className="text-xs font-black text-[#04779e]">{action}</div>
+        )}
+        {badge && (
+          <span className="rounded bg-[#04779e] px-3 py-2 text-[10px] font-black uppercase text-white">
+            {badge}
+          </span>
+        )}
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
   );
 }

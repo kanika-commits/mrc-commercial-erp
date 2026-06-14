@@ -1,12 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   BarChart3,
+  Bell,
   Building2,
   FileText,
   Home,
   LayoutGrid,
+  RefreshCcw,
+  Search,
   Settings,
 } from "lucide-react";
 import UserHeader from "@/components/UserHeader";
@@ -21,31 +25,41 @@ const sidebarItems = [
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+
   return (
-    <div className="min-h-screen bg-slate-50">
-      <aside className="fixed left-0 top-0 z-40 flex h-screen w-56 flex-col bg-slate-950 px-4 py-5 text-white">
-        <Link href="/" className="mb-6 block px-2">
-          <h1 className="text-xl font-bold tracking-tight">ConstructIQ</h1>
-          <p className="mt-1 text-[11px] leading-4 text-slate-400">
-            Enterprise Construction Platform
+    <div className="min-h-screen bg-[#f3f6f8]">
+      <aside className="fixed left-0 top-0 z-40 flex h-screen w-[268px] flex-col bg-black px-4 py-8 text-white">
+        <Link href="/" className="mb-8 block px-2">
+          <h1 className="text-3xl font-bold tracking-tight">ConstructIQ</h1>
+          <p className="mt-2 text-sm font-medium text-white/50">
+            Enterprise ERP
           </p>
         </Link>
 
-        <nav className="space-y-1">
+        <nav className="space-y-2">
           {sidebarItems.map((item, index) => {
             const Icon = item.icon;
+            const active =
+              item.href === "/"
+                ? pathname === "/"
+                : pathname.startsWith(item.href);
 
             return (
               <div key={item.href}>
                 {index === 2 && (
-                  <div className="my-3 border-t border-slate-800" />
+                  <div className="my-5 border-t border-white/10" />
                 )}
 
                 <Link
                   href={item.href}
-                  className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-200 transition hover:bg-slate-800 hover:text-white"
+                  className={`flex h-13 items-center gap-4 rounded-md px-5 text-sm font-bold transition ${
+                    active
+                      ? "bg-[#7bc8ef] text-[#07516c]"
+                      : "text-white/60 hover:bg-white/10 hover:text-white"
+                  }`}
                 >
-                  <Icon className="h-4 w-4 shrink-0" />
+                  <Icon className="h-5 w-5 shrink-0" />
                   <span>{item.label}</span>
                 </Link>
               </div>
@@ -53,25 +67,50 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
 
-        <div className="mt-auto rounded-xl border border-slate-800 bg-slate-900/70 p-3">
-          <p className="text-xs font-medium text-slate-300">MRC ERP</p>
-          <p className="mt-1 text-[11px] text-slate-500">
-            Commercial operations
-          </p>
+        <div className="mt-auto space-y-2 border-t border-white/10 pt-7">
+          <Link
+            href="/modules/administration"
+            className="flex h-12 items-center gap-4 rounded-md px-5 text-sm font-bold text-white/55 transition hover:bg-white/10 hover:text-white"
+          >
+            <Settings className="h-5 w-5" />
+            Settings
+          </Link>
+          <div className="flex h-12 items-center gap-4 rounded-md px-5 text-sm font-bold text-white/55">
+            <span className="grid h-5 w-5 place-items-center rounded-full border border-white/55 text-xs">
+              ?
+            </span>
+            Support
+          </div>
         </div>
       </aside>
 
-      <main className="min-h-screen pl-56">
-        <header className="sticky top-0 z-30 border-b bg-white/95 px-8 py-4 backdrop-blur">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold text-slate-900">
-              Enterprise Construction Platform
-            </h2>
-            <UserHeader />
+      <main className="min-h-screen pl-[268px]">
+        <header className="sticky top-0 z-30 border-b border-[#d7dde3] bg-[#fbf9fa] px-10 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="relative w-full max-w-sm">
+              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+              <input
+                className="h-11 w-full rounded-xl border-0 bg-white px-11 text-sm font-semibold text-slate-700 shadow-sm outline-none ring-1 ring-black/5 placeholder:text-slate-500 focus:ring-[#04779e]"
+                placeholder="Search projects..."
+              />
+            </div>
+
+            <div className="flex items-center gap-7 text-sm font-bold text-slate-700">
+              <Link href="/modules/master-setup">Directory</Link>
+              <Link href="/modules/reports">Reports</Link>
+              <Link href="/approvals">Archives</Link>
+            </div>
+
+            <div className="flex items-center gap-5">
+              <Bell className="h-5 w-5 text-slate-700" />
+              <RefreshCcw className="h-5 w-5 text-slate-700" />
+              <div className="hidden h-8 w-px bg-slate-300 md:block" />
+              <UserHeader />
+            </div>
           </div>
         </header>
 
-        <div className="p-8">{children}</div>
+        <div>{children}</div>
       </main>
     </div>
   );
