@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Building2, Download } from "lucide-react";
+import { ArrowLeft, Building2, Download, Pencil } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { getCurrentUserAccess, can } from "@/lib/accessControl";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -20,17 +21,17 @@ export default function VendorDetailPage() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
   const [debitNotes, setDebitNotes] = useState<any[]>([]);
+  const [canEdit, setCanEdit] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
-  useEffect(() => {
-    loadVendorLedger();
-  }, [vendorId]);
-
-  async function loadVendorLedger() {
+  const loadVendorLedger = useCallback(async () => {
     try {
       setLoading(true);
       setMessage("");
+
+      const access = await getCurrentUserAccess();
+      setCanEdit(can(access.permissions, "vendors", "edit"));
 
       const { data: vendorData, error: vendorError } = await supabase
         .from("vendors")
@@ -106,7 +107,11 @@ export default function VendorDetailPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [vendorId]);
+
+  useEffect(() => {
+    loadVendorLedger();
+  }, [loadVendorLedger]);
 
   const totals = useMemo(() => {
     const totalWO = workOrders.reduce(
@@ -284,6 +289,16 @@ export default function VendorDetailPage() {
         </div>
 
         <div className="flex flex-wrap gap-3">
+          {canEdit && (
+            <Link
+              href={`/vendors/${vendorId}/edit`}
+              className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
+            >
+              <Pencil className="h-4 w-4" />
+              Edit Vendor
+            </Link>
+          )}
+
           <button
             type="button"
             onClick={downloadVendorLedger}

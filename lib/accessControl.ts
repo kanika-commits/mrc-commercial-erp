@@ -4,7 +4,9 @@ export type UserPermission = {
   module_code: string;
   action_code: string;
   allowed: boolean;
-};export async function getCurrentUserAccess() {
+};
+
+export async function getCurrentUserAccess() {
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -18,40 +20,44 @@ export type UserPermission = {
     };
   }
 
-  const [{ data: userRoles }, { data: userPermissionRows }, { data: accessRows }] =
-  await Promise.all([
+  const [
+    { data: userRoles },
+    { data: userPermissionRows },
+    { data: accessRows },
+  ] = await Promise.all([
+    supabase.from("user_roles").select("role_id").eq("user_id", user.id),
+
     supabase
-      .from("user_roles")
-      .select("role_id")
-      .eq("user_id", user.id)
-      .limit(1),
+      .from("user_permissions")
+      .select("module_code, action_code, allowed")
+      .eq("user_id", user.id),
+
+    supabase
+      .from("user_access_assignments")
+      .select("company_id, site_id")
+      .eq("user_id", user.id),
+  ]);
+
+  const roleIds = (userRoles || []).map((r) => r.role_id).filter(Boolean);
+
+  let roleCodes: string[] = [];
+  let rolePermissionRows: UserPermission[] = [];
+
+  if (roleIds.length > 0) {
+    const [{ data: roles }, { data: rolePermissions }] = await Promise.all([
+      supabase.from("roles").select("role_code").in("id", roleIds),
 
       supabase
-        .from("user_permissions")
+        .from("role_permissions")
         .select("module_code, action_code, allowed")
-        .eq("user_id", user.id),
-
-      supabase
-        .from("user_access_assignments")
-        .select("company_id, site_id")
-        .eq("user_id", user.id),
+        .in("role_id", roleIds),
     ]);
 
-  let roleCode = "";
-
-  const userRole = userRoles?.[0];
-
-if (userRole?.role_id) {
-    const { data: roleData } = await supabase
-      .from("roles")
-      .select("role_code")
-      .eq("id", userRole.role_id)
-      .maybeSingle();
-
-    roleCode = roleData?.role_code || "";
+    roleCodes = (roles || []).map((r) => r.role_code).filter(Boolean);
+    rolePermissionRows = rolePermissions || [];
   }
 
-  if (roleCode === "platform_owner") {
+  if (roleCodes.includes("platform_owner")) {
     return {
       user,
       permissions: [{ module_code: "*", action_code: "*", allowed: true }],
@@ -60,7 +66,16 @@ if (userRole?.role_id) {
     };
   }
 
-  const permissions: UserPermission[] = userPermissionRows || [];
+  const permissionMap = new Map<string, UserPermission>();
+
+  [...rolePermissionRows, ...(userPermissionRows || [])].forEach((permission) => {
+    permissionMap.set(
+      `${permission.module_code}:${permission.action_code}`,
+      permission
+    );
+  });
+
+  const permissions = Array.from(permissionMap.values());
 
   return {
     user,
@@ -73,6 +88,7 @@ if (userRole?.role_id) {
     ),
   };
 }
+
 export function can(
   permissions: UserPermission[],
   moduleCode: string,

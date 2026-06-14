@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 const actions = [
@@ -15,16 +16,13 @@ const actions = [
 ];
 
 export default function PermissionsPage() {
+  const searchParams = useSearchParams();
   const [roles, setRoles] = useState<any[]>([]);
   const [modules, setModules] = useState<any[]>([]);
   const [selectedRoleId, setSelectedRoleId] = useState("");
   const [permissions, setPermissions] = useState<any[]>([]);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    loadBaseData();
-  }, []);
 
   async function loadBaseData() {
     const { data: roleData, error: roleError } = await supabase
@@ -59,7 +57,17 @@ export default function PermissionsPage() {
         return String(a.module_group).localeCompare(String(b.module_group));
       })
     );
+
+    const roleId = searchParams.get("role_id");
+
+    if (roleId && (roleData || []).some((role) => role.id === roleId)) {
+      await loadPermissions(roleId);
+    }
   }
+
+  useEffect(() => {
+    loadBaseData();
+  }, [searchParams]);
 
   async function loadPermissions(roleId: string) {
     setSelectedRoleId(roleId);

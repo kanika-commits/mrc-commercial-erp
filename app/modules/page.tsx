@@ -57,16 +57,10 @@ export default function ModulesPage() {
 
   useEffect(() => {
     async function loadAccess() {
-  const access = await getCurrentUserAccess();
-
-  console.log("MODULE ACCESS DEBUG", {
-    user: access.user?.id,
-    permissions: access.permissions,
-  });
-
-  setPermissions(access.permissions || []);
-  setLoading(false);
-}
+      const access = await getCurrentUserAccess();
+      setPermissions(access.permissions || []);
+      setLoading(false);
+    }
 
     loadAccess();
   }, []);

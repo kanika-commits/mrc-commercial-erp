@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { getCurrentUserAccess, can } from "@/lib/accessControl";
 
@@ -19,16 +19,13 @@ type Vendor = {
 
 export default function VendorsPage() {
   const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [canEdit, setCanEdit] = useState(false);
   const [canDelete, setCanDelete] = useState(false);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
-  useEffect(() => {
-    loadPage();
-  }, []);
-
-  async function loadPage() {
+  const loadPage = useCallback(async () => {
     setLoading(true);
 
     const [access, vendorRes] = await Promise.all([
@@ -50,6 +47,7 @@ export default function VendorsPage() {
         .order("created_at", { ascending: false }),
     ]);
 
+    setCanEdit(can(access.permissions, "vendors", "edit"));
     setCanDelete(can(access.permissions, "vendors", "delete"));
 
     if (vendorRes.error) {
@@ -59,7 +57,11 @@ export default function VendorsPage() {
     }
 
     setLoading(false);
-  }
+  }, []);
+
+  useEffect(() => {
+    loadPage();
+  }, [loadPage]);
 
   async function deleteVendor(vendor: Vendor) {
     const ok = window.confirm(
@@ -190,6 +192,16 @@ export default function VendorsPage() {
                     >
                       View
                     </Link>
+
+                    {canEdit && (
+                      <Link
+                        href={`/vendors/${vendor.id}/edit`}
+                        className="inline-flex items-center rounded border px-3 py-1 text-blue-700 hover:bg-blue-50"
+                        title="Edit Vendor"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Link>
+                    )}
 
                     {canDelete && (
                       <button
