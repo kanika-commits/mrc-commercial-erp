@@ -87,7 +87,7 @@ export default function NewWorkOrderPage() {
     site_id: "",
     wo_number: "",
     wo_date: "",
-    wo_type: "Civil",
+    wo_type: "Consultant",
     description: "",
     primary_vendor_id: "",
     primary_vendor_role: "Main Contractor",
@@ -560,14 +560,10 @@ export default function NewWorkOrderPage() {
                       onChange={handleChange}
                       className={inputClass}
                     >
-                      <option>Civil</option>
-                      <option>Interior</option>
-                      <option>Electrical</option>
-                      <option>Plumbing</option>
-                      <option>HVAC</option>
-                      <option>Supply</option>
-                      <option>Service</option>
-                      <option>Other</option>
+                      <option>Consultant</option>
+                      <option>Contractor (Labour)</option>
+                      <option>Contractor (SITC)</option>
+                      <option>Rental</option>
                     </select>
                   </FieldShell>
                 </div>

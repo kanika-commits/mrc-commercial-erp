@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Eye,
+  ExternalLink,
+  FileText,
   Plus,
   RefreshCw,
   Search,
@@ -31,6 +33,7 @@ type WorkOrder = {
   site_code?: string | null;
   vendor_name?: string | null;
   vendor_names?: string[] | null;
+  documents?: WorkOrderDocument[] | null;
   company?: { company_name?: string | null } | null;
   site?: { site_name?: string | null } | null;
   vendor?: { vendor_name?: string | null } | null;
@@ -53,15 +56,20 @@ type Site = {
   organization_id: string | null;
 };
 
-type WorkOrderVendor = {
-  work_order_id: string;
+type WorkOrderVendorSummary = {
   vendor_id: string;
+  vendor_name: string | null;
+  vendor_role: string | null;
   is_primary: boolean | null;
 };
 
-type Vendor = {
+type WorkOrderDocument = {
   id: string;
-  vendor_name: string | null;
+  work_order_id: string;
+  file_name: string | null;
+  file_path: string | null;
+  signed_url?: string | null;
+  signed_url_error?: string | null;
 };
 
 type SelectionMap = Record<string, boolean>;
@@ -272,6 +280,18 @@ export default function WorkOrdersPage() {
   const [sortField, setSortField] = useState<SortField>("wo_date");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
 
+  function openDocument(document: WorkOrderDocument) {
+    if (!document.signed_url) {
+      setError(
+        document.signed_url_error ||
+          "Unable to open Work Order file. Signed URL was not available.",
+      );
+      return;
+    }
+
+    window.open(document.signed_url, "_blank", "noopener,noreferrer");
+  }
+
   async function loadWorkOrders() {
     setLoading(true);
     setError(null);
@@ -296,6 +316,7 @@ export default function WorkOrdersPage() {
           created_at
         `,
       )
+      .ilike("approval_status", "approved")
       .order("created_at", { ascending: false });
 
     if (loadError) {
@@ -338,66 +359,97 @@ export default function WorkOrdersPage() {
       );
       const siteMap = new Map(((sitesResult.data as Site[]) || []).map((site) => [site.id, site]));
 
-      const workOrderVendorRows: WorkOrderVendor[] = [];
-      for (const idChunk of chunkArray(workOrderIds, 50)) {
-        const { data: chunkData, error: chunkError } = await supabase
-          .from("work_order_vendors")
-          .select("work_order_id, vendor_id, is_primary")
-          .in("work_order_id", idChunk);
+      let documentsByWorkOrder = new Map<string, WorkOrderDocument[]>();
+      let vendorsByWorkOrder = new Map<string, WorkOrderVendorSummary>();
 
-        if (chunkError) {
-          setError(chunkError.message);
+      if (workOrderIds.length) {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        const token = session?.access_token;
+
+        if (!token) {
+          setError("Unable to load Work Order documents: missing auth session.");
           setWorkOrders([]);
           setLoading(false);
           return;
         }
 
-        workOrderVendorRows.push(...((chunkData as WorkOrderVendor[]) || []));
-      }
+        const documentRows: WorkOrderDocument[] = [];
 
-      const workOrderVendors = workOrderVendorRows.sort(
-        (a, b) => Number(Boolean(b.is_primary)) - Number(Boolean(a.is_primary)),
-      );
-      const vendorIds = Array.from(
-        new Set(workOrderVendors.map((row) => row.vendor_id).filter(Boolean)),
-      );
+        for (const idChunk of chunkArray(workOrderIds, 50)) {
+          const response = await fetch(
+            `/api/work-orders/documents?work_order_ids=${encodeURIComponent(
+              idChunk.join(","),
+            )}`,
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+              },
+            },
+          );
+          const result = await response.json();
 
-      let vendorMap = new Map<string, Vendor>();
-      if (vendorIds.length) {
-        const vendorRows: Vendor[] = [];
-
-        for (const idChunk of chunkArray(vendorIds, 50)) {
-          const { data: vendorData, error: vendorError } = await supabase
-            .from("vendors")
-            .select("id, vendor_name")
-            .in("id", idChunk);
-
-          if (vendorError) {
-            setError(vendorError.message);
+          if (!response.ok) {
+            setError(result.error || "Could not load Work Order documents.");
             setWorkOrders([]);
             setLoading(false);
             return;
           }
 
-          vendorRows.push(...((vendorData as Vendor[]) || []));
+          documentRows.push(...((result.documents as WorkOrderDocument[]) || []));
         }
 
-        vendorMap = new Map(vendorRows.map((vendor) => [vendor.id, vendor]));
+        documentsByWorkOrder = documentRows.reduce<Map<string, WorkOrderDocument[]>>(
+          (map, document) => {
+            const existing = map.get(document.work_order_id) || [];
+            map.set(document.work_order_id, [...existing, document]);
+            return map;
+          },
+          new Map(),
+        );
+
+        const vendorRows: Array<[string, WorkOrderVendorSummary | null]> = [];
+
+        for (const idChunk of chunkArray(workOrderIds, 50)) {
+          const response = await fetch(
+            `/api/work-orders/vendors?work_order_ids=${encodeURIComponent(
+              idChunk.join(","),
+            )}`,
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+              },
+            },
+          );
+          const result = await response.json();
+
+          if (!response.ok) {
+            setError(result.error || "Could not load Work Order vendors.");
+            setWorkOrders([]);
+            setLoading(false);
+            return;
+          }
+
+          vendorRows.push(
+            ...Object.entries(result.vendors || {}) as Array<
+              [string, WorkOrderVendorSummary | null]
+            >,
+          );
+        }
+
+        vendorsByWorkOrder = new Map(
+          vendorRows.filter(([, vendor]) => vendor?.vendor_name) as Array<
+            [string, WorkOrderVendorSummary]
+          >,
+        );
       }
-
-      const vendorsByWorkOrder = workOrderVendors.reduce<Map<string, string[]>>((map, row) => {
-        const vendorName = vendorMap.get(row.vendor_id)?.vendor_name?.trim();
-        if (!vendorName) return map;
-
-        const existing = map.get(row.work_order_id) || [];
-        map.set(row.work_order_id, [...existing, vendorName]);
-        return map;
-      }, new Map());
 
       const enrichedRows = rows.map((row) => {
         const company = row.company_id ? companyMap.get(row.company_id) : null;
         const site = row.site_id ? siteMap.get(row.site_id) : null;
-        const vendorNames = vendorsByWorkOrder.get(row.id) || [];
+        const vendor = vendorsByWorkOrder.get(row.id);
+        const vendorName = vendor?.vendor_name?.trim() || null;
 
         return {
           ...row,
@@ -405,11 +457,9 @@ export default function WorkOrdersPage() {
           company_code: company?.company_code || null,
           site_name: site?.site_name || site?.site_code || null,
           site_code: site?.site_code || null,
-          vendor_names: vendorNames,
-          vendor_name:
-            vendorNames.length > 1
-              ? `${vendorNames[0]} +${vendorNames.length - 1} more`
-              : vendorNames[0] || null,
+          vendor_names: vendorName ? [vendorName] : [],
+          vendor_name: vendorName,
+          documents: documentsByWorkOrder.get(row.id) || [],
         };
       });
 
@@ -697,31 +747,34 @@ export default function WorkOrdersPage() {
           <div className="p-10 text-center text-slate-500">No work orders match the selected filters.</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[920px] border-collapse text-left">
+            <table className="w-full min-w-[1180px] border-collapse text-left">
               <thead>
                 <tr className="border-b border-slate-300 bg-[#f6f3f5]">
-                  <th className="w-[10%] px-6 py-4 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                  <th className="w-[12%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     WO ID
                   </th>
-                  <th className="w-[18%] px-6 py-4 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                  <th className="w-[18%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Vendor Name
                   </th>
-                  <th className="w-[30%] px-6 py-4 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                  <th className="w-[24%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Description
                   </th>
-                  <th className="w-[13%] px-6 py-4 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                  <th className="w-[11%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Value
                   </th>
-                  <th className="w-[12%] px-6 py-4 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                  <th className="w-[15%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
+                    Documentation
+                  </th>
+                  <th className="w-[10%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Status
                   </th>
-                  <th className="w-[10%] px-6 py-4 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                  <th className="w-[10%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Approval
                   </th>
-                  <th className="w-[10%] px-6 py-4 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                  <th className="w-[10%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     WO Date
                   </th>
-                  <th className="w-[5%] px-6 py-4 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                  <th className="w-[5%] px-6 py-4 text-right text-xs font-bold uppercase tracking-wide text-slate-600">
                     Actions
                   </th>
                 </tr>
@@ -729,22 +782,55 @@ export default function WorkOrdersPage() {
               <tbody className="divide-y divide-slate-200">
                 {sortedWorkOrders.map((wo) => (
                   <tr key={wo.id} className="transition hover:bg-[#f6f3f5]">
-                    <td className="px-6 py-5 align-top text-sm font-bold text-[#00658b]">
+                    <td className="px-6 py-5 align-top text-base font-bold text-[#00658b]">
                       {wo.wo_number || "-"}
                     </td>
                     <td className="px-6 py-5 align-top">
-                      <div className="font-semibold text-slate-950">{getVendorName(wo)}</div>
-                      <div className="mt-1 text-xs text-slate-500">{getSiteName(wo)}</div>
+                      <div className="text-base font-semibold text-slate-950">{getVendorName(wo)}</div>
+                      <div className="mt-1 text-sm text-slate-500">{getSiteName(wo)}</div>
                     </td>
-                    <td className="px-6 py-5 align-top text-sm text-slate-700">
+                    <td className="px-6 py-5 align-top text-base text-slate-700">
                       <p className="max-w-xl truncate">{wo.description || "-"}</p>
                     </td>
-                    <td className="px-6 py-5 align-top text-sm font-bold text-slate-950">
+                    <td className="px-6 py-5 align-top text-base font-bold text-slate-950">
                       {formatCurrency(wo.wo_value)}
                     </td>
                     <td className="px-6 py-5 align-top">
+                      {wo.documents && wo.documents.length > 0 ? (
+                        <div className="space-y-1.5">
+                          <div className="inline-flex items-center gap-1 text-sm font-semibold text-slate-700">
+                            <FileText className="h-4 w-4 text-slate-400" />
+                            {wo.documents.length} file{wo.documents.length === 1 ? "" : "s"}
+                          </div>
+                          {wo.documents.map((document) => (
+                            <div
+                              key={document.id}
+                              className="flex max-w-[260px] items-center gap-2"
+                            >
+                              <span className="truncate text-sm text-slate-600">
+                                {document.file_name || "Work Order file"}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => openDocument(document)}
+                                className="inline-flex shrink-0 items-center gap-1 text-sm font-semibold text-[#00658b] hover:underline"
+                              >
+                                Open
+                                <ExternalLink className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-sm text-slate-400">
+                          <FileText className="h-4 w-4" />
+                          No file
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-6 py-5 align-top">
                       <span
-                        className={`inline-flex border px-2 py-1 text-xs font-semibold ${statusBadgeClass(
+                        className={`inline-flex border px-2.5 py-1.5 text-sm font-semibold ${statusBadgeClass(
                           wo.status,
                         )}`}
                       >
@@ -753,14 +839,14 @@ export default function WorkOrdersPage() {
                     </td>
                     <td className="px-6 py-5 align-top">
                       <span
-                        className={`inline-flex border px-2 py-1 text-xs font-semibold ${statusBadgeClass(
+                        className={`inline-flex border px-2.5 py-1.5 text-sm font-semibold ${statusBadgeClass(
                           wo.approval_status,
                         )}`}
                       >
                         {titleCase(wo.approval_status)}
                       </span>
                     </td>
-                    <td className="px-6 py-5 align-top text-sm text-slate-600">
+                    <td className="px-6 py-5 align-top text-base text-slate-600">
                       {formatDate(wo.wo_date || wo.created_at)}
                     </td>
                     <td className="px-6 py-5 align-top">
