@@ -17,7 +17,9 @@ export default function NewRABillPage() {
   const [workOrders, setWorkOrders] = useState<any[]>([]);
   const [selectedSiteId, setSelectedSiteId] = useState("");
   const [selectedWO, setSelectedWO] = useState<any>(null);
-  const [linkedVendor, setLinkedVendor] = useState<any>(null);
+  const [linkedVendorId, setLinkedVendorId] = useState("");
+  const [linkedVendorName, setLinkedVendorName] = useState("");
+  const [linkedVendorRole, setLinkedVendorRole] = useState("");
   const [previousRABills, setPreviousRABills] = useState<any[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
@@ -93,7 +95,7 @@ export default function NewRABillPage() {
 
     setSelectedSiteId(siteId);
     setSelectedWO(null);
-    setLinkedVendor(null);
+    clearLinkedVendor();
     setPreviousRABills([]);
 
     setForm((prev) => ({
@@ -110,7 +112,7 @@ export default function NewRABillPage() {
   async function loadWorkOrderDetails(workOrderId: string) {
     setMessage("");
     setSelectedWO(null);
-    setLinkedVendor(null);
+    clearLinkedVendor();
     setPreviousRABills([]);
 
     if (!workOrderId) {
@@ -126,42 +128,35 @@ export default function NewRABillPage() {
     const wo = workOrders.find((item) => item.id === workOrderId);
     setSelectedWO(wo || null);
 
-    const { data: vendorData, error: vendorError } = await supabase
-      .from("work_order_vendors")
-      .select(`
-        id,
-        vendor_role,
-        is_primary,
-        vendors (
-          id,
-          vendor_name,
-          vendor_type,
-          pan,
-          gstin
-        )
-      `)
-      .eq("work_order_id", workOrderId)
-      .order("is_primary", { ascending: false });
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-    if (vendorError) {
-      setMessage(vendorError.message);
+    if (!session?.access_token) {
+      setMessage("Please log in again before creating an RA Bill.");
       return;
     }
 
-    const primaryVendor =
-      vendorData?.find((row: any) => row.is_primary) || vendorData?.[0];
+    const vendorResponse = await fetch(
+      `/api/ra-bills/work-order-vendor?work_order_id=${encodeURIComponent(
+        workOrderId
+      )}`,
+      {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      }
+    );
+    const vendorResult = await vendorResponse.json();
 
-    const vendorRelation: any = primaryVendor?.vendors;
-const linkedVendor = Array.isArray(vendorRelation)
-  ? vendorRelation[0]
-  : vendorRelation;
+    if (!vendorResponse.ok) {
+      setMessage(vendorResult.error || "No vendor is linked to this Work Order.");
+      return;
+    }
 
-if (!linkedVendor?.id) {
-  setMessage("No vendor is linked to this Work Order.");
-  return;
-}
-
-    setLinkedVendor(primaryVendor);
+    setLinkedVendorId(vendorResult.vendor_id || "");
+    setLinkedVendorName(vendorResult.vendor_name || "-");
+    setLinkedVendorRole(vendorResult.vendor_role || "-");
 
     const { data: raData, error: raError } = await supabase
       .from("ra_bills")
@@ -193,9 +188,15 @@ if (!linkedVendor?.id) {
     setForm((prev) => ({
       ...prev,
       work_order_id: workOrderId,
-      vendor_id: linkedVendor.id,
+      vendor_id: vendorResult.vendor_id,
       ra_number: suggestedNumber,
     }));
+  }
+
+  function clearLinkedVendor() {
+    setLinkedVendorId("");
+    setLinkedVendorName("");
+    setLinkedVendorRole("");
   }
 
   function handleChange(
@@ -213,6 +214,7 @@ if (!linkedVendor?.id) {
         ra_number: "",
       }));
 
+      clearLinkedVendor();
       loadWorkOrderDetails(value);
       return;
     }
@@ -250,6 +252,7 @@ if (!linkedVendor?.id) {
   const totalAfterThisRA = previousRATotal + currentRAValue;
   const balanceAfterThisRA = woValue - totalAfterThisRA;
   const exceedsWO = selectedWO && balanceAfterThisRA < 0;
+  const selectedSite = sites.find((site) => site.id === selectedSiteId);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -265,7 +268,7 @@ if (!linkedVendor?.id) {
       return;
     }
 
-    if (!form.vendor_id) {
+    if (!linkedVendorId) {
       setMessage("Vendor could not be found for this Work Order.");
       return;
     }
@@ -295,7 +298,7 @@ if (!linkedVendor?.id) {
         .insert({
           organization_id: organizationId,
           work_order_id: form.work_order_id,
-          vendor_id: form.vendor_id,
+          vendor_id: linkedVendorId,
           ra_number: form.ra_number.trim(),
           ra_date: form.ra_date || null,
 
@@ -346,22 +349,23 @@ if (!linkedVendor?.id) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
+    <form onSubmit={handleSubmit} className="space-y-8 pb-24">
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
-            <FileText className="h-3.5 w-3.5" />
-            Contract Management
-          </div>
+          <nav className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <span>Contract Management</span>
+            <span>/</span>
+            <span className="text-sky-800">New RA Bill</span>
+          </nav>
           <h1 className="text-3xl font-bold text-slate-950">New RA Bill</h1>
-          <p className="text-sm text-slate-500">
+          <p className="mt-2 text-sm text-slate-600">
             Site-wise RA bill creation against approved work orders.
           </p>
         </div>
 
         <Link
           href="/ra-bills"
-          className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50"
+          className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
         >
           <ArrowLeft className="h-4 w-4" />
           Back
@@ -369,28 +373,23 @@ if (!linkedVendor?.id) {
       </div>
 
       {message && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           {message}
         </div>
       )}
 
-      <section className="rounded-2xl border bg-white p-6 shadow-sm">
-        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-          Step 1
-        </p>
-        <h2 className="text-xl font-semibold text-slate-950">
-          Select Site & Work Order
-        </h2>
-        <p className="mb-4 text-sm text-slate-500">
-          Select site first. Work orders will be filtered for that site.
+      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <SectionTitle step="01" title="Select Site & Work Order" />
+        <p className="mb-5 text-sm text-slate-500">
+          Select a site first. Work orders are filtered to approved active work orders for that site.
         </p>
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-5 md:grid-cols-2">
           <Field label="Site *">
             <select
               value={selectedSiteId}
               onChange={handleSiteChange}
-              className="h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-slate-400"
+              className="h-11 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 text-sm outline-none focus:border-sky-700 focus:ring-2 focus:ring-sky-100"
             >
               <option value="">Select Site</option>
               {sites.map((site) => (
@@ -407,7 +406,7 @@ if (!linkedVendor?.id) {
               value={form.work_order_id}
               onChange={handleChange}
               disabled={!selectedSiteId}
-              className="h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-slate-400 disabled:bg-slate-100"
+              className="h-11 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 text-sm outline-none focus:border-sky-700 focus:ring-2 focus:ring-sky-100 disabled:bg-slate-100"
             >
               <option value="">
                 {selectedSiteId ? "Select Work Order" : "Select Site First"}
@@ -420,23 +419,39 @@ if (!linkedVendor?.id) {
             </select>
           </Field>
         </div>
+
+        {selectedWO && (
+          <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                  Work Order Details
+                </p>
+                <h3 className="mt-1 text-xl font-bold text-sky-800">
+                  {selectedWO.wo_number}
+                </h3>
+                <p className="mt-2 text-sm text-slate-600">
+                  {selectedWO.companies?.company_name || "-"} / {selectedWO.sites?.site_name || selectedSite?.site_name || "-"}
+                </p>
+              </div>
+              <span className="inline-flex rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase text-emerald-700">
+                Active
+              </span>
+            </div>
+
+            <div className="mt-5 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+              <MiniInfo title="Company" value={selectedWO.companies?.company_name || "-"} />
+              <MiniInfo title="Site" value={selectedWO.sites?.site_name || selectedSite?.site_name || "-"} />
+              <MiniInfo title="Vendor" value={linkedVendorName || "-"} />
+              <MiniInfo title="Vendor Role" value={linkedVendorRole || "-"} />
+              <MiniInfo title="WO Value" value={money(woValue)} />
+            </div>
+          </div>
+        )}
       </section>
 
       {selectedWO && (
         <>
-          <section className="grid gap-4 md:grid-cols-4">
-            <Summary title="Site" value={selectedWO.sites?.site_name || "-"} />
-            <Summary
-              title="Company"
-              value={selectedWO.companies?.company_name || "-"}
-            />
-            <Summary title="WO Number" value={selectedWO.wo_number || "-"} />
-            <Summary
-              title="Vendor"
-              value={linkedVendor?.vendors?.vendor_name || "-"}
-            />
-          </section>
-
           <section className="grid gap-4 md:grid-cols-4">
             <Summary title="WO Value" value={money(woValue)} />
             <Summary title="Previous RA Total" value={money(previousRATotal)} />
@@ -449,85 +464,26 @@ if (!linkedVendor?.id) {
           </section>
 
           {exceedsWO && (
-            <div className="rounded-2xl border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
-              Warning: Total billed amount after this RA exceeds the Work Order
-              value by {money(Math.abs(balanceAfterThisRA))}. You can still
-              submit, but please verify before saving.
+            <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
+              Warning: Total billed amount after this RA exceeds the Work Order value by{" "}
+              {money(Math.abs(balanceAfterThisRA))}. You can still submit, but please verify before saving.
             </div>
           )}
 
-          <section className="rounded-2xl border bg-white p-6 shadow-sm">
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-              History
-            </p>
-            <h2 className="text-xl font-semibold text-slate-950">
-              Previous RA Bills
-            </h2>
-
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full min-w-[700px] text-sm">
-                <thead className="bg-slate-50 text-xs uppercase text-slate-500">
-                  <tr>
-                    <th className="p-3 text-left">RA No</th>
-                    <th className="p-3 text-left">Date</th>
-                    <th className="p-3 text-right">Gross</th>
-                    <th className="p-3 text-right">GST</th>
-                    <th className="p-3 text-right">Net</th>
-                    <th className="p-3 text-left">Approval</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {previousRABills.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="p-6 text-center text-slate-500">
-                        No previous RA bills found for this Work Order.
-                      </td>
-                    </tr>
-                  ) : (
-                    previousRABills.map((bill) => (
-                      <tr key={bill.id} className="border-t">
-                        <td className="p-3 font-medium">{bill.ra_number}</td>
-                        <td className="p-3">{bill.ra_date || "-"}</td>
-                        <td className="p-3 text-right">
-                          {money(bill.gross_amount)}
-                        </td>
-                        <td className="p-3 text-right">
-                          {money(bill.gst_amount)}
-                        </td>
-                        <td className="p-3 text-right">
-                          {money(bill.net_amount)}
-                        </td>
-                        <td className="p-3">
-                          {bill.approval_status || "Pending"}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section className="rounded-2xl border bg-white p-6 shadow-sm">
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Step 2
-            </p>
-            <h2 className="text-xl font-semibold text-slate-950">
-              New RA Bill Details
-            </h2>
+          <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <SectionTitle step="02" title="New RA Bill Details" />
             <p className="mb-5 text-sm text-slate-500">
-              RA number is auto-suggested but editable.
+              RA number is auto-suggested from previous bills and remains editable.
             </p>
 
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
               <Field label="RA Bill Number *">
                 <input
                   type="text"
                   name="ra_number"
                   value={form.ra_number}
                   onChange={handleChange}
-                  className="h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-slate-400"
+                  className="h-11 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 text-sm outline-none focus:border-sky-700 focus:ring-2 focus:ring-sky-100"
                   placeholder="1, 2, 3, Full & Final"
                 />
               </Field>
@@ -538,7 +494,7 @@ if (!linkedVendor?.id) {
                   name="ra_date"
                   value={form.ra_date}
                   onChange={handleChange}
-                  className="h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-slate-400"
+                  className="h-11 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 text-sm outline-none focus:border-sky-700 focus:ring-2 focus:ring-sky-100"
                 />
               </Field>
 
@@ -548,7 +504,8 @@ if (!linkedVendor?.id) {
                   name="value_of_work_done"
                   value={form.value_of_work_done}
                   onChange={handleChange}
-                  className="h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-slate-400"
+                  className="h-11 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 text-sm outline-none focus:border-sky-700 focus:ring-2 focus:ring-sky-100"
+                  placeholder="0"
                 />
               </Field>
 
@@ -558,7 +515,7 @@ if (!linkedVendor?.id) {
                   name="security_amount"
                   value={form.security_amount}
                   onChange={handleChange}
-                  className="h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-slate-400"
+                  className="h-11 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 text-sm outline-none focus:border-sky-700 focus:ring-2 focus:ring-sky-100"
                 />
               </Field>
 
@@ -566,7 +523,7 @@ if (!linkedVendor?.id) {
                 <input
                   value={money(taxableAmount)}
                   readOnly
-                  className="h-11 w-full rounded-xl border bg-slate-50 px-3 text-sm"
+                  className="h-11 w-full rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-600"
                 />
               </Field>
 
@@ -575,7 +532,7 @@ if (!linkedVendor?.id) {
                   name="gst_rate"
                   value={form.gst_rate}
                   onChange={handleChange}
-                  className="h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-slate-400"
+                  className="h-11 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 text-sm outline-none focus:border-sky-700 focus:ring-2 focus:ring-sky-100"
                 >
                   <option value="0">0%</option>
                   <option value="5">5%</option>
@@ -589,7 +546,7 @@ if (!linkedVendor?.id) {
                 <input
                   value={money(gstAmount)}
                   readOnly
-                  className="h-11 w-full rounded-xl border bg-slate-50 px-3 text-sm"
+                  className="h-11 w-full rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-600"
                 />
               </Field>
 
@@ -597,36 +554,29 @@ if (!linkedVendor?.id) {
                 <input
                   value={money(netPayable)}
                   readOnly
-                  className="h-11 w-full rounded-xl border bg-emerald-50 px-3 text-sm font-semibold text-emerald-700"
+                  className="h-11 w-full rounded-lg border border-sky-200 bg-sky-50 px-3 text-base font-bold text-sky-800"
                 />
               </Field>
 
-              <div className="md:col-span-2">
+              <div className="lg:col-span-3">
                 <Field label="Remarks">
                   <textarea
                     name="remarks"
                     value={form.remarks}
                     onChange={handleChange}
-                    className="min-h-24 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:border-slate-400"
+                    className="min-h-24 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-sky-700 focus:ring-2 focus:ring-sky-100"
+                    placeholder="Add work details or supporting context"
                   />
                 </Field>
               </div>
             </div>
           </section>
 
-          <section className="rounded-2xl border bg-white p-6 shadow-sm">
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Step 3
-            </p>
-            <h2 className="text-xl font-semibold text-slate-950">
-              Attachments
-            </h2>
-
-            <label className="mt-4 flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed bg-slate-50 p-8 text-center hover:bg-slate-100">
-              <Upload className="mb-2 h-6 w-6 text-slate-400" />
-              <span className="text-sm font-medium text-slate-700">
-                Click to upload files
-              </span>
+          <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <SectionTitle step="03" title="Attachments" />
+            <label className="mt-5 flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-10 text-center transition hover:border-sky-600 hover:bg-sky-50">
+              <Upload className="mb-3 h-9 w-9 text-slate-400" />
+              <span className="text-sm font-semibold text-slate-800">Click to upload files</span>
               <span className="mt-1 text-xs text-slate-500">
                 Multiple files allowed. At least one attachment is required.
               </span>
@@ -639,12 +589,9 @@ if (!linkedVendor?.id) {
             </label>
 
             {files.length > 0 && (
-              <div className="mt-4 space-y-2">
+              <div className="mt-4 grid gap-2 md:grid-cols-2">
                 {files.map((file) => (
-                  <div
-                    key={file.name}
-                    className="rounded-xl border bg-white px-3 py-2 text-sm"
-                  >
+                  <div key={file.name} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
                     {file.name}
                   </div>
                 ))}
@@ -652,39 +599,94 @@ if (!linkedVendor?.id) {
             )}
           </section>
 
-          <section className="rounded-2xl border bg-white p-6 shadow-sm">
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Step 4
-            </p>
-            <h2 className="text-xl font-semibold text-slate-950">
-              Billing Summary
-            </h2>
-
-            <div className="mt-5 grid gap-4 md:grid-cols-5">
-              <Summary title="Total Billed" value={money(totalAfterThisRA)} />
-              <Summary
-                title="Balance Remaining"
-                value={money(balanceAfterThisRA)}
-                warning={balanceAfterThisRA < 0}
-              />
-              <Summary title="Taxable Amount" value={money(taxableAmount)} />
-              <Summary title="GST Amount" value={money(gstAmount)} />
-              <Summary title="Amount Payable" value={money(netPayable)} />
+          <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <SectionTitle step="04" title="Previous RA Bills" icon />
+            <div className="mt-5 overflow-x-auto">
+              <table className="w-full min-w-[700px] text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="p-3 text-left">RA No</th>
+                    <th className="p-3 text-left">Date</th>
+                    <th className="p-3 text-right">Gross</th>
+                    <th className="p-3 text-right">GST</th>
+                    <th className="p-3 text-right">Net</th>
+                    <th className="p-3 text-left">Approval</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {previousRABills.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center text-slate-500">
+                        No previous RA bills found for this Work Order.
+                      </td>
+                    </tr>
+                  ) : (
+                    previousRABills.map((bill) => (
+                      <tr key={bill.id} className="border-t border-slate-100">
+                        <td className="p-3 font-semibold">{bill.ra_number}</td>
+                        <td className="p-3">{bill.ra_date || "-"}</td>
+                        <td className="p-3 text-right">{money(bill.gross_amount)}</td>
+                        <td className="p-3 text-right">{money(bill.gst_amount)}</td>
+                        <td className="p-3 text-right font-semibold">{money(bill.net_amount)}</td>
+                        <td className="p-3">{bill.approval_status || "Pending"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
           </section>
 
-          <div className="flex justify-end">
-            <button
-              type="submit"
-              disabled={saving}
-              className="rounded-xl bg-slate-950 px-6 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-            >
-              {saving ? "Saving..." : "Save RA Bill"}
-            </button>
+          <div className="sticky bottom-4 z-10 rounded-xl border border-slate-200 bg-white/95 p-4 shadow-lg backdrop-blur">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="grid flex-1 gap-4 md:grid-cols-4">
+                <Summary title="Value of Work Done" value={money(currentRAValue)} />
+                <Summary title="Security Deduction" value={money(form.security_amount)} />
+                <Summary title="GST Amount" value={money(gstAmount)} />
+                <Summary title="Net Payable" value={money(netPayable)} />
+              </div>
+              <button
+                type="submit"
+                disabled={saving}
+                className="inline-flex h-12 items-center justify-center rounded-lg bg-sky-700 px-8 text-sm font-bold text-white shadow-sm hover:bg-sky-800 disabled:opacity-60"
+              >
+                {saving ? "Saving..." : "Save RA Bill"}
+              </button>
+            </div>
           </div>
         </>
       )}
     </form>
+  );
+}
+
+function SectionTitle({
+  step,
+  title,
+  icon = false,
+}: {
+  step: string;
+  title: string;
+  icon?: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-sky-700 text-xs font-bold text-white">
+        {icon ? <FileText className="h-4 w-4" /> : step}
+      </div>
+      <h2 className="text-xl font-bold text-slate-950">{title}</h2>
+    </div>
+  );
+}
+
+function MiniInfo({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4">
+      <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
+        {title}
+      </p>
+      <p className="mt-2 text-sm font-semibold text-slate-950">{value}</p>
+    </div>
   );
 }
 
