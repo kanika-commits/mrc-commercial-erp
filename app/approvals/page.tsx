@@ -10,6 +10,7 @@ function money(value: any) {
 }
 
 type ApprovalAction = "Approved" | "Sent Back" | "Rejected";
+type RaApprovalAction = "Approved" | "Rejected";
 
 export default function ApprovalsPage() {
   const [bills, setBills] = useState<any[]>([]);
@@ -123,12 +124,40 @@ export default function ApprovalsPage() {
           .in("id", companyIds)
       : { data: [] };
 
-    const { data: raDocumentData } = raBillIds.length
-      ? await supabase
-          .from("ra_bill_documents")
-          .select("id, ra_bill_id, file_name, file_url")
-          .in("ra_bill_id", raBillIds)
-      : { data: [] };
+    let raDocumentData: any[] = [];
+
+    if (raBillIds.length) {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        setMessage("Unable to load RA Bill documents: missing auth session.");
+        setLoading(false);
+        return;
+      }
+
+      const documentResponse = await fetch(
+        `/api/ra-bills/documents?ra_bill_ids=${encodeURIComponent(
+          raBillIds.join(",")
+        )}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      const documentResult = await documentResponse.json();
+
+      if (!documentResponse.ok) {
+        setMessage(documentResult.error || "Failed to load RA Bill documents.");
+        setLoading(false);
+        return;
+      }
+
+      raDocumentData = documentResult.documents || [];
+    }
 
     const { data: debitDocumentData } = debitNoteIds.length
       ? await supabase
@@ -160,19 +189,35 @@ export default function ApprovalsPage() {
     return raDocuments.filter((doc) => doc.ra_bill_id === billId).length;
   }
 
+  function raDocumentsForBill(billId: string) {
+    return raDocuments.filter((doc) => doc.ra_bill_id === billId);
+  }
+
+  function openRaDocument(document: any) {
+    if (!document.signed_url) {
+      setMessage(
+        document.signed_url_error ||
+          "Unable to open RA Bill file. Signed URL was not available."
+      );
+      return;
+    }
+
+    window.open(document.signed_url, "_blank", "noopener,noreferrer");
+  }
+
   function debitDocumentCount(debitNoteId: string) {
     return debitDocuments.filter((doc) => doc.debit_note_id === debitNoteId)
       .length;
   }
 
-  async function updateRaStatus(billId: string, action: ApprovalAction) {
+  async function updateRaStatus(billId: string, action: RaApprovalAction) {
     setMessage("");
     setSavingId(`ra-${billId}`);
 
     const remark = remarks[`ra-${billId}`]?.trim() || "";
 
-    if ((action === "Sent Back" || action === "Rejected") && !remark) {
-      setMessage("Reason is required for Send Back or Reject.");
+    if (action === "Rejected" && !remark) {
+      setMessage("Reason is required for Reject.");
       setSavingId("");
       return;
     }
@@ -185,34 +230,6 @@ export default function ApprovalsPage() {
       "HO User";
 
     const now = new Date().toISOString();
-
-    if (action === "Rejected") {
-      const { error: deleteDocsError } = await supabase
-        .from("ra_bill_documents")
-        .delete()
-        .eq("ra_bill_id", billId);
-
-      if (deleteDocsError) {
-        setMessage(deleteDocsError.message);
-        setSavingId("");
-        return;
-      }
-
-      const { error: deleteBillError } = await supabase
-        .from("ra_bills")
-        .delete()
-        .eq("id", billId);
-
-      if (deleteBillError) {
-        setMessage(deleteBillError.message);
-        setSavingId("");
-        return;
-      }
-
-      setBills((prev) => prev.filter((bill) => bill.id !== billId));
-      setSavingId("");
-      return;
-    }
 
     let updateData: any = {
       approval_status: action,
@@ -228,10 +245,10 @@ export default function ApprovalsPage() {
       };
     }
 
-    if (action === "Sent Back") {
+    if (action === "Rejected") {
       updateData = {
         ...updateData,
-        status: "Sent Back",
+        status: "Rejected",
         rejected_by_name: name,
         rejected_by_email: email,
         rejected_at: now,
@@ -409,7 +426,7 @@ export default function ApprovalsPage() {
         <div className="border-b p-4">
           <h2 className="font-semibold text-slate-950">Pending RA Bills</h2>
           <p className="text-xs text-slate-500">
-            Approve, send back for correction, or reject/delete RA bills.
+            Approve or reject RA bills. Rejected records remain available for audit.
           </p>
         </div>
 
@@ -438,6 +455,7 @@ export default function ApprovalsPage() {
                   ? maps.companyMap.get(wo.company_id)
                   : null;
                 const remarkKey = `ra-${bill.id}`;
+                const billDocuments = raDocumentsForBill(bill.id);
 
                 return (
                   <tr key={bill.id} className="border-t align-top">
@@ -489,8 +507,33 @@ export default function ApprovalsPage() {
                     </td>
 
                     <td className="p-3">
-                      {raDocumentCount(bill.id)} file(s)
-                      <div>
+                      <div className="font-medium">
+                        {raDocumentCount(bill.id)} file(s)
+                      </div>
+
+                      {billDocuments.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {billDocuments.map((document) => (
+                            <div
+                              key={document.id}
+                              className="flex max-w-[260px] items-center justify-between gap-2"
+                            >
+                              <span className="truncate text-xs text-slate-600">
+                                {document.file_name || "Attachment"}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => openRaDocument(document)}
+                                className="shrink-0 text-xs font-semibold text-blue-600 hover:underline"
+                              >
+                                Open
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="mt-1">
                         <Link
                           href={`/ra-bills/${bill.id}`}
                           className="text-xs text-blue-600 hover:underline"
@@ -510,7 +553,7 @@ export default function ApprovalsPage() {
                           }))
                         }
                         className="min-h-24 w-64 rounded-xl border px-3 py-2 text-sm outline-none focus:border-slate-400"
-                        placeholder="Required for send back/reject"
+                        placeholder="Required for reject"
                       />
                     </td>
 
@@ -519,7 +562,6 @@ export default function ApprovalsPage() {
                         saving={savingId === remarkKey}
                         viewHref={`/ra-bills/${bill.id}`}
                         onApprove={() => updateRaStatus(bill.id, "Approved")}
-                        onSendBack={() => updateRaStatus(bill.id, "Sent Back")}
                         onReject={() => updateRaStatus(bill.id, "Rejected")}
                       />
                     </td>
@@ -697,7 +739,7 @@ function ActionButtons({
   saving: boolean;
   viewHref: string;
   onApprove: () => void;
-  onSendBack: () => void;
+  onSendBack?: () => void;
   onReject: () => void;
 }) {
   return (
@@ -719,15 +761,17 @@ function ActionButtons({
         Approve
       </button>
 
-      <button
-        type="button"
-        disabled={saving}
-        onClick={onSendBack}
-        className="inline-flex w-28 items-center justify-center gap-1 rounded-xl bg-yellow-500 px-3 py-2 text-xs font-medium text-white hover:bg-yellow-600 disabled:opacity-60"
-      >
-        <RotateCcw className="h-3.5 w-3.5" />
-        Send Back
-      </button>
+      {onSendBack && (
+        <button
+          type="button"
+          disabled={saving}
+          onClick={onSendBack}
+          className="inline-flex w-28 items-center justify-center gap-1 rounded-xl bg-yellow-500 px-3 py-2 text-xs font-medium text-white hover:bg-yellow-600 disabled:opacity-60"
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          Send Back
+        </button>
+      )}
 
       <button
         type="button"

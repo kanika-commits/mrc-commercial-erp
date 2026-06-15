@@ -107,14 +107,32 @@ export default function RABillDetailPage() {
         setVendor(vendorData);
       }
 
-      const { data: documentData, error: documentError } = await supabase
-        .from("ra_bill_documents")
-        .select("*")
-        .eq("ra_bill_id", billId)
-        .order("uploaded_at", { ascending: false });
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
 
-      if (documentError) throw documentError;
-      setDocuments(documentData || []);
+      if (!token) {
+        throw new Error("Unable to load RA Bill attachments: missing auth session.");
+      }
+
+      const documentResponse = await fetch(
+        `/api/ra-bills/documents?ra_bill_id=${encodeURIComponent(billId)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      const documentResult = await documentResponse.json();
+
+      if (!documentResponse.ok) {
+        throw new Error(
+          documentResult.error || "Failed to load RA Bill attachments."
+        );
+      }
+
+      setDocuments(documentResult.documents || []);
     } catch (error: any) {
       setMessage(error.message || "Failed to load RA Bill.");
     } finally {
@@ -122,19 +140,16 @@ export default function RABillDetailPage() {
     }
   }
 
-  async function openDocument(path: string | null) {
-    if (!path) return;
-
-    const { data, error } = await supabase.storage
-      .from("ra-bill-documents")
-      .createSignedUrl(path, 60);
-
-    if (error) {
-      setMessage(error.message);
+  function openDocument(document: any) {
+    if (!document.signed_url) {
+      setMessage(
+        document.signed_url_error ||
+          "Unable to open attachment. Signed URL was not available."
+      );
       return;
     }
 
-    window.open(data.signedUrl, "_blank");
+    window.open(document.signed_url, "_blank", "noopener,noreferrer");
   }
 
   const totals = useMemo(() => {
@@ -353,7 +368,7 @@ export default function RABillDetailPage() {
 
                 <button
                   type="button"
-                  onClick={() => openDocument(doc.file_url)}
+                  onClick={() => openDocument(doc)}
                   className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800"
                 >
                   Open

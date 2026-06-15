@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import Link from "next/link";
-import { FileText, Plus, Search } from "lucide-react";
+import { Eye, FileText, Plus, Search, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 function money(value: any) {
@@ -9,16 +9,27 @@ function money(value: any) {
 }
 
 function statusClass(value?: string | null) {
-  const status = String(value || "").toLowerCase();
+  const status = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
 
-  if (status === "approved") return "border-green-200 bg-green-50 text-green-700";
-  if (status === "pending") return "border-yellow-200 bg-yellow-50 text-yellow-700";
+  if (status === "approved") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "pending") return "border-sky-200 bg-sky-50 text-sky-700";
   if (status === "rejected") return "border-red-200 bg-red-50 text-red-700";
+  if (status === "sent_back") return "border-amber-200 bg-amber-50 text-amber-700";
 
   return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
-export default async function RABillsPage() {
+export default async function RABillsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ q?: string }>;
+}) {
+  const params = (await searchParams) || {};
+  const query = String(params.q || "").trim();
+
   const { data: bills, error } = await supabase
     .from("ra_bills")
     .select(`
@@ -30,16 +41,18 @@ export default async function RABillsPage() {
       gross_amount,
       recovery_amount,
       retention_amount,
+      gst_amount,
       net_amount,
       status,
       approval_status,
       created_at
     `)
+    .ilike("approval_status", "approved")
     .order("created_at", { ascending: false });
 
   if (error) {
     return (
-      <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+      <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
         Failed to load RA Bills: {error.message}
       </div>
     );
@@ -88,179 +101,213 @@ export default async function RABillsPage() {
   const siteMap = new Map((sites || []).map((site: any) => [site.id, site]));
   const companyMap = new Map((companies || []).map((company: any) => [company.id, company]));
 
-  const totalBills = bills?.length || 0;
-  const pendingBills =
-    bills?.filter((bill: any) => String(bill.approval_status || "").toLowerCase() === "pending").length || 0;
-  const approvedBills =
-    bills?.filter((bill: any) => String(bill.approval_status || "").toLowerCase() === "approved").length || 0;
-  const rejectedBills =
-    bills?.filter((bill: any) => String(bill.approval_status || "").toLowerCase() === "rejected").length || 0;
+  const rows = (bills || []).map((bill: any) => {
+    const wo: any = woMap.get(bill.work_order_id);
+    const vendor: any = vendorMap.get(bill.vendor_id);
+    const site: any = wo?.site_id ? siteMap.get(wo.site_id) : null;
+    const company: any = wo?.company_id ? companyMap.get(wo.company_id) : null;
 
+    return {
+      bill,
+      wo,
+      vendor,
+      site,
+      company,
+      searchText: [
+        bill.ra_number,
+        wo?.wo_number,
+        vendor?.vendor_name,
+        site?.site_name,
+        site?.site_code,
+        company?.company_name,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase(),
+    };
+  });
+
+  const filteredRows = rows.filter((row) => {
+    const matchesSearch = query ? row.searchText.includes(query.toLowerCase()) : true;
+    return matchesSearch;
+  });
+
+  const totalBills = bills?.length || 0;
   const totalGross =
     bills?.reduce((sum: number, bill: any) => sum + Number(bill.gross_amount || 0), 0) || 0;
 
   return (
-    <section className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
+    <section className="space-y-8">
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
-            <FileText className="h-3.5 w-3.5" />
-            Contract Management
-          </div>
-
-          <h1 className="text-3xl font-bold text-slate-950">RA Bills</h1>
-          <p className="text-sm text-slate-500">
-            Running Account Bills raised against approved work orders.
+          <nav className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <span>Contract Management</span>
+            <span>/</span>
+            <span className="text-sky-800">RA Bills</span>
+          </nav>
+          <h1 className="text-3xl font-bold text-slate-950">Approved RA Bills</h1>
+          <p className="mt-2 text-sm text-slate-600">
+            Approved RA Bills available for invoicing and payment processing.
           </p>
         </div>
 
         <Link
           href="/ra-bills/new"
-          className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-slate-800"
         >
           <Plus className="h-4 w-4" />
           New RA Bill
         </Link>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-5">
-        <Summary title="Total RA Bills" value={String(totalBills)} />
-        <Summary title="Pending Approval" value={String(pendingBills)} />
-        <Summary title="Approved" value={String(approvedBills)} />
-        <Summary title="Rejected" value={String(rejectedBills)} />
-        <Summary title="Gross RA Value" value={money(totalGross)} />
+      <div className="grid gap-4 md:grid-cols-2">
+        <Summary title="Total Approved RA Bills" value={String(totalBills)} tone="emerald" />
+        <Summary title="Approved RA Value" value={money(totalGross)} tone="cyan" />
       </div>
 
-      <div className="rounded-2xl border bg-white shadow-sm">
-        <div className="border-b p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-200 p-5">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
             <div>
-              <h2 className="font-semibold text-slate-950">RA Bill Register</h2>
-              <p className="text-xs text-slate-500">
-                Track site-wise RA bills, approval status and billing value.
+              <h2 className="text-xl font-bold text-slate-950">Approved RA Bill Register</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Track approved site-wise RA bills ready for commercial processing.
               </p>
             </div>
 
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-              <input
-                className="h-10 w-72 rounded-xl border bg-white pl-9 pr-3 text-sm outline-none focus:border-slate-400"
-                placeholder="Search RA no, WO, vendor..."
-              />
-            </div>
+            <form className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <label className="block">
+                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                  Search
+                </span>
+                <span className="relative block">
+                  <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                  <input
+                    name="q"
+                    defaultValue={query}
+                    className="h-10 w-full rounded-lg border border-slate-300 bg-white pl-9 pr-3 text-sm outline-none focus:border-sky-700 focus:ring-2 focus:ring-sky-100 sm:w-80"
+                    placeholder="Search RA no, WO, vendor, site"
+                  />
+                </span>
+              </label>
+
+              <button className="h-10 rounded-lg bg-sky-700 px-4 text-sm font-bold text-white hover:bg-sky-800">
+                Apply
+              </button>
+
+              {query && (
+                <Link
+                  href="/ra-bills"
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  <X className="h-4 w-4" />
+                  Clear
+                </Link>
+              )}
+            </form>
           </div>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1200px] text-sm">
-            <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+          <table className="w-full min-w-[1180px] border-collapse text-sm">
+            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
-                <th className="p-3 text-left">RA No</th>
-                <th className="p-3 text-left">Date</th>
-                <th className="p-3 text-left">Site</th>
-                <th className="p-3 text-left">Vendor</th>
-                <th className="p-3 text-left">WO Number</th>
-                <th className="p-3 text-right">Gross</th>
-                <th className="p-3 text-right">GST</th>
-                <th className="p-3 text-right">Net</th>
-                <th className="p-3 text-left">Approval</th>
-                <th className="p-3 text-right">Action</th>
+                <th className="border-b border-slate-200 px-5 py-3 text-left">RA No</th>
+                <th className="border-b border-slate-200 px-5 py-3 text-left">Date</th>
+                <th className="border-b border-slate-200 px-5 py-3 text-left">Site</th>
+                <th className="border-b border-slate-200 px-5 py-3 text-left">Vendor</th>
+                <th className="border-b border-slate-200 px-5 py-3 text-left">WO Number</th>
+                <th className="border-b border-slate-200 px-5 py-3 text-right">Gross</th>
+                <th className="border-b border-slate-200 px-5 py-3 text-right">GST</th>
+                <th className="border-b border-slate-200 px-5 py-3 text-right">Net</th>
+                <th className="border-b border-slate-200 px-5 py-3 text-left">Approval</th>
+                <th className="border-b border-slate-200 px-5 py-3 text-right">Actions</th>
               </tr>
             </thead>
 
-            <tbody>
-              {bills?.map((bill: any) => {
-                const wo = woMap.get(bill.work_order_id);
-                const vendor = vendorMap.get(bill.vendor_id);
-                const site = wo?.site_id ? siteMap.get(wo.site_id) : null;
-                const company = wo?.company_id ? companyMap.get(wo.company_id) : null;
-
-                return (
-                  <tr key={bill.id} className="border-t hover:bg-slate-50">
-                    <td className="p-3 font-semibold text-slate-950">
-                      {bill.ra_number}
-                    </td>
-
-                    <td className="p-3">{bill.ra_date || "-"}</td>
-
-                    <td className="p-3">
-                      <div className="font-medium">{site?.site_name || "-"}</div>
-                      <div className="text-xs text-slate-500">
-                        {company?.company_name || "-"}
-                      </div>
-                    </td>
-
-                    <td className="p-3">{vendor?.vendor_name || "-"}</td>
-
-                    <td className="p-3">
-                      {bill.work_order_id ? (
-                        <Link
-                          href={`/work-orders/${bill.work_order_id}`}
-                          className="text-blue-600 hover:underline"
-                        >
-                          {wo?.wo_number || "-"}
-                        </Link>
-                      ) : (
-                        "-"
-                      )}
-                    </td>
-
-                    <td className="p-3 text-right font-semibold">
-                      {money(bill.gross_amount)}
-                    </td>
-
-                    <td className="p-3 text-right">
-                      {money(bill.retention_amount)}
-                    </td>
-
-                    <td className="p-3 text-right font-semibold">
-                      {money(bill.net_amount)}
-                    </td>
-
-                    <td className="p-3">
-                      <span
-                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass(
-                          bill.approval_status
-                        )}`}
-                      >
-                        {bill.approval_status || "Pending"}
-                      </span>
-                    </td>
-
-                    <td className="p-3 text-right">
-                      <Link
-                        href={`/ra-bills/${bill.id}`}
-                        className="rounded-lg border px-3 py-1.5 text-xs font-medium hover:bg-slate-50"
-                      >
-                        View
+            <tbody className="divide-y divide-slate-100">
+              {filteredRows.map(({ bill, wo, vendor, site, company }) => (
+                <tr key={bill.id} className="hover:bg-slate-50">
+                  <td className="px-5 py-4 font-bold text-sky-800">{bill.ra_number}</td>
+                  <td className="px-5 py-4 text-slate-700">{bill.ra_date || "-"}</td>
+                  <td className="px-5 py-4">
+                    <div className="font-semibold text-slate-950">{site?.site_name || "-"}</div>
+                    <div className="text-xs text-slate-500">{company?.company_name || "-"}</div>
+                  </td>
+                  <td className="px-5 py-4 text-slate-700">{vendor?.vendor_name || "-"}</td>
+                  <td className="px-5 py-4">
+                    {bill.work_order_id ? (
+                      <Link href={`/work-orders/${bill.work_order_id}`} className="font-semibold text-sky-700 hover:underline">
+                        {wo?.wo_number || "-"}
                       </Link>
-                    </td>
-                  </tr>
-                );
-              })}
+                    ) : (
+                      "-"
+                    )}
+                  </td>
+                  <td className="px-5 py-4 text-right font-semibold">{money(bill.gross_amount)}</td>
+                  <td className="px-5 py-4 text-right">{money(bill.gst_amount)}</td>
+                  <td className="px-5 py-4 text-right font-bold text-slate-950">{money(bill.net_amount)}</td>
+                  <td className="px-5 py-4">
+                    <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-bold uppercase ${statusClass(bill.approval_status)}`}>
+                      {bill.approval_status || "Pending"}
+                    </span>
+                  </td>
+                  <td className="px-5 py-4 text-right">
+                    <Link
+                      href={`/ra-bills/${bill.id}`}
+                      className="inline-flex items-center justify-center rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-sky-700"
+                      title="View RA Bill"
+                    >
+                      <Eye className="h-4 w-4" />
+                    </Link>
+                  </td>
+                </tr>
+              ))}
 
-              {bills?.length === 0 && (
+              {filteredRows.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="p-8 text-center text-slate-500">
-                    No RA Bills found.
+                  <td colSpan={10} className="px-5 py-16 text-center">
+                    <FileText className="mx-auto h-10 w-10 text-slate-300" />
+                    <h3 className="mt-3 text-lg font-bold text-slate-800">No RA Bills found</h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Adjust your filters or create a new RA Bill.
+                    </p>
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
+
+        <div className="border-t border-slate-200 bg-slate-50 px-5 py-3 text-xs font-medium text-slate-500">
+          Showing {filteredRows.length} of {totalBills} RA bills
+        </div>
       </div>
     </section>
   );
 }
 
-function Summary({ title, value }: { title: string; value: string }) {
+function Summary({
+  title,
+  value,
+  tone,
+}: {
+  title: string;
+  value: string;
+  tone: "slate" | "sky" | "emerald" | "red" | "cyan";
+}) {
+  const toneClass = {
+    slate: "border-t-slate-900",
+    sky: "border-t-sky-600",
+    emerald: "border-t-emerald-600",
+    red: "border-t-red-600",
+    cyan: "border-t-cyan-500",
+  }[tone];
+
   return (
-    <div className="rounded-2xl border bg-white p-5 shadow-sm">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-        {title}
-      </p>
-      <p className="mt-2 text-xl font-bold text-slate-950">{value}</p>
+    <div className={`rounded-lg border border-slate-200 border-t-4 ${toneClass} bg-white p-5 shadow-sm`}>
+      <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{title}</p>
+      <p className="mt-3 text-xl font-bold text-slate-950">{value}</p>
     </div>
   );
 }
