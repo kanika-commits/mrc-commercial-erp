@@ -114,7 +114,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <div className="mt-auto space-y-2 border-t border-white/10 pt-7">
           {visibleGroupCodes.has("administration") && (
             <Link
-              href="/modules/administration"
+              href="/settings/appearance"
               className="flex h-12 items-center gap-4 rounded-md px-5 text-sm font-bold text-white/55 transition hover:bg-white/10 hover:text-white"
             >
               <Settings className="h-5 w-5" />

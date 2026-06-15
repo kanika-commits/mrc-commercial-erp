@@ -46,6 +46,21 @@ export default function AuthGuard({
           fetch("/api/admin/module-navigation"),
         ]);
 
+        if (pathname.startsWith("/settings")) {
+          if (
+            !access.roleCodes.includes("platform_owner") &&
+            !access.roleCodes.includes("super_admin")
+          ) {
+            setAccessDenied(true);
+            setChecking(false);
+            return;
+          }
+
+          setAccessDenied(false);
+          setChecking(false);
+          return;
+        }
+
         if (navigationResponse.ok) {
           const navigation = await navigationResponse.json();
           const modules: ModuleRoute[] = navigation.modules || [];
