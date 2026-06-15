@@ -73,7 +73,7 @@ export default function NewVendorPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [currentStep, setCurrentStep] = useState(1);
 
-  function validate() {
+  function collectValidationErrors() {
     const newErrors: Record<string, string> = {};
 
     const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
@@ -86,6 +86,10 @@ export default function NewVendorPage() {
     const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
 
     if (!form.vendor_name.trim()) newErrors.vendor_name = "Vendor Name is required.";
+    if (!form.vendor_type.trim()) newErrors.vendor_type = "Vendor Type is required.";
+    if (!form.contractor_type.trim())
+      newErrors.contractor_type = "Contractor Type is required.";
+    if (!form.status.trim()) newErrors.status = "Status is required.";
 
     if (!form.pan.trim()) newErrors.pan = "PAN is required.";
     else if (!panRegex.test(form.pan)) newErrors.pan = "Invalid PAN. Example: ABCDE1234F";
@@ -110,6 +114,10 @@ export default function NewVendorPage() {
       } else if (form.gstin.substring(2, 12) !== form.pan) {
         newErrors.gstin = "GSTIN PAN does not match entered PAN.";
       }
+    }
+
+    if (contacts.length === 0) {
+      newErrors.contacts = "At least one contact is required.";
     }
 
     contacts.forEach((contact, index) => {
@@ -161,9 +169,54 @@ if (form.gstin && !files.GST_CERTIFICATE) {
       newErrors.MSME_CERTIFICATE = "MSME certificate is required.";
     }
 
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    return newErrors;
   }
+
+  function validate(step?: number) {
+    const newErrors = collectValidationErrors();
+    setErrors(newErrors);
+
+    return Object.entries(newErrors).every(
+      ([key]) => !step || getErrorStep(key) !== step
+    );
+  }
+
+  function getErrorStep(key: string) {
+    if (["vendor_name", "vendor_type", "contractor_type", "status"].includes(key)) {
+      return 1;
+    }
+
+    if (
+      key === "contacts" ||
+      key.startsWith("contact_name_") ||
+      key.startsWith("contact_number_") ||
+      key.startsWith("email_")
+    ) {
+      return 2;
+    }
+
+    if (["pan", "aadhaar_cin", "gstin", "pan_aadhaar_link_status"].includes(key)) {
+      return 3;
+    }
+
+    if (
+      [
+        "account_holder_name",
+        "bank_name",
+        "account_number",
+        "ifsc_code",
+        "msme_number",
+      ].includes(key)
+    ) {
+      return 4;
+    }
+
+    return 5;
+  }
+
+  const currentStepErrors = Object.entries(errors).filter(
+    ([key]) => getErrorStep(key) === currentStep
+  );
 
   function handleChange(
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
@@ -227,7 +280,14 @@ if (form.gstin && !files.GST_CERTIFICATE) {
     e.preventDefault();
     setMessage("");
 
-    if (!validate()) {
+    const validationErrors = collectValidationErrors();
+    setErrors(validationErrors);
+
+    if (Object.keys(validationErrors).length > 0) {
+      const firstErrorStep = Math.min(...Object.keys(validationErrors).map(getErrorStep));
+      if (Number.isFinite(firstErrorStep)) {
+        setCurrentStep(firstErrorStep);
+      }
       setMessage("Please fix the highlighted errors before saving.");
       return;
     }
@@ -299,6 +359,10 @@ if (form.gstin && !files.GST_CERTIFICATE) {
   }
 
   function goToNextStep() {
+    if (!validate(currentStep)) {
+      setMessage("Please fix the highlighted errors before continuing.");
+      return;
+    }
     setCurrentStep((step) => Math.min(step + 1, 5));
     setMessage("");
   }
@@ -428,6 +492,19 @@ if (form.gstin && !files.GST_CERTIFICATE) {
         </aside>
 
         <div className="space-y-6">
+          {currentStepErrors.length > 0 && (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              <p className="font-semibold">
+                Please fix these required fields before continuing:
+              </p>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                {currentStepErrors.map(([key, error]) => (
+                  <li key={key}>{error}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {currentStep === 1 && (
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <h2 className="mb-5 text-xl font-semibold text-slate-950">
@@ -458,7 +535,9 @@ if (form.gstin && !files.GST_CERTIFICATE) {
                     name="vendor_type"
                     value={form.vendor_type}
                     onChange={handleChange}
-                    className={inputClass}
+                    className={`${inputClass} ${
+                      errors.vendor_type ? errorClass : ""
+                    }`}
                   >
                     <option>Contractor</option>
                     <option>Supplier</option>
@@ -467,6 +546,7 @@ if (form.gstin && !files.GST_CERTIFICATE) {
                     <option>Equipment Rental</option>
                     <option>Transporter</option>
                   </select>
+                  <ErrorText name="vendor_type" />
                 </div>
 
                 <div>
@@ -477,13 +557,16 @@ if (form.gstin && !files.GST_CERTIFICATE) {
                     name="contractor_type"
                     value={form.contractor_type}
                     onChange={handleChange}
-                    className={inputClass}
+                    className={`${inputClass} ${
+                      errors.contractor_type ? errorClass : ""
+                    }`}
                   >
                     <option>Company</option>
                     <option>LLP</option>
                     <option>Partnership</option>
                     <option>Proprietor</option>
                   </select>
+                  <ErrorText name="contractor_type" />
                 </div>
 
                 <div>
@@ -494,12 +577,15 @@ if (form.gstin && !files.GST_CERTIFICATE) {
                     name="status"
                     value={form.status}
                     onChange={handleChange}
-                    className={inputClass}
+                    className={`${inputClass} ${
+                      errors.status ? errorClass : ""
+                    }`}
                   >
                     <option value="active">active</option>
                     <option value="inactive">inactive</option>
                     <option value="blocked">blocked</option>
                   </select>
+                  <ErrorText name="status" />
                 </div>
               </div>
             </section>
@@ -713,7 +799,7 @@ if (form.gstin && !files.GST_CERTIFICATE) {
 
                   <div>
                     <label className="mb-1 block text-sm font-medium text-slate-700">
-                      MSME Number
+                      MSME Number{form.msme_registered === "Yes" ? " *" : ""}
                     </label>
                     <input
                       name="msme_number"
@@ -789,9 +875,22 @@ if (form.gstin && !files.GST_CERTIFICATE) {
                 {[
                   ["PAN", "PAN Copy *"],
                   ["AADHAAR_CIN", "Aadhaar / CIN Copy *"],
-                  ["GST_CERTIFICATE", "GST Certificate"],
-                  ["PAN_AADHAAR_ATTACHMENT", "PAN-Aadhaar Link Proof *"],
-                  ["MSME_CERTIFICATE", "MSME Certificate"],
+                  [
+                    "GST_CERTIFICATE",
+                    `GST Certificate${form.gstin ? " *" : ""}`,
+                  ],
+                  [
+                    "PAN_AADHAAR_ATTACHMENT",
+                    `PAN-Aadhaar Link Proof${
+                      form.pan_aadhaar_link_status === "Yes" ? " *" : ""
+                    }`,
+                  ],
+                  [
+                    "MSME_CERTIFICATE",
+                    `MSME Certificate${
+                      form.msme_registered === "Yes" ? " *" : ""
+                    }`,
+                  ],
                   ["BANK_PROOF", "Cancelled Cheque / Bank Proof *"],
                   ["ADDITIONAL_DOCUMENT", "Additional Documents"],
                 ].map(([key, label]) => (

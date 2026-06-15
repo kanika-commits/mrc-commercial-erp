@@ -187,6 +187,17 @@ export async function POST(request: Request) {
     const vendor = parseJson<VendorPayload>(formData, "vendor", {} as VendorPayload);
     const contacts = parseJson<ContactPayload[]>(formData, "contacts", []);
     const bankAccounts = parseJson<BankPayload[]>(formData, "bank_accounts", []);
+    const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+    const aadhaarRegex = /^[2-9][0-9]{11}$/;
+    const cinRegex = /^[A-Z][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}$/;
+    const gstRegex =
+      /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+    const mobileRegex = /^[6-9][0-9]{9}$/;
+    const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+    const hasDocument = (documentType: string) => {
+      const file = formData.get(`document:${documentType}`);
+      return file instanceof File && file.size > 0;
+    };
 
     if (!vendor.vendor_name?.trim()) {
       return NextResponse.json({ error: "Vendor Name is required." }, { status: 400 });
@@ -194,6 +205,162 @@ export async function POST(request: Request) {
 
     if (!vendor.pan?.trim()) {
       return NextResponse.json({ error: "PAN is required." }, { status: 400 });
+    }
+
+    if (!panRegex.test(vendor.pan)) {
+      return NextResponse.json({ error: "Invalid PAN format." }, { status: 400 });
+    }
+
+    if (!vendor.aadhaar_cin?.trim()) {
+      return NextResponse.json(
+        { error: "Aadhaar / CIN is required." },
+        { status: 400 }
+      );
+    }
+
+    if (
+      vendor.contractor_type === "Proprietor" &&
+      !aadhaarRegex.test(vendor.aadhaar_cin)
+    ) {
+      return NextResponse.json(
+        { error: "Invalid Aadhaar format." },
+        { status: 400 }
+      );
+    }
+
+    if (
+      vendor.contractor_type === "Company" &&
+      !cinRegex.test(vendor.aadhaar_cin)
+    ) {
+      return NextResponse.json({ error: "Invalid CIN format." }, { status: 400 });
+    }
+
+    if (!vendor.pan_aadhaar_link_status?.trim()) {
+      return NextResponse.json(
+        { error: "PAN-Aadhaar link status is required." },
+        { status: 400 }
+      );
+    }
+
+    if (vendor.gstin) {
+      if (!gstRegex.test(vendor.gstin)) {
+        return NextResponse.json(
+          { error: "Invalid GSTIN format." },
+          { status: 400 }
+        );
+      }
+
+      if (vendor.gstin.substring(2, 12) !== vendor.pan) {
+        return NextResponse.json(
+          { error: "GSTIN PAN does not match entered PAN." },
+          { status: 400 }
+        );
+      }
+    }
+
+    const firstContact = contacts[0];
+
+    if (!firstContact?.contact_name?.trim()) {
+      return NextResponse.json(
+        { error: "Primary contact name is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!firstContact?.contact_number?.trim()) {
+      return NextResponse.json(
+        { error: "Primary contact number is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!mobileRegex.test(firstContact.contact_number)) {
+      return NextResponse.json(
+        { error: "Primary contact number is invalid." },
+        { status: 400 }
+      );
+    }
+
+    const firstBank = bankAccounts[0];
+
+    if (!firstBank?.account_holder_name?.trim()) {
+      return NextResponse.json(
+        { error: "Bank account holder name is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!firstBank?.bank_name?.trim()) {
+      return NextResponse.json({ error: "Bank name is required." }, { status: 400 });
+    }
+
+    if (!firstBank?.account_number?.trim()) {
+      return NextResponse.json(
+        { error: "Bank account number is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!firstBank?.ifsc_code?.trim()) {
+      return NextResponse.json({ error: "IFSC is required." }, { status: 400 });
+    }
+
+    if (!ifscRegex.test(firstBank.ifsc_code)) {
+      return NextResponse.json(
+        { error: "Invalid IFSC format." },
+        { status: 400 }
+      );
+    }
+
+    if (!hasDocument("PAN")) {
+      return NextResponse.json({ error: "PAN copy is required." }, { status: 400 });
+    }
+
+    if (!hasDocument("AADHAAR_CIN")) {
+      return NextResponse.json(
+        { error: "Aadhaar / CIN copy is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!hasDocument("BANK_PROOF")) {
+      return NextResponse.json(
+        { error: "Cancelled cheque / bank proof is required." },
+        { status: 400 }
+      );
+    }
+
+    if (vendor.gstin && !hasDocument("GST_CERTIFICATE")) {
+      return NextResponse.json(
+        { error: "GST certificate is required when GSTIN is entered." },
+        { status: 400 }
+      );
+    }
+
+    if (
+      vendor.pan_aadhaar_link_status === "Yes" &&
+      !hasDocument("PAN_AADHAAR_ATTACHMENT")
+    ) {
+      return NextResponse.json(
+        { error: "PAN-Aadhaar Link Proof is required." },
+        { status: 400 }
+      );
+    }
+
+    if (vendor.msme_registered === "Yes") {
+      if (!vendor.msme_number?.trim()) {
+        return NextResponse.json(
+          { error: "MSME number is required." },
+          { status: 400 }
+        );
+      }
+
+      if (!hasDocument("MSME_CERTIFICATE")) {
+        return NextResponse.json(
+          { error: "MSME certificate is required." },
+          { status: 400 }
+        );
+      }
     }
 
     const duplicateConditions = [

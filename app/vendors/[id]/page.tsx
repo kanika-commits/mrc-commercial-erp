@@ -338,6 +338,555 @@ export default function VendorDetailPage() {
   if (!vendor) return <p className="text-red-600">Vendor not found.</p>;
 
   const complianceAlerts = buildComplianceAlerts(vendor, bankAccounts, documents);
+  const primaryBank =
+    bankAccounts.find((account) => account.is_primary) || bankAccounts[0];
+  const uniqueGstins = [
+    ...(vendor.gstin
+      ? [
+          {
+            id: "vendor-primary-gstin",
+            gstin: vendor.gstin,
+            state_code: vendor.gstin.slice(0, 2),
+            state_name: "",
+            is_primary: true,
+          },
+        ]
+      : []),
+    ...gstins.filter(
+      (gstin) => gstin.gstin && gstin.gstin !== vendor.gstin
+    ),
+  ];
+  const documentTypes = new Set(
+    documents.map((document) => document.document_type).filter(Boolean)
+  );
+  const complianceChecks = [
+    { label: "PAN", value: vendor.pan, complete: Boolean(vendor.pan) },
+    { label: "GSTIN", value: vendor.gstin, complete: Boolean(vendor.gstin) },
+    {
+      label: "Aadhaar/CIN",
+      value: vendor.aadhaar_cin,
+      complete: Boolean(vendor.aadhaar_cin),
+    },
+    {
+      label: "Primary Bank Account",
+      value: primaryBank?.bank_name
+        ? `${primaryBank.bank_name} (${maskAccount(primaryBank.account_number)})`
+        : "",
+      complete: Boolean(primaryBank),
+    },
+    {
+      label: "PAN-Aadhaar Link",
+      value: vendor.pan_aadhaar_link_status,
+      complete:
+        String(vendor.pan_aadhaar_link_status || "").toLowerCase() === "yes",
+    },
+    {
+      label: "PAN Copy",
+      value: documentTypes.has("PAN") ? "Uploaded" : "",
+      complete: documentTypes.has("PAN"),
+    },
+    {
+      label: "Bank Proof",
+      value: documentTypes.has("BANK_PROOF") ? "Uploaded" : "",
+      complete: documentTypes.has("BANK_PROOF"),
+    },
+  ];
+  const complianceScore = Math.round(
+    (complianceChecks.filter((item) => item.complete).length /
+      complianceChecks.length) *
+      100
+  );
+
+  return (
+    <section className="space-y-8">
+      <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <span>Master Setup</span>
+        <span>/</span>
+        <Link href="/vendors" className="text-slate-600 hover:text-slate-950">
+          Vendors
+        </Link>
+        <span>/</span>
+        <span className="text-blue-700">Detail</span>
+      </div>
+
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-5">
+          <div className="min-w-0">
+            <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+              <Building2 className="h-3.5 w-3.5" />
+              Vendor Master
+            </div>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-950 md:text-4xl">
+              {vendor.vendor_name}
+            </h1>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Badge>{vendor.status || "active"}</Badge>
+              <Badge>{vendor.vendor_type || "Vendor"}</Badge>
+              <Badge>{vendor.contractor_type || "Contractor Type -"}</Badge>
+              <Badge>PAN: {vendor.pan || "-"}</Badge>
+              <Badge>GSTIN: {vendor.gstin || "-"}</Badge>
+              <Badge>
+                PAN-Aadhaar: {vendor.pan_aadhaar_link_status || "-"}
+              </Badge>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            {canEdit && (
+              <Link
+                href={`/vendors/${vendorId}/edit`}
+                className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-50"
+              >
+                <Pencil className="h-4 w-4" />
+                Edit Vendor
+              </Link>
+            )}
+            <button
+              type="button"
+              onClick={downloadVendorLedger}
+              className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
+            >
+              <Download className="h-4 w-4" />
+              Download Ledger
+            </button>
+            <Link
+              href="/vendors"
+              className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold shadow-sm hover:bg-slate-50"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to Vendors
+            </Link>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+        <Summary title="WO Value" value={money(totals.totalWO)} />
+        <Summary title="RA Bills" value={money(totals.totalRA)} />
+        <Summary title="Invoices" value={money(totals.totalInvoices)} />
+        <Summary title="Payments" value={money(totals.totalPayments)} />
+        <Summary title="Debit Notes" value={money(totals.totalDebitNotes)} />
+        <Summary title="Outstanding" value={money(totals.outstanding)} />
+      </div>
+
+      <div className="grid grid-cols-12 gap-6 items-start">
+        <div className="col-span-12 space-y-6 xl:col-span-8">
+          <VendorCard title="Basic Information" icon={<Building2 className="h-5 w-5" />}>
+            <div className="grid gap-x-8 gap-y-6 md:grid-cols-2 lg:grid-cols-3">
+              <Info label="Vendor Name" value={vendor.vendor_name} />
+              <Info label="Vendor Type" value={vendor.vendor_type} />
+              <Info label="Contractor Type" value={vendor.contractor_type} />
+              <Info label="PAN" value={vendor.pan} />
+              <Info label="Aadhaar/CIN" value={vendor.aadhaar_cin} />
+              <Info label="GSTIN" value={vendor.gstin} />
+              <Info
+                label="PAN-Aadhaar Link Status"
+                value={vendor.pan_aadhaar_link_status}
+              />
+              <Info
+                label="MSME Registered"
+                value={vendor.msme_registered ? "Yes" : "No"}
+              />
+              <Info label="MSME Number" value={vendor.msme_number} />
+              <Info label="MSME Category" value={vendor.msme_category} />
+              <Info label="Status" value={vendor.status} />
+            </div>
+          </VendorCard>
+
+          <VendorCard
+            title="Tax & Compliance"
+            icon={<CheckCircle2 className="h-5 w-5" />}
+          >
+            <div className="grid gap-4 md:grid-cols-2">
+              {complianceChecks.slice(0, 4).map((item) => (
+                <div
+                  key={item.label}
+                  className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4"
+                >
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      {item.label}
+                    </p>
+                    <p className="mt-1 truncate font-semibold text-slate-950">
+                      {item.value || "-"}
+                    </p>
+                  </div>
+                  {item.complete ? (
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      Verified
+                    </span>
+                  ) : (
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      Missing
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </VendorCard>
+
+          <VendorCard title="GST Details" icon={<FileText className="h-5 w-5" />}>
+            {uniqueGstins.length === 0 ? (
+              <EmptyState message="No GST details added." />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[720px] text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-4 py-3 text-left">GSTIN</th>
+                      <th className="px-4 py-3 text-left">State Code</th>
+                      <th className="px-4 py-3 text-left">State</th>
+                      <th className="px-4 py-3 text-left">Type</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {uniqueGstins.map((gstin) => (
+                      <tr key={gstin.id || gstin.gstin} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 font-semibold text-slate-950">
+                          {gstin.gstin || "-"}
+                        </td>
+                        <td className="px-4 py-3 text-slate-700">
+                          {gstin.state_code || gstin.gstin?.slice(0, 2) || "-"}
+                        </td>
+                        <td className="px-4 py-3 text-slate-700">
+                          {gstin.state_name || "-"}
+                        </td>
+                        <td className="px-4 py-3">
+                          {gstin.is_primary ? <Badge>Primary GSTIN</Badge> : "-"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </VendorCard>
+
+          <VendorCard
+            title="Document Repository"
+            icon={<FileText className="h-5 w-5" />}
+          >
+            {documents.length === 0 ? (
+              <EmptyState message="No documents uploaded." />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[900px] text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-4 py-3 text-left">Document</th>
+                      <th className="px-4 py-3 text-left">Linked Number</th>
+                      <th className="px-4 py-3 text-left">Uploaded</th>
+                      <th className="px-4 py-3 text-left">Status</th>
+                      <th className="px-4 py-3 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {documents.map((document) => (
+                      <tr key={document.id} className="hover:bg-slate-50">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-700">
+                              <FileText className="h-4 w-4" />
+                            </div>
+                            <div>
+                              <p className="font-semibold text-slate-950">
+                                {formatDocumentType(document.document_type)}
+                              </p>
+                              <p className="text-xs text-slate-500">
+                                {document.file_name || "-"}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-slate-700">
+                          {getDocumentDisplayNumber(
+                            document,
+                            vendor,
+                            gstins,
+                            bankAccounts
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-slate-700">
+                          {formatDateTime(document.uploaded_at)}
+                        </td>
+                        <td className="px-4 py-3">
+                          {document.is_verified ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              Verified
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                              <AlertTriangle className="h-3.5 w-3.5" />
+                              Pending
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            type="button"
+                            disabled={!document.file_url}
+                            onClick={() => openVendorDocument(document)}
+                            className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                            View
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </VendorCard>
+
+          <VendorCard title="Commercial Ledger">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[950px] text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3 text-left">Date</th>
+                    <th className="px-4 py-3 text-left">Type</th>
+                    <th className="px-4 py-3 text-left">WO Number</th>
+                    <th className="px-4 py-3 text-left">Reference</th>
+                    <th className="px-4 py-3 text-right">Debit</th>
+                    <th className="px-4 py-3 text-right">Credit</th>
+                    <th className="px-4 py-3 text-right">Balance</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {ledgerRows.map((row, index) => (
+                    <tr key={index} className="hover:bg-slate-50">
+                      <td className="px-4 py-3">
+                        {row.date ? String(row.date).slice(0, 10) : "-"}
+                      </td>
+                      <td className="px-4 py-3">{row.type}</td>
+                      <td className="px-4 py-3">{row.woNumber || "-"}</td>
+                      <td className="px-4 py-3 font-semibold">
+                        {row.reference || "-"}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {row.debit ? money(row.debit) : "-"}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {row.credit ? money(row.credit) : "-"}
+                      </td>
+                      <td className="px-4 py-3 text-right font-semibold">
+                        {money(row.balance)}
+                      </td>
+                    </tr>
+                  ))}
+                  {ledgerRows.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-slate-500">
+                        No ledger transactions found.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </VendorCard>
+
+          <SimpleTable
+            title="Work Orders"
+            columns={["WO No", "Date", "Value", "Status", "Approval"]}
+            rows={workOrders.map((wo) => [
+              wo.wo_number || "-",
+              wo.wo_date || "-",
+              money(wo.wo_value),
+              wo.status || "-",
+              wo.approval_status || "-",
+            ])}
+          />
+          <SimpleTable
+            title="RA Bills"
+            columns={["RA No", "Date", "Gross", "GST", "Net", "Approval"]}
+            rows={raBills.map((bill) => [
+              bill.ra_number || "-",
+              bill.ra_date || "-",
+              money(bill.gross_amount),
+              money(bill.gst_amount),
+              money(bill.net_amount),
+              bill.approval_status || "-",
+            ])}
+          />
+          <SimpleTable
+            title="Invoices"
+            columns={["Invoice No", "Date", "Taxable", "GST", "Total", "ITC"]}
+            rows={invoices.map((invoice) => [
+              invoice.invoice_number || "-",
+              invoice.invoice_date || "-",
+              money(invoice.taxable_amount),
+              money(invoice.gst_amount),
+              money(invoice.invoice_amount),
+              invoice.itc_status || "Pending",
+            ])}
+          />
+          <SimpleTable
+            title="Payments"
+            columns={["Date", "Type", "Reference", "Total", "TDS", "Transferred"]}
+            rows={payments.map((payment) => [
+              payment.payment_date || "-",
+              payment.payment_type || "-",
+              payment.reference_number || "-",
+              money(payment.total_payment),
+              money(payment.tds_amount),
+              money(payment.transferred_amount || payment.payment_amount),
+            ])}
+          />
+          <SimpleTable
+            title="Debit Notes"
+            columns={["DN No", "Date", "Type", "Amount", "Reason", "Approval"]}
+            rows={debitNotes.map((note) => [
+              note.debit_note_number || "-",
+              note.debit_note_date || "-",
+              note.debit_note_type || "-",
+              money(note.total_amount),
+              note.reason || "-",
+              note.approval_status || "-",
+            ])}
+          />
+        </div>
+
+        <aside className="col-span-12 space-y-6 xl:col-span-4">
+          <section className="rounded-3xl bg-slate-950 p-6 text-white shadow-sm">
+            <div className="mb-5 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Compliance Health
+                </p>
+                <p className="mt-1 text-3xl font-bold">{complianceScore}%</p>
+              </div>
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-400/15 text-blue-200">
+                <CheckCircle2 className="h-5 w-5" />
+              </div>
+            </div>
+            <div className="space-y-3">
+              {complianceChecks.map((item) => (
+                <div
+                  key={item.label}
+                  className="flex items-center justify-between gap-3 border-b border-white/10 pb-3 last:border-0 last:pb-0"
+                >
+                  <div>
+                    <p className="text-sm font-medium">{item.label}</p>
+                    <p className="text-xs text-slate-400">{item.value || "-"}</p>
+                  </div>
+                  <span
+                    className={`rounded-full px-2 py-1 text-xs font-semibold ${
+                      item.complete
+                        ? "bg-emerald-400/15 text-emerald-200"
+                        : "bg-amber-400/15 text-amber-200"
+                    }`}
+                  >
+                    {item.complete ? "Ready" : "Pending"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <VendorCard title="Contact Persons" icon={<Phone className="h-5 w-5" />}>
+            {contacts.length === 0 ? (
+              <EmptyState message="No contact persons added." />
+            ) : (
+              <div className="space-y-3">
+                {contacts.map((contact) => (
+                  <div
+                    key={contact.id}
+                    className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-100 text-sm font-bold text-blue-800">
+                        {getInitials(contact.contact_name)}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-semibold text-slate-950">
+                            {contact.contact_name || "-"}
+                          </p>
+                          {contact.is_primary && <Badge>Primary</Badge>}
+                        </div>
+                        <p className="text-sm text-slate-500">
+                          {contact.designation || "Contact person"}
+                        </p>
+                        <div className="mt-3 space-y-1 text-sm text-slate-600">
+                          <p>{contact.contact_number || "-"}</p>
+                          <p className="break-all">{contact.email || "-"}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </VendorCard>
+
+          <VendorCard title="Bank Accounts" icon={<Landmark className="h-5 w-5" />}>
+            {bankAccounts.length === 0 ? (
+              <EmptyState message="No bank accounts added." />
+            ) : (
+              <div className="space-y-3">
+                {bankAccounts.map((account) => (
+                  <div
+                    key={account.id}
+                    className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4"
+                  >
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-slate-950">
+                          {account.bank_name || "Bank account"}
+                        </p>
+                        <p className="text-sm text-slate-500">
+                          {account.account_holder_name || "-"}
+                        </p>
+                      </div>
+                      {account.is_primary && <Badge>Primary</Badge>}
+                    </div>
+                    <div className="grid gap-3 text-sm">
+                      <Info
+                        label="Account Number"
+                        value={maskAccount(account.account_number)}
+                      />
+                      <Info label="IFSC" value={account.ifsc_code} />
+                      <Info label="Branch" value={account.branch_name} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </VendorCard>
+
+          <VendorCard
+            title="Compliance Alerts"
+            icon={<AlertTriangle className="h-5 w-5" />}
+          >
+            {complianceAlerts.length === 0 ? (
+              <div className="flex items-center gap-2 rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-sm font-medium text-emerald-700">
+                <CheckCircle2 className="h-4 w-4" />
+                No compliance alerts.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {complianceAlerts.map((alert) => (
+                  <div
+                    key={alert}
+                    className="flex items-start gap-2 rounded-2xl border border-amber-100 bg-amber-50 p-4 text-sm text-amber-800"
+                  >
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    {alert}
+                  </div>
+                ))}
+              </div>
+            )}
+          </VendorCard>
+        </aside>
+      </div>
+    </section>
+  );
 
   return (
     <section className="space-y-6">
@@ -759,13 +1308,48 @@ export default function VendorDetailPage() {
   );
 }
 
+function VendorCard({
+  title,
+  icon,
+  children,
+}: {
+  title: string;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-5 py-4">
+        <div className="flex items-center gap-2 text-slate-950">
+          {icon && <span className="text-blue-700">{icon}</span>}
+          <h2 className="text-lg font-semibold">{title}</h2>
+        </div>
+      </div>
+      <div className="p-5">{children}</div>
+    </section>
+  );
+}
+
+function getInitials(value: string | null) {
+  if (!value) return "V";
+  return value
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join("")
+    .toUpperCase();
+}
+
 function Summary({ title, value }: { title: string; value: string }) {
   return (
-    <div className="rounded-2xl border bg-white p-5 shadow-sm">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+    <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
         {title}
       </p>
-      <p className="mt-2 text-lg font-bold text-slate-950">{value}</p>
+      <p className="mt-3 text-xl font-bold text-slate-950">{value}</p>
+      <div className="absolute inset-x-0 bottom-0 h-1 origin-left scale-x-0 bg-blue-700 transition-transform group-hover:scale-x-100" />
     </div>
   );
 }
@@ -793,7 +1377,7 @@ function Badge({ children }: { children: React.ReactNode }) {
 
 function EmptyState({ message }: { message: string }) {
   return (
-    <div className="rounded-xl border border-dashed p-6 text-center text-sm text-slate-500">
+    <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 p-6 text-center text-sm text-slate-500">
       {message}
     </div>
   );
