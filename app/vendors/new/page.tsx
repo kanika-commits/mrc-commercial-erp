@@ -23,11 +23,6 @@ type FileKey =
   | "ADDITIONAL_DOCUMENT";
 
 export default function NewVendorPage() {
-    console.log("SUPABASE URL:", process.env.NEXT_PUBLIC_SUPABASE_URL);
-console.log(
-  "SUPABASE KEY:",
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.substring(0, 20)
-);
   const router = useRouter();
 
   const [saving, setSaving] = useState(false);
@@ -150,8 +145,8 @@ console.log(
 if (!files.AADHAAR_CIN)
   newErrors.AADHAAR_CIN = "Aadhaar / CIN copy is required.";
 
-if (!files.PAN_AADHAAR_ATTACHMENT)
-  newErrors.PAN_AADHAAR_ATTACHMENT = "PAN-Aadhaar proof is required.";
+if (form.pan_aadhaar_link_status === "Yes" && !files.PAN_AADHAAR_ATTACHMENT)
+  newErrors.PAN_AADHAAR_ATTACHMENT = "PAN-Aadhaar Link Proof is required.";
 
 if (!files.BANK_PROOF)
   newErrors.BANK_PROOF = "Cancelled cheque / bank proof is required.";
@@ -227,30 +222,6 @@ if (form.gstin && !files.GST_CERTIFICATE) {
     }));
   }
 
-  async function uploadDocument(
-    organizationId: string,
-    vendorId: string,
-    documentType: FileKey,
-    file: File
-  ) {
-    const safeName = file.name.replace(/[^a-zA-Z0-9.]/g, "_");
-    const path = `${organizationId}/${vendorId}/${documentType}_${Date.now()}_${safeName}`;
-
-    const { error: uploadError } = await supabase.storage
-      .from("Vendor-Documents")
-      .upload(path, file);
-
-    if (uploadError) throw uploadError;
-
-    return {
-      organization_id: organizationId,
-      vendor_id: vendorId,
-      document_type: documentType,
-      file_name: file.name,
-      file_url: path,
-    };
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setMessage("");
@@ -263,111 +234,53 @@ if (form.gstin && !files.GST_CERTIFICATE) {
     try {
       setSaving(true);
 
-    const organizationId =
-  "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
-  const duplicateConditions = [
-  `pan.eq.${form.pan}`,
-  `aadhaar_cin.eq.${form.aadhaar_cin}`,
-];
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-if (form.gstin) {
-  duplicateConditions.push(`gstin.eq.${form.gstin}`);
-}
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
 
-const { data: duplicateVendor, error: duplicateError } = await supabase
-  .from("vendors")
-  .select("id, vendor_name, pan, aadhaar_cin, gstin")
-  .eq("organization_id", organizationId)
-  .or(duplicateConditions.join(","))
-  .limit(1)
-  .maybeSingle();
+      const payload = new FormData();
 
-if (duplicateError) throw duplicateError;
-
-if (duplicateVendor) {
-  throw new Error(
-    `Vendor already exists with same PAN / Aadhaar-CIN / GSTIN: ${duplicateVendor.vendor_name}`
-  );
-}
-
-      const { data: vendor, error: vendorError } = await supabase
-        .from("vendors")
-        .insert({
-          organization_id: organizationId,
-          vendor_name: form.vendor_name.trim(),
-          vendor_type: form.vendor_type,
-          contractor_type: form.contractor_type,
-          status: form.status,
-          pan: form.pan,
-          aadhaar_cin: form.aadhaar_cin,
-          gstin: form.gstin || null,
-          pan_aadhaar_link_status: form.pan_aadhaar_link_status,
-          msme_registered: form.msme_registered === "Yes",
-          msme_number: form.msme_registered === "Yes" ? form.msme_number : null,
-          msme_category:
-            form.msme_registered === "Yes" ? form.msme_category : null,
-        })
-        .select("id")
-        .single();
-
-      if (vendorError) throw vendorError;
-
-      const vendorId = vendor.id;
-
-      const contactRows = contacts.map((contact) => ({
-        organization_id: organizationId,
-        vendor_id: vendorId,
-        contact_name: contact.contact_name.trim(),
-        contact_number: contact.contact_number.trim(),
-        email: contact.email.trim() || null,
-        designation: contact.designation.trim() || null,
-        is_primary: contact.is_primary,
-      }));
-
-      const { error: contactError } = await supabase
-        .from("vendor_contacts")
-        .insert(contactRows);
-
-      if (contactError) throw contactError;
-
-      const { error: bankError } = await supabase
-        .from("vendor_bank_accounts")
-        .insert({
-          organization_id: organizationId,
-          vendor_id: vendorId,
-          account_holder_name: form.account_holder_name.trim(),
-          account_number: form.account_number.trim(),
-          ifsc_code: form.ifsc_code.trim(),
-          bank_name: form.bank_name.trim(),
-          branch_name: form.branch_name.trim() || null,
-          is_primary: true,
-        });
-
-      if (bankError) throw bankError;
-
-      const documentRows = [];
+      payload.append("vendor", JSON.stringify(form));
+      payload.append("contacts", JSON.stringify(contacts));
+      payload.append(
+        "bank_accounts",
+        JSON.stringify([
+          {
+            account_holder_name: form.account_holder_name,
+            account_number: form.account_number,
+            ifsc_code: form.ifsc_code,
+            bank_name: form.bank_name,
+            branch_name: form.branch_name,
+            is_primary: true,
+          },
+        ])
+      );
 
       for (const [documentType, file] of Object.entries(files) as [
         FileKey,
         File | null
       ][]) {
         if (file) {
-          const uploaded = await uploadDocument(
-            organizationId,
-            vendorId,
-            documentType,
-            file
-          );
-          documentRows.push(uploaded);
+          payload.append(`document:${documentType}`, file);
         }
       }
 
-      if (documentRows.length > 0) {
-        const { error: documentError } = await supabase
-          .from("vendor_documents")
-          .insert(documentRows);
+      const response = await fetch("/api/vendors", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: payload,
+      });
 
-        if (documentError) throw documentError;
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Something went wrong while saving vendor.");
       }
 
       router.push("/vendors");
@@ -712,7 +625,7 @@ if (duplicateVendor) {
   ["PAN", "PAN Copy *"],
   ["AADHAAR_CIN", "Aadhaar / CIN Copy *"],
   ["GST_CERTIFICATE", "GST Certificate"],
-  ["PAN_AADHAAR_ATTACHMENT", "PAN-Aadhaar Proof *"],
+  ["PAN_AADHAAR_ATTACHMENT", "PAN-Aadhaar Link Proof *"],
   ["MSME_CERTIFICATE", "MSME Certificate"],
   ["BANK_PROOF", "Cancelled Cheque / Bank Proof *"],
   ["ADDITIONAL_DOCUMENT", "Additional Documents"],

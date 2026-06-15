@@ -3,7 +3,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Building2, Download, Pencil } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Building2,
+  CheckCircle2,
+  Download,
+  ExternalLink,
+  FileText,
+  Landmark,
+  Pencil,
+  Phone,
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { getCurrentUserAccess, can } from "@/lib/accessControl";
 
@@ -16,6 +27,10 @@ export default function VendorDetailPage() {
   const vendorId = params.id as string;
 
   const [vendor, setVendor] = useState<any>(null);
+  const [contacts, setContacts] = useState<any[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<any[]>([]);
+  const [documents, setDocuments] = useState<any[]>([]);
+  const [gstins, setGstins] = useState<any[]>([]);
   const [workOrders, setWorkOrders] = useState<any[]>([]);
   const [raBills, setRaBills] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -33,14 +48,30 @@ export default function VendorDetailPage() {
       const access = await getCurrentUserAccess();
       setCanEdit(can(access.permissions, "vendors", "edit"));
 
-      const { data: vendorData, error: vendorError } = await supabase
-        .from("vendors")
-        .select("*")
-        .eq("id", vendorId)
-        .single();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (vendorError) throw vendorError;
-      setVendor(vendorData);
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const vendorResponse = await fetch(`/api/vendors/${vendorId}`, {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+      const vendorResult = await vendorResponse.json();
+
+      if (!vendorResponse.ok) {
+        throw new Error(vendorResult.error || "Failed to load vendor master.");
+      }
+
+      setVendor(vendorResult.vendor);
+      setContacts(vendorResult.contacts || []);
+      setBankAccounts(vendorResult.bankAccounts || []);
+      setDocuments(vendorResult.documents || []);
+      setGstins(vendorResult.gstins || []);
 
       const { data: woLinkData, error: woLinkError } = await supabase
         .from("work_order_vendors")
@@ -255,6 +286,43 @@ export default function VendorDetailPage() {
     URL.revokeObjectURL(url);
   }
 
+  async function openVendorDocument(document: any) {
+    if (!document.id) {
+      alert("Document id is missing.");
+      return;
+    }
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      alert("Your session expired. Please log in again.");
+      return;
+    }
+
+    const response = await fetch(`/api/vendors/${vendorId}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ document_id: document.id }),
+    });
+    const result = await response.json();
+
+    if (!response.ok || !result.signedUrl) {
+      console.error("Vendor document open failed", {
+        document,
+        error: result.error,
+      });
+      alert(result.error || "Unable to open this document.");
+      return;
+    }
+
+    window.open(result.signedUrl, "_blank", "noopener,noreferrer");
+  }
+
   if (loading) {
     return <p className="text-sm text-slate-500">Loading vendor ledger...</p>;
   }
@@ -269,23 +337,28 @@ export default function VendorDetailPage() {
 
   if (!vendor) return <p className="text-red-600">Vendor not found.</p>;
 
+  const complianceAlerts = buildComplianceAlerts(vendor, bankAccounts, documents);
+
   return (
     <section className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
             <Building2 className="h-3.5 w-3.5" />
-            Vendor Ledger
+            Vendor Master
           </div>
 
           <h1 className="text-3xl font-bold text-slate-950">
             {vendor.vendor_name}
           </h1>
 
-          <p className="mt-1 text-sm text-slate-500">
-            PAN: {vendor.pan || "-"} · GSTIN: {vendor.gstin || "-"} · Status:{" "}
-            {vendor.status || "-"}
-          </p>
+          <div className="mt-3 flex flex-wrap gap-2 text-xs">
+            <Badge>{vendor.status || "active"}</Badge>
+            <Badge>{vendor.vendor_type || "Vendor"}</Badge>
+            <Badge>PAN: {vendor.pan || "-"}</Badge>
+            <Badge>GSTIN: {vendor.gstin || "-"}</Badge>
+            <Badge>PAN-Aadhaar: {vendor.pan_aadhaar_link_status || "-"}</Badge>
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-3">
@@ -326,6 +399,246 @@ export default function VendorDetailPage() {
         <Summary title="Debit Notes" value={money(totals.totalDebitNotes)} />
         <Summary title="Outstanding" value={money(totals.outstanding)} />
       </div>
+
+      <section className="rounded-2xl border bg-white p-6 shadow-sm">
+        <h2 className="mb-4 text-xl font-semibold text-slate-950">
+          Basic Information
+        </h2>
+        <div className="grid gap-4 md:grid-cols-3">
+          <Info label="Vendor Name" value={vendor.vendor_name} />
+          <Info label="Vendor Type" value={vendor.vendor_type} />
+          <Info label="Contractor Type" value={vendor.contractor_type} />
+          <Info label="PAN" value={vendor.pan} />
+          <Info label="Aadhaar/CIN" value={vendor.aadhaar_cin} />
+          <Info label="GSTIN" value={vendor.gstin} />
+          <Info
+            label="PAN-Aadhaar Link Status"
+            value={vendor.pan_aadhaar_link_status}
+          />
+          <Info
+            label="MSME Registered"
+            value={vendor.msme_registered ? "Yes" : "No"}
+          />
+          <Info label="MSME Number" value={vendor.msme_number} />
+          <Info label="MSME Category" value={vendor.msme_category} />
+          <Info label="Status" value={vendor.status} />
+        </div>
+      </section>
+
+      <section className="rounded-2xl border bg-white p-6 shadow-sm">
+        <div className="mb-4 flex items-center gap-2">
+          <Phone className="h-5 w-5 text-slate-500" />
+          <h2 className="text-xl font-semibold text-slate-950">
+            Contact Persons
+          </h2>
+        </div>
+
+        {contacts.length === 0 ? (
+          <EmptyState message="No contacts added." />
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2">
+            {contacts.map((contact) => (
+              <div key={contact.id} className="rounded-xl border p-4">
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-slate-950">
+                      {contact.contact_name || "-"}
+                    </p>
+                    <p className="text-sm text-slate-500">
+                      {contact.designation || "Contact person"}
+                    </p>
+                  </div>
+                  {contact.is_primary && <Badge>Primary</Badge>}
+                </div>
+                <div className="grid gap-3 text-sm md:grid-cols-2">
+                  <Info label="Mobile" value={contact.contact_number} />
+                  <Info label="Email" value={contact.email} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-2xl border bg-white p-6 shadow-sm">
+        <h2 className="mb-4 text-xl font-semibold text-slate-950">
+          GST Details
+        </h2>
+
+        {!vendor.gstin && gstins.length === 0 ? (
+          <EmptyState message="No GST details added." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] text-sm">
+              <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                <tr>
+                  <th className="p-3 text-left">GSTIN</th>
+                  <th className="p-3 text-left">State Code</th>
+                  <th className="p-3 text-left">State</th>
+                  <th className="p-3 text-left">Type</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vendor.gstin && (
+                  <tr className="border-t">
+                    <td className="p-3 font-medium">{vendor.gstin}</td>
+                    <td className="p-3">{vendor.gstin.slice(0, 2)}</td>
+                    <td className="p-3">-</td>
+                    <td className="p-3">
+                      <Badge>Primary GSTIN</Badge>
+                    </td>
+                  </tr>
+                )}
+                {gstins
+                  .filter((gstin) => gstin.gstin && gstin.gstin !== vendor.gstin)
+                  .map((gstin) => (
+                  <tr key={gstin.id} className="border-t">
+                    <td className="p-3 font-medium">{gstin.gstin || "-"}</td>
+                    <td className="p-3">{gstin.state_code || "-"}</td>
+                    <td className="p-3">{gstin.state_name || "-"}</td>
+                    <td className="p-3">
+                      {gstin.is_primary ? <Badge>Primary</Badge> : "-"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-2xl border bg-white p-6 shadow-sm">
+        <div className="mb-4 flex items-center gap-2">
+          <Landmark className="h-5 w-5 text-slate-500" />
+          <h2 className="text-xl font-semibold text-slate-950">
+            Bank Accounts
+          </h2>
+        </div>
+
+        {bankAccounts.length === 0 ? (
+          <EmptyState message="No bank accounts added." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] text-sm">
+              <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                <tr>
+                  <th className="p-3 text-left">Account Holder</th>
+                  <th className="p-3 text-left">Account Number</th>
+                  <th className="p-3 text-left">IFSC</th>
+                  <th className="p-3 text-left">Bank</th>
+                  <th className="p-3 text-left">Branch</th>
+                  <th className="p-3 text-left">Type</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bankAccounts.map((account) => (
+                  <tr key={account.id} className="border-t">
+                    <td className="p-3 font-medium">
+                      {account.account_holder_name || "-"}
+                    </td>
+                    <td className="p-3">{maskAccount(account.account_number)}</td>
+                    <td className="p-3">{account.ifsc_code || "-"}</td>
+                    <td className="p-3">{account.bank_name || "-"}</td>
+                    <td className="p-3">{account.branch_name || "-"}</td>
+                    <td className="p-3">
+                      {account.is_primary ? <Badge>Primary</Badge> : "-"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-2xl border bg-white p-6 shadow-sm">
+        <div className="mb-4 flex items-center gap-2">
+          <FileText className="h-5 w-5 text-slate-500" />
+          <h2 className="text-xl font-semibold text-slate-950">
+            Documents & Attachments
+          </h2>
+        </div>
+
+        {documents.length === 0 ? (
+          <EmptyState message="No documents uploaded." />
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2">
+                {documents.map((document) => (
+              <div
+                key={document.id}
+                className="flex items-start justify-between gap-4 rounded-xl border p-4"
+              >
+                <div>
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <Badge>{formatDocumentType(document.document_type)}</Badge>
+                    {document.is_verified ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Verified
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        Pending
+                      </span>
+                    )}
+                  </div>
+                  <p className="font-medium text-slate-950">
+                    {document.file_name || "-"}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Linked Number:{" "}
+                    {getDocumentDisplayNumber(
+                      document,
+                      vendor,
+                      gstins,
+                      bankAccounts
+                    )}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Uploaded: {formatDateTime(document.uploaded_at)}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={!document.file_url}
+                  onClick={() => openVendorDocument(document)}
+                  className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Open
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-2xl border bg-white p-6 shadow-sm">
+        <h2 className="mb-4 text-xl font-semibold text-slate-950">
+          Compliance Alerts
+        </h2>
+
+        {complianceAlerts.length === 0 ? (
+          <div className="flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-700">
+            <CheckCircle2 className="h-4 w-4" />
+            No compliance alerts.
+          </div>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-2">
+            {complianceAlerts.map((alert) => (
+              <div
+                key={alert}
+                className="flex items-center gap-2 rounded-xl border border-amber-100 bg-amber-50 p-4 text-sm text-amber-800"
+              >
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                {alert}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       <section className="rounded-2xl border bg-white p-6 shadow-sm">
         <h2 className="mb-4 text-xl font-semibold text-slate-950">
@@ -455,6 +768,141 @@ function Summary({ title, value }: { title: string; value: string }) {
       <p className="mt-2 text-lg font-bold text-slate-950">{value}</p>
     </div>
   );
+}
+
+function Info({ label, value }: { label: string; value: any }) {
+  return (
+    <div>
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+        {label}
+      </p>
+      <p className="mt-1 font-medium text-slate-950">
+        {value === null || value === undefined || value === "" ? "-" : String(value)}
+      </p>
+    </div>
+  );
+}
+
+function Badge({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
+      {children}
+    </span>
+  );
+}
+
+function EmptyState({ message }: { message: string }) {
+  return (
+    <div className="rounded-xl border border-dashed p-6 text-center text-sm text-slate-500">
+      {message}
+    </div>
+  );
+}
+
+function maskAccount(value: string | null) {
+  if (!value) return "-";
+  const last4 = value.slice(-4);
+  return `•••• •••• ${last4}`;
+}
+
+function formatDateTime(value: string | null) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatDocumentType(value: string | null) {
+  if (!value) return "Document";
+
+  const labels: Record<string, string> = {
+    PAN: "PAN",
+    AADHAAR_CIN: "Aadhaar/CIN",
+    GST_CERTIFICATE: "GST Certificate",
+    PAN_AADHAAR_ATTACHMENT: "PAN-Aadhaar Link Proof",
+    MSME_CERTIFICATE: "MSME Certificate",
+    BANK_PROOF: "Bank Proof",
+    ADDITIONAL_DOCUMENT: "Additional Document",
+  };
+
+  return labels[value] || value.replace(/_/g, " ");
+}
+
+function getDocumentDisplayNumber(
+  document: any,
+  vendor: any,
+  gstins: any[],
+  bankAccounts: any[]
+) {
+  if (document.document_number) return document.document_number;
+
+  const primaryGstin =
+    gstins.find((gstin) => gstin.is_primary)?.gstin ||
+    gstins.find((gstin) => gstin.gstin)?.gstin ||
+    vendor?.gstin;
+  const primaryBank =
+    bankAccounts.find((account) => account.is_primary) || bankAccounts[0];
+
+  switch (document.document_type) {
+    case "PAN":
+      return vendor?.pan || "-";
+    case "AADHAAR_CIN":
+      return vendor?.aadhaar_cin || "-";
+    case "GST_CERTIFICATE":
+      return primaryGstin || "-";
+    case "PAN_AADHAAR_ATTACHMENT":
+      return [vendor?.pan, vendor?.pan_aadhaar_link_status]
+        .filter(Boolean)
+        .join(" / ") || "-";
+    case "MSME_CERTIFICATE":
+      return vendor?.msme_number || "-";
+    case "BANK_PROOF":
+      return primaryBank?.account_number
+        ? `Account ending ${primaryBank.account_number.slice(-4)}`
+        : "-";
+    case "ADDITIONAL_DOCUMENT":
+      return document.remarks || "-";
+    default:
+      return "-";
+  }
+}
+
+function buildComplianceAlerts(vendor: any, bankAccounts: any[], documents: any[]) {
+  const alerts: string[] = [];
+  const documentTypes = new Set(
+    documents.map((document) => document.document_type).filter(Boolean)
+  );
+
+  if (String(vendor.pan_aadhaar_link_status || "").toLowerCase() !== "yes") {
+    alerts.push("PAN-Aadhaar is not verified.");
+  }
+
+  if (!vendor.pan) alerts.push("PAN is missing.");
+  if (!vendor.gstin) alerts.push("GSTIN is missing.");
+  if (bankAccounts.length === 0) alerts.push("Bank account is missing.");
+
+  [
+    ["PAN", "PAN copy is missing."],
+    ["AADHAAR_CIN", "Aadhaar/CIN copy is missing."],
+    ["PAN_AADHAAR_ATTACHMENT", "PAN-Aadhaar Link Proof is missing."],
+    ["BANK_PROOF", "Bank proof / cancelled cheque is missing."],
+  ].forEach(([type, message]) => {
+    if (!documentTypes.has(type)) alerts.push(message);
+  });
+
+  if (vendor.gstin && !documentTypes.has("GST_CERTIFICATE")) {
+    alerts.push("GST certificate is missing.");
+  }
+
+  if (vendor.msme_registered && !documentTypes.has("MSME_CERTIFICATE")) {
+    alerts.push("MSME certificate is missing.");
+  }
+
+  return alerts;
 }
 
 function SimpleTable({
