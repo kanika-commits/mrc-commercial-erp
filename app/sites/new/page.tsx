@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -13,17 +13,9 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
-type Company = {
-  id: string;
-  company_name: string;
-  company_code: string;
-};
-
 export default function NewSitePage() {
   const router = useRouter();
 
-  const [companies, setCompanies] = useState<Company[]>([]);
-  const [companyId, setCompanyId] = useState("");
   const [siteName, setSiteName] = useState("");
   const [siteCode, setSiteCode] = useState("");
   const [location, setLocation] = useState("");
@@ -32,32 +24,8 @@ export default function NewSitePage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
 
-  async function loadCompanies() {
-    const { data, error } = await supabase
-      .from("companies")
-      .select("id, company_name, company_code")
-      .eq("status", "active")
-      .order("company_name");
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setCompanies(data || []);
-  }
-
-  useEffect(() => {
-    loadCompanies();
-  }, []);
-
   async function saveSite() {
     setMessage("");
-
-    if (!companyId) {
-      setMessage("Company is required.");
-      return;
-    }
 
     if (!siteName.trim()) {
       setMessage("Site name is required.");
@@ -76,7 +44,6 @@ export default function NewSitePage() {
 
       const { error } = await supabase.from("sites").insert({
         organization_id: organizationId,
-        company_id: companyId,
         site_name: siteName.trim(),
         site_code: siteCode.trim(),
         location: location.trim() || null,
@@ -137,32 +104,6 @@ export default function NewSitePage() {
             </div>
 
             <div className="space-y-6 p-6">
-              <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-3">
-                <label className="mt-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-                  Company
-                </label>
-                <div className="md:col-span-2">
-                  <select
-                    value={companyId}
-                    onChange={(e) => setCompanyId(e.target.value)}
-                    className="w-full rounded border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-900 focus:ring-0"
-                  >
-                    <option value="">Select Company</option>
-                    {companies.map((company) => (
-                      <option key={company.id} value={company.id}>
-                        {company.company_name} - {company.company_code}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-2 text-xs leading-5 text-slate-500">
-                    Link this site to a registered company for reporting and
-                    access control.
-                  </p>
-                </div>
-              </div>
-
-              <hr className="border-slate-200" />
-
               <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-3">
                 <label className="mt-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
                   Identification
@@ -274,15 +215,11 @@ export default function NewSitePage() {
                 <span className="text-sm font-bold text-black">
                   {
                     [
-                      companyId,
-                      siteName.trim(),
-                      siteCode.trim(),
-                      location.trim(),
-                      state.trim(),
-                      status,
+                      siteName.trim() && siteCode.trim(),
+                      location.trim() || state.trim(),
                     ].filter(Boolean).length
                   }
-                  /6
+                  /2
                 </span>
               </div>
               <div className="mb-4 h-1.5 overflow-hidden rounded-full bg-slate-100">
@@ -291,23 +228,16 @@ export default function NewSitePage() {
                   style={{
                     width: `${
                       ([
-                        companyId,
-                        siteName.trim(),
-                        siteCode.trim(),
-                        location.trim(),
-                        state.trim(),
-                        status,
+                        siteName.trim() && siteCode.trim(),
+                        location.trim() || state.trim(),
                       ].filter(Boolean).length /
-                        6) *
+                        2) *
                       100
                     }%`,
                   }}
                 />
               </div>
               <ul className="space-y-2 text-sm text-slate-600">
-                <ProgressItem done={Boolean(companyId)}>
-                  Company selected
-                </ProgressItem>
                 <ProgressItem done={Boolean(siteName.trim() && siteCode.trim())}>
                   Identification entered
                 </ProgressItem>
@@ -323,8 +253,8 @@ export default function NewSitePage() {
                 Site Registry
               </div>
               <p className="text-sm leading-6 text-slate-600">
-                Sites are linked to companies and become available across work
-                orders, bills, invoices, approvals, and reporting.
+                Sites are independent project locations. Company is selected
+                later on Work Orders.
               </p>
             </div>
 
