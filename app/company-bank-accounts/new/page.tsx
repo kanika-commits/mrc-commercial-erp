@@ -80,26 +80,34 @@ export default function NewCompanyBankAccountPage() {
     try {
       setSaving(true);
 
-      const organizationId = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (form.is_default) {
-        await supabase
-          .from("company_bank_accounts")
-          .update({ is_default: false })
-          .eq("company_id", form.company_id);
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
       }
 
-      const { error } = await supabase.from("company_bank_accounts").insert({
-        organization_id: organizationId,
-        company_id: form.company_id,
-        bank_name: form.bank_name.trim(),
-        account_number: form.account_number.trim(),
-        ifsc: form.ifsc.trim().toUpperCase(),
-        is_default: form.is_default,
-        status: form.status,
+      const response = await fetch("/api/company-bank-accounts", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          company_id: form.company_id,
+          bank_name: form.bank_name.trim(),
+          account_number: form.account_number.trim(),
+          ifsc: form.ifsc.trim().toUpperCase(),
+          is_default: form.is_default,
+          status: form.status,
+        }),
       });
+      const result = await response.json();
 
-      if (error) throw error;
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to create bank account.");
+      }
 
       router.push("/company-bank-accounts");
     } catch (error: any) {
