@@ -324,10 +324,10 @@ export async function POST(request: Request) {
       uploadedFilePath = filePath;
 
       const { data: publicUrlData } = admin.storage
-        .from("work_order_documents")
+        .from("work-order-documents")
         .getPublicUrl(filePath);
 
-      const { error: documentError } = await admin
+      const { data: document, error: documentError } = await admin
         .from("work_order_documents")
         .insert({
           organization_id: organizationId,
@@ -335,9 +335,16 @@ export async function POST(request: Request) {
           file_name: file.name,
           file_url: publicUrlData.publicUrl,
           file_path: filePath,
-        });
+          uploaded_at: new Date().toISOString(),
+        })
+        .select("id, file_name, file_path")
+        .single();
 
       if (documentError) throw documentError;
+
+      if (!document?.file_name || !document?.file_path) {
+        throw new Error("Work Order file metadata was not saved.");
+      }
 
       return NextResponse.json({ workOrder });
     } catch (error) {

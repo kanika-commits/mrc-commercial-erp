@@ -2,23 +2,39 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { CheckCircle2, ExternalLink, FileText, RefreshCw, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 function money(value: any) {
-  return `Rs. ${Number(value || 0).toLocaleString("en-IN")}`;
+  return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
-function safeFileName(name: string) {
-  return name.replace(/[^a-zA-Z0-9._-]/g, "_");
+function badgeClass(value?: string | null) {
+  const status = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+
+  if (status === "approved" || status === "active") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+
+  if (status === "pending" || status === "draft") {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+
+  if (status === "rejected") {
+    return "border-rose-200 bg-rose-50 text-rose-700";
+  }
+
+  return "border-slate-200 bg-slate-50 text-slate-600";
 }
 
 export default function WorkOrderApprovalPage() {
   const [workOrders, setWorkOrders] = useState<any[]>([]);
   const [companies, setCompanies] = useState<Map<string, string>>(new Map());
   const [sites, setSites] = useState<Map<string, string>>(new Map());
-  const [documents, setDocuments] = useState<Map<string, any>>(new Map());
-  const [removeFile, setRemoveFile] = useState<Record<string, boolean>>({});
-  const [newFiles, setNewFiles] = useState<Record<string, File | null>>({});
+  const [documents, setDocuments] = useState<Map<string, any[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState("");
   const [message, setMessage] = useState("");
@@ -50,6 +66,7 @@ export default function WorkOrderApprovalPage() {
           cost_code,
           created_at
         `)
+        .or("approval_status.is.null,approval_status.ilike.pending,approval_status.ilike.draft")
         .order("created_at", { ascending: false });
 
       if (woError) throw woError;
@@ -91,20 +108,38 @@ export default function WorkOrderApprovalPage() {
       }
 
       if (workOrderIds.length > 0) {
-        const { data: docData, error: docError } = await supabase
-          .from("work_order_documents")
-          .select("id, organization_id, work_order_id, file_name, file_url, file_path, uploaded_at")
-          .in("work_order_id", workOrderIds)
-          .order("uploaded_at", { ascending: false });
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        const token = session?.access_token;
 
-        if (docError) throw docError;
+        if (!token) {
+          throw new Error("Unable to load Work Order files: missing auth session.");
+        }
 
-        const docMap = new Map<string, any>();
-
-        (docData || []).forEach((doc: any) => {
-          if (!docMap.has(doc.work_order_id)) {
-            docMap.set(doc.work_order_id, doc);
+        const documentResponse = await fetch(
+          `/api/work-orders/documents?work_order_ids=${encodeURIComponent(
+            workOrderIds.join(",")
+          )}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
           }
+        );
+        const documentResult = await documentResponse.json();
+
+        if (!documentResponse.ok) {
+          throw new Error(
+            documentResult.error || "Failed to load Work Order files."
+          );
+        }
+
+        const docMap = new Map<string, any[]>();
+
+        (documentResult.documents || []).forEach((doc: any) => {
+          const current = docMap.get(doc.work_order_id) || [];
+          docMap.set(doc.work_order_id, [...current, doc]);
         });
 
         setDocuments(docMap);
@@ -120,68 +155,22 @@ export default function WorkOrderApprovalPage() {
     }
   }
 
-  async function replaceFileIfNeeded(wo: any) {
-    const shouldRemove = removeFile[wo.id] || false;
-    const selectedFile = newFiles[wo.id] || null;
-    const currentDoc = documents.get(wo.id);
-
-    if (!shouldRemove) {
+  function openDocument(document: any) {
+    if (!document.signed_url) {
+      setMessage(
+        document.signed_url_error ||
+          "Unable to open Work Order file. Signed URL was not available."
+      );
       return;
     }
 
-    if (!selectedFile) {
-      throw new Error(`New file is required for ${wo.wo_number}`);
-    }
-
-    const cleanName = safeFileName(selectedFile.name);
-    const newPath = `work-orders/${wo.id}/${Date.now()}-${cleanName}`;
-
-    const { error: uploadError } = await supabase.storage
-      .from("work-order-documents")
-      .upload(newPath, selectedFile, {
-        upsert: false,
-      });
-
-    if (uploadError) throw uploadError;
-
-    const { data: publicUrlData } = supabase.storage
-      .from("work-order-documents")
-      .getPublicUrl(newPath);
-
-    if (currentDoc?.file_path) {
-      await supabase.storage
-        .from("work-order-documents")
-        .remove([currentDoc.file_path]);
-    }
-
-    if (currentDoc?.id) {
-      const { error: deleteDocError } = await supabase
-        .from("work_order_documents")
-        .delete()
-        .eq("id", currentDoc.id);
-
-      if (deleteDocError) throw deleteDocError;
-    }
-
-    const { error: insertDocError } = await supabase
-      .from("work_order_documents")
-      .insert({
-        organization_id: wo.organization_id,
-        work_order_id: wo.id,
-        file_name: selectedFile.name,
-        file_url: publicUrlData.publicUrl,
-        file_path: newPath,
-      });
-
-    if (insertDocError) throw insertDocError;
+    window.open(document.signed_url, "_blank", "noopener,noreferrer");
   }
 
-  async function updateApproval(wo: any, approvalStatus: string, status: string) {
+  async function approveWorkOrder(wo: any) {
   try {
     setSavingId(wo.id);
     setMessage("");
-
-    await replaceFileIfNeeded(wo);
 
     const {
       data: { user },
@@ -193,200 +182,272 @@ export default function WorkOrderApprovalPage() {
       user?.user_metadata?.name ||
       userEmail;
 
-    const updateData: any = {
-      approval_status: approvalStatus,
-      status,
-    };
-
-    if (approvalStatus === "approved") {
-      updateData.approved_by_name = userName;
-      updateData.approved_by_email = userEmail;
-      updateData.approved_at = new Date().toISOString();
-    }
-
-    if (approvalStatus === "rejected") {
-      updateData.rejected_by_name = userName;
-      updateData.rejected_by_email = userEmail;
-      updateData.rejected_at = new Date().toISOString();
-    }
-
     const { error } = await supabase
       .from("work_orders")
-      .update(updateData)
+      .update({
+        approval_status: "approved",
+        status: "active",
+        approved_by_name: userName,
+        approved_by_email: userEmail,
+        approved_at: new Date().toISOString(),
+      })
       .eq("id", wo.id);
 
     if (error) throw error;
 
-    setMessage("Work order updated successfully.");
-    setRemoveFile((prev) => ({ ...prev, [wo.id]: false }));
-    setNewFiles((prev) => ({ ...prev, [wo.id]: null }));
+    setMessage("Work order approved successfully.");
     await loadWorkOrders();
   } catch (error: any) {
-    setMessage(error.message || "Failed to update work order.");
+    setMessage(error.message || "Failed to approve work order.");
   } finally {
     setSavingId("");
   }
 }
 
-  const pendingWorkOrders = workOrders.filter(
-    (wo) => (wo.approval_status || "").toLowerCase() !== "approved"
-  );
+  async function rejectWorkOrder(wo: any) {
+  try {
+    setSavingId(wo.id);
+    setMessage("");
+
+    const currentDocuments = documents.get(wo.id) || [];
+    const storagePaths = currentDocuments
+      .map((doc) => doc.file_path)
+      .filter(Boolean);
+
+    if (storagePaths.length > 0) {
+      const { error: storageError } = await supabase.storage
+        .from("work-order-documents")
+        .remove(storagePaths);
+
+      if (storageError) throw storageError;
+    }
+
+    const { error: vendorError } = await supabase
+      .from("work_order_vendors")
+      .delete()
+      .eq("work_order_id", wo.id);
+
+    if (vendorError) throw vendorError;
+
+    const { error: documentError } = await supabase
+      .from("work_order_documents")
+      .delete()
+      .eq("work_order_id", wo.id);
+
+    if (documentError) throw documentError;
+
+    const { error: orderError } = await supabase
+      .from("work_orders")
+      .delete()
+      .eq("id", wo.id);
+
+    if (orderError) throw orderError;
+
+    setMessage("Work order rejected and deleted successfully.");
+    await loadWorkOrders();
+  } catch (error: any) {
+    setMessage(error.message || "Failed to reject work order.");
+  } finally {
+    setSavingId("");
+  }
+}
+
+  const pendingWorkOrders = workOrders.filter((wo) => {
+    const approvalStatus = String(wo.approval_status || "")
+      .trim()
+      .toLowerCase();
+
+    return approvalStatus !== "approved" && approvalStatus !== "rejected";
+  });
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Work Order Approval</h1>
-          <p className="text-gray-500">
-            Review pending work orders and approve or suspend them.
+          <nav className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <span>Contract Management</span>
+            <span>/</span>
+            <span className="text-sky-800">Work Order Approvals</span>
+          </nav>
+          <h1 className="text-3xl font-bold text-slate-950">Work Order Approval</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Review pending work orders and approve or reject them based on documentation.
           </p>
         </div>
 
         <button
           type="button"
           onClick={loadWorkOrders}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-white"
+          className="inline-flex items-center justify-center gap-2 rounded bg-sky-700 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-sky-800"
         >
-          Refresh
+          <RefreshCw className="h-4 w-4" />
+          Refresh List
         </button>
       </div>
 
       {message && (
-        <div className="rounded-lg border bg-yellow-50 p-3 text-sm text-yellow-800">
+        <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
           {message}
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-lg border bg-white">
-        <table className="w-full min-w-[1900px] text-sm">
-          <thead className="bg-gray-100">
-            <tr>
-              <th className="p-3 text-left">Company</th>
-              <th className="p-3 text-left">Site</th>
-              <th className="p-3 text-left">WO Number</th>
-              <th className="p-3 text-left">WO Date</th>
-              <th className="p-3 text-left">WO Type</th>
-              <th className="p-3 text-left">Description</th>
-              <th className="p-3 text-left">WO Value</th>
-              <th className="p-3 text-left">Current File</th>
-              <th className="p-3 text-left">Replace File</th>
-              <th className="p-3 text-left">New File</th>
-              <th className="p-3 text-left">Status</th>
-              <th className="p-3 text-left">Approval</th>
-              <th className="p-3 text-left">View</th>
-              <th className="p-3 text-left">Action</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {loading ? (
+      <div className="overflow-hidden rounded border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1400px] border-collapse text-left text-sm">
+            <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
-                <td colSpan={14} className="p-6 text-center text-gray-500">
-                  Loading work orders...
-                </td>
+                <th className="px-4 py-3 font-semibold">Company / Site</th>
+                <th className="px-4 py-3 font-semibold">WO Number</th>
+                <th className="px-4 py-3 font-semibold">WO Details</th>
+                <th className="px-4 py-3 font-semibold">Description</th>
+                <th className="px-4 py-3 text-center font-semibold">Documentation</th>
+                <th className="px-4 py-3 text-center font-semibold">Status</th>
+                <th className="px-4 py-3 text-center font-semibold">Approval</th>
+                <th className="px-4 py-3 text-right font-semibold">Actions</th>
               </tr>
-            ) : pendingWorkOrders.length === 0 ? (
-              <tr>
-                <td colSpan={14} className="p-6 text-center text-gray-500">
-                  No pending work orders found.
-                </td>
-              </tr>
-            ) : (
-              pendingWorkOrders.map((wo) => {
-                const currentDoc = documents.get(wo.id);
-                const isSaving = savingId === wo.id;
+            </thead>
 
-                return (
-                  <tr key={wo.id} className="border-t align-top">
-                    <td className="p-3">{companies.get(wo.company_id) || "-"}</td>
-                    <td className="p-3">{sites.get(wo.site_id) || "-"}</td>
-                    <td className="p-3 font-medium">{wo.wo_number}</td>
-                    <td className="p-3">{wo.wo_date || "-"}</td>
-                    <td className="p-3">{wo.wo_type || "-"}</td>
-                    <td className="p-3">{wo.description || "-"}</td>
-                    <td className="p-3">{money(wo.wo_value)}</td>
+            <tbody className="divide-y divide-slate-100">
+              {loading ? (
+                <tr>
+                  <td colSpan={8} className="p-8 text-center text-slate-500">
+                    Loading work orders...
+                  </td>
+                </tr>
+              ) : pendingWorkOrders.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="p-8 text-center text-slate-500">
+                    No pending work orders found.
+                  </td>
+                </tr>
+              ) : (
+                pendingWorkOrders.map((wo) => {
+                  const currentDocuments = documents.get(wo.id) || [];
+                  const isSaving = savingId === wo.id;
 
-                    <td className="p-3">
-                      {currentDoc ? (
-                        <a
-                          href={currentDoc.file_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 underline"
-                        >
-                          Open File
-                        </a>
-                      ) : (
-                        "No file"
-                      )}
-                    </td>
+                  return (
+                    <tr key={wo.id} className="align-top transition-colors hover:bg-slate-50">
+                      <td className="px-4 py-4">
+                        <div className="font-semibold leading-tight text-slate-950">
+                          {companies.get(wo.company_id) || "-"}
+                        </div>
+                        <div className="mt-0.5 text-xs text-slate-500">
+                          {sites.get(wo.site_id) || "-"}
+                        </div>
+                      </td>
 
-                    <td className="p-3">
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={removeFile[wo.id] || false}
-                          onChange={(e) =>
-                            setRemoveFile((prev) => ({
-                              ...prev,
-                              [wo.id]: e.target.checked,
-                            }))
-                          }
-                        />
-                        <span>Replace</span>
-                      </label>
-                    </td>
+                      <td className="whitespace-nowrap px-4 py-4">
+                        <span className="font-mono text-xs font-bold text-sky-800">
+                          {wo.wo_number}
+                        </span>
+                      </td>
 
-                    <td className="p-3">
-                      <input
-                        type="file"
-                        disabled={!removeFile[wo.id]}
-                        onChange={(e) =>
-                          setNewFiles((prev) => ({
-                            ...prev,
-                            [wo.id]: e.target.files?.[0] || null,
-                          }))
-                        }
-                        className="w-56 rounded border px-2 py-1"
-                      />
-                    </td>
+                      <td className="px-4 py-4">
+                        <div className="text-xs text-slate-700">
+                          <span className="text-slate-400">Date:</span>{" "}
+                          {wo.wo_date || "-"}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-700">
+                          <span className="text-slate-400">Type:</span>{" "}
+                          {wo.wo_type || "-"}
+                        </div>
+                      </td>
 
-                    <td className="p-3">{wo.status || "-"}</td>
-                    <td className="p-3">{wo.approval_status || "-"}</td>
+                      <td className="max-w-xs px-4 py-4">
+                        <p className="line-clamp-3 text-xs text-slate-600">
+                          {wo.description || "-"}
+                        </p>
+                      </td>
 
-                    <td className="p-3">
-                      <Link href={`/work-orders/${wo.id}`} className="rounded border px-3 py-1">
-                        View
-                      </Link>
-                    </td>
+                      <td className="px-4 py-4">
+                        {currentDocuments.length === 0 ? (
+                          <div className="flex justify-center">
+                            <span className="inline-flex items-center gap-1 text-xs text-slate-400">
+                              <FileText className="h-3.5 w-3.5" />
+                              No file
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            {currentDocuments.map((document) => (
+                              <div
+                                key={document.id}
+                                className="flex items-center justify-center gap-2"
+                              >
+                                <span className="max-w-[180px] truncate text-xs text-slate-600">
+                                  {document.file_name || "Work Order file"}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => openDocument(document)}
+                                  className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 hover:underline"
+                                >
+                                  Open
+                                  <ExternalLink className="h-3 w-3" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
 
-                    <td className="p-3">
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          disabled={isSaving}
-                          onClick={() => updateApproval(wo, "approved", "active")}
-                          className="rounded bg-blue-600 px-3 py-1 text-white disabled:opacity-60"
-                        >
-                          {isSaving ? "Saving" : "Approve"}
-                        </button>
+                      <td className="px-4 py-4 text-center">
+                        <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${badgeClass(wo.status)}`}>
+                          {wo.status || "-"}
+                        </span>
+                      </td>
 
-                        <button
-  type="button"
-  disabled={isSaving}
-  onClick={() => updateApproval(wo, "rejected", "rejected")}
-  className="rounded bg-red-600 px-3 py-1 text-white disabled:opacity-60"
->
-  Reject
-</button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+                      <td className="px-4 py-4 text-center">
+                        <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${badgeClass(wo.approval_status)}`}>
+                          {wo.approval_status || "Pending"}
+                        </span>
+                      </td>
+
+                      <td className="px-4 py-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <Link
+                            href={`/work-orders/${wo.id}`}
+                            className="rounded border border-slate-200 px-3 py-1.5 text-xs font-semibold hover:bg-slate-100"
+                          >
+                            View
+                          </Link>
+
+                          <button
+                            type="button"
+                            disabled={isSaving}
+                            onClick={() => approveWorkOrder(wo)}
+                            className="inline-flex items-center gap-1 rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                          >
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            Approve
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={isSaving}
+                            onClick={() => rejectWorkOrder(wo)}
+                            className="inline-flex items-center gap-1 rounded bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Reject
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="border-t border-slate-200 bg-slate-50 px-6 py-3 text-xs text-slate-500">
+          Showing{" "}
+          <span className="font-semibold text-slate-900">
+            {pendingWorkOrders.length}
+          </span>{" "}
+          pending Work Orders
+        </div>
       </div>
     </div>
   );
