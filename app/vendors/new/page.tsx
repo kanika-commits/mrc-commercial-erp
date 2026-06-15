@@ -71,6 +71,7 @@ export default function NewVendorPage() {
 });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [currentStep, setCurrentStep] = useState(1);
 
   function validate() {
     const newErrors: Record<string, string> = {};
@@ -297,364 +298,564 @@ if (form.gstin && !files.GST_CERTIFICATE) {
     return <p className="mt-1 text-sm text-red-600">{errors[name]}</p>;
   }
 
-  const inputClass = "w-full rounded-lg border px-3 py-2";
+  function goToNextStep() {
+    setCurrentStep((step) => Math.min(step + 1, 5));
+    setMessage("");
+  }
+
+  function goToPreviousStep() {
+    setCurrentStep((step) => Math.max(step - 1, 1));
+    setMessage("");
+  }
+
+  const steps = [
+    {
+      number: 1,
+      title: "Basic Information",
+      description: "Entity core details",
+    },
+    {
+      number: 2,
+      title: "Contact Persons",
+      description: "Stakeholder network",
+    },
+    {
+      number: 3,
+      title: "Tax & Compliance",
+      description: "Legal and certificates",
+    },
+    {
+      number: 4,
+      title: "MSME & Bank Details",
+      description: "Payments and MSME",
+    },
+    {
+      number: 5,
+      title: "Documents",
+      description: "File uploads",
+    },
+  ];
+
+  const inputClass =
+    "h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-100";
   const errorClass = "border-red-500";
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Add Vendor</h1>
-        <p className="text-gray-500">
-          Create contractor, subcontractor, consultant or supplier profile.
-        </p>
+    <form onSubmit={handleSubmit} className="min-h-[calc(100vh-8rem)]">
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+            Vendor Onboarding
+          </div>
+          <h1 className="text-3xl font-bold text-slate-950">Add Vendor</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Create contractor, subcontractor, consultant or supplier profile.
+          </p>
+        </div>
+
+        <Link
+          href="/vendors"
+          className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        >
+          Cancel
+        </Link>
       </div>
 
       {message && (
-        <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+        <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           {message}
         </div>
       )}
 
-      <section className="rounded-lg border bg-white p-6">
-        <h2 className="mb-4 text-xl font-semibold">Basic Information</h2>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <label className="mb-1 block text-sm font-medium">Vendor Name *</label>
-            <input
-              name="vendor_name"
-              value={form.vendor_name}
-              onChange={handleChange}
-              className={`${inputClass} ${errors.vendor_name ? errorClass : ""}`}
-            />
-            <ErrorText name="vendor_name" />
+      <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+        <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:sticky lg:top-24 lg:self-start">
+          <div className="mb-6">
+            <h2 className="text-base font-semibold text-slate-950">Progress</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Step {currentStep} of {steps.length}
+            </p>
           </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-medium">Vendor Type *</label>
-            <select
-              name="vendor_type"
-              value={form.vendor_type}
-              onChange={handleChange}
-              className={inputClass}
-            >
-              <option>Contractor</option>
-              <option>Supplier</option>
-              <option>Consultant</option>
-              <option>Labour Contractor</option>
-              <option>Equipment Rental</option>
-              <option>Transporter</option>
-            </select>
-          </div>
+          <div className="space-y-5">
+            {steps.map((step, index) => {
+              const active = currentStep === step.number;
+              const complete = currentStep > step.number;
 
-          <div>
-            <label className="mb-1 block text-sm font-medium">
-              Contractor Type *
-            </label>
-            <select
-              name="contractor_type"
-              value={form.contractor_type}
-              onChange={handleChange}
-              className={inputClass}
-            >
-              <option>Company</option>
-              <option>LLP</option>
-              <option>Partnership</option>
-              <option>Proprietor</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-medium">Status *</label>
-            <select
-              name="status"
-              value={form.status}
-              onChange={handleChange}
-              className={inputClass}
-            >
-              <option value="active">active</option>
-              <option value="inactive">inactive</option>
-              <option value="blocked">blocked</option>
-            </select>
-          </div>
-        </div>
-      </section>
-
-      <section className="rounded-lg border bg-white p-6">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-xl font-semibold">Contact Persons</h2>
-          <button
-            type="button"
-            onClick={addContact}
-            className="rounded-lg border px-3 py-2 text-sm"
-          >
-            + Add Contact
-          </button>
-        </div>
-
-        <div className="space-y-4">
-          {contacts.map((contact, index) => (
-            <div key={index} className="rounded-lg border p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <strong>Contact {index + 1}</strong>
-
-                {contacts.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeContact(index)}
-                    className="text-sm text-red-600"
+              return (
+                <button
+                  key={step.number}
+                  type="button"
+                  onClick={() => setCurrentStep(step.number)}
+                  className="relative flex w-full items-start gap-3 text-left"
+                >
+                  {index < steps.length - 1 && (
+                    <span
+                      className={`absolute left-[13px] top-7 h-10 w-px ${
+                        complete ? "bg-sky-500" : "bg-slate-200"
+                      }`}
+                    />
+                  )}
+                  <span
+                    className={`relative z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                      active || complete
+                        ? "bg-sky-600 text-white"
+                        : "bg-slate-100 text-slate-500"
+                    }`}
                   >
-                    Remove
-                  </button>
-                )}
-              </div>
+                    {step.number}
+                  </span>
+                  <span>
+                    <span
+                      className={`block text-sm font-semibold ${
+                        active ? "text-sky-700" : "text-slate-800"
+                      }`}
+                    >
+                      {step.title}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-slate-500">
+                      {step.description}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
+          <div className="mt-8 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
+            Fields marked with * are required before final submission. Your inputs
+            stay saved while you move between steps.
+          </div>
+        </aside>
+
+        <div className="space-y-6">
+          {currentStep === 1 && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="mb-5 text-xl font-semibold text-slate-950">
+                Basic Information
+              </h2>
+              <div className="grid gap-5 md:grid-cols-2">
                 <div>
-                  <label className="mb-1 block text-sm font-medium">
-                    Contact Name *
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Vendor Name *
                   </label>
                   <input
-                    value={contact.contact_name}
-                    onChange={(e) =>
-                      updateContact(index, "contact_name", e.target.value)
-                    }
+                    name="vendor_name"
+                    value={form.vendor_name}
+                    onChange={handleChange}
                     className={`${inputClass} ${
-                      errors[`contact_name_${index}`] ? errorClass : ""
+                      errors.vendor_name ? errorClass : ""
                     }`}
+                    placeholder="Enter vendor name"
                   />
-                  <ErrorText name={`contact_name_${index}`} />
+                  <ErrorText name="vendor_name" />
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-sm font-medium">
-                    Contact Number *
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Vendor Type *
                   </label>
-                  <input
-                    value={contact.contact_number}
-                    onChange={(e) =>
-                      updateContact(index, "contact_number", e.target.value)
-                    }
-                    className={`${inputClass} ${
-                      errors[`contact_number_${index}`] ? errorClass : ""
-                    }`}
-                  />
-                  <ErrorText name={`contact_number_${index}`} />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Email</label>
-                  <input
-                    value={contact.email}
-                    onChange={(e) =>
-                      updateContact(index, "email", e.target.value)
-                    }
-                    className={`${inputClass} ${
-                      errors[`email_${index}`] ? errorClass : ""
-                    }`}
-                  />
-                  <ErrorText name={`email_${index}`} />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium">
-                    Designation
-                  </label>
-                  <input
-                    value={contact.designation}
-                    onChange={(e) =>
-                      updateContact(index, "designation", e.target.value)
-                    }
+                  <select
+                    name="vendor_type"
+                    value={form.vendor_type}
+                    onChange={handleChange}
                     className={inputClass}
-                  />
+                  >
+                    <option>Contractor</option>
+                    <option>Supplier</option>
+                    <option>Consultant</option>
+                    <option>Labour Contractor</option>
+                    <option>Equipment Rental</option>
+                    <option>Transporter</option>
+                  </select>
                 </div>
 
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="radio"
-                    checked={contact.is_primary}
-                    onChange={() => setPrimaryContact(index)}
-                  />
-                  Primary Contact
-                </label>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Contractor Type *
+                  </label>
+                  <select
+                    name="contractor_type"
+                    value={form.contractor_type}
+                    onChange={handleChange}
+                    className={inputClass}
+                  >
+                    <option>Company</option>
+                    <option>LLP</option>
+                    <option>Partnership</option>
+                    <option>Proprietor</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Status *
+                  </label>
+                  <select
+                    name="status"
+                    value={form.status}
+                    onChange={handleChange}
+                    className={inputClass}
+                  >
+                    <option value="active">active</option>
+                    <option value="inactive">inactive</option>
+                    <option value="blocked">blocked</option>
+                  </select>
+                </div>
               </div>
+            </section>
+          )}
+
+          {currentStep === 2 && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-950">
+                    Contact Persons
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Add the people your teams will coordinate with.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={addContact}
+                  className="rounded-xl border border-sky-200 px-4 py-2 text-sm font-medium text-sky-700 hover:bg-sky-50"
+                >
+                  + Add Contact
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                {contacts.map((contact, index) => (
+                  <div key={index} className="rounded-xl border border-slate-200 p-4">
+                    <div className="mb-4 flex items-center justify-between">
+                      <strong className="text-sm text-slate-950">
+                        Contact {index + 1}
+                      </strong>
+
+                      {contacts.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeContact(index)}
+                          className="text-sm font-medium text-red-600"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid gap-5 md:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">
+                          Contact Name *
+                        </label>
+                        <input
+                          value={contact.contact_name}
+                          onChange={(e) =>
+                            updateContact(index, "contact_name", e.target.value)
+                          }
+                          className={`${inputClass} ${
+                            errors[`contact_name_${index}`] ? errorClass : ""
+                          }`}
+                        />
+                        <ErrorText name={`contact_name_${index}`} />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">
+                          Contact Number *
+                        </label>
+                        <input
+                          value={contact.contact_number}
+                          onChange={(e) =>
+                            updateContact(index, "contact_number", e.target.value)
+                          }
+                          className={`${inputClass} ${
+                            errors[`contact_number_${index}`] ? errorClass : ""
+                          }`}
+                        />
+                        <ErrorText name={`contact_number_${index}`} />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">
+                          Email
+                        </label>
+                        <input
+                          value={contact.email}
+                          onChange={(e) =>
+                            updateContact(index, "email", e.target.value)
+                          }
+                          className={`${inputClass} ${
+                            errors[`email_${index}`] ? errorClass : ""
+                          }`}
+                        />
+                        <ErrorText name={`email_${index}`} />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">
+                          Designation
+                        </label>
+                        <input
+                          value={contact.designation}
+                          onChange={(e) =>
+                            updateContact(index, "designation", e.target.value)
+                          }
+                          className={inputClass}
+                        />
+                      </div>
+
+                      <label className="flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="radio"
+                          checked={contact.is_primary}
+                          onChange={() => setPrimaryContact(index)}
+                        />
+                        Primary Contact
+                      </label>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {currentStep === 3 && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="mb-5 text-xl font-semibold text-slate-950">
+                Tax & Compliance
+              </h2>
+              <div className="grid gap-5 md:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    PAN *
+                  </label>
+                  <input
+                    name="pan"
+                    value={form.pan}
+                    onChange={handleChange}
+                    className={`${inputClass} uppercase ${
+                      errors.pan ? errorClass : ""
+                    }`}
+                  />
+                  <ErrorText name="pan" />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Aadhaar / CIN *
+                  </label>
+                  <input
+                    name="aadhaar_cin"
+                    value={form.aadhaar_cin}
+                    onChange={handleChange}
+                    className={`${inputClass} uppercase ${
+                      errors.aadhaar_cin ? errorClass : ""
+                    }`}
+                  />
+                  <ErrorText name="aadhaar_cin" />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    GSTIN
+                  </label>
+                  <input
+                    name="gstin"
+                    value={form.gstin}
+                    onChange={handleChange}
+                    className={`${inputClass} uppercase ${
+                      errors.gstin ? errorClass : ""
+                    }`}
+                  />
+                  <ErrorText name="gstin" />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    PAN Linked with Aadhaar *
+                  </label>
+                  <select
+                    name="pan_aadhaar_link_status"
+                    value={form.pan_aadhaar_link_status}
+                    onChange={handleChange}
+                    className={inputClass}
+                  >
+                    <option>Yet to check</option>
+                    <option>Yes</option>
+                    <option>No</option>
+                  </select>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {currentStep === 4 && (
+            <div className="space-y-6">
+              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="mb-5 text-xl font-semibold text-slate-950">MSME</h2>
+                <div className="grid gap-5 md:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      MSME Registered?
+                    </label>
+                    <select
+                      name="msme_registered"
+                      value={form.msme_registered}
+                      onChange={handleChange}
+                      className={inputClass}
+                    >
+                      <option>No</option>
+                      <option>Yes</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      MSME Number
+                    </label>
+                    <input
+                      name="msme_number"
+                      value={form.msme_number}
+                      onChange={handleChange}
+                      className={`${inputClass} ${
+                        errors.msme_number ? errorClass : ""
+                      }`}
+                    />
+                    <ErrorText name="msme_number" />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      MSME Category
+                    </label>
+                    <select
+                      name="msme_category"
+                      value={form.msme_category}
+                      onChange={handleChange}
+                      className={inputClass}
+                    >
+                      <option>Micro</option>
+                      <option>Small</option>
+                      <option>Medium</option>
+                    </select>
+                  </div>
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="mb-5 text-xl font-semibold text-slate-950">
+                  Bank Details
+                </h2>
+                <div className="grid gap-5 md:grid-cols-2">
+                  {[
+                    ["account_holder_name", "Account Holder Name *"],
+                    ["bank_name", "Bank Name *"],
+                    ["account_number", "Account Number *"],
+                    ["ifsc_code", "IFSC Code *"],
+                    ["branch_name", "Branch Name"],
+                  ].map(([name, label]) => (
+                    <div
+                      key={name}
+                      className={name === "branch_name" ? "md:col-span-2" : ""}
+                    >
+                      <label className="mb-1 block text-sm font-medium text-slate-700">
+                        {label}
+                      </label>
+                      <input
+                        name={name}
+                        value={(form as any)[name]}
+                        onChange={handleChange}
+                        className={`${inputClass} ${
+                          errors[name] ? errorClass : ""
+                        }`}
+                      />
+                      <ErrorText name={name} />
+                    </div>
+                  ))}
+                </div>
+              </section>
             </div>
-          ))}
-        </div>
-      </section>
+          )}
 
-      <section className="rounded-lg border bg-white p-6">
-        <h2 className="mb-4 text-xl font-semibold">Tax & Compliance</h2>
+          {currentStep === 5 && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="mb-5 text-xl font-semibold text-slate-950">
+                Documents & Attachments
+              </h2>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <label className="mb-1 block text-sm font-medium">PAN *</label>
-            <input
-              name="pan"
-              value={form.pan}
-              onChange={handleChange}
-              className={`${inputClass} uppercase ${errors.pan ? errorClass : ""}`}
-            />
-            <ErrorText name="pan" />
-          </div>
+              <div className="grid gap-5 md:grid-cols-2">
+                {[
+                  ["PAN", "PAN Copy *"],
+                  ["AADHAAR_CIN", "Aadhaar / CIN Copy *"],
+                  ["GST_CERTIFICATE", "GST Certificate"],
+                  ["PAN_AADHAAR_ATTACHMENT", "PAN-Aadhaar Link Proof *"],
+                  ["MSME_CERTIFICATE", "MSME Certificate"],
+                  ["BANK_PROOF", "Cancelled Cheque / Bank Proof *"],
+                  ["ADDITIONAL_DOCUMENT", "Additional Documents"],
+                ].map(([key, label]) => (
+                  <div
+                    key={key}
+                    className={key === "ADDITIONAL_DOCUMENT" ? "md:col-span-2" : ""}
+                  >
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      {label}
+                    </label>
+                    <input
+                      type="file"
+                      onChange={(e) => handleFileChange(e, key as FileKey)}
+                      className={`${inputClass} h-auto py-2 ${
+                        errors[key] ? errorClass : ""
+                      }`}
+                    />
+                    <ErrorText name={key} />
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
 
-          <div>
-            <label className="mb-1 block text-sm font-medium">
-              Aadhaar / CIN *
-            </label>
-            <input
-              name="aadhaar_cin"
-              value={form.aadhaar_cin}
-              onChange={handleChange}
-              className={`${inputClass} uppercase ${
-                errors.aadhaar_cin ? errorClass : ""
-              }`}
-            />
-            <ErrorText name="aadhaar_cin" />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-medium">GSTIN</label>
-            <input
-              name="gstin"
-              value={form.gstin}
-              onChange={handleChange}
-              className={`${inputClass} uppercase ${
-                errors.gstin ? errorClass : ""
-              }`}
-            />
-            <ErrorText name="gstin" />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-medium">
-              PAN Linked with Aadhaar *
-            </label>
-            <select
-              name="pan_aadhaar_link_status"
-              value={form.pan_aadhaar_link_status}
-              onChange={handleChange}
-              className={inputClass}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-6">
+            <button
+              type="button"
+              disabled
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-400"
             >
-              <option>Yet to check</option>
-              <option>Yes</option>
-              <option>No</option>
-            </select>
-          </div>
-        </div>
-      </section>
+              Save as Draft
+            </button>
 
-      <section className="rounded-lg border bg-white p-6">
-        <h2 className="mb-4 text-xl font-semibold">MSME</h2>
+            <div className="flex gap-3">
+              {currentStep > 1 && (
+                <button
+                  type="button"
+                  onClick={goToPreviousStep}
+                  className="rounded-xl border border-slate-200 bg-white px-5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Previous
+                </button>
+              )}
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <label className="mb-1 block text-sm font-medium">
-              MSME Registered?
-            </label>
-            <select
-              name="msme_registered"
-              value={form.msme_registered}
-              onChange={handleChange}
-              className={inputClass}
-            >
-              <option>No</option>
-              <option>Yes</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-medium">MSME Number</label>
-            <input
-              name="msme_number"
-              value={form.msme_number}
-              onChange={handleChange}
-              className={`${inputClass} ${
-                errors.msme_number ? errorClass : ""
-              }`}
-            />
-            <ErrorText name="msme_number" />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-medium">MSME Category</label>
-            <select
-              name="msme_category"
-              value={form.msme_category}
-              onChange={handleChange}
-              className={inputClass}
-            >
-              <option>Micro</option>
-              <option>Small</option>
-              <option>Medium</option>
-            </select>
-          </div>
-        </div>
-      </section>
-
-      <section className="rounded-lg border bg-white p-6">
-        <h2 className="mb-4 text-xl font-semibold">Bank Details</h2>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          {[
-            ["account_holder_name", "Account Holder Name *"],
-            ["bank_name", "Bank Name *"],
-            ["account_number", "Account Number *"],
-            ["ifsc_code", "IFSC Code *"],
-            ["branch_name", "Branch Name"],
-          ].map(([name, label]) => (
-            <div key={name}>
-              <label className="mb-1 block text-sm font-medium">{label}</label>
-              <input
-                name={name}
-                value={(form as any)[name]}
-                onChange={handleChange}
-                className={`${inputClass} ${errors[name] ? errorClass : ""}`}
-              />
-              <ErrorText name={name} />
+              {currentStep < 5 ? (
+                <button
+                  type="button"
+                  onClick={goToNextStep}
+                  className="rounded-xl bg-sky-700 px-5 py-2 text-sm font-semibold text-white hover:bg-sky-800"
+                >
+                  Next Step
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="rounded-xl bg-sky-700 px-5 py-2 text-sm font-semibold text-white hover:bg-sky-800 disabled:opacity-60"
+                >
+                  {saving ? "Saving..." : "Save Vendor"}
+                </button>
+              )}
             </div>
-          ))}
+          </div>
         </div>
-      </section>
-
-      <section className="rounded-lg border bg-white p-6">
-        <h2 className="mb-4 text-xl font-semibold">Documents & Attachments</h2>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          {[
-  ["PAN", "PAN Copy *"],
-  ["AADHAAR_CIN", "Aadhaar / CIN Copy *"],
-  ["GST_CERTIFICATE", "GST Certificate"],
-  ["PAN_AADHAAR_ATTACHMENT", "PAN-Aadhaar Link Proof *"],
-  ["MSME_CERTIFICATE", "MSME Certificate"],
-  ["BANK_PROOF", "Cancelled Cheque / Bank Proof *"],
-  ["ADDITIONAL_DOCUMENT", "Additional Documents"],
-].map(([key, label]) => (
-            <div key={key} className={key === "ADDITIONAL_DOCUMENT" ? "md:col-span-2" : ""}>
-              <label className="mb-1 block text-sm font-medium">{label}</label>
-              <input
-                type="file"
-                onChange={(e) => handleFileChange(e, key as FileKey)}
-                className={`${inputClass} ${errors[key] ? errorClass : ""}`}
-              />
-              <ErrorText name={key} />
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <div className="flex justify-end gap-3">
-        <Link href="/vendors" className="rounded-lg border px-4 py-2">
-          Cancel
-        </Link>
-
-        <button
-          type="submit"
-          disabled={saving}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-white disabled:opacity-60"
-        >
-          {saving ? "Saving..." : "Save Vendor"}
-        </button>
       </div>
     </form>
   );
