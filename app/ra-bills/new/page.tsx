@@ -278,6 +278,11 @@ export default function NewRABillPage() {
       return;
     }
 
+    if (!form.ra_date) {
+      setMessage("RA Date is required.");
+      return;
+    }
+
     if (!form.value_of_work_done || Number(form.value_of_work_done) <= 0) {
       setMessage("Value of work done is required.");
       return;
@@ -291,56 +296,41 @@ export default function NewRABillPage() {
     try {
       setSaving(true);
 
-      const organizationId = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      const { data, error } = await supabase
-        .from("ra_bills")
-        .insert({
-          organization_id: organizationId,
-          work_order_id: form.work_order_id,
-          vendor_id: linkedVendorId,
-          ra_number: form.ra_number.trim(),
-          ra_date: form.ra_date || null,
-
-          gross_amount: Number(form.value_of_work_done) || 0,
-          recovery_amount: Number(form.security_amount) || 0,
-          retention_amount: 0,
-          gst_rate: Number(form.gst_rate) || 0,
-          gst_amount: gstAmount,
-          net_amount: netPayable,
-
-          status: "Draft",
-          approval_status: "Pending",
-          remarks: form.remarks.trim() || null,
-        })
-        .select("id")
-        .single();
-
-      if (error) throw error;
-
-      for (const file of files) {
-        const safeName = file.name.replace(/[^a-zA-Z0-9.]/g, "_");
-        const path = `${organizationId}/ra-bills/${data.id}/${Date.now()}_${safeName}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from("ra-bill-documents")
-          .upload(path, file);
-
-        if (uploadError) throw uploadError;
-
-        const { error: documentError } = await supabase
-          .from("ra_bill_documents")
-          .insert({
-            organization_id: organizationId,
-            ra_bill_id: data.id,
-            file_name: file.name,
-            file_url: path,
-          });
-
-        if (documentError) throw documentError;
+      if (!session?.access_token) {
+        throw new Error("Please log in again before creating an RA Bill.");
       }
 
-      router.push(`/ra-bills/${data.id}`);
+      const payload = new FormData();
+      payload.append("work_order_id", form.work_order_id);
+      payload.append("vendor_id", linkedVendorId);
+      payload.append("ra_number", form.ra_number.trim());
+      payload.append("ra_date", form.ra_date);
+      payload.append("value_of_work_done", String(Number(form.value_of_work_done) || 0));
+      payload.append("security_amount", String(Number(form.security_amount) || 0));
+      payload.append("gst_rate", String(Number(form.gst_rate) || 0));
+      payload.append("gst_amount", String(gstAmount));
+      payload.append("net_amount", String(netPayable));
+      payload.append("remarks", form.remarks.trim());
+      files.forEach((file) => payload.append("attachments", file));
+
+      const response = await fetch("/api/ra-bills", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: payload,
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to create RA Bill.");
+      }
+
+      router.push(`/ra-bills/${result.id}`);
     } catch (err: any) {
       setMessage(err.message || "Failed to create RA Bill");
     } finally {
