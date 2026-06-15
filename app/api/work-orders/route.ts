@@ -72,6 +72,28 @@ async function generateWorkOrderNumber(
   return `${prefix}${nextNumber}`;
 }
 
+async function cleanupWorkOrder(
+  admin: ReturnType<typeof adminClient>,
+  workOrderId?: string,
+  filePath?: string
+) {
+  if (filePath) {
+    await admin.storage.from("work-order-documents").remove([filePath]);
+  }
+
+  if (workOrderId) {
+    await admin
+      .from("work_order_documents")
+      .delete()
+      .eq("work_order_id", workOrderId);
+    await admin
+      .from("work_order_vendors")
+      .delete()
+      .eq("work_order_id", workOrderId);
+    await admin.from("work_orders").delete().eq("id", workOrderId);
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const auth = await requireUser(request);
@@ -185,6 +207,21 @@ export async function POST(request: Request) {
       );
     }
 
+    const { data: vendor, error: vendorError } = await admin
+      .from("vendors")
+      .select("id, vendor_name")
+      .eq("id", vendorId)
+      .maybeSingle();
+
+    if (vendorError) throw vendorError;
+
+    if (!vendor) {
+      return NextResponse.json(
+        { error: "Selected vendor was not found." },
+        { status: 404 }
+      );
+    }
+
     const organizationId = company.organization_id;
     const generatedWONumber = await generateWorkOrderNumber(
       admin,
@@ -215,65 +252,98 @@ export async function POST(request: Request) {
       userEmail ||
       "Platform Owner";
 
-    const { data: workOrder, error: woError } = await admin
-      .from("work_orders")
-      .insert({
-        organization_id: organizationId,
-        company_id: companyId,
-        site_id: siteId,
-        wo_number: generatedWONumber,
-        wo_date: woDate,
-        wo_type: woType,
-        description: description || null,
-        status: "active",
-        approval_status: "pending",
-        created_by_name: userName,
-        created_by_email: userEmail,
-        created_at_user: new Date().toISOString(),
-      })
-      .select("id")
-      .single();
+    let createdWorkOrderId = "";
+    let uploadedFilePath = "";
 
-    if (woError) throw woError;
+    try {
+      const { data: workOrder, error: woError } = await admin
+        .from("work_orders")
+        .insert({
+          organization_id: organizationId,
+          company_id: companyId,
+          site_id: siteId,
+          wo_number: generatedWONumber,
+          wo_date: woDate,
+          wo_type: woType,
+          description: description || null,
+          status: "active",
+          approval_status: "pending",
+          created_by_name: userName,
+          created_by_email: userEmail,
+          created_at_user: new Date().toISOString(),
+        })
+        .select("id")
+        .single();
 
-    const cleanName = safeFileName(file.name);
-    const filePath = `work-orders/${workOrder.id}/${Date.now()}-${cleanName}`;
+      if (woError) throw woError;
 
-    const { error: uploadError } = await admin.storage
-      .from("work-order-documents")
-      .upload(filePath, file, { upsert: false });
+      createdWorkOrderId = workOrder.id;
 
-    if (uploadError) throw uploadError;
+      const { data: vendorLink, error: vendorLinkError } = await admin
+        .from("work_order_vendors")
+        .insert({
+          organization_id: organizationId,
+          work_order_id: workOrder.id,
+          vendor_id: vendorId,
+          vendor_role: vendorRole,
+          is_primary: true,
+        })
+        .select("id")
+        .single();
 
-    const { data: publicUrlData } = admin.storage
-      .from("work_order_documents")
-      .getPublicUrl(filePath);
+      if (vendorLinkError) throw vendorLinkError;
 
-    const { error: documentError } = await admin
-      .from("work_order_documents")
-      .insert({
-        organization_id: organizationId,
-        work_order_id: workOrder.id,
-        file_name: file.name,
-        file_url: publicUrlData.publicUrl,
-        file_path: filePath,
-      });
+      if (!vendorLink?.id) {
+        throw new Error("Work Order vendor link was not created.");
+      }
 
-    if (documentError) throw documentError;
+      const { data: confirmedVendorLink, error: confirmVendorLinkError } =
+        await admin
+          .from("work_order_vendors")
+          .select("id")
+          .eq("work_order_id", workOrder.id)
+          .eq("vendor_id", vendorId)
+          .eq("is_primary", true)
+          .maybeSingle();
 
-    const { error: vendorLinkError } = await admin
-      .from("work_order_vendors")
-      .insert({
-        organization_id: organizationId,
-        work_order_id: workOrder.id,
-        vendor_id: vendorId,
-        vendor_role: vendorRole,
-        is_primary: true,
-      });
+      if (confirmVendorLinkError) throw confirmVendorLinkError;
 
-    if (vendorLinkError) throw vendorLinkError;
+      if (!confirmedVendorLink) {
+        throw new Error("Work Order vendor link could not be verified.");
+      }
 
-    return NextResponse.json({ workOrder });
+      const cleanName = safeFileName(file.name);
+      const filePath = `work-orders/${workOrder.id}/${Date.now()}-${cleanName}`;
+
+      const { error: uploadError } = await admin.storage
+        .from("work-order-documents")
+        .upload(filePath, file, { upsert: false });
+
+      if (uploadError) throw uploadError;
+
+      uploadedFilePath = filePath;
+
+      const { data: publicUrlData } = admin.storage
+        .from("work_order_documents")
+        .getPublicUrl(filePath);
+
+      const { error: documentError } = await admin
+        .from("work_order_documents")
+        .insert({
+          organization_id: organizationId,
+          work_order_id: workOrder.id,
+          file_name: file.name,
+          file_url: publicUrlData.publicUrl,
+          file_path: filePath,
+        });
+
+      if (documentError) throw documentError;
+
+      return NextResponse.json({ workOrder });
+    } catch (error) {
+      await cleanupWorkOrder(admin, createdWorkOrderId, uploadedFilePath);
+      throw error;
+    }
   } catch (error: any) {
     return NextResponse.json(
       { error: error.message || "Failed to create work order." },
