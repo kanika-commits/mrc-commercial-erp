@@ -82,6 +82,7 @@ export default function NewWorkOrderPage() {
   const [message, setMessage] = useState("");
   const [currentStep, setCurrentStep] = useState(1);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [woNumberEdited, setWoNumberEdited] = useState(false);
 
   const [form, setForm] = useState<FormState>({
     company_id: "",
@@ -166,6 +167,9 @@ export default function NewWorkOrderPage() {
   ) {
     const { name, value } = e.target;
     clearFieldError(name);
+    if (name === "wo_number") {
+      setWoNumberEdited(true);
+    }
     setForm((prev) => ({ ...prev, [name]: value }));
   }
 
@@ -208,15 +212,28 @@ export default function NewWorkOrderPage() {
     return `${prefix}${nextNumber}`;
   }
 
-  async function ensureWorkOrderNumber() {
-    const existing = form.wo_number.trim();
-    if (existing) return existing;
-    if (!form.company_id || !form.site_id) return "";
+  useEffect(() => {
+    let cancelled = false;
 
-    const generated = await generateWorkOrderNumber();
-    setForm((prev) => ({ ...prev, wo_number: generated }));
-    return generated;
-  }
+    async function suggestWorkOrderNumber() {
+      if (!form.company_id || !form.site_id || woNumberEdited) return;
+
+      try {
+        const generated = await generateWorkOrderNumber();
+        if (!cancelled) {
+          setForm((prev) => ({ ...prev, wo_number: generated }));
+        }
+      } catch {
+        // Validation will surface missing company/site codes if the user continues.
+      }
+    }
+
+    suggestWorkOrderNumber();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [form.company_id, form.site_id, woNumberEdited]);
 
   async function validateStep(step: number) {
     const errors: Record<string, string> = {};
@@ -225,19 +242,7 @@ export default function NewWorkOrderPage() {
       if (!form.company_id) errors.company_id = "Company is required.";
       if (!form.site_id) errors.site_id = "Site is required.";
 
-      if (form.company_id && form.site_id && !form.wo_number.trim()) {
-        try {
-          const generated = await ensureWorkOrderNumber();
-          if (!generated) errors.wo_number = "Work Order number is required.";
-        } catch (error: any) {
-          errors.wo_number =
-            error.message || "Work Order number could not be generated.";
-        }
-      }
-
-      if (!form.wo_number.trim() && (!form.company_id || !form.site_id)) {
-        errors.wo_number = "Select company and site to generate a Work Order number.";
-      }
+      if (!form.wo_number.trim()) errors.wo_number = "Work Order number is required.";
     }
 
     if (step === 2) {
@@ -304,9 +309,6 @@ export default function NewWorkOrderPage() {
     try {
       setSaving(true);
 
-      const generatedWONumber = await generateWorkOrderNumber();
-      setForm((prev) => ({ ...prev, wo_number: generatedWONumber }));
-
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -318,6 +320,7 @@ export default function NewWorkOrderPage() {
       const payload = new FormData();
       payload.append("company_id", form.company_id);
       payload.append("site_id", form.site_id);
+      payload.append("wo_number", form.wo_number.trim());
       payload.append("wo_date", form.wo_date);
       payload.append("wo_type", form.wo_type);
       payload.append("description", form.description);
@@ -514,9 +517,9 @@ export default function NewWorkOrderPage() {
                     <input
                       name="wo_number"
                       value={form.wo_number}
-                      readOnly
-                      placeholder="Auto-generated after company and site are selected"
-                      className={`${inputClass} bg-slate-50 text-slate-600`}
+                      onChange={handleChange}
+                      placeholder="Enter Work Order Number"
+                      className={inputClass}
                     />
                   </FieldShell>
                 </div>

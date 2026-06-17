@@ -4,6 +4,7 @@ import {
   insertDeleteAudit,
   requireDeletePermission,
 } from "@/lib/serverDeleteAudit";
+import { createWorkOrderDriveFolder } from "@/src/lib/googleDrive";
 
 const MODULE_CODE = "work_orders";
 const DOCUMENT_BUCKET = "work-order-documents";
@@ -201,6 +202,7 @@ export async function POST(request: Request) {
     const formData = await request.formData();
     const companyId = String(formData.get("company_id") || "").trim();
     const siteId = String(formData.get("site_id") || "").trim();
+    const woNumber = String(formData.get("wo_number") || "").trim();
     const woDate = String(formData.get("wo_date") || "").trim();
     const woType = String(formData.get("wo_type") || "").trim();
     const description = String(formData.get("description") || "").trim();
@@ -217,6 +219,13 @@ export async function POST(request: Request) {
 
     if (!siteId) {
       return NextResponse.json({ error: "Site is required." }, { status: 400 });
+    }
+
+    if (!woNumber) {
+      return NextResponse.json(
+        { error: "Work Order number is required." },
+        { status: 400 }
+      );
     }
 
     if (!woDate) {
@@ -316,24 +325,23 @@ export async function POST(request: Request) {
     }
 
     const organizationId = company.organization_id;
-    const generatedWONumber = await generateWorkOrderNumber(
-      admin,
-      company.company_code,
-      site.site_code
-    );
+    const normalizedWONumber = woNumber.toLowerCase();
 
-    const { data: duplicate, error: duplicateError } = await admin
+    const { data: duplicates, error: duplicateError } = await admin
       .from("work_orders")
       .select("id, wo_number")
       .eq("organization_id", organizationId)
-      .eq("wo_number", generatedWONumber)
-      .maybeSingle();
+      .ilike("wo_number", woNumber);
 
     if (duplicateError) throw duplicateError;
 
+    const duplicate = (duplicates || []).find(
+      (row) => String(row.wo_number || "").trim().toLowerCase() === normalizedWONumber
+    );
+
     if (duplicate) {
       return NextResponse.json(
-        { error: "Generated Work Order number already exists. Please save again." },
+        { error: "Work Order number already exists." },
         { status: 409 }
       );
     }
@@ -355,7 +363,7 @@ export async function POST(request: Request) {
           organization_id: organizationId,
           company_id: companyId,
           site_id: siteId,
-          wo_number: generatedWONumber,
+          wo_number: woNumber,
           wo_date: woDate,
           wo_type: woType,
           description: description || null,
@@ -438,6 +446,26 @@ export async function POST(request: Request) {
       if (!document?.file_name || !document?.file_path) {
         throw new Error("Work Order file metadata was not saved.");
       }
+
+      const driveFolder = await createWorkOrderDriveFolder(woNumber);
+
+      const { error: driveFolderError } = await admin
+        .from("work_order_drive_folders")
+        .upsert(
+          {
+            organization_id: organizationId,
+            work_order_id: workOrder.id,
+            drive_folder_id: driveFolder.folder_id,
+            drive_folder_name: driveFolder.folder_name,
+            ra_bills_folder_id: driveFolder.ra_bills_folder_id,
+            invoices_folder_id: driveFolder.invoices_folder_id,
+            debit_notes_folder_id: driveFolder.debit_notes_folder_id,
+            contractor_docs_folder_id: driveFolder.contractor_docs_folder_id,
+          },
+          { onConflict: "work_order_id" }
+        );
+
+      if (driveFolderError) throw driveFolderError;
 
       return NextResponse.json({ workOrder });
     } catch (error) {
