@@ -404,6 +404,14 @@ export default function ITCReviewPage() {
 
                     <td className="p-3">
                       <div className="flex flex-col justify-center gap-2">
+                        <Link
+                          href={`/invoices/${invoice.id}`}
+                          className="inline-flex items-center justify-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          View
+                        </Link>
+
                         <button
                           type="button"
                           disabled={savingId === invoice.id}
