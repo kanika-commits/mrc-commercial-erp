@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { CheckCircle2, FileMinus, FileText, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { can, getCurrentUserAccess } from "@/lib/accessControl";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -28,10 +29,17 @@ export default function ApprovalsPage() {
   const [savingId, setSavingId] = useState("");
   const [message, setMessage] = useState("");
   const [remarks, setRemarks] = useState<Record<string, string>>({});
+  const [canDeleteDebitNotes, setCanDeleteDebitNotes] = useState(false);
 
   useEffect(() => {
+    loadAccess();
     loadApprovals();
   }, []);
+
+  async function loadAccess() {
+    const access = await getCurrentUserAccess();
+    setCanDeleteDebitNotes(can(access.permissions, "debit_notes", "delete"));
+  }
 
   async function loadApprovals() {
     setLoading(true);
@@ -764,6 +772,7 @@ export default function ApprovalsPage() {
                       <ActionButtons
                         saving={savingId === remarkKey}
                         viewHref={`/debit-notes/${note.id}`}
+                        showReject={canDeleteDebitNotes}
                         onApprove={() =>
                           updateDebitNoteStatus(note.id, "Approved")
                         }
@@ -794,11 +803,13 @@ export default function ApprovalsPage() {
 function ActionButtons({
   saving,
   viewHref,
+  showReject = true,
   onApprove,
   onReject,
 }: {
   saving: boolean;
   viewHref: string;
+  showReject?: boolean;
   onApprove: () => void;
   onReject: () => void;
 }) {
@@ -821,15 +832,17 @@ function ActionButtons({
         Approve
       </button>
 
-      <button
-        type="button"
-        disabled={saving}
-        onClick={onReject}
-        className="inline-flex w-28 items-center justify-center gap-1 rounded-xl bg-red-600 px-3 py-2 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-60"
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-        Reject
-      </button>
+      {showReject && (
+        <button
+          type="button"
+          disabled={saving}
+          onClick={onReject}
+          className="inline-flex w-28 items-center justify-center gap-1 rounded-xl bg-red-600 px-3 py-2 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-60"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Reject
+        </button>
+      )}
     </div>
   );
 }
