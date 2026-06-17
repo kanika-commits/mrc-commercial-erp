@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Import artifacts
+import-data/
+reports/
+scripts/__pycache__/
