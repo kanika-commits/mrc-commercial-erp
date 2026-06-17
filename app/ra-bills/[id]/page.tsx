@@ -37,6 +37,11 @@ function statusClass(value?: string | null) {
   return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
+function isGoogleDocumentUrl(value: string | null | undefined) {
+  const url = String(value || "").trim();
+  return url.startsWith("https://drive.google.com/") || url.startsWith("https://docs.google.com/");
+}
+
 export default function RABillDetailPage() {
   const params = useParams();
   const billId = params.id as string;
@@ -154,7 +159,11 @@ export default function RABillDetailPage() {
   }
 
   function openDocument(document: any) {
-    if (!document.signed_url) {
+    const url = isGoogleDocumentUrl(document.file_url)
+      ? document.file_url
+      : document.signed_url;
+
+    if (!url) {
       setMessage(
         document.signed_url_error ||
           "Unable to open attachment. Signed URL was not available."
@@ -162,7 +171,7 @@ export default function RABillDetailPage() {
       return;
     }
 
-    window.open(document.signed_url, "_blank", "noopener,noreferrer");
+    window.open(url, "_blank", "noopener,noreferrer");
   }
 
   const totals = useMemo(() => {
