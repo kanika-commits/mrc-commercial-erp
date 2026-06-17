@@ -48,6 +48,11 @@ function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
+async function fileToBase64(file: File) {
+  const buffer = Buffer.from(await file.arrayBuffer());
+  return buffer.toString("base64");
+}
+
 async function readDeletionReason(request: Request) {
   const contentType = request.headers.get("content-type") || "";
 
@@ -354,8 +359,6 @@ export async function POST(request: Request) {
       "Platform Owner";
 
     let createdWorkOrderId = "";
-    let uploadedFilePath = "";
-
     try {
       const { data: workOrder, error: woError } = await admin
         .from("work_orders")
@@ -413,29 +416,24 @@ export async function POST(request: Request) {
         throw new Error("Work Order vendor link could not be verified.");
       }
 
-      const cleanName = safeFileName(file.name);
-      const filePath = `work-orders/${workOrder.id}/${Date.now()}-${cleanName}`;
+      const driveFolder = await createWorkOrderDriveFolder(woNumber, {
+        fileName: file.name,
+        mimeType: file.type || "application/pdf",
+        base64: await fileToBase64(file),
+      });
 
-      const { error: uploadError } = await admin.storage
-        .from("work-order-documents")
-        .upload(filePath, file, { upsert: false });
-
-      if (uploadError) throw uploadError;
-
-      uploadedFilePath = filePath;
-
-      const { data: publicUrlData } = admin.storage
-        .from("work-order-documents")
-        .getPublicUrl(filePath);
+      if (!driveFolder.work_order_file_id || !driveFolder.work_order_file_url) {
+        throw new Error("Google Drive Work Order file was not created.");
+      }
 
       const { data: document, error: documentError } = await admin
         .from("work_order_documents")
         .insert({
           organization_id: organizationId,
           work_order_id: workOrder.id,
-          file_name: file.name,
-          file_url: publicUrlData.publicUrl,
-          file_path: filePath,
+          file_name: driveFolder.work_order_file_name || file.name,
+          file_url: driveFolder.work_order_file_url,
+          file_path: driveFolder.work_order_file_id,
           uploaded_at: new Date().toISOString(),
         })
         .select("id, file_name, file_path")
@@ -446,8 +444,6 @@ export async function POST(request: Request) {
       if (!document?.file_name || !document?.file_path) {
         throw new Error("Work Order file metadata was not saved.");
       }
-
-      const driveFolder = await createWorkOrderDriveFolder(woNumber);
 
       const { error: driveFolderError } = await admin
         .from("work_order_drive_folders")
@@ -469,7 +465,7 @@ export async function POST(request: Request) {
 
       return NextResponse.json({ workOrder });
     } catch (error) {
-      await cleanupWorkOrder(admin, createdWorkOrderId, uploadedFilePath);
+      await cleanupWorkOrder(admin, createdWorkOrderId);
       throw error;
     }
   } catch (error: any) {
