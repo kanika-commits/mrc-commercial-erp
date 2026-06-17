@@ -115,6 +115,16 @@ function isMissingRelationError(error: any) {
   );
 }
 
+function logDebitNoteDeleteError(step: string, error: any) {
+  console.error("[Debit Note DELETE]", step, {
+    message: error?.message,
+    code: error?.code,
+    details: error?.details,
+    hint: error?.hint,
+    error,
+  });
+}
+
 async function countDirectLinks(
   admin: ReturnType<typeof adminClient>,
   table: string,
@@ -371,145 +381,172 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  try {
-    const auth = await requireUser(request);
+  const fail = (step: string, details: any, status = 500) => {
+    logDebitNoteDeleteError(step, details);
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
-    }
-
-    const { searchParams } = new URL(request.url);
-    const debitNoteId = searchParams.get("debit_note_id")?.trim();
-    const deletionReason = await readDeletionReason(request);
-
-    if (!debitNoteId) {
-      return NextResponse.json(
-        { error: "debit_note_id is required." },
-        { status: 400 }
-      );
-    }
-
-    if (deletionReason.length < 10) {
-      return NextResponse.json(
-        { error: "Deletion reason must be at least 10 characters." },
-        { status: 400 }
-      );
-    }
-
-    const admin = adminClient();
-    const permission = await requireDeletePermission(
-      admin,
-      auth.user,
-      MODULE_CODE
-    );
-
-    if ("error" in permission) {
-      return NextResponse.json(
-        { error: permission.error },
-        { status: permission.status }
-      );
-    }
-
-    const { data: debitNote, error: debitNoteError } = await admin
-      .from("debit_notes")
-      .select("*")
-      .eq("id", debitNoteId)
-      .maybeSingle();
-
-    if (debitNoteError) throw debitNoteError;
-
-    if (!debitNote) {
-      return NextResponse.json(
-        { error: "Debit Note was not found." },
-        { status: 404 }
-      );
-    }
-
-    const [
-      invoiceCount,
-      paymentCount,
-      ledgerEntryCount,
-      ledgerTransactionCount,
-      accountLedgerCount,
-    ] = await Promise.all([
-      countDirectLinks(admin, "invoices", "debit_note_id", debitNoteId),
-      countDirectLinks(admin, "payments", "debit_note_id", debitNoteId),
-      countDirectLinks(admin, "ledger_entries", "debit_note_id", debitNoteId),
-      countDirectLinks(admin, "ledger_transactions", "debit_note_id", debitNoteId),
-      countDirectLinks(admin, "account_ledger", "debit_note_id", debitNoteId),
-    ]);
-
-    const ledgerCount =
-      ledgerEntryCount + ledgerTransactionCount + accountLedgerCount;
-
-    if (invoiceCount > 0 || paymentCount > 0 || ledgerCount > 0) {
-      return NextResponse.json(
-        {
-          error:
-            "Cannot delete Debit Note because linked invoices/payments/ledger rows exist.",
-          dependencies: {
-            invoices: invoiceCount,
-            payments: paymentCount,
-            ledger_rows: ledgerCount,
-          },
-        },
-        { status: 409 }
-      );
-    }
-
-    const { data: documents, error: documentsError } = await admin
-      .from("debit_note_documents")
-      .select("*")
-      .eq("debit_note_id", debitNoteId);
-
-    if (documentsError) throw documentsError;
-
-    const paths = Array.from(
-      new Set(
-        (documents || [])
-          .map((document) => normalizeStoragePath(document.file_url))
-          .filter(Boolean)
-      )
-    );
-
-    await insertDeleteAudit(admin, auth.user, {
-      organizationId: debitNote.organization_id,
-      moduleCode: MODULE_CODE,
-      documentType: "Debit Note",
-      documentId: debitNote.id,
-      documentNumber: debitNote.debit_note_number,
-      deletionReason,
-      recordSnapshot: debitNote,
-      relatedSnapshot: {
-        debit_note_documents: documents || [],
-      },
-      fileSnapshot: {
-        bucket: DOCUMENT_BUCKET,
-        paths,
-      },
-    });
-
-    if (paths.length > 0) {
-      const { error: storageError } = await admin.storage
-        .from(DOCUMENT_BUCKET)
-        .remove(paths);
-
-      if (storageError) throw storageError;
-    }
-
-    await cleanupDebitNote(admin, debitNoteId);
-
-    return NextResponse.json({
-      deleted: true,
-      deleted_storage_files: paths.length,
-    });
-  } catch (error: any) {
     return NextResponse.json(
-      { error: error.message || "Failed to delete Debit Note." },
-      { status: 500 }
+      {
+        error: "Debit Note delete failed",
+        step,
+        details,
+      },
+      { status }
+    );
+  };
+
+  let debitNoteId = "";
+  let deletionReason = "";
+
+  try {
+    const { searchParams } = new URL(request.url);
+    debitNoteId = searchParams.get("debit_note_id")?.trim() || "";
+    deletionReason = await readDeletionReason(request);
+  } catch (error) {
+    return fail("parse_request", error);
+  }
+
+  if (!debitNoteId) {
+    return fail("parse_request", { message: "debit_note_id is required." }, 400);
+  }
+
+  if (deletionReason.length < 10) {
+    return fail(
+      "parse_request",
+      { message: "Deletion reason must be at least 10 characters." },
+      400
     );
   }
+
+  const auth = await requireUser(request).catch((error) => ({
+    error,
+    status: 401,
+  }));
+
+  if ("error" in auth) {
+    return fail("permission_check", auth.error, auth.status);
+  }
+
+  let admin: ReturnType<typeof adminClient>;
+
+  try {
+    admin = adminClient();
+  } catch (error) {
+    return fail("permission_check", error);
+  }
+
+  const permission = await requireDeletePermission(
+    admin,
+    auth.user,
+    MODULE_CODE
+  ).catch((error) => ({
+    error,
+    status: 500,
+  }));
+
+  if ("error" in permission) {
+    return fail("permission_check", permission.error, permission.status);
+  }
+
+  const { data: debitNote, error: debitNoteError } = await admin
+    .from("debit_notes")
+    .select("*")
+    .eq("id", debitNoteId)
+    .maybeSingle();
+
+  if (debitNoteError) {
+    return fail("fetch_debit_note", debitNoteError);
+  }
+
+  if (!debitNote) {
+    return fail("fetch_debit_note", { message: "Debit Note was not found." }, 404);
+  }
+
+  const normalizedApprovalStatus = String(
+    debitNote.approval_status || debitNote.status || ""
+  )
+    .trim()
+    .toLowerCase();
+  const isApprovedDebitNote = normalizedApprovalStatus === "approved";
+
+  let documents: any[] = [];
+  const { data: documentData, error: documentsError } = await admin
+    .from("debit_note_documents")
+    .select("*")
+    .eq("debit_note_id", debitNoteId);
+
+  if (documentsError) {
+    if (isMissingRelationError(documentsError)) {
+      documents = [];
+    } else {
+      return fail("fetch_related_documents", documentsError);
+    }
+  } else {
+    documents = documentData || [];
+  }
+
+  const paths = Array.from(
+    new Set(
+      documents
+        .map((document) => normalizeStoragePath(document.file_url))
+        .filter(Boolean)
+    )
+  );
+
+  const audit = await insertDeleteAudit(admin, auth.user, {
+    organizationId: debitNote.organization_id,
+    moduleCode: MODULE_CODE,
+    documentType: "Debit Note",
+    documentId: debitNote.id,
+    documentNumber: debitNote.debit_note_number,
+    deletionReason,
+    recordSnapshot: debitNote,
+    relatedSnapshot: {
+      debit_note_documents: documents,
+    },
+    fileSnapshot: {
+      bucket: DOCUMENT_BUCKET,
+      paths,
+    },
+  }).catch((error) => ({ error }));
+
+  if ("error" in audit) {
+    return fail("insert_audit", audit.error);
+  }
+
+  if (paths.length > 0) {
+    const { error: storageError } = await admin.storage
+      .from(DOCUMENT_BUCKET)
+      .remove(paths);
+
+    if (storageError) {
+      return fail("delete_storage_files", storageError);
+    }
+  }
+
+  if (documents.length > 0) {
+    const { error: documentDeleteError } = await admin
+      .from("debit_note_documents")
+      .delete()
+      .eq("debit_note_id", debitNoteId);
+
+    if (documentDeleteError) {
+      return fail("delete_document_rows", documentDeleteError);
+    }
+  }
+
+  const { error: debitNoteDeleteError } = await admin
+    .from("debit_notes")
+    .delete()
+    .eq("id", debitNoteId);
+
+  if (debitNoteDeleteError) {
+    return fail("delete_debit_note", debitNoteDeleteError);
+  }
+
+  return NextResponse.json({
+    deleted: true,
+    deleted_storage_files: paths.length,
+    audited: true,
+    approved_delete: isApprovedDebitNote,
+  });
 }
