@@ -82,6 +82,14 @@ type SelectionMap = Record<string, boolean>;
 type SortField = "wo_number" | "vendor_name" | "wo_value" | "status" | "approval_status" | "wo_date";
 type SortDirection = "asc" | "desc";
 
+const LIFECYCLE_STATUS_OPTIONS = [
+  { value: "yet_to_start", label: "Yet to Start" },
+  { value: "active", label: "Active" },
+  { value: "completed", label: "Completed" },
+  { value: "suspended", label: "Suspended" },
+  { value: "terminated", label: "Terminated" },
+];
+
 function cleanValue(...values: Array<string | null | undefined>) {
   const value = values.find((item) => item && item.trim().length > 0);
   return value?.trim() || "Unassigned";
@@ -110,6 +118,7 @@ function getVendorName(wo: WorkOrder) {
 
 function titleCase(value: string | null | undefined) {
   if (!value) return "Unassigned";
+  if (value.trim().toLowerCase() === "yet_to_start") return "Yet to Start";
   return value
     .replace(/_/g, " ")
     .trim()
@@ -119,12 +128,14 @@ function titleCase(value: string | null | undefined) {
 }
 
 function getStatusFilterValue(wo: WorkOrder) {
-  const approvalStatus = wo.approval_status?.trim();
-  if (approvalStatus && approvalStatus.toLowerCase() !== "approved") {
-    return titleCase(approvalStatus);
-  }
+  return titleCase(lifecycleStatusValue(wo.status));
+}
 
-  return titleCase(wo.status);
+function lifecycleStatusValue(status: string | null | undefined) {
+  const normalized = String(status || "").trim().toLowerCase();
+  return LIFECYCLE_STATUS_OPTIONS.some((option) => option.value === normalized)
+    ? normalized
+    : "yet_to_start";
 }
 
 function getUniqueValues(values: string[]) {
@@ -309,7 +320,9 @@ export default function WorkOrdersPage() {
   const [sortField, setSortField] = useState<SortField>("wo_date");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [message, setMessage] = useState("");
+  const [canEdit, setCanEdit] = useState(false);
   const [canDelete, setCanDelete] = useState(false);
+  const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
   const [deleteWorkOrder, setDeleteWorkOrder] = useState<WorkOrder | null>(null);
   const [deletionReason, setDeletionReason] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -509,7 +522,49 @@ export default function WorkOrdersPage() {
 
   async function loadAccess() {
     const access = await getCurrentUserAccess();
+    setCanEdit(can(access.permissions, "work_orders", "edit"));
     setCanDelete(can(access.permissions, "work_orders", "delete"));
+  }
+
+  async function updateLifecycleStatus(workOrderId: string, nextStatus: string) {
+    const status = lifecycleStatusValue(nextStatus);
+
+    try {
+      setUpdatingStatusId(workOrderId);
+      setMessage("");
+      setError(null);
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Please sign in again to update this Work Order.");
+      }
+
+      const response = await fetch(`/api/work-orders/${workOrderId}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to update Work Order status.");
+      }
+
+      setWorkOrders((prev) =>
+        prev.map((wo) => (wo.id === workOrderId ? { ...wo, status } : wo)),
+      );
+      setMessage("Work Order status updated.");
+    } catch (statusError: any) {
+      setMessage(statusError.message || "Failed to update Work Order status.");
+    } finally {
+      setUpdatingStatusId(null);
+    }
   }
 
   async function confirmDelete() {
@@ -579,8 +634,8 @@ export default function WorkOrdersPage() {
   );
 
   const statusOptions = useMemo(
-    () => getUniqueValues(workOrders.map((wo) => getStatusFilterValue(wo))),
-    [workOrders],
+    () => LIFECYCLE_STATUS_OPTIONS.map((option) => option.label),
+    [],
   );
 
   const typeOptions = useMemo(
@@ -662,8 +717,8 @@ export default function WorkOrdersPage() {
           bValue = typeof b.wo_value === "string" ? Number(b.wo_value) || 0 : b.wo_value || 0;
           break;
         case "status":
-          aValue = titleCase(a.status);
-          bValue = titleCase(b.status);
+          aValue = titleCase(lifecycleStatusValue(a.status));
+          bValue = titleCase(lifecycleStatusValue(b.status));
           break;
         case "approval_status":
           aValue = titleCase(a.approval_status);
@@ -886,7 +941,10 @@ export default function WorkOrdersPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {sortedWorkOrders.map((wo) => (
+                {sortedWorkOrders.map((wo) => {
+                  const lifecycleStatus = lifecycleStatusValue(wo.status);
+
+                  return (
                   <tr key={wo.id} className="transition hover:bg-[#f6f3f5]">
                     <td className="px-6 py-5 align-top text-base font-bold text-[#00658b]">
                       {wo.wo_number || "-"}
@@ -935,13 +993,30 @@ export default function WorkOrdersPage() {
                       )}
                     </td>
                     <td className="px-6 py-5 align-top">
-                      <span
-                        className={`inline-flex border px-2.5 py-1.5 text-sm font-semibold ${statusBadgeClass(
-                          wo.status,
-                        )}`}
-                      >
-                        {titleCase(wo.status)}
-                      </span>
+                      {canEdit ? (
+                        <select
+                          value={lifecycleStatus}
+                          onChange={(event) => updateLifecycleStatus(wo.id, event.target.value)}
+                          disabled={updatingStatusId === wo.id}
+                          className={`border px-2.5 py-1.5 text-sm font-semibold outline-none transition focus:ring-1 focus:ring-[#00658b] disabled:opacity-60 ${statusBadgeClass(
+                            lifecycleStatus,
+                          )}`}
+                        >
+                          {LIFECYCLE_STATUS_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span
+                          className={`inline-flex border px-2.5 py-1.5 text-sm font-semibold ${statusBadgeClass(
+                            lifecycleStatus,
+                          )}`}
+                        >
+                          {titleCase(lifecycleStatus)}
+                        </span>
+                      )}
                     </td>
                     <td className="px-6 py-5 align-top">
                       <span
@@ -995,7 +1070,8 @@ export default function WorkOrdersPage() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

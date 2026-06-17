@@ -186,6 +186,10 @@ async function createDocumentSignedUrl(
   supabase: ReturnType<typeof adminClient>,
   document: any
 ) {
+  if (String(document.file_url || "").trim().startsWith("https://drive.google.com/")) {
+    return { signedUrl: document.file_url, path: document.file_url };
+  }
+
   const basePath = normalizeStoragePath(document.file_url);
   const candidates = new Set<string>();
 

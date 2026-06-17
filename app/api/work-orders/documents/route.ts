@@ -3,6 +3,10 @@ import { createClient } from "@supabase/supabase-js";
 
 const DOCUMENT_BUCKET = "work-order-documents";
 
+function isGoogleDriveUrl(value: string | null | undefined) {
+  return String(value || "").trim().startsWith("https://drive.google.com/");
+}
+
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -98,6 +102,14 @@ export async function GET(request: Request) {
 
     const signedDocuments = await Promise.all(
       (documents || []).map(async (document) => {
+        if (isGoogleDriveUrl(document.file_url)) {
+          return {
+            ...document,
+            signed_url: document.file_url,
+            signed_url_error: null,
+          };
+        }
+
         const path = normalizeStoragePath(document);
         let signed_url: string | null = null;
         let signed_url_error: string | null = null;

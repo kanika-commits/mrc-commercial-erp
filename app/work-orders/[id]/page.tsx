@@ -5,9 +5,23 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Download } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { can, getCurrentUserAccess } from "@/lib/accessControl";
+
+const STATUS_OPTIONS = [
+  { value: "yet_to_start", label: "Yet to Start" },
+  { value: "active", label: "Active" },
+  { value: "completed", label: "Completed" },
+  { value: "suspended", label: "Suspended" },
+  { value: "terminated", label: "Terminated" },
+];
 
 function money(value: any) {
   return `Rs. ${Number(value || 0).toLocaleString("en-IN")}`;
+}
+
+function statusLabel(value: string | null | undefined) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return STATUS_OPTIONS.find((option) => option.value === normalized)?.label || value || "-";
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -38,6 +52,11 @@ const [debitNotes, setDebitNotes] = useState<any[]>([]);
 const [documents, setDocuments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
+  const [canUpdateStatus, setCanUpdateStatus] = useState(false);
+  const [showStatusModal, setShowStatusModal] = useState(false);
+  const [selectedStatus, setSelectedStatus] = useState("active");
+  const [savingStatus, setSavingStatus] = useState(false);
 
   useEffect(() => {
     loadWorkOrder();
@@ -47,6 +66,10 @@ const [documents, setDocuments] = useState<any[]>([]);
     try {
       setLoading(true);
       setMessage("");
+      setStatusMessage("");
+
+      const access = await getCurrentUserAccess();
+      setCanUpdateStatus(can(access.permissions, "work_orders", "edit"));
 
       const { data: woData, error: woError } = await supabase
         .from("work_orders")
@@ -57,6 +80,11 @@ const [documents, setDocuments] = useState<any[]>([]);
       if (woError) throw woError;
 
       setWorkOrder(woData);
+      setSelectedStatus(
+        STATUS_OPTIONS.some((option) => option.value === String(woData.status || "").toLowerCase())
+          ? String(woData.status || "").toLowerCase()
+          : "active"
+      );
 
       if (woData.company_id) {
         const { data } = await supabase
@@ -185,6 +213,50 @@ setDebitNotes(debitNoteData || []);
     }
 
     window.open(document.signed_url, "_blank", "noopener,noreferrer");
+  }
+
+  async function updateWorkOrderStatus() {
+    setStatusMessage("");
+
+    if (!STATUS_OPTIONS.some((option) => option.value === selectedStatus)) {
+      setStatusMessage("Please select a valid Work Order status.");
+      return;
+    }
+
+    try {
+      setSavingStatus(true);
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/work-orders/${workOrderId}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status: selectedStatus }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to update Work Order status.");
+      }
+
+      setShowStatusModal(false);
+      setStatusMessage("Work Order status updated.");
+      await loadWorkOrder();
+      setStatusMessage("Work Order status updated.");
+    } catch (error: any) {
+      setStatusMessage(error.message || "Failed to update Work Order status.");
+    } finally {
+      setSavingStatus(false);
+    }
   }
 
  const totals = useMemo(() => {
@@ -323,6 +395,12 @@ function downloadWOLedger() {
 
   return (
     <div className="space-y-6">
+      {statusMessage && (
+        <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm font-medium text-slate-800">
+          {statusMessage}
+        </div>
+      )}
+
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold">{workOrder.wo_number}</h1>
@@ -340,6 +418,24 @@ function downloadWOLedger() {
     <Download className="h-4 w-4" />
     Download Ledger
   </button>
+
+  {canUpdateStatus && (
+    <button
+      type="button"
+      onClick={() => {
+        setSelectedStatus(
+          STATUS_OPTIONS.some((option) => option.value === String(workOrder.status || "").toLowerCase())
+            ? String(workOrder.status || "").toLowerCase()
+            : "active"
+        );
+        setStatusMessage("");
+        setShowStatusModal(true);
+      }}
+      className="rounded-lg border border-slate-300 px-4 py-2 font-medium text-slate-800 hover:bg-slate-50"
+    >
+      Update Status
+    </button>
+  )}
 
   <Link href="/work-orders" className="rounded-lg border px-4 py-2">
     Back to Work Orders
@@ -377,7 +473,7 @@ function downloadWOLedger() {
           <Info label="Site Location" value={site?.location || "-"} />
           <Info label="WO Date" value={workOrder.wo_date || "-"} />
           <Info label="WO Type" value={workOrder.wo_type || "-"} />
-          <Info label="Status" value={workOrder.status || "-"} />
+          <Info label="Status" value={statusLabel(workOrder.status)} />
           <Info label="Approval Status" value={workOrder.approval_status || "-"} />
           <Info label="WO Value" value={money(workOrder.wo_value)} />
           <Info label="GST Percent" value={workOrder.gst_percent ? `${workOrder.gst_percent}%` : "-"} />
@@ -466,6 +562,66 @@ function downloadWOLedger() {
           </div>
         )}
       </section>
+
+      {showStatusModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-slate-950">Update Status</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Change lifecycle status only for {workOrder.wo_number || "this Work Order"}.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowStatusModal(false)}
+                className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100"
+                disabled={savingStatus}
+              >
+                x
+              </button>
+            </div>
+
+            <label className="mt-5 block">
+              <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                Status
+              </span>
+              <select
+                value={selectedStatus}
+                onChange={(event) => setSelectedStatus(event.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+                disabled={savingStatus}
+              >
+                {STATUS_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowStatusModal(false)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                disabled={savingStatus}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={updateWorkOrderStatus}
+                className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                disabled={savingStatus}
+              >
+                {savingStatus ? "Saving..." : "Save Status"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     <DataTable
       title={`Linked RA Bills (${raBills.length})`}
