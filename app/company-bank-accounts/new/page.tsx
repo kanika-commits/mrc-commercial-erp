@@ -6,6 +6,7 @@ import { ArrowLeft, Building2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { sortCompanies } from "@/lib/companyOrdering";
+import { can, getCurrentUserAccess } from "@/lib/accessControl";
 
 export default function NewCompanyBankAccountPage() {
   const router = useRouter();
@@ -13,6 +14,7 @@ export default function NewCompanyBankAccountPage() {
   const [companies, setCompanies] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [accessDenied, setAccessDenied] = useState(false);
 
   const [form, setForm] = useState({
     company_id: "",
@@ -28,6 +30,14 @@ export default function NewCompanyBankAccountPage() {
   }, []);
 
   async function loadCompanies() {
+    const access = await getCurrentUserAccess();
+
+    if (!can(access.permissions, "company_bank_accounts", "add")) {
+      setAccessDenied(true);
+      setMessage("You do not have permission to add company bank accounts.");
+      return;
+    }
+
     const { data, error } = await supabase
       .from("companies")
       .select("id, company_name, company_code")
@@ -116,6 +126,23 @@ export default function NewCompanyBankAccountPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  if (accessDenied) {
+    return (
+      <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-700">
+        <h1 className="text-lg font-semibold">Access Denied</h1>
+        <p className="mt-1 text-sm">
+          You do not have permission to add company bank accounts.
+        </p>
+        <Link
+          href="/company-bank-accounts"
+          className="mt-4 inline-flex rounded-xl border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100"
+        >
+          Back to Bank Accounts
+        </Link>
+      </div>
+    );
   }
 
   return (

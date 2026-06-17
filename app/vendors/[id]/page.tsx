@@ -14,6 +14,7 @@ import {
   Landmark,
   Pencil,
   Phone,
+  Trash2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { getCurrentUserAccess, can } from "@/lib/accessControl";
@@ -37,6 +38,7 @@ export default function VendorDetailPage() {
   const [payments, setPayments] = useState<any[]>([]);
   const [debitNotes, setDebitNotes] = useState<any[]>([]);
   const [canEdit, setCanEdit] = useState(false);
+  const [canDelete, setCanDelete] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
@@ -47,6 +49,7 @@ export default function VendorDetailPage() {
 
       const access = await getCurrentUserAccess();
       setCanEdit(can(access.permissions, "vendors", "edit"));
+      setCanDelete(can(access.permissions, "vendors", "delete"));
 
       const {
         data: { session },
@@ -286,6 +289,40 @@ export default function VendorDetailPage() {
     URL.revokeObjectURL(url);
   }
 
+  async function deleteVendor() {
+    const ok = window.confirm(
+      `Delete vendor "${vendor?.vendor_name || "Vendor"}"? This will remove it from the active vendor list.`
+    );
+
+    if (!ok) return;
+
+    try {
+      setMessage("");
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/vendors/${vendorId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to delete vendor.");
+      }
+
+      window.location.href = "/vendors";
+    } catch (error: any) {
+      setMessage(error.message || "Failed to delete vendor.");
+    }
+  }
+
   async function openVendorDocument(document: any) {
     if (!document.id) {
       alert("Document id is missing.");
@@ -440,6 +477,16 @@ export default function VendorDetailPage() {
                 <Pencil className="h-4 w-4" />
                 Edit Vendor
               </Link>
+            )}
+            {canDelete && (
+              <button
+                type="button"
+                onClick={deleteVendor}
+                className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-50"
+              >
+                <Trash2 className="h-4 w-4" />
+                Delete
+              </button>
             )}
             <button
               type="button"
@@ -919,6 +966,16 @@ export default function VendorDetailPage() {
               <Pencil className="h-4 w-4" />
               Edit Vendor
             </Link>
+          )}
+          {canDelete && (
+            <button
+              type="button"
+              onClick={deleteVendor}
+              className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+            >
+              <Trash2 className="h-4 w-4" />
+              Delete
+            </button>
           )}
 
           <button

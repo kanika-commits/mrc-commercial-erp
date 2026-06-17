@@ -20,6 +20,7 @@ type Company = {
 export default function CompaniesPage() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [canEditCompanies, setCanEditCompanies] = useState(false);
+  const [canDeleteCompanies, setCanDeleteCompanies] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
@@ -38,10 +39,16 @@ export default function CompaniesPage() {
         access.roleCodes.includes("super_admin") ||
         can(access.permissions, "companies", "edit")
     );
+    setCanDeleteCompanies(
+      access.roleCodes.includes("platform_owner") ||
+        access.roleCodes.includes("super_admin") ||
+        can(access.permissions, "companies", "delete")
+    );
 
     const { data, error } = await supabase
       .from("companies")
       .select("id, organization_id, company_name, company_code, status, created_at")
+      .neq("status", "deleted")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -85,6 +92,41 @@ export default function CompaniesPage() {
     setLoading(false);
   }
 
+  async function deleteCompany(company: Company) {
+    const ok = window.confirm(
+      `Delete company "${company.company_name}"? This is blocked automatically if linked records exist.`
+    );
+
+    if (!ok) return;
+
+    try {
+      setMessage("");
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/companies/${company.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to delete company.");
+      }
+
+      setCompanies((prev) => prev.filter((item) => item.id !== company.id));
+      setMessage("Company deleted successfully.");
+    } catch (error: any) {
+      setMessage(error.message || "Failed to delete company.");
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -113,20 +155,20 @@ export default function CompaniesPage() {
               <th className="p-3 text-left">Organization</th>
               <th className="p-3 text-left">Status</th>
               <th className="p-3 text-left">Created At</th>
-              {canEditCompanies && <th className="p-3 text-left">Action</th>}
+              <th className="p-3 text-left">Action</th>
             </tr>
           </thead>
 
           <tbody>
             {loading ? (
               <tr>
-                <td className="p-3" colSpan={canEditCompanies ? 6 : 5}>
+                <td className="p-3" colSpan={6}>
                   Loading...
                 </td>
               </tr>
             ) : companies.length === 0 ? (
               <tr>
-                <td className="p-3" colSpan={canEditCompanies ? 6 : 5}>
+                <td className="p-3" colSpan={6}>
                   No companies found.
                 </td>
               </tr>
@@ -146,16 +188,33 @@ export default function CompaniesPage() {
                   <td className="p-3">
                     {new Date(company.created_at).toLocaleDateString("en-IN")}
                   </td>
-                  {canEditCompanies && (
-                    <td className="p-3">
+                  <td className="p-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link
+                        href={`/companies/${company.id}`}
+                        className="rounded border px-3 py-1"
+                      >
+                        View
+                      </Link>
+                      {canEditCompanies && (
                       <Link
                         href={`/companies/${company.id}/edit`}
                         className="rounded border px-3 py-1"
                       >
                         Edit
                       </Link>
-                    </td>
-                  )}
+                      )}
+                      {canDeleteCompanies && (
+                        <button
+                          type="button"
+                          onClick={() => deleteCompany(company)}
+                          className="rounded border border-red-200 px-3 py-1 text-red-700 hover:bg-red-50"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                  </td>
                 </tr>
               ))
             )}

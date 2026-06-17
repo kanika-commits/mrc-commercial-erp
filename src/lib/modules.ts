@@ -1,5 +1,6 @@
 export const MODULES = [
   "companies",
+  "company_bank_accounts",
   "sites",
   "vendors",
   "work_orders",

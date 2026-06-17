@@ -88,13 +88,23 @@ export default function VendorsPage() {
 
     if (!ok) return;
 
-    const { error } = await supabase
-      .from("vendors")
-      .update({ status: "deleted" })
-      .eq("id", vendor.id);
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-    if (error) {
-      alert(error.message);
+    if (!session?.access_token) {
+      alert("Your session expired. Please log in again.");
+      return;
+    }
+
+    const response = await fetch(`/api/vendors/${vendor.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    });
+    const result = await response.json();
+
+    if (!response.ok) {
+      alert(result.error || "Failed to delete vendor.");
       return;
     }
 

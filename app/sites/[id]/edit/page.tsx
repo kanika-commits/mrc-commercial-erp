@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Save } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { can, getCurrentUserAccess } from "@/lib/accessControl";
 
 type Site = {
   id: string;
@@ -28,11 +29,22 @@ export default function EditSitePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [accessDenied, setAccessDenied] = useState(false);
 
   useEffect(() => {
     async function loadSite() {
       setLoading(true);
       setMessage("");
+      setAccessDenied(false);
+
+      const access = await getCurrentUserAccess();
+
+      if (!can(access.permissions, "sites", "edit")) {
+        setAccessDenied(true);
+        setMessage("You do not have permission to edit sites.");
+        setLoading(false);
+        return;
+      }
 
       const { data, error } = await supabase
         .from("sites")
@@ -73,27 +85,58 @@ export default function EditSitePage() {
       return;
     }
 
-    setSaving(true);
+    try {
+      setSaving(true);
 
-    const { error } = await supabase
-      .from("sites")
-      .update({
-        site_name: siteName.trim(),
-        site_code: siteCode.trim(),
-        location: location.trim() || null,
-        state: state.trim() || null,
-        status,
-      })
-      .eq("id", siteId);
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-    setSaving(false);
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
 
-    if (error) {
-      setMessage(error.message);
-      return;
+      const response = await fetch(`/api/sites/${siteId}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          site_name: siteName.trim(),
+          site_code: siteCode.trim(),
+          location: location.trim() || null,
+          state: state.trim() || null,
+          status,
+        }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to update site.");
+      }
+
+      router.push(`/sites/${siteId}`);
+    } catch (error: any) {
+      setMessage(error.message || "Failed to update site.");
+    } finally {
+      setSaving(false);
     }
+  }
 
-    router.push(`/sites/${siteId}`);
+  if (accessDenied) {
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-red-700">
+        <h1 className="text-lg font-semibold">Access Denied</h1>
+        <p className="mt-1 text-sm">You do not have permission to edit sites.</p>
+        <Link
+          href={`/sites/${siteId}`}
+          className="mt-4 inline-flex rounded border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100"
+        >
+          Back to Site
+        </Link>
+      </div>
+    );
   }
 
   return (

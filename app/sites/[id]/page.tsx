@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, Building2, Pencil } from "lucide-react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { can, getCurrentUserAccess } from "@/lib/accessControl";
 
 type Site = {
   id: string;
@@ -83,11 +84,15 @@ export default function SiteDetailPage() {
   const [companyMap, setCompanyMap] = useState<Map<string, Company>>(new Map());
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [canEditSite, setCanEditSite] = useState(false);
 
   useEffect(() => {
     async function loadSite() {
       setLoading(true);
       setMessage("");
+
+      const access = await getCurrentUserAccess();
+      setCanEditSite(can(access.permissions, "sites", "edit"));
 
       const { data: siteData, error: siteError } = await supabase
         .from("sites")
@@ -188,13 +193,15 @@ export default function SiteDetailPage() {
             <ArrowLeft className="h-4 w-4" />
             Back to Sites
           </Link>
-          <Link
-            href={`/sites/${site.id}/edit`}
-            className="inline-flex items-center gap-2 rounded bg-[#00658b] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#005174]"
-          >
-            <Pencil className="h-4 w-4" />
-            Edit Site
-          </Link>
+          {canEditSite && (
+            <Link
+              href={`/sites/${site.id}/edit`}
+              className="inline-flex items-center gap-2 rounded bg-[#00658b] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#005174]"
+            >
+              <Pencil className="h-4 w-4" />
+              Edit Site
+            </Link>
+          )}
         </div>
       </div>
 

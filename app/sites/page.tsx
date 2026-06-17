@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Building2, ChevronRight, Eye, Pencil, Plus, Search } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { can, getCurrentUserAccess } from "@/lib/accessControl";
 
 type Site = {
   id: string;
@@ -64,6 +65,7 @@ export default function SitesPage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [canEditSites, setCanEditSites] = useState(false);
 
   useEffect(() => {
     loadSites();
@@ -72,6 +74,9 @@ export default function SitesPage() {
   async function loadSites() {
     setLoading(true);
     setMessage("");
+
+    const access = await getCurrentUserAccess();
+    setCanEditSites(can(access.permissions, "sites", "edit"));
 
     const { data, error } = await supabase
       .from("sites")
@@ -267,13 +272,15 @@ export default function SitesPage() {
                         >
                           <Eye className="h-4 w-4" />
                         </Link>
-                        <Link
-                          href={`/sites/${site.id}/edit`}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded text-slate-500 transition hover:bg-slate-100 hover:text-[#00658b]"
-                          title="Edit site"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Link>
+                        {canEditSites && (
+                          <Link
+                            href={`/sites/${site.id}/edit`}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded text-slate-500 transition hover:bg-slate-100 hover:text-[#00658b]"
+                            title="Edit site"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Link>
+                        )}
                       </div>
                     </td>
                   </tr>

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { assertCompanyBankAccountPermission } from "@/lib/serverCompanyBankAccountAccess";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -12,39 +13,12 @@ function adminClient() {
   return createClient(supabaseUrl, serviceRoleKey);
 }
 
-async function requireUser(request: Request) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  const token = request.headers.get("authorization")?.replace("Bearer ", "");
-
-  if (!token) {
-    return { error: "Missing auth token.", status: 401 };
-  }
-
-  const authClient = createClient(supabaseUrl, anonKey);
-  const {
-    data: { user },
-    error,
-  } = await authClient.auth.getUser(token);
-
-  if (error) throw error;
-
-  if (!user) {
-    return { error: "User not found.", status: 401 };
-  }
-
-  return { user };
-}
-
 export async function POST(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const access = await assertCompanyBankAccountPermission(request, "add");
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("error" in access) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
     }
 
     const payload = await request.json();
@@ -56,17 +30,11 @@ export async function POST(request: Request) {
     const isDefault = payload.is_default === true;
 
     if (!companyId) {
-      return NextResponse.json(
-        { error: "Company is required." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Company is required." }, { status: 400 });
     }
 
     if (!bankName) {
-      return NextResponse.json(
-        { error: "Bank name is required." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Bank name is required." }, { status: 400 });
     }
 
     if (!accountNumber) {
@@ -133,17 +101,15 @@ export async function POST(request: Request) {
 
 export async function GET(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const access = await assertCompanyBankAccountPermission(request, "view");
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("error" in access) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
     }
 
     const { searchParams } = new URL(request.url);
     const companyId = searchParams.get("company_id")?.trim();
+    const includeDeleted = searchParams.get("include_deleted") === "true";
 
     const admin = adminClient();
     let query = admin
@@ -155,6 +121,10 @@ export async function GET(request: Request) {
 
     if (companyId) {
       query = query.eq("company_id", companyId);
+    }
+
+    if (!includeDeleted) {
+      query = query.neq("status", "deleted");
     }
 
     const { data, error } = await query;

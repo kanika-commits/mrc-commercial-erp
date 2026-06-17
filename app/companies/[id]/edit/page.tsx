@@ -21,6 +21,7 @@ export default function EditCompanyPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -29,6 +30,7 @@ export default function EditCompanyPage() {
   async function loadData() {
     setLoading(true);
     setMessage("");
+    setAccessDenied(false);
 
     const access = await getCurrentUserAccess();
     const canEditCompany =
@@ -37,6 +39,7 @@ export default function EditCompanyPage() {
       can(access.permissions, "companies", "edit");
 
     if (!canEditCompany) {
+      setAccessDenied(true);
       setMessage("You do not have permission to edit companies.");
       setLoading(false);
       return;
@@ -90,16 +93,31 @@ export default function EditCompanyPage() {
         return;
       }
 
-      const { error } = await supabase
-        .from("companies")
-        .update({
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/companies/${id}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
           company_name: form.company_name,
           company_code: form.company_code,
           status: form.status,
-        })
-        .eq("id", id);
+        }),
+      });
+      const result = await response.json();
 
-      if (error) throw error;
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to update company.");
+      }
 
       setMessage("Company updated successfully.");
       router.push("/companies");
@@ -112,6 +130,21 @@ export default function EditCompanyPage() {
 
   if (loading) {
     return <p className="text-gray-500">Loading company...</p>;
+  }
+
+  if (accessDenied) {
+    return (
+      <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-red-700">
+        <h1 className="text-lg font-semibold">Access Denied</h1>
+        <p className="mt-1 text-sm">You do not have permission to edit companies.</p>
+        <Link
+          href={`/companies/${id}`}
+          className="mt-4 inline-flex rounded border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100"
+        >
+          Back to Company
+        </Link>
+      </div>
+    );
   }
 
   const inputClass = "w-full rounded-lg border px-3 py-2";

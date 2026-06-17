@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { can, getCurrentUserAccess } from "@/lib/accessControl";
 
 type VendorForm = {
   vendor_name: string;
@@ -121,16 +122,26 @@ export default function EditVendorPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [accessDenied, setAccessDenied] = useState(false);
 
   useEffect(() => {
     async function loadVendor() {
       try {
+        setAccessDenied(false);
         const {
           data: { session },
         } = await supabase.auth.getSession();
 
         if (!session?.access_token) {
           throw new Error("Your session expired. Please log in again.");
+        }
+
+        const access = await getCurrentUserAccess();
+
+        if (!can(access.permissions, "vendors", "edit")) {
+          setAccessDenied(true);
+          setMessage("You do not have permission to edit vendors.");
+          return;
         }
 
         const response = await fetch(`/api/vendors/${vendorId}`, {
@@ -511,6 +522,21 @@ export default function EditVendorPage() {
     return <p className="text-sm text-slate-500">Loading vendor...</p>;
   }
 
+  if (accessDenied) {
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-red-700">
+        <h1 className="text-lg font-semibold">Access Denied</h1>
+        <p className="mt-1 text-sm">You do not have permission to edit vendors.</p>
+        <Link
+          href={`/vendors/${vendorId}`}
+          className="mt-4 inline-flex rounded border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100"
+        >
+          Back to Vendor
+        </Link>
+      </div>
+    );
+  }
+
   function documentLabel(value: string | null) {
     const labels: Record<string, string> = {
       PAN: "PAN",
@@ -621,7 +647,7 @@ export default function EditVendorPage() {
                 className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-600"
               />
               <p className="mt-1 text-xs text-slate-500">
-                Vendor name can only be changed by Super Admin / Platform Owner.
+                Vendor name cannot be changed after creation. Contact Super Admin if correction is required.
               </p>
             </div>
 

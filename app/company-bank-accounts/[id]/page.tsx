@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Building2 } from "lucide-react";
+import { ArrowLeft, Building2, Pencil, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { can, getCurrentUserAccess } from "@/lib/accessControl";
 
 function maskAccount(value?: string | null) {
   if (!value) return "-";
@@ -19,6 +20,8 @@ export default function CompanyBankAccountDetailPage() {
   const [company, setCompany] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [canEdit, setCanEdit] = useState(false);
+  const [canDelete, setCanDelete] = useState(false);
 
   useEffect(() => {
     loadAccount();
@@ -29,13 +32,28 @@ export default function CompanyBankAccountDetailPage() {
       setLoading(true);
       setMessage("");
 
-      const { data: accountData, error: accountError } = await supabase
-        .from("company_bank_accounts")
-        .select("*")
-        .eq("id", accountId)
-        .single();
+      const access = await getCurrentUserAccess();
+      setCanEdit(can(access.permissions, "company_bank_accounts", "edit"));
+      setCanDelete(can(access.permissions, "company_bank_accounts", "delete"));
 
-      if (accountError) throw accountError;
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/company-bank-accounts/${accountId}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to load bank account.");
+      }
+
+      const accountData = result.account;
 
       setAccount(accountData);
 
@@ -54,6 +72,40 @@ export default function CompanyBankAccountDetailPage() {
       setMessage(error.message || "Failed to load bank account.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function deleteAccount() {
+    const confirmed = window.confirm(
+      `Delete bank account "${account?.bank_name || "Bank Account"}"? It will be marked as deleted and hidden from active use.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setMessage("");
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/company-bank-accounts/${accountId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to delete bank account.");
+      }
+
+      window.location.href = "/company-bank-accounts";
+    } catch (error: any) {
+      setMessage(error.message || "Failed to delete bank account.");
     }
   }
 
@@ -90,13 +142,34 @@ export default function CompanyBankAccountDetailPage() {
           </p>
         </div>
 
-        <Link
-          href="/company-bank-accounts"
-          className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href="/company-bank-accounts"
+            className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back
+          </Link>
+          {canEdit && (
+            <Link
+              href={`/company-bank-accounts/${account.id}/edit`}
+              className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-white px-4 py-2 text-sm font-medium text-sky-700 hover:bg-sky-50"
+            >
+              <Pencil className="h-4 w-4" />
+              Edit
+            </Link>
+          )}
+          {canDelete && (
+            <button
+              type="button"
+              onClick={deleteAccount}
+              className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+            >
+              <Trash2 className="h-4 w-4" />
+              Delete
+            </button>
+          )}
+        </div>
       </div>
 
       <section className="rounded-2xl border bg-white p-6 shadow-sm">

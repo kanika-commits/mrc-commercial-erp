@@ -52,7 +52,10 @@ function adminClient() {
   return createClient(supabaseUrl, serviceRoleKey);
 }
 
-async function assertPermission(request: Request, actionCode: "view" | "edit") {
+async function assertPermission(
+  request: Request,
+  actionCode: "view" | "edit" | "delete"
+) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -546,6 +549,47 @@ export async function POST(
 
     return NextResponse.json(
       { error: error.message || "Unable to open this document." },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const access = await assertPermission(request, "delete");
+
+    if ("error" in access) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
+    const { id } = await params;
+    const supabase = adminClient();
+    const { data: vendor, error: vendorError } = await supabase
+      .from("vendors")
+      .select("id, status")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (vendorError) throw vendorError;
+
+    if (!vendor) {
+      return NextResponse.json({ error: "Vendor was not found." }, { status: 404 });
+    }
+
+    const { error: updateError } = await supabase
+      .from("vendors")
+      .update({ status: "deleted" })
+      .eq("id", id);
+
+    if (updateError) throw updateError;
+
+    return NextResponse.json({ success: true, status: "deleted" });
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: error.message || "Failed to delete vendor." },
       { status: 500 }
     );
   }

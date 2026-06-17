@@ -1,54 +1,147 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { can, getCurrentUserAccess } from "@/lib/accessControl";
 
-export default async function CompanyDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
+export default function CompanyDetailPage() {
+  const params = useParams<{ id: string }>();
+  const id = params.id;
 
-  const { data: company, error } = await supabase
-    .from("companies")
-    .select("id, organization_id, company_name, company_code, status, created_at")
-    .eq("id", id)
-    .single();
+  const [company, setCompany] = useState<any>(null);
+  const [organization, setOrganization] = useState<any>(null);
+  const [sites, setSites] = useState<any[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
+  const [canEditCompany, setCanEditCompany] = useState(false);
+  const [canDeleteCompany, setCanDeleteCompany] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState("");
 
-  if (error || !company) {
+  useEffect(() => {
+    loadCompany();
+  }, [id]);
+
+  async function loadCompany() {
+    try {
+      setLoading(true);
+      setMessage("");
+
+      const access = await getCurrentUserAccess();
+      setCanEditCompany(
+        access.roleCodes.includes("platform_owner") ||
+          access.roleCodes.includes("super_admin") ||
+          can(access.permissions, "companies", "edit")
+      );
+      setCanDeleteCompany(
+        access.roleCodes.includes("platform_owner") ||
+          access.roleCodes.includes("super_admin") ||
+          can(access.permissions, "companies", "delete")
+      );
+
+      const { data: companyData, error: companyError } = await supabase
+        .from("companies")
+        .select("id, organization_id, company_name, company_code, status, created_at")
+        .eq("id", id)
+        .single();
+
+      if (companyError) throw companyError;
+
+      setCompany(companyData);
+
+      const { data: organizationData } = await supabase
+        .from("organizations")
+        .select("id, name, code")
+        .eq("id", companyData.organization_id)
+        .maybeSingle();
+
+      setOrganization(organizationData);
+
+      const { data: siteData, error: siteError } = await supabase
+        .from("sites")
+        .select("id, site_name, site_code, status")
+        .eq("company_id", id)
+        .order("site_name");
+
+      if (siteError) throw siteError;
+
+      setSites(siteData || []);
+
+      const { data: userAccess, error: userAccessError } = await supabase
+        .from("user_access_assignments")
+        .select("user_id")
+        .eq("company_id", id);
+
+      if (userAccessError) throw userAccessError;
+
+      const userIds = Array.from(
+        new Set((userAccess || []).map((item: any) => item.user_id).filter(Boolean))
+      );
+
+      if (userIds.length) {
+        const { data: userData, error: userError } = await supabase
+          .from("profiles")
+          .select("id, email, full_name, status")
+          .in("id", userIds);
+
+        if (userError) throw userError;
+        setUsers(userData || []);
+      } else {
+        setUsers([]);
+      }
+    } catch (error: any) {
+      setMessage(error.message || "Company not found.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deleteCompany() {
+    const ok = window.confirm(
+      `Delete company "${company?.company_name || "Company"}"? This is blocked automatically if linked records exist.`
+    );
+
+    if (!ok) return;
+
+    try {
+      setMessage("");
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/companies/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to delete company.");
+      }
+
+      window.location.href = "/companies";
+    } catch (error: any) {
+      setMessage(error.message || "Failed to delete company.");
+    }
+  }
+
+  if (loading) {
+    return <p className="text-gray-500">Loading company...</p>;
+  }
+
+  if (message && !company) {
     return (
       <div className="rounded-lg border bg-red-50 p-4 text-red-700">
-        Company not found.
+        {message}
       </div>
     );
   }
-
-  const { data: organization } = await supabase
-    .from("organizations")
-    .select("id, name, code")
-    .eq("id", company.organization_id)
-    .maybeSingle();
-
-  const { data: sites } = await supabase
-    .from("sites")
-    .select("id, site_name, site_code, status")
-    .eq("company_id", id)
-    .order("site_name");
-
-  const { data: userAccess } = await supabase
-    .from("user_access_assignments")
-    .select("user_id")
-    .eq("company_id", id);
-
-  const userIds = Array.from(
-    new Set((userAccess || []).map((item: any) => item.user_id).filter(Boolean))
-  );
-
-  const { data: users } = userIds.length
-    ? await supabase
-        .from("profiles")
-        .select("id, email, full_name, status")
-        .in("id", userIds)
-    : { data: [] };
 
   return (
     <div className="space-y-6">
@@ -60,19 +153,36 @@ export default async function CompanyDetailPage({
           </p>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Link href="/companies" className="rounded-lg border px-4 py-2">
             Back
           </Link>
 
-          <Link
-            href={`/companies/${company.id}/edit`}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-white"
-          >
-            Edit Company
-          </Link>
+          {canEditCompany && (
+            <Link
+              href={`/companies/${company.id}/edit`}
+              className="rounded-lg bg-blue-600 px-4 py-2 text-white"
+            >
+              Edit Company
+            </Link>
+          )}
+          {canDeleteCompany && (
+            <button
+              type="button"
+              onClick={deleteCompany}
+              className="rounded-lg border border-red-200 px-4 py-2 text-red-700 hover:bg-red-50"
+            >
+              Delete
+            </button>
+          )}
         </div>
       </div>
+
+      {message && (
+        <div className="rounded-lg border bg-yellow-50 p-3 text-sm text-yellow-800">
+          {message}
+        </div>
+      )}
 
       <section className="rounded-lg border bg-white p-6">
         <h2 className="mb-4 text-xl font-semibold">Company Information</h2>
@@ -113,7 +223,7 @@ export default async function CompanyDetailPage({
             </thead>
 
             <tbody>
-              {sites?.map((site: any) => (
+              {sites.map((site: any) => (
                 <tr key={site.id} className="border-t">
                   <td className="p-3">{site.site_name}</td>
                   <td className="p-3">{site.site_code || "-"}</td>
@@ -121,7 +231,7 @@ export default async function CompanyDetailPage({
                 </tr>
               ))}
 
-              {sites?.length === 0 && (
+              {sites.length === 0 && (
                 <tr>
                   <td colSpan={3} className="p-6 text-center text-gray-500">
                     No sites found.
@@ -147,7 +257,7 @@ export default async function CompanyDetailPage({
             </thead>
 
             <tbody>
-              {users?.map((user: any) => (
+              {users.map((user: any) => (
                 <tr key={user.id} className="border-t">
                   <td className="p-3">{user.full_name || "-"}</td>
                   <td className="p-3">{user.email || "-"}</td>
@@ -155,7 +265,7 @@ export default async function CompanyDetailPage({
                 </tr>
               ))}
 
-              {users?.length === 0 && (
+              {users.length === 0 && (
                 <tr>
                   <td colSpan={3} className="p-6 text-center text-gray-500">
                     No users assigned to this company.
