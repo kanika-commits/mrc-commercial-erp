@@ -16,7 +16,30 @@ function accountLabel(account: any) {
   return `${account.bank_name || "Bank"} | ${last4}`;
 }
 
-export default async function PaymentsPage() {
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "-";
+
+  return parsed.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+export default async function PaymentsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ q?: string }>;
+}) {
+  const params = searchParams ? await searchParams : {};
+  const search = String(params.q || "").trim();
+  const normalizedSearch = search.toLowerCase();
+
   const { data: payments, error } = await supabase
     .from("payments")
     .select(`
@@ -38,6 +61,8 @@ export default async function PaymentsPage() {
       utr_number,
       status,
       remarks,
+      created_by_name,
+      created_by_email,
       created_at
     `)
     .order("payment_date", { ascending: false });
@@ -109,42 +134,85 @@ export default async function PaymentsPage() {
     (accounts || []).map((account: any) => [account.id, account])
   );
 
-  const paymentCount = payments?.length || 0;
+  const enrichedPayments = (payments || []).map((payment: any) => {
+    const wo = payment.work_order_id ? woMap.get(payment.work_order_id) : null;
+    const vendorName = payment.vendor_id
+      ? vendorMap.get(payment.vendor_id)
+      : "-";
+    const account = payment.company_bank_account_id
+      ? accountMap.get(payment.company_bank_account_id)
+      : null;
+    const reference =
+      payment.payment_type === "Work Order"
+        ? wo?.wo_number || payment.reference_number || "-"
+        : payment.reference_number || "-";
+    const party =
+      payment.payment_type === "Internal Transfer"
+        ? "Internal Transfer"
+        : vendorName || "-";
+    const accountName = accountLabel(account);
+    const searchText = [
+      party,
+      reference,
+      payment.utr_number,
+      payment.reference_number,
+      payment.payment_number,
+      accountName,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
 
-  const totalPaid = (payments || []).reduce(
-    (sum: number, p: any) => sum + Number(p.total_payment || 0),
+    return {
+      payment,
+      reference,
+      party,
+      accountName,
+      visible: !normalizedSearch || searchText.includes(normalizedSearch),
+    };
+  });
+
+  const visiblePayments = enrichedPayments.filter((row) => row.visible);
+
+  const paymentCount = visiblePayments.length;
+
+  const totalPaid = visiblePayments.reduce(
+    (sum: number, row: any) => sum + Number(row.payment.total_payment || 0),
     0
   );
 
-  const totalTds = (payments || []).reduce(
-    (sum: number, p: any) => sum + Number(p.tds_amount || 0),
+  const totalTds = visiblePayments.reduce(
+    (sum: number, row: any) => sum + Number(row.payment.tds_amount || 0),
     0
   );
 
-  const totalTransferred = (payments || []).reduce(
-    (sum: number, p: any) =>
-      sum + Number(p.transferred_amount || p.payment_amount || 0),
+  const totalTransferred = visiblePayments.reduce(
+    (sum: number, row: any) =>
+      sum +
+      Number(row.payment.transferred_amount || row.payment.payment_amount || 0),
     0
   );
 
   return (
     <section className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+          <div className="mb-2 inline-flex items-center gap-2 rounded bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
             <CreditCard className="h-3.5 w-3.5" />
             Payment Register
           </div>
 
-          <h1 className="text-3xl font-bold text-slate-950">Payments</h1>
-          <p className="text-sm text-slate-500">
+          <h1 className="text-3xl font-bold tracking-tight text-slate-950">
+            Payments
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
             Company-wise payment register for daily accounts tracking.
           </p>
         </div>
 
         <Link
           href="/payments/new"
-          className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+          className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
         >
           <Plus className="h-4 w-4" />
           New Payment
@@ -152,129 +220,100 @@ export default async function PaymentsPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
-        <Summary title="Payments Count" value={String(paymentCount)} />
-        <Summary title="Total Paid" value={money(totalPaid)} />
+        <Summary title="Total Payments" value={money(totalPaid)} />
         <Summary title="Total TDS" value={money(totalTds)} />
-        <Summary title="Net Transferred" value={money(totalTransferred)} />
+        <Summary title="Total Transferred" value={money(totalTransferred)} />
+        <Summary title="Payment Count" value={String(paymentCount)} />
       </div>
 
-      <div className="rounded-2xl border bg-white shadow-sm">
-        <div className="border-b p-4">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-200 bg-white p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="font-semibold text-slate-950">
+              <h2 className="text-lg font-semibold text-slate-950">
                 Payment Register
               </h2>
-              <p className="text-xs text-slate-500">
+              <p className="mt-1 text-sm text-slate-500">
                 Date-wise payments with company, reference, party and account.
               </p>
             </div>
 
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+            <form className="relative" action="/payments">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
-                className="h-10 w-72 rounded-xl border bg-white pl-9 pr-3 text-sm outline-none focus:border-slate-400"
-                placeholder="Search company, vendor, payment..."
+                name="q"
+                defaultValue={search}
+                className="h-10 w-80 rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none transition focus:border-slate-400 focus:bg-white"
+                placeholder="Search vendor, reference, UTR, account..."
               />
-            </div>
+            </form>
           </div>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1200px] text-sm">
-            <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+          <table className="w-full min-w-[1500px] text-sm">
+            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
-                <th className="p-3 text-left">Date</th>
-                <th className="p-3 text-left">Company</th>
-                <th className="p-3 text-left">Type</th>
-                <th className="p-3 text-left">Reference</th>
-                <th className="p-3 text-left">Vendor / Party</th>
-                <th className="p-3 text-left">From Account</th>
-                <th className="p-3 text-right">Total</th>
-                <th className="p-3 text-right">TDS</th>
-                <th className="p-3 text-right">Transferred</th>
-                <th className="p-3 text-center">Action</th>
+                <th className="px-4 py-3 text-left font-semibold">Payment Date</th>
+                <th className="px-4 py-3 text-left font-semibold">Reference / UTR</th>
+                <th className="px-4 py-3 text-left font-semibold">Vendor / Party</th>
+                <th className="px-4 py-3 text-left font-semibold">Invoice / Reference</th>
+                <th className="px-4 py-3 text-left font-semibold">From Account</th>
+                <th className="px-4 py-3 text-right font-semibold">Total Payment</th>
+                <th className="px-4 py-3 text-right font-semibold">TDS Amount</th>
+                <th className="px-4 py-3 text-right font-semibold">Transferred Amount</th>
+                <th className="px-4 py-3 text-left font-semibold">Payment Mode</th>
+                <th className="px-4 py-3 text-left font-semibold">Remarks</th>
+                <th className="px-4 py-3 text-left font-semibold">Created By</th>
+                <th className="px-4 py-3 text-left font-semibold">Created At</th>
+                <th className="px-4 py-3 text-center font-semibold">Action</th>
               </tr>
             </thead>
 
-            <tbody>
-              {payments?.map((payment: any) => {
-                const wo = payment.work_order_id
-                  ? woMap.get(payment.work_order_id)
-                  : null;
-
-                const vendorName = payment.vendor_id
-                  ? vendorMap.get(payment.vendor_id)
-                  : "-";
-
-                const company = payment.company_id
-                  ? companyMap.get(payment.company_id)
-                  : null;
-
-                const account = payment.company_bank_account_id
-                  ? accountMap.get(payment.company_bank_account_id)
-                  : null;
-
-                const reference =
-                  payment.payment_type === "Work Order"
-                    ? wo?.wo_number || payment.reference_number || "-"
-                    : payment.reference_number || "-";
-
-                const party =
-                  payment.payment_type === "Internal Transfer"
-                    ? "Internal Transfer"
-                    : vendorName || "-";
-
+            <tbody className="divide-y divide-slate-100">
+              {visiblePayments.map(({ payment, reference, party, accountName }) => {
+                const createdBy =
+                  payment.created_by_name || payment.created_by_email || "-";
                 return (
-                  <tr key={payment.id} className="border-t hover:bg-slate-50">
-                    <td className="p-3">{payment.payment_date || "-"}</td>
-
-                    <td className="p-3">
-                      <div className="font-medium text-slate-950">
-                        {company?.company_name || "-"}
-                      </div>
-                      <div className="text-xs text-slate-500">
-                        {company?.company_code || ""}
-                      </div>
+                  <tr key={payment.id} className="transition hover:bg-slate-50">
+                    <td className="px-4 py-4 text-slate-700">
+                      {payment.payment_date || "-"}
                     </td>
-
-                    <td className="p-3">{payment.payment_type || "-"}</td>
-
-                    <td className="p-3 font-medium">
-                      {payment.work_order_id ? (
-                        <Link
-                          href={`/work-orders/${payment.work_order_id}`}
-                          className="text-blue-600 hover:underline"
-                        >
-                          {reference}
-                        </Link>
-                      ) : (
-                        reference
-                      )}
+                    <td className="px-4 py-4 font-medium text-slate-950">
+                      {payment.utr_number || payment.reference_number || "-"}
                     </td>
-
-                    <td className="p-3">{party}</td>
-
-                    <td className="p-3">{accountLabel(account)}</td>
-
-                    <td className="p-3 text-right font-semibold">
+                    <td className="px-4 py-4 text-slate-700">{party}</td>
+                    <td className="px-4 py-4 text-slate-700">
+                      {reference}
+                    </td>
+                    <td className="px-4 py-4 text-slate-700">
+                      {accountName}
+                    </td>
+                    <td className="px-4 py-4 text-right font-semibold text-slate-950">
                       {money(payment.total_payment)}
                     </td>
-
-                    <td className="p-3 text-right">
+                    <td className="px-4 py-4 text-right text-slate-700">
                       {money(payment.tds_amount)}
                     </td>
-
-                    <td className="p-3 text-right font-semibold">
+                    <td className="px-4 py-4 text-right font-semibold text-slate-950">
                       {money(
                         payment.transferred_amount || payment.payment_amount
                       )}
                     </td>
-
-                    <td className="p-3 text-center">
+                    <td className="px-4 py-4 text-slate-700">
+                      {payment.payment_mode || "-"}
+                    </td>
+                    <td className="max-w-[220px] px-4 py-4 text-slate-700">
+                      <div className="line-clamp-2">{payment.remarks || "-"}</div>
+                    </td>
+                    <td className="px-4 py-4 text-slate-700">{createdBy}</td>
+                    <td className="px-4 py-4 text-slate-700">
+                      {formatDateTime(payment.created_at)}
+                    </td>
+                    <td className="px-4 py-4 text-center">
                       <Link
                         href={`/payments/${payment.id}`}
-                        className="rounded-lg border px-3 py-1.5 text-xs font-medium hover:bg-slate-50"
+                        className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
                       >
                         View
                       </Link>
@@ -283,9 +322,9 @@ export default async function PaymentsPage() {
                 );
               })}
 
-              {payments?.length === 0 && (
+              {visiblePayments.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="p-8 text-center text-slate-500">
+                  <td colSpan={13} className="px-4 py-12 text-center text-slate-500">
                     No payments found.
                   </td>
                 </tr>
@@ -300,11 +339,13 @@ export default async function PaymentsPage() {
 
 function Summary({ title, value }: { title: string; value: string }) {
   return (
-    <div className="rounded-2xl border bg-white p-5 shadow-sm">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
         {title}
       </p>
-      <p className="mt-2 text-xl font-bold text-slate-950">{value}</p>
+      <p className="mt-2 text-2xl font-bold tracking-tight text-slate-950">
+        {value}
+      </p>
     </div>
   );
 }

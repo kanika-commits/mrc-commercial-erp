@@ -315,6 +315,14 @@ export default function NewPaymentPage() {
     setSaving(true);
 
     const organizationId = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const userEmail = session?.user?.email || "";
+    const userName =
+      session?.user?.user_metadata?.full_name ||
+      session?.user?.user_metadata?.name ||
+      userEmail;
 
     for (const [index, row] of filledRows.entries()) {
       const rowNo = index + 1;
@@ -394,6 +402,8 @@ export default function NewPaymentPage() {
         payment_mode: "Bank Transfer",
         status: "Draft",
         remarks: null,
+        created_by_name: userName || null,
+        created_by_email: userEmail || null,
       });
 
       if (error) throw error;
@@ -409,53 +419,71 @@ export default function NewPaymentPage() {
 }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6 pb-8">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold">Payment Entry</h1>
-          <p className="text-gray-500">
+          <div className="mb-2 inline-flex items-center rounded bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
+            Payments
+          </div>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-950">
+            Payment Entry
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
             Excel-style payment entry with company-wise account selection.
           </p>
         </div>
 
-        <Link href="/payments" className="rounded-lg border px-4 py-2">
+        <Link
+          href="/payments"
+          className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+        >
           Back
         </Link>
       </div>
 
       {message && (
-        <div className="rounded-lg border bg-yellow-50 p-3 text-sm text-yellow-800">
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
           {message}
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-lg border bg-white">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-200 bg-white px-5 py-4">
+          <h2 className="text-lg font-semibold text-slate-950">
+            Payment Rows
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Paste or enter rows directly. Transferred amount is calculated from total payment minus TDS.
+          </p>
+        </div>
+
+        <div className="overflow-x-auto">
         <table className="w-full min-w-[1600px] text-sm">
-          <thead className="bg-gray-100">
+          <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-600">
             <tr>
-              <th className="p-2 text-left">Company</th>
-              <th className="p-2 text-left">Payment Type</th>
-              <th className="p-2 text-left">Reference</th>
-              <th className="p-2 text-left">From Account</th>
-              <th className="p-2 text-left">Vendor / Party</th>
-              <th className="p-2 text-left">Payment Date</th>
-              <th className="p-2 text-left">Total Payment</th>
-              <th className="p-2 text-left">TDS Deducted</th>
-              <th className="p-2 text-left">Transferred Amount</th>
-              <th className="p-2 text-left">Remove</th>
+              <th className="px-3 py-3 text-left font-semibold">Company</th>
+              <th className="px-3 py-3 text-left font-semibold">Payment Type</th>
+              <th className="px-3 py-3 text-left font-semibold">Reference</th>
+              <th className="px-3 py-3 text-left font-semibold">From Account</th>
+              <th className="px-3 py-3 text-left font-semibold">Vendor / Party</th>
+              <th className="px-3 py-3 text-left font-semibold">Payment Date</th>
+              <th className="px-3 py-3 text-left font-semibold">Total Payment</th>
+              <th className="px-3 py-3 text-left font-semibold">TDS Deducted</th>
+              <th className="px-3 py-3 text-left font-semibold">Transferred Amount</th>
+              <th className="px-3 py-3 text-left font-semibold">Remove</th>
             </tr>
           </thead>
 
-          <tbody>
+          <tbody className="divide-y divide-slate-100">
             {rows.map((row, index) => (
-              <tr key={index} className="border-t">
-                <td className="p-2">
+              <tr key={index} className="transition hover:bg-slate-50">
+                <td className="px-3 py-3 align-top">
                   <select
                     value={row.company_id}
                     onChange={(e) =>
                       updateRow(index, "company_id", e.target.value)
                     }
-                    className="w-full rounded border px-2 py-1"
+                    className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
                   >
                     <option value="">Select Company</option>
                     {companies.map((company) => (
@@ -469,13 +497,13 @@ export default function NewPaymentPage() {
                   </select>
                 </td>
 
-                <td className="p-2">
+                <td className="px-3 py-3 align-top">
                   <select
                     value={row.payment_type}
                     onChange={(e) =>
                       updateRow(index, "payment_type", e.target.value)
                     }
-                    className="w-full rounded border px-2 py-1"
+                    className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
                   >
                     {PAYMENT_TYPES.map((type) => (
                       <option key={type}>{type}</option>
@@ -483,7 +511,7 @@ export default function NewPaymentPage() {
                   </select>
                 </td>
 
-                <td className="p-2">
+                <td className="px-3 py-3 align-top">
                   {row.payment_type === "Work Order" ? (
                     <select
                       value={row.work_order_id}
@@ -491,7 +519,7 @@ export default function NewPaymentPage() {
                         handleWorkOrderSelect(index, e.target.value)
                       }
                       disabled={!row.company_id}
-                      className="w-full rounded border px-2 py-1 disabled:bg-gray-100"
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400 disabled:bg-slate-100"
                     >
                       <option value="">
                         {row.company_id
@@ -508,7 +536,7 @@ export default function NewPaymentPage() {
                   ) : row.payment_type === "Purchase Order" ? (
                     <select
                       disabled
-                      className="w-full rounded border bg-gray-100 px-2 py-1"
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-500"
                     >
                       <option>Purchase Order module not built yet</option>
                     </select>
@@ -519,7 +547,7 @@ export default function NewPaymentPage() {
                         handleInternalTransferSelect(index, e.target.value)
                       }
                       disabled={!row.company_id}
-                      className="w-full rounded border px-2 py-1 disabled:bg-gray-100"
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400 disabled:bg-slate-100"
                     >
                       <option value="">
                         {row.company_id
@@ -540,7 +568,7 @@ export default function NewPaymentPage() {
                         updateRow(index, "reference_number", e.target.value)
                       }
                       onPaste={(e) => handlePaste(e, index)}
-                      className="w-full rounded border px-2 py-1"
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
                       placeholder="Reference"
                     />
                   ) : (
@@ -549,13 +577,13 @@ export default function NewPaymentPage() {
                       onChange={(e) =>
                         updateRow(index, "reference_number", e.target.value)
                       }
-                      className="w-full rounded border px-2 py-1"
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
                       placeholder="Reference"
                     />
                   )}
                 </td>
 
-                <td className="p-2">
+                <td className="px-3 py-3 align-top">
                   <select
                     value={row.company_bank_account_id}
                     onChange={(e) =>
@@ -566,7 +594,7 @@ export default function NewPaymentPage() {
                       )
                     }
                     disabled={!row.company_id}
-                    className="w-full rounded border px-2 py-1 disabled:bg-gray-100"
+                    className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400 disabled:bg-slate-100"
                   >
                     <option value="">
                       {row.company_id ? "Select Account" : "Select Company First"}
@@ -580,7 +608,7 @@ export default function NewPaymentPage() {
                   </select>
                 </td>
 
-                <td className="p-2">
+                <td className="px-3 py-3 align-top">
                   <input
                     value={
                       row.payment_type === "Internal Transfer"
@@ -595,7 +623,7 @@ export default function NewPaymentPage() {
                       row.payment_type === "Purchase Order" ||
                       row.payment_type === "Internal Transfer"
                     }
-                    className="w-full rounded border bg-gray-50 px-2 py-1"
+                    className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition focus:border-slate-400 read-only:text-slate-600"
                     placeholder={
                       manualPaymentTypes.includes(row.payment_type)
                         ? "Vendor / Party"
@@ -627,14 +655,16 @@ export default function NewPaymentPage() {
                 />
 
                 <td className="p-2 font-medium">
-                  ₹ {transferred(row).toLocaleString("en-IN")}
+                  <div className="flex h-10 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 font-semibold text-slate-950">
+                    ₹ {transferred(row).toLocaleString("en-IN")}
+                  </div>
                 </td>
 
-                <td className="p-2">
+                <td className="px-3 py-3 align-top">
                   <button
                     type="button"
                     onClick={() => removeRow(index)}
-                    className="rounded bg-red-100 px-2 py-1 text-red-700"
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-red-200 bg-red-50 text-sm font-bold text-red-700 transition hover:bg-red-100"
                   >
                     X
                   </button>
@@ -643,15 +673,16 @@ export default function NewPaymentPage() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
-      <div className="flex justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <button
           type="button"
           onClick={() =>
             setRows((prev) => [...prev, ...Array.from({ length: 10 }, emptyRow)])
           }
-          className="rounded-lg border px-4 py-2"
+          className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
         >
           + Add 10 Rows
         </button>
@@ -660,7 +691,7 @@ export default function NewPaymentPage() {
           type="button"
           onClick={savePayments}
           disabled={saving}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-white disabled:opacity-60"
+          className="rounded-lg bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
         >
           {saving ? "Saving..." : "Save Payments"}
         </button>
@@ -679,14 +710,14 @@ function Cell({
   type?: string;
 }) {
   return (
-    <td className="p-2">
+    <td className="px-3 py-3 align-top">
       <input
         type={type}
         step="1"
         min={type === "number" ? "0" : undefined}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded border px-2 py-1"
+        className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
       />
     </td>
   );
