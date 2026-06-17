@@ -53,7 +53,7 @@ export default function NewDebitNotePage() {
     const { data: woData, error: woError } = await supabase
       .from("work_orders")
       .select("id, wo_number, wo_value, company_id, site_id")
-      .eq("approval_status", "approved")
+      .ilike("approval_status", "approved")
       .eq("status", "active")
       .order("wo_number");
 
@@ -101,44 +101,46 @@ export default function NewDebitNotePage() {
     const wo = workOrders.find((item) => item.id === workOrderId);
     setSelectedWO(wo || null);
 
-    const { data: vendorData, error: vendorError } = await supabase
-      .from("work_order_vendors")
-      .select(`
-        id,
-        vendor_role,
-        is_primary,
-        vendors (
-          id,
-          vendor_name
-        )
-      `)
-      .eq("work_order_id", workOrderId)
-      .order("is_primary", { ascending: false });
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-    if (vendorError) {
-      setMessage(vendorError.message);
+    if (!session?.access_token) {
+      setMessage("Please sign in again to resolve the linked vendor.");
       return;
     }
 
-    const primaryVendor =
-      vendorData?.find((row: any) => row.is_primary) || vendorData?.[0];
+    const vendorResponse = await fetch(
+      `/api/work-orders/vendors?work_order_id=${encodeURIComponent(
+        workOrderId
+      )}`,
+      {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      }
+    );
+    const vendorResult = await vendorResponse.json();
 
-   const linkedVendor = Array.isArray(primaryVendor?.vendors)
-  ? primaryVendor.vendors[0]
-  : primaryVendor?.vendors;
+    if (!vendorResponse.ok) {
+      setMessage(vendorResult.error || "Failed to resolve Work Order vendor.");
+      return;
+    }
 
-if (!linkedVendor?.id) {
-  setMessage("No vendor is linked to this Work Order.");
-  return;
-}
+    const linkedVendor = vendorResult.vendors?.[workOrderId];
 
-    setLinkedVendor(primaryVendor);
+    if (!linkedVendor?.vendor_id) {
+      setMessage("No vendor is linked to this Work Order.");
+      return;
+    }
+
+    setLinkedVendor(linkedVendor);
 
     const { data: raData, error: raError } = await supabase
       .from("ra_bills")
       .select("id, ra_number, ra_date, gross_amount, net_amount, approval_status")
       .eq("work_order_id", workOrderId)
-      .eq("approval_status", "Approved")
+      .ilike("approval_status", "approved")
       .order("created_at", { ascending: false });
 
     if (raError) {
@@ -153,7 +155,7 @@ if (!linkedVendor?.id) {
     setForm((prev) => ({
       ...prev,
       work_order_id: workOrderId,
-      vendor_id: linkedVendor.id,
+      vendor_id: linkedVendor.vendor_id,
       debit_note_number: suggestedNumber,
     }));
   }
@@ -208,6 +210,11 @@ if (!linkedVendor?.id) {
       return;
     }
 
+    if (!form.debit_note_date) {
+      setMessage("Debit Note Date is required.");
+      return;
+    }
+
     if (!form.amount || Number(form.amount) <= 0) {
       setMessage("Debit Note amount is required.");
       return;
@@ -226,54 +233,41 @@ if (!linkedVendor?.id) {
     try {
       setSaving(true);
 
-      const organizationId = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
       const amount = Number(form.amount) || 0;
 
-      const { data, error } = await supabase
-        .from("debit_notes")
-        .insert({
-          organization_id: organizationId,
-          work_order_id: form.work_order_id,
-          ra_bill_id: form.ra_bill_id || null,
-          vendor_id: form.vendor_id,
-          debit_note_number: form.debit_note_number.trim(),
-          debit_note_date: form.debit_note_date || null,
-          debit_note_type: form.debit_note_type,
-          reason: form.reason.trim(),
-          gross_amount: amount,
-          gst_amount: 0,
-          total_amount: amount,
-          status: "Draft",
-          approval_status: "Pending",
-        })
-        .select("id")
-        .single();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (error) throw error;
-
-      for (const file of files) {
-        const safeName = file.name.replace(/[^a-zA-Z0-9.]/g, "_");
-        const path = `${organizationId}/debit-notes/${data.id}/${Date.now()}_${safeName}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from("debit-note-documents")
-          .upload(path, file);
-
-        if (uploadError) throw uploadError;
-
-        const { error: documentError } = await supabase
-          .from("debit_note_documents")
-          .insert({
-            organization_id: organizationId,
-            debit_note_id: data.id,
-            file_name: file.name,
-            file_url: path,
-          });
-
-        if (documentError) throw documentError;
+      if (!session?.access_token) {
+        throw new Error("Please sign in again to create the Debit Note.");
       }
 
-      router.push(`/debit-notes/${data.id}`);
+      const formData = new FormData();
+      formData.append("work_order_id", form.work_order_id);
+      formData.append("vendor_id", form.vendor_id);
+      formData.append("ra_bill_id", form.ra_bill_id);
+      formData.append("debit_note_number", form.debit_note_number.trim());
+      formData.append("debit_note_date", form.debit_note_date);
+      formData.append("debit_note_type", form.debit_note_type);
+      formData.append("reason", form.reason.trim());
+      formData.append("gross_amount", String(amount));
+      files.forEach((file) => formData.append("attachments", file));
+
+      const response = await fetch("/api/debit-notes", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: formData,
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to create Debit Note.");
+      }
+
+      router.push(`/debit-notes/${result.id}`);
     } catch (err: any) {
       setMessage(err.message || "Failed to create Debit Note.");
     } finally {
@@ -364,7 +358,7 @@ if (!linkedVendor?.id) {
             <Summary title="WO Value" value={money(selectedWO.wo_value)} />
             <Summary
               title="Vendor"
-              value={linkedVendor?.vendors?.vendor_name || "-"}
+              value={linkedVendor?.vendor_name || "-"}
             />
             <Summary title="Approved RA Bills" value={String(raBills.length)} />
           </section>
@@ -436,14 +430,6 @@ if (!linkedVendor?.id) {
                   value={form.amount}
                   onChange={handleChange}
                   className="h-11 w-full rounded-xl border px-3 text-sm"
-                />
-              </Field>
-
-              <Field label="Amount Payable / Recoverable">
-                <input
-                  value={money(form.amount)}
-                  readOnly
-                  className="h-11 w-full rounded-xl border bg-red-50 px-3 text-sm font-semibold text-red-700"
                 />
               </Field>
 

@@ -16,6 +16,21 @@ function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "-";
+
+  return parsed.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function statusClass(value?: string | null) {
   const status = String(value || "").toLowerCase();
 
@@ -103,15 +118,29 @@ export default function InvoiceDetailPage() {
         setVendor(vendorData);
       }
 
-      const { data: documentData, error: documentError } = await supabase
-        .from("invoice_documents")
-        .select("*")
-        .eq("invoice_id", invoiceId)
-        .maybeSingle();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (documentError) throw documentError;
+      if (session?.access_token) {
+        const response = await fetch(
+          `/api/invoices/documents?invoice_id=${encodeURIComponent(invoiceId)}`,
+          {
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+            },
+          }
+        );
+        const result = await response.json();
 
-      setDocument(documentData);
+        if (!response.ok) {
+          throw new Error(result.error || "Failed to load invoice PDF.");
+        }
+
+        setDocument(result.documents?.[0] || null);
+      } else {
+        setDocument(null);
+      }
     } catch (error: any) {
       setMessage(error.message || "Failed to load invoice.");
     } finally {
@@ -119,19 +148,13 @@ export default function InvoiceDetailPage() {
     }
   }
 
-  async function openDocument(path: string | null) {
-    if (!path) return;
-
-    const { data, error } = await supabase.storage
-      .from("invoice-documents")
-      .createSignedUrl(path, 60);
-
-    if (error) {
-      setMessage(error.message);
+  function openDocument(doc: any) {
+    if (!doc?.signed_url) {
+      setMessage(doc?.signed_url_error || "Invoice PDF is not available.");
       return;
     }
 
-    window.open(data.signedUrl, "_blank");
+    window.open(doc.signed_url, "_blank", "noopener,noreferrer");
   }
 
   if (loading) {
@@ -242,6 +265,7 @@ export default function InvoiceDetailPage() {
           <Info label="Approval Status" value={invoice.approval_status || "-"} />
           <Info label="Created By" value={invoice.created_by_name || "-"} />
           <Info label="Created Email" value={invoice.created_by_email || "-"} />
+          <Info label="Created At" value={formatDateTime(invoice.created_at)} />
         </div>
 
         {invoice.remarks && (
@@ -267,11 +291,7 @@ export default function InvoiceDetailPage() {
           <Info label="Claimed Email" value={invoice.itc_claimed_by_email || "-"} />
           <Info
             label="Claimed At"
-            value={
-              invoice.itc_claimed_at
-                ? new Date(invoice.itc_claimed_at).toLocaleString()
-                : "-"
-            }
+            value={formatDateTime(invoice.itc_claimed_at)}
           />
           <Info label="Rejected By" value={invoice.itc_rejected_by_name || "-"} />
           <Info
@@ -280,11 +300,7 @@ export default function InvoiceDetailPage() {
           />
           <Info
             label="Rejected At"
-            value={
-              invoice.itc_rejected_at
-                ? new Date(invoice.itc_rejected_at).toLocaleString()
-                : "-"
-            }
+            value={formatDateTime(invoice.itc_rejected_at)}
           />
         </div>
 
@@ -322,7 +338,7 @@ export default function InvoiceDetailPage() {
 
             <button
               type="button"
-              onClick={() => openDocument(document.file_url)}
+              onClick={() => openDocument(document)}
               className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800"
             >
               Open PDF

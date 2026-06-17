@@ -21,6 +21,9 @@ type WorkOrder = {
   status: string | null;
   wo_value: number | string | null;
   approval_status: string | null;
+  approved_by_name: string | null;
+  approved_by_email: string | null;
+  approved_at: string | null;
   company_id: string | null;
   site_id: string | null;
   organization_id: string | null;
@@ -176,6 +179,29 @@ function formatDate(date: string | null) {
   });
 }
 
+function formatDateTime(date: string | null) {
+  if (!date) return "-";
+
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) return "-";
+
+  return parsed.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function getApprovedBy(wo: WorkOrder) {
+  const value = [wo.approved_by_name, wo.approved_by_email].find(
+    (item) => item && item.trim().length > 0,
+  );
+
+  return value?.trim() || "-";
+}
+
 function statusBadgeClass(status: string | null) {
   const normalized = status?.toLowerCase();
 
@@ -308,6 +334,9 @@ export default function WorkOrdersPage() {
           status,
           wo_value,
           approval_status,
+          approved_by_name,
+          approved_by_email,
+          approved_at,
           company_id,
           site_id,
           organization_id,
@@ -747,31 +776,37 @@ export default function WorkOrdersPage() {
           <div className="p-10 text-center text-slate-500">No work orders match the selected filters.</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1180px] border-collapse text-left">
+            <table className="w-full min-w-[1420px] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-300 bg-[#f6f3f5]">
                   <th className="w-[12%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     WO ID
                   </th>
-                  <th className="w-[18%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
+                  <th className="w-[16%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Vendor Name
                   </th>
-                  <th className="w-[24%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
+                  <th className="w-[16%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Description
                   </th>
-                  <th className="w-[11%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
+                  <th className="w-[9%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Value
                   </th>
-                  <th className="w-[15%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
+                  <th className="w-[14%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Documentation
                   </th>
-                  <th className="w-[10%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
+                  <th className="w-[8%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Status
                   </th>
-                  <th className="w-[10%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
+                  <th className="w-[8%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Approval
                   </th>
-                  <th className="w-[10%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
+                  <th className="w-[12%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
+                    Approved By
+                  </th>
+                  <th className="w-[11%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
+                    Approved At
+                  </th>
+                  <th className="w-[8%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     WO Date
                   </th>
                   <th className="w-[5%] px-6 py-4 text-right text-xs font-bold uppercase tracking-wide text-slate-600">
@@ -790,7 +825,7 @@ export default function WorkOrdersPage() {
                       <div className="mt-1 text-sm text-slate-500">{getSiteName(wo)}</div>
                     </td>
                     <td className="px-6 py-5 align-top text-base text-slate-700">
-                      <p className="max-w-xl truncate">{wo.description || "-"}</p>
+                      <p className="line-clamp-2 max-w-[280px] leading-6">{wo.description || "-"}</p>
                     </td>
                     <td className="px-6 py-5 align-top text-base font-bold text-slate-950">
                       {formatCurrency(wo.wo_value)}
@@ -845,6 +880,19 @@ export default function WorkOrdersPage() {
                       >
                         {titleCase(wo.approval_status)}
                       </span>
+                    </td>
+                    <td className="px-6 py-5 align-top">
+                      <div className="max-w-[180px] truncate text-sm font-medium text-slate-800">
+                        {getApprovedBy(wo)}
+                      </div>
+                      {wo.approved_by_name && wo.approved_by_email && wo.approved_by_name !== wo.approved_by_email && (
+                        <div className="mt-1 max-w-[180px] truncate text-xs text-slate-500">
+                          {wo.approved_by_email}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-6 py-5 align-top text-sm font-medium text-slate-700">
+                      {formatDateTime(wo.approved_at)}
                     </td>
                     <td className="px-6 py-5 align-top text-base text-slate-600">
                       {formatDate(wo.wo_date || wo.created_at)}

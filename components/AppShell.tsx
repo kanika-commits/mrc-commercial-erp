@@ -72,9 +72,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen bg-[#f3f6f8]">
-      <aside className="fixed left-0 top-0 z-40 flex h-screen w-[268px] flex-col bg-black px-4 py-8 text-white">
+      <aside className="fixed left-0 top-0 z-40 flex h-screen w-[224px] flex-col bg-black px-4 py-8 text-white">
         <Link href="/" className="mb-8 block px-2">
-          <h1 className="text-3xl font-bold tracking-tight">ConstructIQ</h1>
+          <h1 className="text-2xl font-bold tracking-tight">ConstructIQ</h1>
           <p className="mt-2 text-sm font-medium text-white/50">
             Enterprise ERP
           </p>
@@ -97,7 +97,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
                 <Link
                   href={item.href}
-                  className={`flex h-13 items-center gap-4 rounded-md px-5 text-sm font-bold transition ${
+                  className={`flex h-13 items-center gap-3 rounded-md px-3 text-sm font-bold transition ${
                     active
                       ? "bg-[#7bc8ef] text-[#07516c]"
                       : "text-white/60 hover:bg-white/10 hover:text-white"
@@ -115,13 +115,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           {visibleGroupCodes.has("administration") && (
             <Link
               href="/settings/appearance"
-              className="flex h-12 items-center gap-4 rounded-md px-5 text-sm font-bold text-white/55 transition hover:bg-white/10 hover:text-white"
+              className="flex h-12 items-center gap-3 rounded-md px-3 text-sm font-bold text-white/55 transition hover:bg-white/10 hover:text-white"
             >
               <Settings className="h-5 w-5" />
               Settings
             </Link>
           )}
-          <div className="flex h-12 items-center gap-4 rounded-md px-5 text-sm font-bold text-white/55">
+          <div className="flex h-12 items-center gap-3 rounded-md px-3 text-sm font-bold text-white/55">
             <span className="grid h-5 w-5 place-items-center rounded-full border border-white/55 text-xs">
               ?
             </span>
@@ -130,7 +130,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <main className="min-h-screen pl-[268px]">
+      <main className="min-h-screen pl-[224px]">
         <header className="sticky top-0 z-30 border-b border-[#d7dde3] bg-[#fbf9fa] px-10 py-4">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="relative w-full max-w-sm">

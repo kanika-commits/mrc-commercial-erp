@@ -2,14 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, FileMinus, FileText, RotateCcw, Trash2 } from "lucide-react";
+import { CheckCircle2, FileMinus, FileText, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
-type ApprovalAction = "Approved" | "Sent Back" | "Rejected";
+type ApprovalAction = "Approved" | "Rejected";
 type RaApprovalAction = "Approved" | "Rejected";
 
 export default function ApprovalsPage() {
@@ -159,12 +159,40 @@ export default function ApprovalsPage() {
       raDocumentData = documentResult.documents || [];
     }
 
-    const { data: debitDocumentData } = debitNoteIds.length
-      ? await supabase
-          .from("debit_note_documents")
-          .select("id, debit_note_id, file_name, file_url")
-          .in("debit_note_id", debitNoteIds)
-      : { data: [] };
+    let debitDocumentData: any[] = [];
+
+    if (debitNoteIds.length) {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        setMessage("Unable to load Debit Note documents: missing auth session.");
+        setLoading(false);
+        return;
+      }
+
+      const documentResponse = await fetch(
+        `/api/debit-notes/documents?debit_note_ids=${encodeURIComponent(
+          debitNoteIds.join(",")
+        )}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      const documentResult = await documentResponse.json();
+
+      if (!documentResponse.ok) {
+        setMessage(documentResult.error || "Failed to load Debit Note documents.");
+        setLoading(false);
+        return;
+      }
+
+      debitDocumentData = documentResult.documents || [];
+    }
 
     setWorkOrders(woData || []);
     setVendors(vendorData || []);
@@ -208,6 +236,22 @@ export default function ApprovalsPage() {
   function debitDocumentCount(debitNoteId: string) {
     return debitDocuments.filter((doc) => doc.debit_note_id === debitNoteId)
       .length;
+  }
+
+  function debitDocumentsForNote(debitNoteId: string) {
+    return debitDocuments.filter((doc) => doc.debit_note_id === debitNoteId);
+  }
+
+  function openDebitDocument(document: any) {
+    if (!document.signed_url) {
+      setMessage(
+        document.signed_url_error ||
+          "Unable to open Debit Note file. Signed URL was not available."
+      );
+      return;
+    }
+
+    window.open(document.signed_url, "_blank", "noopener,noreferrer");
   }
 
   async function updateRaStatus(billId: string, action: RaApprovalAction) {
@@ -280,8 +324,8 @@ export default function ApprovalsPage() {
 
     const remark = remarks[`dn-${debitNoteId}`]?.trim() || "";
 
-    if ((action === "Sent Back" || action === "Rejected") && !remark) {
-      setMessage("Reason is required for Send Back or Reject.");
+    if (action === "Rejected" && !remark) {
+      setMessage("Reason is required for Reject/Delete.");
       setSavingId("");
       return;
     }
@@ -296,30 +340,38 @@ export default function ApprovalsPage() {
     const now = new Date().toISOString();
 
     if (action === "Rejected") {
-      const { error: deleteDocsError } = await supabase
-        .from("debit_note_documents")
-        .delete()
-        .eq("debit_note_id", debitNoteId);
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (deleteDocsError) {
-        setMessage(deleteDocsError.message);
+      if (!session?.access_token) {
+        setMessage("Please sign in again to delete the Debit Note.");
         setSavingId("");
         return;
       }
 
-      const { error: deleteNoteError } = await supabase
-        .from("debit_notes")
-        .delete()
-        .eq("id", debitNoteId);
+      const response = await fetch(
+        `/api/debit-notes?debit_note_id=${encodeURIComponent(debitNoteId)}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        }
+      );
+      const result = await response.json();
 
-      if (deleteNoteError) {
-        setMessage(deleteNoteError.message);
+      if (!response.ok) {
+        setMessage(result.error || "Failed to delete Debit Note.");
         setSavingId("");
         return;
       }
 
       setDebitNotes((prev) =>
         prev.filter((note) => note.id !== debitNoteId)
+      );
+      setDebitDocuments((prev) =>
+        prev.filter((document) => document.debit_note_id !== debitNoteId)
       );
       setSavingId("");
       return;
@@ -336,17 +388,6 @@ export default function ApprovalsPage() {
         approved_by_name: name,
         approved_by_email: email,
         approved_at: now,
-      };
-    }
-
-    if (action === "Sent Back") {
-      updateData = {
-        ...updateData,
-        status: "Sent Back",
-        rejected_by_name: name,
-        rejected_by_email: email,
-        rejected_at: now,
-        rejection_reason: remark,
       };
     }
 
@@ -590,7 +631,7 @@ export default function ApprovalsPage() {
             </h2>
           </div>
           <p className="text-xs text-slate-500">
-            Approve, send back for correction, or reject/delete debit notes.
+            Approve or reject/delete debit notes.
           </p>
         </div>
 
@@ -620,6 +661,7 @@ export default function ApprovalsPage() {
                   : null;
                 const remarkKey = `dn-${note.id}`;
                 const amount = note.total_amount || note.gross_amount || 0;
+                const noteDocuments = debitDocumentsForNote(note.id);
 
                 return (
                   <tr key={note.id} className="border-t align-top">
@@ -671,6 +713,27 @@ export default function ApprovalsPage() {
 
                     <td className="p-3">
                       {debitDocumentCount(note.id)} file(s)
+                      {noteDocuments.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {noteDocuments.map((document) => (
+                            <div
+                              key={document.id}
+                              className="flex max-w-[260px] items-center justify-between gap-2"
+                            >
+                              <span className="truncate text-xs text-slate-600">
+                                {document.file_name || "Attachment"}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => openDebitDocument(document)}
+                                className="shrink-0 text-xs font-semibold text-blue-600 hover:underline"
+                              >
+                                Open
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       <div>
                         <Link
                           href={`/debit-notes/${note.id}`}
@@ -691,7 +754,7 @@ export default function ApprovalsPage() {
                           }))
                         }
                         className="min-h-24 w-64 rounded-xl border px-3 py-2 text-sm outline-none focus:border-slate-400"
-                        placeholder="Required for send back/reject"
+                        placeholder="Required for reject/delete"
                       />
                     </td>
 
@@ -701,9 +764,6 @@ export default function ApprovalsPage() {
                         viewHref={`/debit-notes/${note.id}`}
                         onApprove={() =>
                           updateDebitNoteStatus(note.id, "Approved")
-                        }
-                        onSendBack={() =>
-                          updateDebitNoteStatus(note.id, "Sent Back")
                         }
                         onReject={() =>
                           updateDebitNoteStatus(note.id, "Rejected")
@@ -733,13 +793,11 @@ function ActionButtons({
   saving,
   viewHref,
   onApprove,
-  onSendBack,
   onReject,
 }: {
   saving: boolean;
   viewHref: string;
   onApprove: () => void;
-  onSendBack?: () => void;
   onReject: () => void;
 }) {
   return (
@@ -760,18 +818,6 @@ function ActionButtons({
         <CheckCircle2 className="h-3.5 w-3.5" />
         Approve
       </button>
-
-      {onSendBack && (
-        <button
-          type="button"
-          disabled={saving}
-          onClick={onSendBack}
-          className="inline-flex w-28 items-center justify-center gap-1 rounded-xl bg-yellow-500 px-3 py-2 text-xs font-medium text-white hover:bg-yellow-600 disabled:opacity-60"
-        >
-          <RotateCcw className="h-3.5 w-3.5" />
-          Send Back
-        </button>
-      )}
 
       <button
         type="button"

@@ -10,6 +10,19 @@ function money(value: any) {
   return `Rs. ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "-";
+  return parsed.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export default function WorkOrderDetailPage() {
   const params = useParams();
   const workOrderId = params.id as string;
@@ -94,7 +107,7 @@ const [documents, setDocuments] = useState<any[]>([]);
 
       const { data: invoiceData, error: invoiceError } = await supabase
         .from("invoices")
-        .select("id, invoice_number, invoice_date, taxable_amount, gst_amount, invoice_amount, status, approval_status")
+        .select("id, invoice_number, invoice_date, taxable_amount, gst_amount, invoice_amount, status, approval_status, itc_status")
         .eq("work_order_id", workOrderId)
         .order("invoice_date", { ascending: false });
 
@@ -117,6 +130,7 @@ if (paymentError) throw paymentError;
     debit_note_type,
     total_amount,
     reason,
+    status,
     approval_status
   `)
   .eq("work_order_id", workOrderId)
@@ -125,15 +139,30 @@ if (paymentError) throw paymentError;
 if (debitNoteError) throw debitNoteError;
 
      
-      const { data: documentData, error: documentError } = await supabase
-  .from("work_order_documents")
-  .select("*")
-  .eq("work_order_id", workOrderId)
-  .order("uploaded_at", { ascending: false });
+const {
+  data: { session },
+} = await supabase.auth.getSession();
+const token = session?.access_token;
 
-if (documentError) throw documentError;
+if (!token) {
+  throw new Error("Unable to load Work Order files: missing auth session.");
+}
 
-setDocuments(documentData || []);
+const documentResponse = await fetch(
+  `/api/work-orders/documents?work_order_id=${encodeURIComponent(workOrderId)}`,
+  {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  }
+);
+const documentResult = await documentResponse.json();
+
+if (!documentResponse.ok) {
+  throw new Error(documentResult.error || "Failed to load Work Order files.");
+}
+
+setDocuments(documentResult.documents || []);
 setVendors(vendorData || []);
 setRaBills(raData || []);
 setInvoices(invoiceData || []);
@@ -144,6 +173,18 @@ setDebitNotes(debitNoteData || []);
     } finally {
       setLoading(false);
     }
+  }
+
+  function openDocument(document: any) {
+    if (!document.signed_url) {
+      setMessage(
+        document.signed_url_error ||
+          "Unable to open Work Order file. Signed URL was not available."
+      );
+      return;
+    }
+
+    window.open(document.signed_url, "_blank", "noopener,noreferrer");
   }
 
  const totals = useMemo(() => {
@@ -313,6 +354,13 @@ function downloadWOLedger() {
         <Summary title="Total Payments" value={money(totals.totalPayments)} />
       </section>
 
+      <section className="grid gap-4 md:grid-cols-4">
+        <Summary title="RA Bills" value={String(raBills.length)} />
+        <Summary title="Invoices" value={String(invoices.length)} />
+        <Summary title="Payments" value={String(payments.length)} />
+        <Summary title="Debit Notes" value={String(debitNotes.length)} />
+      </section>
+
       <section className="grid gap-4 md:grid-cols-3">
 <Summary title="Balance WO Value" value={money(totals.balanceWoValue)} />
 <Summary title="RA Bills Minus Invoices" value={money(totals.raMinusInvoices)} />
@@ -335,6 +383,10 @@ function downloadWOLedger() {
           <Info label="GST Percent" value={workOrder.gst_percent ? `${workOrder.gst_percent}%` : "-"} />
           <Info label="Department" value={workOrder.department || "-"} />
           <Info label="Cost Code" value={workOrder.cost_code || "-"} />
+          <Info label="Created By" value={workOrder.created_by_name || workOrder.created_by_email || "-"} />
+          <Info label="Created At" value={formatDateTime(workOrder.created_at_user || workOrder.created_at)} />
+          <Info label="Approved By" value={workOrder.approved_by_name || workOrder.approved_by_email || "-"} />
+          <Info label="Approved At" value={formatDateTime(workOrder.approved_at)} />
         </div>
 <div className="mt-6 border-t pt-4">
   <h3 className="mb-3 font-semibold">
@@ -348,15 +400,25 @@ function downloadWOLedger() {
   ) : (
     <div className="space-y-2">
       {documents.map((doc) => (
-        <div key={doc.id}>
-          <a
-            href={doc.file_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-600 underline"
+        <div
+          key={doc.id}
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-slate-50 p-3"
+        >
+          <div>
+            <p className="font-medium text-slate-950">
+              {doc.file_name || "Work Order file"}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              {doc.file_path || "-"}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => openDocument(doc)}
+            className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800"
           >
-            {doc.file_name}
-          </a>
+            Open
+          </button>
         </div>
       ))}
     </div>
@@ -371,7 +433,9 @@ function downloadWOLedger() {
       </section>
 
       <section className="rounded-lg border bg-white p-6">
-        <h2 className="mb-4 text-xl font-semibold">Linked Vendors</h2>
+        <h2 className="mb-4 text-xl font-semibold">
+          Linked Vendors ({vendors.length})
+        </h2>
 
         {vendors.length === 0 ? (
           <p className="text-gray-500">No vendors linked.</p>
@@ -403,24 +467,20 @@ function downloadWOLedger() {
         )}
       </section>
 
-      {workOrder.approval_status === "approved" ? (
-  <>
     <DataTable
-      title="RA Bills"
+      title={`Linked RA Bills (${raBills.length})`}
       empty="No RA Bills found."
       headers={[
-        "RA Bill No",
-        "Date",
-        "Gross Amount",
-        "Net Amount",
+        "RA Number",
+        "RA Date",
+        "Amount",
         "Status",
-        "Approval",
+        "Approval Status",
         "Action",
       ]}
       rows={raBills.map((item) => [
         item.ra_number,
         item.ra_date || "-",
-        money(item.gross_amount),
         money(item.net_amount),
         item.status || "Draft",
         item.approval_status || "Pending",
@@ -435,26 +495,20 @@ function downloadWOLedger() {
     />
 
     <DataTable
-      title="Invoices"
+      title={`Linked Invoices (${invoices.length})`}
       empty="No invoices found."
       headers={[
-        "Invoice No",
-        "Date",
-        "Taxable",
-        "GST",
-        "Total",
-        "Status",
-        "Approval",
+        "Invoice Number",
+        "Invoice Date",
+        "Invoice Amount",
+        "ITC Status",
         "Action",
       ]}
       rows={invoices.map((item) => [
         item.invoice_number,
         item.invoice_date || "-",
-        money(item.taxable_amount),
-        money(item.gst_amount),
         money(item.invoice_amount),
-        item.status || "Draft",
-        item.approval_status || "Pending",
+        item.itc_status || "-",
         <Link
           key={item.id}
           href={`/invoices/${item.id}`}
@@ -466,27 +520,19 @@ function downloadWOLedger() {
     />
 
     <DataTable
-      title="Payments"
+      title={`Linked Payments (${payments.length})`}
       empty="No payments found."
       headers={[
-        "Payment No",
-        "Date",
-        "Transferred Amount",
-        "TDS",
-        "Total Payment",
-        "Mode",
-        "UTR / Ref",
-        "Status",
+        "Payment Number",
+        "Payment Date",
+        "Amount",
+        "UTR Number",
       ]}
       rows={payments.map((item) => [
         item.payment_number,
         item.payment_date || "-",
-        money(item.payment_amount || item.transferred_amount),
-        money(item.tds_amount),
-        money(item.total_payment),
-        item.payment_mode || "-",
+        money(item.transferred_amount || item.payment_amount || item.total_payment),
         item.utr_number || item.reference_number || "-",
-        item.status || "Draft",
       ])}
     />
 
@@ -504,16 +550,14 @@ function downloadWOLedger() {
 />
 
 <DataTable
-  title="Debit Notes"
+  title={`Linked Debit Notes (${debitNotes.length})`}
   empty="No debit notes found."
-  headers={["DN No", "Date", "Type", "Amount", "Reason", "Approval", "Action"]}
+  headers={["Debit Note Number", "Date", "Amount", "Status", "Action"]}
   rows={debitNotes.map((item) => [
     item.debit_note_number || "-",
     item.debit_note_date || "-",
-    item.debit_note_type || "-",
     money(item.total_amount),
-    item.reason || "-",
-    item.approval_status || "-",
+    item.status || item.approval_status || "-",
     <Link
       key={item.id}
       href={`/debit-notes/${item.id}`}
@@ -523,27 +567,6 @@ function downloadWOLedger() {
     </Link>,
   ])}
 />
-  </>
-) : (
-  <section className="rounded-lg border border-yellow-300 bg-yellow-50 p-6">
-    <h2 className="mb-2 text-xl font-semibold">
-      Work Order Awaiting Approval
-    </h2>
-
-    <p className="text-gray-700">
-      This work order is still pending approval.
-      RA Bills, Invoices, Payments and Debit Notes
-      will become available only after approval.
-    </p>
-
-    <Link
-      href="/approvals/work-orders"
-      className="mt-4 inline-block rounded-lg bg-blue-600 px-4 py-2 text-white"
-    >
-      Go To WO Approval
-    </Link>
-  </section>
-)}
         
     </div>
   );

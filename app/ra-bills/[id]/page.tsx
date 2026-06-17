@@ -16,6 +16,19 @@ function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "-";
+  return parsed.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function statusClass(value?: string | null) {
   const status = String(value || "").toLowerCase();
   if (status === "approved") return "border-green-200 bg-green-50 text-green-700";
@@ -254,6 +267,10 @@ export default function RABillDetailPage() {
           <Info label="RA Date" value={bill.ra_date || "-"} />
           <Info label="PAN" value={vendor?.pan || "-"} />
           <Info label="GSTIN" value={vendor?.gstin || "-"} />
+          <Info label="Created By" value={bill.created_by_name || bill.created_by_email || "-"} />
+          <Info label="Created At" value={formatDateTime(bill.created_at)} />
+          <Info label="Approved By" value={bill.approved_by_name || bill.approved_by_email || "-"} />
+          <Info label="Approved At" value={formatDateTime(bill.approved_at)} />
         </div>
 
         {bill.work_order_id && (

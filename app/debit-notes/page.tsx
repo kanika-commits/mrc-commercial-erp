@@ -8,12 +8,30 @@ function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "-";
+
+  return parsed.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function auditName(name?: string | null, email?: string | null) {
+  return name || email || "-";
+}
+
 function statusClass(value?: string | null) {
   const status = String(value || "").toLowerCase();
 
   if (status === "approved") return "border-green-200 bg-green-50 text-green-700";
   if (status === "pending") return "border-yellow-200 bg-yellow-50 text-yellow-700";
-  if (status === "sent back") return "border-orange-200 bg-orange-50 text-orange-700";
   if (status === "rejected") return "border-red-200 bg-red-50 text-red-700";
 
   return "border-slate-200 bg-slate-50 text-slate-700";
@@ -35,8 +53,14 @@ export default async function DebitNotesPage() {
       total_amount,
       status,
       approval_status,
+      created_by_name,
+      created_by_email,
+      approved_by_name,
+      approved_by_email,
+      approved_at,
       created_at
     `)
+    .ilike("approval_status", "approved")
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -62,52 +86,14 @@ export default async function DebitNotesPage() {
         .in("id", workOrderIds)
     : { data: [] };
 
-  const siteIds = Array.from(
-    new Set((workOrders || []).map((wo: any) => wo.site_id).filter(Boolean))
-  );
-
-  const companyIds = Array.from(
-    new Set((workOrders || []).map((wo: any) => wo.company_id).filter(Boolean))
-  );
-
   const { data: vendors } = vendorIds.length
     ? await supabase.from("vendors").select("id, vendor_name").in("id", vendorIds)
     : { data: [] };
 
-  const { data: sites } = siteIds.length
-    ? await supabase.from("sites").select("id, site_name, site_code").in("id", siteIds)
-    : { data: [] };
-
-  const { data: companies } = companyIds.length
-    ? await supabase
-        .from("companies")
-        .select("id, company_name, company_code")
-        .in("id", companyIds)
-    : { data: [] };
-
   const woMap = new Map((workOrders || []).map((wo: any) => [wo.id, wo]));
   const vendorMap = new Map((vendors || []).map((vendor: any) => [vendor.id, vendor]));
-  const siteMap = new Map((sites || []).map((site: any) => [site.id, site]));
-  const companyMap = new Map((companies || []).map((company: any) => [company.id, company]));
 
   const totalNotes = notes?.length || 0;
-  const pendingNotes =
-    notes?.filter(
-      (note: any) =>
-        String(note.approval_status || "").toLowerCase() === "pending"
-    ).length || 0;
-
-  const approvedNotes =
-    notes?.filter(
-      (note: any) =>
-        String(note.approval_status || "").toLowerCase() === "approved"
-    ).length || 0;
-
-  const sentBackNotes =
-    notes?.filter(
-      (note: any) =>
-        String(note.approval_status || "").toLowerCase() === "sent back"
-    ).length || 0;
 
   const totalDebitValue =
     notes?.reduce(
@@ -125,9 +111,11 @@ export default async function DebitNotesPage() {
             Contract Management
           </div>
 
-          <h1 className="text-3xl font-bold text-slate-950">Debit Notes</h1>
+          <h1 className="text-3xl font-bold text-slate-950">
+            Approved Debit Notes
+          </h1>
           <p className="text-sm text-slate-500">
-            Track debit notes raised against work orders or RA bills.
+            Approved debit notes available for commercial adjustment tracking.
           </p>
         </div>
 
@@ -140,12 +128,13 @@ export default async function DebitNotesPage() {
         </Link>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-5">
-        <Summary title="Total Debit Notes" value={String(totalNotes)} />
-        <Summary title="Pending Approval" value={String(pendingNotes)} />
-        <Summary title="Approved" value={String(approvedNotes)} />
-        <Summary title="Sent Back" value={String(sentBackNotes)} />
-        <Summary title="Debit Value" value={money(totalDebitValue)} />
+      <div className="grid gap-4 md:grid-cols-3">
+        <Summary title="Approved Debit Notes" value={String(totalNotes)} />
+        <Summary title="Approved Debit Value" value={money(totalDebitValue)} />
+        <Summary
+          title="Average Debit Value"
+          value={money(totalNotes ? totalDebitValue / totalNotes : 0)}
+        />
       </div>
 
       <div className="rounded-2xl border bg-white shadow-sm">
@@ -153,10 +142,10 @@ export default async function DebitNotesPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="font-semibold text-slate-950">
-                Debit Note Register
+                Approved Debit Note Register
               </h2>
               <p className="text-xs text-slate-500">
-                Site-wise debit notes, amounts and approval status.
+                Commercial adjustment records cleared by HO.
               </p>
             </div>
 
@@ -171,17 +160,20 @@ export default async function DebitNotesPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1050px] text-sm">
+          <table className="w-full min-w-[1680px] text-sm">
             <thead className="bg-slate-50 text-xs uppercase text-slate-500">
               <tr>
-                <th className="p-3 text-left">DN No</th>
                 <th className="p-3 text-left">Date</th>
-                <th className="p-3 text-left">Site</th>
+                <th className="p-3 text-left">Debit Note Number</th>
                 <th className="p-3 text-left">Vendor</th>
                 <th className="p-3 text-left">WO Number</th>
                 <th className="p-3 text-left">Type</th>
+                <th className="p-3 text-left">Reason</th>
                 <th className="p-3 text-right">Amount</th>
-                <th className="p-3 text-left">Approval</th>
+                <th className="p-3 text-left">Created By</th>
+                <th className="p-3 text-left">Created At</th>
+                <th className="p-3 text-left">Approved By</th>
+                <th className="p-3 text-left">Approved At</th>
                 <th className="p-3 text-right">Action</th>
               </tr>
             </thead>
@@ -190,22 +182,13 @@ export default async function DebitNotesPage() {
               {notes?.map((note: any) => {
                 const wo = woMap.get(note.work_order_id);
                 const vendor = vendorMap.get(note.vendor_id);
-                const site = wo?.site_id ? siteMap.get(wo.site_id) : null;
-                const company = wo?.company_id ? companyMap.get(wo.company_id) : null;
 
                 return (
                   <tr key={note.id} className="border-t hover:bg-slate-50">
-                    <td className="p-3 font-semibold text-slate-950">
-                      {note.debit_note_number}
-                    </td>
-
                     <td className="p-3">{note.debit_note_date || "-"}</td>
 
-                    <td className="p-3">
-                      <div className="font-medium">{site?.site_name || "-"}</div>
-                      <div className="text-xs text-slate-500">
-                        {company?.company_name || "-"}
-                      </div>
+                    <td className="p-3 font-semibold text-slate-950">
+                      {note.debit_note_number}
                     </td>
 
                     <td className="p-3">{vendor?.vendor_name || "-"}</td>
@@ -225,18 +208,44 @@ export default async function DebitNotesPage() {
 
                     <td className="p-3">{note.debit_note_type || "-"}</td>
 
+                    <td className="p-3">
+                      <div className="max-w-[260px] line-clamp-2">
+                        {note.reason || "-"}
+                      </div>
+                    </td>
+
                     <td className="p-3 text-right font-semibold">
                       {money(note.total_amount || note.gross_amount)}
                     </td>
 
                     <td className="p-3">
-                      <span
-                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass(
-                          note.approval_status
-                        )}`}
-                      >
-                        {note.approval_status || "Pending"}
-                      </span>
+                      <div className="max-w-[180px] truncate font-medium">
+                        {auditName(note.created_by_name, note.created_by_email)}
+                      </div>
+                      {note.created_by_name && note.created_by_email && note.created_by_name !== note.created_by_email && (
+                        <div className="max-w-[180px] truncate text-xs text-slate-500">
+                          {note.created_by_email}
+                        </div>
+                      )}
+                    </td>
+
+                    <td className="p-3 text-slate-700">
+                      {formatDateTime(note.created_at)}
+                    </td>
+
+                    <td className="p-3">
+                      <div className="max-w-[180px] truncate font-medium">
+                        {auditName(note.approved_by_name, note.approved_by_email)}
+                      </div>
+                      {note.approved_by_name && note.approved_by_email && note.approved_by_name !== note.approved_by_email && (
+                        <div className="max-w-[180px] truncate text-xs text-slate-500">
+                          {note.approved_by_email}
+                        </div>
+                      )}
+                    </td>
+
+                    <td className="p-3 text-slate-700">
+                      {formatDateTime(note.approved_at)}
                     </td>
 
                     <td className="p-3 text-right">
@@ -253,8 +262,8 @@ export default async function DebitNotesPage() {
 
               {notes?.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="p-8 text-center text-slate-500">
-                    No Debit Notes found.
+                  <td colSpan={12} className="p-8 text-center text-slate-500">
+                    No approved Debit Notes found.
                   </td>
                 </tr>
               )}

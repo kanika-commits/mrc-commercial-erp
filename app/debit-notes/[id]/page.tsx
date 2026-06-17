@@ -16,6 +16,21 @@ function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "-";
+
+  return parsed.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function statusClass(value?: string | null) {
   const status = String(value || "").toLowerCase();
 
@@ -116,15 +131,31 @@ export default function DebitNoteDetailPage() {
         setRaBill(raData);
       }
 
-      const { data: documentData, error: documentError } = await supabase
-        .from("debit_note_documents")
-        .select("*")
-        .eq("debit_note_id", debitNoteId)
-        .order("uploaded_at", { ascending: false });
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (documentError) throw documentError;
+      if (session?.access_token) {
+        const response = await fetch(
+          `/api/debit-notes/documents?debit_note_id=${encodeURIComponent(
+            debitNoteId
+          )}`,
+          {
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+            },
+          }
+        );
+        const result = await response.json();
 
-      setDocuments(documentData || []);
+        if (!response.ok) {
+          throw new Error(result.error || "Failed to load Debit Note documents.");
+        }
+
+        setDocuments(result.documents || []);
+      } else {
+        setDocuments([]);
+      }
     } catch (error: any) {
       setMessage(error.message || "Failed to load Debit Note.");
     } finally {
@@ -132,19 +163,13 @@ export default function DebitNoteDetailPage() {
     }
   }
 
-  async function openDocument(path: string | null) {
-    if (!path) return;
-
-    const { data, error } = await supabase.storage
-      .from("debit-note-documents")
-      .createSignedUrl(path, 60);
-
-    if (error) {
-      setMessage(error.message);
+  function openDocument(document: any) {
+    if (!document?.signed_url) {
+      setMessage(document?.signed_url_error || "Debit Note file is not available.");
       return;
     }
 
-    window.open(data.signedUrl, "_blank");
+    window.open(document.signed_url, "_blank", "noopener,noreferrer");
   }
 
   const amount = useMemo(() => {
@@ -205,7 +230,7 @@ export default function DebitNoteDetailPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
-        <Summary title="Debit Amount" value={money(amount)} />
+        <Summary title="Debit Note Amount" value={money(amount)} />
         <Summary title="Type" value={note.debit_note_type || "-"} />
         <Summary title="Approval" value={note.approval_status || "Pending"} />
         <Summary title="Files" value={String(documents.length)} />
@@ -273,11 +298,13 @@ export default function DebitNoteDetailPage() {
           <Info label="Debit Note Number" value={note.debit_note_number || "-"} />
           <Info label="Debit Note Date" value={note.debit_note_date || "-"} />
           <Info label="Debit Note Type" value={note.debit_note_type || "-"} />
-          <Info label="Amount" value={money(amount)} />
+          <Info label="Debit Note Amount" value={money(amount)} />
           <Info label="Status" value={note.status || "-"} />
           <Info label="Approval Status" value={note.approval_status || "-"} />
-          <Info label="Created By" value={note.created_by_name || "-"} />
-          <Info label="Created Email" value={note.created_by_email || "-"} />
+          <Info label="Created By" value={note.created_by_name || note.created_by_email || "-"} />
+          <Info label="Created At" value={formatDateTime(note.created_at)} />
+          <Info label="Approved By" value={note.approved_by_name || note.approved_by_email || "-"} />
+          <Info label="Approved At" value={formatDateTime(note.approved_at)} />
         </div>
 
         {note.reason && (
@@ -332,7 +359,7 @@ export default function DebitNoteDetailPage() {
 
                 <button
                   type="button"
-                  onClick={() => openDocument(doc.file_url)}
+                  onClick={() => openDocument(doc)}
                   className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800"
                 >
                   Open

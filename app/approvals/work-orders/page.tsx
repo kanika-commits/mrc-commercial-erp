@@ -9,6 +9,19 @@ function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
+function formatDate(date: string | null | undefined) {
+  if (!date) return "";
+
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) return "";
+
+  return parsed.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 function badgeClass(value?: string | null) {
   const status = String(value || "")
     .trim()
@@ -64,7 +77,8 @@ export default function WorkOrderApprovalPage() {
           approval_status,
           department,
           cost_code,
-          created_at
+          created_at,
+          approved_at
         `)
         .or("approval_status.is.null,approval_status.ilike.pending,approval_status.ilike.draft")
         .order("created_at", { ascending: false });
@@ -293,13 +307,13 @@ export default function WorkOrderApprovalPage() {
 
       <div className="overflow-hidden rounded border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1400px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[1320px] border-collapse text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-3 font-semibold">Company / Site</th>
                 <th className="px-4 py-3 font-semibold">WO Number</th>
                 <th className="px-4 py-3 font-semibold">WO Details</th>
-                <th className="px-4 py-3 font-semibold">Description</th>
+                <th className="w-[18%] px-4 py-3 font-semibold">Description</th>
                 <th className="px-4 py-3 text-center font-semibold">Documentation</th>
                 <th className="px-4 py-3 text-center font-semibold">Status</th>
                 <th className="px-4 py-3 text-center font-semibold">Approval</th>
@@ -327,39 +341,39 @@ export default function WorkOrderApprovalPage() {
 
                   return (
                     <tr key={wo.id} className="align-top transition-colors hover:bg-slate-50">
-                      <td className="px-4 py-4">
-                        <div className="font-semibold leading-tight text-slate-950">
+                      <td className="px-4 py-5">
+                        <div className="text-base font-semibold leading-tight text-slate-950">
                           {companies.get(wo.company_id) || "-"}
                         </div>
-                        <div className="mt-0.5 text-xs text-slate-500">
+                        <div className="mt-1 text-base text-slate-600">
                           {sites.get(wo.site_id) || "-"}
                         </div>
                       </td>
 
-                      <td className="whitespace-nowrap px-4 py-4">
-                        <span className="font-mono text-xs font-bold text-sky-800">
+                      <td className="whitespace-nowrap px-4 py-5">
+                        <span className="font-mono text-base font-medium text-sky-800">
                           {wo.wo_number}
                         </span>
                       </td>
 
-                      <td className="px-4 py-4">
-                        <div className="text-xs text-slate-700">
+                      <td className="px-4 py-5">
+                        <div className="text-sm text-slate-700">
                           <span className="text-slate-400">Date:</span>{" "}
                           {wo.wo_date || "-"}
                         </div>
-                        <div className="mt-1 text-xs text-slate-700">
+                        <div className="mt-1 text-sm text-slate-700">
                           <span className="text-slate-400">Type:</span>{" "}
                           {wo.wo_type || "-"}
                         </div>
                       </td>
 
-                      <td className="max-w-xs px-4 py-4">
-                        <p className="line-clamp-3 text-xs text-slate-600">
+                      <td className="w-[18%] max-w-[240px] px-4 py-5">
+                        <p className="line-clamp-2 text-sm leading-5 text-slate-600">
                           {wo.description || "-"}
                         </p>
                       </td>
 
-                      <td className="px-4 py-4">
+                      <td className="px-4 py-5">
                         {currentDocuments.length === 0 ? (
                           <div className="flex justify-center">
                             <span className="inline-flex items-center gap-1 text-xs text-slate-400">
@@ -391,19 +405,24 @@ export default function WorkOrderApprovalPage() {
                         )}
                       </td>
 
-                      <td className="px-4 py-4 text-center">
-                        <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${badgeClass(wo.status)}`}>
+                      <td className="px-4 py-5 text-center">
+                        <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold uppercase tracking-wide ${badgeClass(wo.status)}`}>
                           {wo.status || "-"}
                         </span>
                       </td>
 
-                      <td className="px-4 py-4 text-center">
-                        <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${badgeClass(wo.approval_status)}`}>
+                      <td className="px-4 py-5 text-center">
+                        <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold uppercase tracking-wide ${badgeClass(wo.approval_status)}`}>
                           {wo.approval_status || "Pending"}
                         </span>
+                        {formatDate(wo.approved_at) && (
+                          <div className="mt-1 text-xs font-medium text-slate-500">
+                            {formatDate(wo.approved_at)}
+                          </div>
+                        )}
                       </td>
 
-                      <td className="px-4 py-4 text-right">
+                      <td className="px-4 py-5 text-right">
                         <div className="flex items-center justify-end gap-2">
                           <Link
                             href={`/work-orders/${wo.id}`}

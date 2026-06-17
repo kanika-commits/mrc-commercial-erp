@@ -8,6 +8,19 @@ function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "-";
+  return parsed.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function statusClass(value?: string | null) {
   const status = String(value || "")
     .trim()
@@ -45,6 +58,9 @@ export default async function RABillsPage({
       net_amount,
       status,
       approval_status,
+      approved_by_name,
+      approved_by_email,
+      approved_at,
       created_at
     `)
     .ilike("approval_status", "approved")
@@ -209,7 +225,7 @@ export default async function RABillsPage({
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1180px] border-collapse text-sm">
+          <table className="w-full min-w-[1360px] border-collapse text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="border-b border-slate-200 px-5 py-3 text-left">RA No</th>
@@ -221,6 +237,8 @@ export default async function RABillsPage({
                 <th className="border-b border-slate-200 px-5 py-3 text-right">GST</th>
                 <th className="border-b border-slate-200 px-5 py-3 text-right">Net</th>
                 <th className="border-b border-slate-200 px-5 py-3 text-left">Approval</th>
+                <th className="border-b border-slate-200 px-5 py-3 text-left">Approved By</th>
+                <th className="border-b border-slate-200 px-5 py-3 text-left">Approved At</th>
                 <th className="border-b border-slate-200 px-5 py-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -252,6 +270,17 @@ export default async function RABillsPage({
                       {bill.approval_status || "Pending"}
                     </span>
                   </td>
+                  <td className="px-5 py-4 text-slate-700">
+                    <div className="max-w-[180px] truncate font-medium">
+                      {bill.approved_by_name || bill.approved_by_email || "-"}
+                    </div>
+                    {bill.approved_by_name && bill.approved_by_email && bill.approved_by_name !== bill.approved_by_email && (
+                      <div className="max-w-[180px] truncate text-xs text-slate-500">
+                        {bill.approved_by_email}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-5 py-4 text-slate-700">{formatDateTime(bill.approved_at)}</td>
                   <td className="px-5 py-4 text-right">
                     <Link
                       href={`/ra-bills/${bill.id}`}
@@ -266,7 +295,7 @@ export default async function RABillsPage({
 
               {filteredRows.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-5 py-16 text-center">
+                  <td colSpan={12} className="px-5 py-16 text-center">
                     <FileText className="mx-auto h-10 w-10 text-slate-300" />
                     <h3 className="mt-3 text-lg font-bold text-slate-800">No RA Bills found</h3>
                     <p className="mt-1 text-sm text-slate-500">
