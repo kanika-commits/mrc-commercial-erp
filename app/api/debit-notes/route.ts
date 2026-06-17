@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  insertDeleteAudit,
+  requireDeletePermission,
+} from "@/lib/serverDeleteAudit";
 
 const DOCUMENT_BUCKET = "debit-note-documents";
+const MODULE_CODE = "debit_notes";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -51,6 +56,62 @@ function normalizeStoragePath(value: string | null) {
   }
 
   return raw;
+}
+
+async function readDeletionReason(request: Request) {
+  const contentType = request.headers.get("content-type") || "";
+
+  if (contentType.includes("application/json")) {
+    const body = await request.json().catch(() => ({}));
+    return String(body.deletion_reason || body.deletionReason || "").trim();
+  }
+
+  if (contentType.includes("multipart/form-data")) {
+    const formData = await request.formData();
+    return String(
+      formData.get("deletion_reason") || formData.get("deletionReason") || ""
+    ).trim();
+  }
+
+  if (contentType.includes("application/x-www-form-urlencoded")) {
+    const formData = await request.formData();
+    return String(
+      formData.get("deletion_reason") || formData.get("deletionReason") || ""
+    ).trim();
+  }
+
+  return "";
+}
+
+function isMissingRelationError(error: any) {
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    error?.code === "42P01" ||
+    error?.code === "42703" ||
+    error?.code === "PGRST204" ||
+    error?.code === "PGRST205" ||
+    message.includes("could not find") ||
+    message.includes("does not exist")
+  );
+}
+
+async function countDirectLinks(
+  admin: ReturnType<typeof adminClient>,
+  table: string,
+  column: string,
+  id: string
+) {
+  const { count, error } = await admin
+    .from(table)
+    .select("id", { count: "exact", head: true })
+    .eq(column, id);
+
+  if (error) {
+    if (isMissingRelationError(error)) return 0;
+    throw error;
+  }
+
+  return count || 0;
 }
 
 async function cleanupDebitNote(
@@ -276,6 +337,7 @@ export async function DELETE(request: Request) {
 
     const { searchParams } = new URL(request.url);
     const debitNoteId = searchParams.get("debit_note_id")?.trim();
+    const deletionReason = await readDeletionReason(request);
 
     if (!debitNoteId) {
       return NextResponse.json(
@@ -284,10 +346,77 @@ export async function DELETE(request: Request) {
       );
     }
 
+    if (deletionReason.length < 10) {
+      return NextResponse.json(
+        { error: "Deletion reason must be at least 10 characters." },
+        { status: 400 }
+      );
+    }
+
     const admin = adminClient();
+    const permission = await requireDeletePermission(
+      admin,
+      auth.user,
+      MODULE_CODE
+    );
+
+    if ("error" in permission) {
+      return NextResponse.json(
+        { error: permission.error },
+        { status: permission.status }
+      );
+    }
+
+    const { data: debitNote, error: debitNoteError } = await admin
+      .from("debit_notes")
+      .select("*")
+      .eq("id", debitNoteId)
+      .maybeSingle();
+
+    if (debitNoteError) throw debitNoteError;
+
+    if (!debitNote) {
+      return NextResponse.json(
+        { error: "Debit Note was not found." },
+        { status: 404 }
+      );
+    }
+
+    const [
+      invoiceCount,
+      paymentCount,
+      ledgerEntryCount,
+      ledgerTransactionCount,
+      accountLedgerCount,
+    ] = await Promise.all([
+      countDirectLinks(admin, "invoices", "debit_note_id", debitNoteId),
+      countDirectLinks(admin, "payments", "debit_note_id", debitNoteId),
+      countDirectLinks(admin, "ledger_entries", "debit_note_id", debitNoteId),
+      countDirectLinks(admin, "ledger_transactions", "debit_note_id", debitNoteId),
+      countDirectLinks(admin, "account_ledger", "debit_note_id", debitNoteId),
+    ]);
+
+    const ledgerCount =
+      ledgerEntryCount + ledgerTransactionCount + accountLedgerCount;
+
+    if (invoiceCount > 0 || paymentCount > 0 || ledgerCount > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Cannot delete Debit Note because linked invoices/payments/ledger rows exist.",
+          dependencies: {
+            invoices: invoiceCount,
+            payments: paymentCount,
+            ledger_rows: ledgerCount,
+          },
+        },
+        { status: 409 }
+      );
+    }
+
     const { data: documents, error: documentsError } = await admin
       .from("debit_note_documents")
-      .select("id, file_url")
+      .select("*")
       .eq("debit_note_id", debitNoteId);
 
     if (documentsError) throw documentsError;
@@ -299,6 +428,23 @@ export async function DELETE(request: Request) {
           .filter(Boolean)
       )
     );
+
+    await insertDeleteAudit(admin, auth.user, {
+      organizationId: debitNote.organization_id,
+      moduleCode: MODULE_CODE,
+      documentType: "Debit Note",
+      documentId: debitNote.id,
+      documentNumber: debitNote.debit_note_number,
+      deletionReason,
+      recordSnapshot: debitNote,
+      relatedSnapshot: {
+        debit_note_documents: documents || [],
+      },
+      fileSnapshot: {
+        bucket: DOCUMENT_BUCKET,
+        paths,
+      },
+    });
 
     if (paths.length > 0) {
       const { error: storageError } = await admin.storage

@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  insertDeleteAudit,
+  requireDeletePermission,
+} from "@/lib/serverDeleteAudit";
+
+const MODULE_CODE = "payments";
+const DOCUMENT_BUCKET = "payment-documents";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -45,6 +52,72 @@ function isBankTransferMode(mode: string) {
   return ["bank transfer", "neft", "rtgs", "imps", "upi"].includes(
     mode.trim().toLowerCase()
   );
+}
+
+async function readDeletionReason(request: Request) {
+  const contentType = request.headers.get("content-type") || "";
+
+  if (contentType.includes("application/json")) {
+    const body = await request.json().catch(() => ({}));
+    return String(body.deletion_reason || body.deletionReason || "").trim();
+  }
+
+  if (
+    contentType.includes("multipart/form-data") ||
+    contentType.includes("application/x-www-form-urlencoded")
+  ) {
+    const formData = await request.formData();
+    return String(
+      formData.get("deletion_reason") || formData.get("deletionReason") || ""
+    ).trim();
+  }
+
+  return "";
+}
+
+function normalizeStoragePath(value: string | null) {
+  const raw = String(value || "").trim();
+
+  if (!raw) return "";
+  if (!raw.startsWith("http")) return raw.replace(/^\/+/, "");
+
+  const marker = `/storage/v1/object/public/${DOCUMENT_BUCKET}/`;
+  const markerIndex = raw.indexOf(marker);
+
+  if (markerIndex >= 0) {
+    return decodeURIComponent(raw.slice(markerIndex + marker.length));
+  }
+
+  return raw;
+}
+
+function isMissingRelationError(error: any) {
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    error?.code === "42P01" ||
+    error?.code === "42703" ||
+    error?.code === "PGRST204" ||
+    error?.code === "PGRST205" ||
+    message.includes("could not find") ||
+    message.includes("does not exist")
+  );
+}
+
+async function loadPaymentDocuments(
+  admin: ReturnType<typeof adminClient>,
+  paymentId: string
+) {
+  const { data, error } = await admin
+    .from("payment_documents")
+    .select("*")
+    .eq("payment_id", paymentId);
+
+  if (error) {
+    if (isMissingRelationError(error)) return [];
+    throw error;
+  }
+
+  return data || [];
 }
 
 export async function POST(request: Request) {
@@ -234,6 +307,138 @@ export async function POST(request: Request) {
   } catch (error: any) {
     return NextResponse.json(
       { error: error.message || "Failed to create payment." },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const auth = await requireUser(request);
+
+    if ("error" in auth) {
+      return NextResponse.json(
+        { error: auth.error },
+        { status: auth.status }
+      );
+    }
+
+    const { searchParams } = new URL(request.url);
+    const paymentId = searchParams.get("payment_id")?.trim();
+    const deletionReason = await readDeletionReason(request);
+
+    if (!paymentId) {
+      return NextResponse.json(
+        { error: "payment_id is required." },
+        { status: 400 }
+      );
+    }
+
+    if (deletionReason.length < 10) {
+      return NextResponse.json(
+        { error: "Deletion reason must be at least 10 characters." },
+        { status: 400 }
+      );
+    }
+
+    const admin = adminClient();
+    const permission = await requireDeletePermission(
+      admin,
+      auth.user,
+      MODULE_CODE
+    );
+
+    if ("error" in permission) {
+      return NextResponse.json(
+        { error: permission.error },
+        { status: permission.status }
+      );
+    }
+
+    const { data: payment, error: paymentError } = await admin
+      .from("payments")
+      .select("*")
+      .eq("id", paymentId)
+      .maybeSingle();
+
+    if (paymentError) throw paymentError;
+
+    if (!payment) {
+      return NextResponse.json(
+        { error: "Payment was not found." },
+        { status: 404 }
+      );
+    }
+
+    const documents = await loadPaymentDocuments(admin, paymentId);
+    const filePaths = Array.from(
+      new Set(
+        documents
+          .map((document: any) =>
+            normalizeStoragePath(document.file_path || document.file_url)
+          )
+          .filter(Boolean)
+      )
+    );
+
+    await insertDeleteAudit(admin, auth.user, {
+      organizationId: payment.organization_id,
+      moduleCode: MODULE_CODE,
+      documentType: "Payment",
+      documentId: payment.id,
+      documentNumber:
+        payment.payment_number || payment.reference_number || payment.utr_number,
+      deletionReason,
+      recordSnapshot: payment,
+      relatedSnapshot: documents.length
+        ? {
+            payment_documents: documents,
+          }
+        : null,
+      fileSnapshot: filePaths.length
+        ? {
+            bucket: DOCUMENT_BUCKET,
+            paths: filePaths,
+          }
+        : null,
+    });
+
+    if (filePaths.length > 0) {
+      const { error: storageError } = await admin.storage
+        .from(DOCUMENT_BUCKET)
+        .remove(filePaths);
+
+      if (storageError && !isMissingRelationError(storageError)) {
+        throw storageError;
+      }
+    }
+
+    if (documents.length > 0) {
+      const { error: documentDeleteError } = await admin
+        .from("payment_documents")
+        .delete()
+        .eq("payment_id", paymentId);
+
+      if (documentDeleteError && !isMissingRelationError(documentDeleteError)) {
+        throw documentDeleteError;
+      }
+    }
+
+    const { error: deleteError } = await admin
+      .from("payments")
+      .delete()
+      .eq("id", paymentId);
+
+    if (deleteError) throw deleteError;
+
+    return NextResponse.json({
+      deleted: true,
+      audit_logged: true,
+      deleted_storage_files: filePaths.length,
+    });
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: error.message || "Failed to delete payment." },
       { status: 500 }
     );
   }

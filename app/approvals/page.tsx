@@ -324,8 +324,8 @@ export default function ApprovalsPage() {
 
     const remark = remarks[`dn-${debitNoteId}`]?.trim() || "";
 
-    if (action === "Rejected" && !remark) {
-      setMessage("Reason is required for Reject/Delete.");
+    if (action === "Rejected" && remark.length < 10) {
+      setMessage("Reason must be at least 10 characters for Reject/Delete.");
       setSavingId("");
       return;
     }
@@ -356,7 +356,9 @@ export default function ApprovalsPage() {
           method: "DELETE",
           headers: {
             Authorization: `Bearer ${session.access_token}`,
+            "Content-Type": "application/json",
           },
+          body: JSON.stringify({ deletion_reason: remark }),
         }
       );
       const result = await response.json();

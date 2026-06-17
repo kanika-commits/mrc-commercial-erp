@@ -1,8 +1,11 @@
-export const dynamic = "force-dynamic";
+"use client";
 
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Eye, FileText, Plus, Search, X } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { Eye, FileText, Plus, Search, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { can, getCurrentUserAccess } from "@/lib/accessControl";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -35,122 +38,216 @@ function statusClass(value?: string | null) {
   return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
-export default async function RABillsPage({
-  searchParams,
-}: {
-  searchParams?: Promise<{ q?: string }>;
-}) {
-  const params = (await searchParams) || {};
-  const query = String(params.q || "").trim();
+export default function RABillsPage() {
+  const searchParams = useSearchParams();
+  const query = String(searchParams.get("q") || "").trim();
+  const [bills, setBills] = useState<any[]>([]);
+  const [workOrders, setWorkOrders] = useState<any[]>([]);
+  const [vendors, setVendors] = useState<any[]>([]);
+  const [sites, setSites] = useState<any[]>([]);
+  const [companies, setCompanies] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [canDelete, setCanDelete] = useState(false);
+  const [deleteBill, setDeleteBill] = useState<any | null>(null);
+  const [deletionReason, setDeletionReason] = useState("");
+  const [deleting, setDeleting] = useState(false);
 
-  const { data: bills, error } = await supabase
-    .from("ra_bills")
-    .select(`
-      id,
-      work_order_id,
-      vendor_id,
-      ra_number,
-      ra_date,
-      gross_amount,
-      recovery_amount,
-      retention_amount,
-      gst_amount,
-      net_amount,
-      status,
-      approval_status,
-      approved_by_name,
-      approved_by_email,
-      approved_at,
-      created_at
-    `)
-    .ilike("approval_status", "approved")
-    .order("created_at", { ascending: false });
+  useEffect(() => {
+    loadAccess();
+    loadBills();
+  }, []);
 
-  if (error) {
-    return (
-      <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-        Failed to load RA Bills: {error.message}
-      </div>
-    );
+  async function loadAccess() {
+    const access = await getCurrentUserAccess();
+    setCanDelete(can(access.permissions, "ra_bills", "delete"));
   }
 
-  const workOrderIds = Array.from(
-    new Set((bills || []).map((b: any) => b.work_order_id).filter(Boolean))
-  );
+  async function loadBills() {
+    try {
+      setLoading(true);
+      setError("");
 
-  const vendorIds = Array.from(
-    new Set((bills || []).map((b: any) => b.vendor_id).filter(Boolean))
-  );
+      const { data: billData, error: billError } = await supabase
+        .from("ra_bills")
+        .select(`
+          id,
+          work_order_id,
+          vendor_id,
+          ra_number,
+          ra_date,
+          gross_amount,
+          recovery_amount,
+          retention_amount,
+          gst_amount,
+          net_amount,
+          status,
+          approval_status,
+          approved_by_name,
+          approved_by_email,
+          approved_at,
+          created_at
+        `)
+        .ilike("approval_status", "approved")
+        .order("created_at", { ascending: false });
 
-  const { data: workOrders } = workOrderIds.length
-    ? await supabase
-        .from("work_orders")
-        .select("id, wo_number, site_id, company_id")
-        .in("id", workOrderIds)
-    : { data: [] };
+      if (billError) throw billError;
 
-  const siteIds = Array.from(
-    new Set((workOrders || []).map((wo: any) => wo.site_id).filter(Boolean))
-  );
+      const loadedBills = billData || [];
+      setBills(loadedBills);
 
-  const companyIds = Array.from(
-    new Set((workOrders || []).map((wo: any) => wo.company_id).filter(Boolean))
-  );
+      const workOrderIds = Array.from(
+        new Set(loadedBills.map((b: any) => b.work_order_id).filter(Boolean))
+      );
+      const vendorIds = Array.from(
+        new Set(loadedBills.map((b: any) => b.vendor_id).filter(Boolean))
+      );
 
-  const { data: vendors } = vendorIds.length
-    ? await supabase.from("vendors").select("id, vendor_name").in("id", vendorIds)
-    : { data: [] };
+      const { data: workOrderData } = workOrderIds.length
+        ? await supabase
+            .from("work_orders")
+            .select("id, wo_number, site_id, company_id")
+            .in("id", workOrderIds)
+        : { data: [] };
 
-  const { data: sites } = siteIds.length
-    ? await supabase.from("sites").select("id, site_name, site_code").in("id", siteIds)
-    : { data: [] };
+      setWorkOrders(workOrderData || []);
 
-  const { data: companies } = companyIds.length
-    ? await supabase
-        .from("companies")
-        .select("id, company_name, company_code")
-        .in("id", companyIds)
-    : { data: [] };
+      const siteIds = Array.from(
+        new Set((workOrderData || []).map((wo: any) => wo.site_id).filter(Boolean))
+      );
+      const companyIds = Array.from(
+        new Set((workOrderData || []).map((wo: any) => wo.company_id).filter(Boolean))
+      );
 
-  const woMap = new Map((workOrders || []).map((wo: any) => [wo.id, wo]));
-  const vendorMap = new Map((vendors || []).map((vendor: any) => [vendor.id, vendor]));
-  const siteMap = new Map((sites || []).map((site: any) => [site.id, site]));
-  const companyMap = new Map((companies || []).map((company: any) => [company.id, company]));
+      const [{ data: vendorData }, { data: siteData }, { data: companyData }] =
+        await Promise.all([
+          vendorIds.length
+            ? supabase.from("vendors").select("id, vendor_name").in("id", vendorIds)
+            : Promise.resolve({ data: [] }),
+          siteIds.length
+            ? supabase.from("sites").select("id, site_name, site_code").in("id", siteIds)
+            : Promise.resolve({ data: [] }),
+          companyIds.length
+            ? supabase
+                .from("companies")
+                .select("id, company_name, company_code")
+                .in("id", companyIds)
+            : Promise.resolve({ data: [] }),
+        ]);
 
-  const rows = (bills || []).map((bill: any) => {
-    const wo: any = woMap.get(bill.work_order_id);
-    const vendor: any = vendorMap.get(bill.vendor_id);
-    const site: any = wo?.site_id ? siteMap.get(wo.site_id) : null;
-    const company: any = wo?.company_id ? companyMap.get(wo.company_id) : null;
+      setVendors(vendorData || []);
+      setSites(siteData || []);
+      setCompanies(companyData || []);
+    } catch (loadError: any) {
+      setError(loadError.message || "Failed to load RA Bills.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
-    return {
-      bill,
-      wo,
-      vendor,
-      site,
-      company,
-      searchText: [
-        bill.ra_number,
-        wo?.wo_number,
-        vendor?.vendor_name,
-        site?.site_name,
-        site?.site_code,
-        company?.company_name,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase(),
-    };
-  });
+  const rows = useMemo(() => {
+    const woMap = new Map((workOrders || []).map((wo: any) => [wo.id, wo]));
+    const vendorMap = new Map((vendors || []).map((vendor: any) => [vendor.id, vendor]));
+    const siteMap = new Map((sites || []).map((site: any) => [site.id, site]));
+    const companyMap = new Map((companies || []).map((company: any) => [company.id, company]));
+
+    return bills.map((bill: any) => {
+      const wo: any = woMap.get(bill.work_order_id);
+      const vendor: any = vendorMap.get(bill.vendor_id);
+      const site: any = wo?.site_id ? siteMap.get(wo.site_id) : null;
+      const company: any = wo?.company_id ? companyMap.get(wo.company_id) : null;
+
+      return {
+        bill,
+        wo,
+        vendor,
+        site,
+        company,
+        searchText: [
+          bill.ra_number,
+          wo?.wo_number,
+          vendor?.vendor_name,
+          site?.site_name,
+          site?.site_code,
+          company?.company_name,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase(),
+      };
+    });
+  }, [bills, companies, sites, vendors, workOrders]);
 
   const filteredRows = rows.filter((row) => {
     const matchesSearch = query ? row.searchText.includes(query.toLowerCase()) : true;
     return matchesSearch;
   });
 
-  const totalBills = bills?.length || 0;
-  const totalGross =
-    bills?.reduce((sum: number, bill: any) => sum + Number(bill.gross_amount || 0), 0) || 0;
+  const totalBills = bills.length;
+  const totalGross = bills.reduce(
+    (sum: number, bill: any) => sum + Number(bill.gross_amount || 0),
+    0
+  );
+
+  async function confirmDelete() {
+    if (!deleteBill) return;
+
+    const reason = deletionReason.trim();
+
+    if (reason.length < 10) {
+      setMessage("Deletion reason must be at least 10 characters.");
+      return;
+    }
+
+    try {
+      setDeleting(true);
+      setMessage("");
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Please sign in again to delete this RA Bill.");
+      }
+
+      const response = await fetch(`/api/ra-bills/${deleteBill.id}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ deletion_reason: reason }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to delete RA Bill.");
+      }
+
+      setBills((prev) => prev.filter((bill) => bill.id !== deleteBill.id));
+      setDeleteBill(null);
+      setDeletionReason("");
+      setMessage("RA Bill deleted successfully.");
+    } catch (deleteError: any) {
+      setMessage(deleteError.message || "Failed to delete RA Bill.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  if (loading) {
+    return <p className="text-sm text-slate-500">Loading approved RA Bills...</p>;
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        Failed to load RA Bills: {error}
+      </div>
+    );
+  }
 
   return (
     <section className="space-y-8">
@@ -180,6 +277,12 @@ export default async function RABillsPage({
         <Summary title="Total Approved RA Bills" value={String(totalBills)} tone="emerald" />
         <Summary title="Approved RA Value" value={money(totalGross)} tone="cyan" />
       </div>
+
+      {message && (
+        <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm font-medium text-sky-800">
+          {message}
+        </div>
+      )}
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 p-5">
@@ -282,13 +385,30 @@ export default async function RABillsPage({
                   </td>
                   <td className="px-5 py-4 text-slate-700">{formatDateTime(bill.approved_at)}</td>
                   <td className="px-5 py-4 text-right">
-                    <Link
-                      href={`/ra-bills/${bill.id}`}
-                      className="inline-flex items-center justify-center rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-sky-700"
-                      title="View RA Bill"
-                    >
-                      <Eye className="h-4 w-4" />
-                    </Link>
+                    <div className="flex justify-end gap-2">
+                      <Link
+                        href={`/ra-bills/${bill.id}`}
+                        className="inline-flex items-center justify-center rounded-md border border-slate-200 p-2 text-slate-500 hover:bg-slate-100 hover:text-sky-700"
+                        title="View RA Bill"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </Link>
+
+                      {canDelete && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDeleteBill(bill);
+                            setDeletionReason("");
+                            setMessage("");
+                          }}
+                          className="inline-flex items-center justify-center rounded-md border border-red-200 p-2 text-red-600 hover:bg-red-50"
+                          title="Delete RA Bill"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -312,6 +432,76 @@ export default async function RABillsPage({
           Showing {filteredRows.length} of {totalBills} RA bills
         </div>
       </div>
+
+      {deleteBill && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-slate-950">Delete RA Bill</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  This will hard delete RA Bill{" "}
+                  <span className="font-semibold text-slate-950">
+                    {deleteBill.ra_number || "-"}
+                  </span>{" "}
+                  after saving an audit snapshot.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteBill(null);
+                  setDeletionReason("");
+                }}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+                disabled={deleting}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <label className="mt-5 block">
+              <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                Deletion Reason
+              </span>
+              <textarea
+                value={deletionReason}
+                onChange={(event) => setDeletionReason(event.target.value)}
+                className="min-h-28 w-full rounded-xl border border-slate-300 p-3 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+                placeholder="Enter why this approved RA Bill is being deleted..."
+                disabled={deleting}
+              />
+            </label>
+
+            <p className="mt-2 text-xs text-slate-500">
+              Minimum 10 characters required.
+            </p>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteBill(null);
+                  setDeletionReason("");
+                }}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                disabled={deleting || deletionReason.trim().length < 10}
+                className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {deleting ? "Deleting..." : "Delete RA Bill"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

@@ -149,43 +149,52 @@ export default function NewPaymentPage() {
   ];
 
   async function loadVendorForWorkOrder(index: number, workOrderId: string) {
-    const { data, error } = await supabase
-      .from("work_order_vendors")
-      .select(`
-        vendor_id,
-        vendor_role,
-        is_primary,
-        vendors (
-          id,
-          vendor_name
-        )
-      `)
-      .eq("work_order_id", workOrderId)
-      .order("is_primary", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-    if (error) {
-      setMessage(error.message || "Failed to load vendor for work order.");
+    if (!session?.access_token) {
+      setMessage("Please sign in again to load vendor for work order.");
+      return;
+    }
+
+    const response = await fetch(
+      `/api/work-orders/vendors?work_order_id=${encodeURIComponent(workOrderId)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      }
+    );
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      setMessage(result.error || "Failed to load vendor for work order.");
+      return;
+    }
+
+    const linkedVendor = result.vendors?.[workOrderId];
+
+    if (!linkedVendor?.vendor_id) {
+      setMessage("No vendor linked to selected Work Order");
+      setRows((prev) =>
+        prev.map((row, i) =>
+          i === index ? { ...row, vendor_id: "", vendor_name: "" } : row
+        )
+      );
       return;
     }
 
     setRows((prev) =>
       prev.map((row, i) =>
         i === index
-          ? (() => {
-    const vendorRelation: any = data?.vendors;
-    const linkedVendor = Array.isArray(vendorRelation)
-      ? vendorRelation[0]
-      : vendorRelation;
-
-    return {
-      ...row,
-      vendor_id: linkedVendor?.id || "",
-      vendor_name: linkedVendor?.vendor_name || "",
-    };
-  })()
-: row
+          ? {
+              ...row,
+              vendor_id: linkedVendor.vendor_id || "",
+              vendor_name: linkedVendor.vendor_name || "",
+            }
+          : row
       )
     );
   }
@@ -370,8 +379,13 @@ export default function NewPaymentPage() {
         throw new Error(`Row ${rowNo}: Reference is required.`);
       }
 
+      if (row.payment_type === "Work Order" && !row.vendor_id) {
+        throw new Error(`Row ${rowNo}: No vendor linked to selected Work Order.`);
+      }
+
       if (
         row.payment_type !== "Internal Transfer" &&
+        row.payment_type !== "Work Order" &&
         !row.vendor_name.trim()
       ) {
         throw new Error(`Row ${rowNo}: Vendor / Party is required.`);

@@ -9,8 +9,10 @@ import {
   FileText,
   Search,
   Trash2,
+  X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { can, getCurrentUserAccess } from "@/lib/accessControl";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -25,10 +27,19 @@ export default function ITCReviewPage() {
   const [savingId, setSavingId] = useState("");
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [canDelete, setCanDelete] = useState(false);
+  const [deleteInvoice, setDeleteInvoice] = useState<any | null>(null);
+  const [deletionReason, setDeletionReason] = useState("");
 
   useEffect(() => {
+    loadAccess();
     loadInvoices();
   }, []);
+
+  async function loadAccess() {
+    const access = await getCurrentUserAccess();
+    setCanDelete(can(access.permissions, "invoices", "delete"));
+  }
 
   async function loadInvoices() {
     try {
@@ -178,10 +189,19 @@ export default function ITCReviewPage() {
     }
   }
 
-  async function deleteInvoice(invoiceId: string) {
+  async function deleteSelectedInvoice() {
+    if (!deleteInvoice) return;
+
+    const reason = deletionReason.trim();
+
+    if (reason.length < 10) {
+      setMessage("Deletion reason must be at least 10 characters.");
+      return;
+    }
+
     try {
       setMessage("");
-      setSavingId(invoiceId);
+      setSavingId(deleteInvoice.id);
 
       const {
         data: { session },
@@ -192,12 +212,14 @@ export default function ITCReviewPage() {
       }
 
       const response = await fetch(
-        `/api/invoices?invoice_id=${encodeURIComponent(invoiceId)}`,
+        `/api/invoices?invoice_id=${encodeURIComponent(deleteInvoice.id)}`,
         {
           method: "DELETE",
           headers: {
             Authorization: `Bearer ${session.access_token}`,
+            "Content-Type": "application/json",
           },
+          body: JSON.stringify({ deletion_reason: reason }),
         }
       );
       const result = await response.json();
@@ -206,12 +228,16 @@ export default function ITCReviewPage() {
         throw new Error(result.error || "Failed to delete invoice.");
       }
 
-      setInvoices((prev) => prev.filter((invoice) => invoice.id !== invoiceId));
+      setInvoices((prev) =>
+        prev.filter((invoice) => invoice.id !== deleteInvoice.id)
+      );
       setDocuments((prev) => {
         const next = new Map(prev);
-        next.delete(invoiceId);
+        next.delete(deleteInvoice.id);
         return next;
       });
+      setDeleteInvoice(null);
+      setDeletionReason("");
       setMessage("Invoice deleted successfully.");
     } catch (error: any) {
       setMessage(error.message || "Failed to delete invoice.");
@@ -422,15 +448,21 @@ export default function ITCReviewPage() {
                           ITC Claimed
                         </button>
 
-                        <button
-                          type="button"
-                          disabled={savingId === invoice.id}
-                          onClick={() => deleteInvoice(invoice.id)}
-                          className="inline-flex items-center justify-center gap-1 rounded-lg bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-800 disabled:opacity-60"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          Delete
-                        </button>
+                        {canDelete && (
+                          <button
+                            type="button"
+                            disabled={savingId === invoice.id}
+                            onClick={() => {
+                              setDeleteInvoice(invoice);
+                              setDeletionReason("");
+                              setMessage("");
+                            }}
+                            className="inline-flex items-center justify-center gap-1 rounded-lg bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-800 disabled:opacity-60"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Delete
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -448,6 +480,81 @@ export default function ITCReviewPage() {
           </table>
         </div>
       </div>
+
+      {deleteInvoice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-slate-950">
+                  Delete Invoice
+                </h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  This will hard delete invoice{" "}
+                  <span className="font-semibold text-slate-950">
+                    {deleteInvoice.invoice_number || "-"}
+                  </span>{" "}
+                  after saving an audit snapshot.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteInvoice(null);
+                  setDeletionReason("");
+                }}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+                disabled={savingId === deleteInvoice.id}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <label className="mt-5 block">
+              <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                Deletion Reason
+              </span>
+              <textarea
+                value={deletionReason}
+                onChange={(event) => setDeletionReason(event.target.value)}
+                className="min-h-28 w-full rounded-xl border border-slate-300 p-3 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+                placeholder="Enter why this invoice is being deleted..."
+                disabled={savingId === deleteInvoice.id}
+              />
+            </label>
+
+            <p className="mt-2 text-xs text-slate-500">
+              Minimum 10 characters required.
+            </p>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteInvoice(null);
+                  setDeletionReason("");
+                }}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                disabled={savingId === deleteInvoice.id}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={deleteSelectedInvoice}
+                disabled={
+                  savingId === deleteInvoice.id ||
+                  deletionReason.trim().length < 10
+                }
+                className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {savingId === deleteInvoice.id ? "Deleting..." : "Delete Invoice"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

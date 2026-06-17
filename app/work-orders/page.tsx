@@ -9,8 +9,11 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Trash2,
+  X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { can, getCurrentUserAccess } from "@/lib/accessControl";
 
 type WorkOrder = {
   id: string;
@@ -305,6 +308,11 @@ export default function WorkOrdersPage() {
   const [selectedTypes, setSelectedTypes] = useState<SelectionMap>({});
   const [sortField, setSortField] = useState<SortField>("wo_date");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [message, setMessage] = useState("");
+  const [canDelete, setCanDelete] = useState(false);
+  const [deleteWorkOrder, setDeleteWorkOrder] = useState<WorkOrder | null>(null);
+  const [deletionReason, setDeletionReason] = useState("");
+  const [deleting, setDeleting] = useState(false);
 
   function openDocument(document: WorkOrderDocument) {
     if (!document.signed_url) {
@@ -499,7 +507,64 @@ export default function WorkOrdersPage() {
     setLoading(false);
   }
 
+  async function loadAccess() {
+    const access = await getCurrentUserAccess();
+    setCanDelete(can(access.permissions, "work_orders", "delete"));
+  }
+
+  async function confirmDelete() {
+    if (!deleteWorkOrder) return;
+
+    const reason = deletionReason.trim();
+
+    if (reason.length < 10) {
+      setMessage("Deletion reason must be at least 10 characters.");
+      return;
+    }
+
+    try {
+      setDeleting(true);
+      setMessage("");
+      setError(null);
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Please sign in again to delete this Work Order.");
+      }
+
+      const response = await fetch(
+        `/api/work-orders?work_order_id=${encodeURIComponent(deleteWorkOrder.id)}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ deletion_reason: reason }),
+        },
+      );
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to delete Work Order.");
+      }
+
+      setWorkOrders((prev) => prev.filter((wo) => wo.id !== deleteWorkOrder.id));
+      setDeleteWorkOrder(null);
+      setDeletionReason("");
+      setMessage("Work Order deleted successfully.");
+    } catch (deleteError: any) {
+      setMessage(deleteError.message || "Failed to delete Work Order.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   useEffect(() => {
+    loadAccess();
     loadWorkOrders();
   }, []);
 
@@ -731,6 +796,12 @@ export default function WorkOrdersPage() {
         </div>
       </section>
 
+      {message && (
+        <div className="border border-sky-200 bg-sky-50 p-4 text-sm font-medium text-sky-800">
+          {message}
+        </div>
+      )}
+
       <section className="overflow-hidden border border-slate-300 bg-white shadow-sm">
         <div className="flex flex-col gap-4 border-b border-slate-300 p-4 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-wrap items-center gap-3">
@@ -898,14 +969,29 @@ export default function WorkOrdersPage() {
                       {formatDate(wo.wo_date || wo.created_at)}
                     </td>
                     <td className="px-6 py-5 align-top">
-                      <div className="flex justify-end">
+                      <div className="flex justify-end gap-2">
                         <Link
                           href={`/work-orders/${wo.id}`}
-                          className="inline-flex h-9 w-9 items-center justify-center text-slate-500 transition hover:bg-[#f6f3f5] hover:text-slate-950"
+                          className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 text-slate-500 transition hover:bg-[#f6f3f5] hover:text-slate-950"
                           title="View"
                         >
                           <Eye className="h-4 w-4" />
                         </Link>
+
+                        {canDelete && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDeleteWorkOrder(wo);
+                              setDeletionReason("");
+                              setMessage("");
+                            }}
+                            className="inline-flex h-9 w-9 items-center justify-center border border-red-200 text-red-600 transition hover:bg-red-50"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -915,6 +1001,78 @@ export default function WorkOrdersPage() {
           </div>
         )}
       </section>
+
+      {deleteWorkOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-slate-950">
+                  Delete Work Order
+                </h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  This will hard delete Work Order{" "}
+                  <span className="font-semibold text-slate-950">
+                    {deleteWorkOrder.wo_number || "-"}
+                  </span>{" "}
+                  after saving an audit snapshot.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteWorkOrder(null);
+                  setDeletionReason("");
+                }}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+                disabled={deleting}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <label className="mt-5 block">
+              <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                Deletion Reason
+              </span>
+              <textarea
+                value={deletionReason}
+                onChange={(event) => setDeletionReason(event.target.value)}
+                className="min-h-28 w-full rounded-xl border border-slate-300 p-3 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+                placeholder="Enter why this Work Order is being deleted..."
+                disabled={deleting}
+              />
+            </label>
+
+            <p className="mt-2 text-xs text-slate-500">
+              Minimum 10 characters required.
+            </p>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteWorkOrder(null);
+                  setDeletionReason("");
+                }}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                disabled={deleting || deletionReason.trim().length < 10}
+                className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {deleting ? "Deleting..." : "Delete Work Order"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
