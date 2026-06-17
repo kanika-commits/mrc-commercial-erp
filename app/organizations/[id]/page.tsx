@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
+import { sortCompanies } from "@/lib/companyOrdering";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -132,7 +133,7 @@ export default async function OrganizationDetailPage({
             </thead>
 
             <tbody>
-              {companies?.map((company: any) => (
+              {sortCompanies(companies || []).map((company: any) => (
                 <tr key={company.id} className="border-t">
                   <td className="p-3">{company.company_name}</td>
                   <td className="p-3">{company.company_code || "-"}</td>

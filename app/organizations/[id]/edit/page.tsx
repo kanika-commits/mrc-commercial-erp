@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { sortCompanies } from "@/lib/companyOrdering";
 
 export default function EditOrganizationPage() {
   const params = useParams();
@@ -53,7 +54,7 @@ export default function EditOrganizationPage() {
       .eq("organization_id", id)
       .order("company_name");
 
-    setCompanies(companyData || []);
+    setCompanies(sortCompanies(companyData || []));
     setLoading(false);
   }
 

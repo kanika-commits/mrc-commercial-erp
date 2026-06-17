@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { sortCompanies } from "@/lib/companyOrdering";
 
 const PAYMENT_TYPES = [
   "Work Order",
@@ -51,7 +52,7 @@ function accountLabel(account: any) {
     ? account.account_number.slice(-4)
     : "----";
 
-  return `${account.bank_name || "Bank"} | ${last4}`;
+  return `${account.bank_name || "Bank"} • ****${last4}`;
 }
 
 export default function NewPaymentPage() {
@@ -78,7 +79,7 @@ export default function NewPaymentPage() {
       return;
     }
 
-    setCompanies(companyData || []);
+    setCompanies(sortCompanies(companyData || []));
 
     const { data: woData, error: woError } = await supabase
       .from("work_orders")
@@ -94,18 +95,32 @@ export default function NewPaymentPage() {
 
     setWorkOrders(woData || []);
 
-    const { data: accountData, error: accountError } = await supabase
-      .from("company_bank_accounts")
-      .select("id, company_id, bank_name, account_number, ifsc")
-      .eq("status", "active")
-      .order("bank_name");
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-    if (accountError) {
-      setMessage(accountError.message);
+    if (!session?.access_token) {
+      setMessage("Please sign in again to load company bank accounts.");
       return;
     }
 
-    setBankAccounts(accountData || []);
+    const accountResponse = await fetch("/api/company-bank-accounts", {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    });
+    const accountResult = await accountResponse.json();
+
+    if (!accountResponse.ok) {
+      setMessage(accountResult.error || "Failed to load company bank accounts.");
+      return;
+    }
+
+    setBankAccounts(
+      (accountResult.accounts || []).filter(
+        (account: any) => String(account.status || "active").toLowerCase() === "active"
+      )
+    );
   }
 
   function transferred(row: Row) {
@@ -596,9 +611,13 @@ export default function NewPaymentPage() {
                     disabled={!row.company_id}
                     className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400 disabled:bg-slate-100"
                   >
-                    <option value="">
-                      {row.company_id ? "Select Account" : "Select Company First"}
-                    </option>
+                      <option value="">
+                        {row.company_id
+                          ? accountsForCompany(row.company_id).length > 0
+                            ? "Select Account"
+                            : "No accounts found for this company"
+                          : "Select Company First"}
+                      </option>
 
                     {accountsForCompany(row.company_id).map((account) => (
                       <option key={account.id} value={account.id}>

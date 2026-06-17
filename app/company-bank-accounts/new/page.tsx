@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, Building2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { sortCompanies } from "@/lib/companyOrdering";
 
 export default function NewCompanyBankAccountPage() {
   const router = useRouter();
@@ -38,7 +39,7 @@ export default function NewCompanyBankAccountPage() {
       return;
     }
 
-    setCompanies(data || []);
+    setCompanies(sortCompanies(data || []));
   }
 
   function handleChange(

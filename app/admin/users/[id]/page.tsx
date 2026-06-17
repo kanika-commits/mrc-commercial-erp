@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { sortCompanies } from "@/lib/companyOrdering";
 
 const actions = ["view", "add", "edit", "delete", "approve", "reject", "upload", "export"];
 
@@ -68,7 +69,7 @@ export default function UserAccessPage() {
       setProfile(result.profile);
       setRoles(result.roles || []);
       setOrganizations(result.organizations || []);
-      setCompanies(result.companies || []);
+      setCompanies(sortCompanies(result.companies || []));
       setSites(result.sites || []);
       setModules(
         (result.modules || []).sort((a: any, b: any) => {

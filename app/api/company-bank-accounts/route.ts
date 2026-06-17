@@ -130,3 +130,42 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export async function GET(request: Request) {
+  try {
+    const auth = await requireUser(request);
+
+    if ("error" in auth) {
+      return NextResponse.json(
+        { error: auth.error },
+        { status: auth.status }
+      );
+    }
+
+    const { searchParams } = new URL(request.url);
+    const companyId = searchParams.get("company_id")?.trim();
+
+    const admin = adminClient();
+    let query = admin
+      .from("company_bank_accounts")
+      .select(
+        "id, organization_id, company_id, bank_name, account_number, ifsc, is_default, status, created_at"
+      )
+      .order("bank_name");
+
+    if (companyId) {
+      query = query.eq("company_id", companyId);
+    }
+
+    const { data, error } = await query;
+
+    if (error) throw error;
+
+    return NextResponse.json({ accounts: data || [] });
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: error.message || "Failed to load bank accounts." },
+      { status: 500 }
+    );
+  }
+}

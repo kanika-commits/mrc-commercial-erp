@@ -2,15 +2,28 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import { Building2, Plus } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { createClient } from "@supabase/supabase-js";
+import { companySortPriority } from "@/lib/companyOrdering";
+
+function adminClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+  if (!serviceRoleKey) {
+    throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY.");
+  }
+
+  return createClient(supabaseUrl, serviceRoleKey);
+}
 
 function maskAccount(value?: string | null) {
   if (!value) return "-";
   const last4 = value.slice(-4);
-  return `XXXX${last4}`;
+  return `****${last4}`;
 }
 
 export default async function CompanyBankAccountsPage() {
+  const supabase = adminClient();
   const { data: accounts, error } = await supabase
     .from("company_bank_accounts")
     .select(`
@@ -47,12 +60,22 @@ export default async function CompanyBankAccountsPage() {
   const companyMap = new Map(
     (companies || []).map((company: any) => [company.id, company])
   );
+  const sortedAccounts = [...(accounts || [])].sort((a: any, b: any) => {
+    const companyA = a.company_id ? companyMap.get(a.company_id) : null;
+    const companyB = b.company_id ? companyMap.get(b.company_id) : null;
+    const companyDiff =
+      companySortPriority(companyA || {}) - companySortPriority(companyB || {});
+
+    if (companyDiff !== 0) return companyDiff;
+
+    return String(a.bank_name || "").localeCompare(String(b.bank_name || ""));
+  });
 
   const activeCount =
-    accounts?.filter((item: any) => item.status === "active").length || 0;
+    sortedAccounts.filter((item: any) => item.status === "active").length || 0;
 
   const defaultCount =
-    accounts?.filter((item: any) => item.is_default === true).length || 0;
+    sortedAccounts.filter((item: any) => item.is_default === true).length || 0;
 
   return (
     <section className="space-y-6">
@@ -81,7 +104,7 @@ export default async function CompanyBankAccountsPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
-        <Summary title="Total Accounts" value={String(accounts?.length || 0)} />
+        <Summary title="Total Accounts" value={String(sortedAccounts.length)} />
         <Summary title="Active Accounts" value={String(activeCount)} />
         <Summary title="Default Accounts" value={String(defaultCount)} />
       </div>
@@ -109,7 +132,7 @@ export default async function CompanyBankAccountsPage() {
             </thead>
 
             <tbody>
-              {accounts?.map((account: any) => {
+              {sortedAccounts.map((account: any) => {
                 const company = account.company_id
                   ? companyMap.get(account.company_id)
                   : null;
@@ -146,7 +169,7 @@ export default async function CompanyBankAccountsPage() {
                 );
               })}
 
-              {accounts?.length === 0 && (
+              {sortedAccounts.length === 0 && (
                 <tr>
                   <td colSpan={7} className="p-8 text-center text-slate-500">
                     No bank accounts found.

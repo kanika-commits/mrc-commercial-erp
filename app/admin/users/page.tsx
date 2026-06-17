@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { sortCompanies } from "@/lib/companyOrdering";
 
 export default function AdminUsersPage() {
   const [profiles, setProfiles] = useState<any[]>([]);
@@ -34,7 +35,7 @@ export default function AdminUsersPage() {
     setUserRoles(result.userRoles || []);
     setAccessRows(result.accessRows || []);
     setOrganizations(result.organizations || []);
-    setCompanies(result.companies || []);
+    setCompanies(sortCompanies(result.companies || []));
     setSites(result.sites || []);
   }
 

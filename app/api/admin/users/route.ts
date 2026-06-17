@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { sortCompanies } from "@/lib/companyOrdering";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -60,7 +61,7 @@ export async function GET() {
       userRoles: userRoles.data || [],
       accessRows: accessRows.data || [],
       organizations: organizations.data || [],
-      companies: companies.data || [],
+      companies: sortCompanies(companies.data || []),
       sites: sites.data || [],
     });
   } catch (error: any) {

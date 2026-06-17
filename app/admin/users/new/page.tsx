@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { sortCompanies } from "@/lib/companyOrdering";
 
 export default function NewUserPage() {
   const router = useRouter();
@@ -41,7 +42,7 @@ export default function NewUserPage() {
 
     setRoles((result.roles || []).filter((role: any) => role.role_code !== "platform_owner"));
     setOrganizations(result.organizations || []);
-    setCompanies(result.companies || []);
+    setCompanies(sortCompanies(result.companies || []));
     setSites(result.sites || []);
   }
 

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { sortCompanies } from "@/lib/companyOrdering";
 
 type Company = {
   id: string;
@@ -71,7 +72,7 @@ export default function CompaniesPage() {
     );
 
     setCompanies(
-      (data || []).map((company) => {
+      sortCompanies((data || []).map((company) => {
         const organization = organizationById.get(company.organization_id);
 
         return {
@@ -79,7 +80,7 @@ export default function CompaniesPage() {
           organization_name: organization?.name || "",
           organization_code: organization?.code || "",
         };
-      })
+      }))
     );
     setLoading(false);
   }

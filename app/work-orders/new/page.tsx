@@ -13,6 +13,7 @@ import {
   Upload,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { sortCompanies } from "@/lib/companyOrdering";
 
 type Vendor = {
   id: string;
@@ -147,7 +148,7 @@ export default function NewWorkOrderPage() {
     }
 
     setVendors(vendorData || []);
-    setCompanies(companyData || []);
+    setCompanies(sortCompanies(companyData || []));
     setSites(siteData || []);
   }
 

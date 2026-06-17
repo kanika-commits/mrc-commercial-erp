@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { sortCompanies } from "@/lib/companyOrdering";
 
 export async function GET() {
   try {
@@ -42,7 +43,7 @@ export async function GET() {
     return NextResponse.json({
       roles: roles.data || [],
       organizations: organizations.data || [],
-      companies: companies.data || [],
+      companies: sortCompanies(companies.data || []),
       sites: sites.data || [],
     });
   } catch (error: any) {
