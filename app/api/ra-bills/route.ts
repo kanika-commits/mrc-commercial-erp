@@ -42,6 +42,26 @@ function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9.]/g, "_");
 }
 
+function normalized(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function duplicateErrorMessage(error: any) {
+  const message = String(error?.message || "");
+  const details = String(error?.details || "");
+  const constraint = String(error?.constraint || "");
+  const haystack = `${message} ${details} ${constraint}`.toLowerCase();
+
+  if (
+    error?.code === "23505" &&
+    haystack.includes("ra_bills_unique_number_per_wo")
+  ) {
+    return "RA Bill number already exists for this Work Order.";
+  }
+
+  return "";
+}
+
 async function cleanupRABill(
   admin: ReturnType<typeof adminClient>,
   raBillId?: string,
@@ -158,6 +178,24 @@ export async function POST(request: Request) {
       );
     }
 
+    const { data: existingRaBills, error: duplicateError } = await admin
+      .from("ra_bills")
+      .select("id, ra_number")
+      .eq("work_order_id", workOrderId);
+
+    if (duplicateError) throw duplicateError;
+
+    const duplicate = (existingRaBills || []).find(
+      (bill) => normalized(String(bill.ra_number || "")) === normalized(raNumber)
+    );
+
+    if (duplicate) {
+      return NextResponse.json(
+        { error: "RA Bill number already exists for this Work Order." },
+        { status: 409 }
+      );
+    }
+
     const userEmail = auth.user.email || "platform.owner@mrc.local";
     const userName =
       auth.user.user_metadata?.full_name ||
@@ -225,6 +263,12 @@ export async function POST(request: Request) {
       throw error;
     }
   } catch (error: any) {
+    const friendlyDuplicate = duplicateErrorMessage(error);
+
+    if (friendlyDuplicate) {
+      return NextResponse.json({ error: friendlyDuplicate }, { status: 409 });
+    }
+
     return NextResponse.json(
       { error: error.message || "Failed to create RA Bill." },
       { status: 500 }

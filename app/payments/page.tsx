@@ -14,11 +14,12 @@ function money(value: any) {
 function accountLabel(account: any) {
   if (!account) return "-";
 
-  const last4 = account.account_number
-    ? account.account_number.slice(-4)
+  const accountNumber = account.account_number ? String(account.account_number) : "";
+  const last4 = accountNumber
+    ? accountNumber.slice(-4)
     : "----";
 
-  return `${account.bank_name || "Bank"} | ${last4}`;
+  return `${account.bank_name || "Bank"} • ****${last4}`;
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -42,6 +43,7 @@ export default function PaymentsPage() {
   const normalizedSearch = search.toLowerCase();
   const [payments, setPayments] = useState<any[]>([]);
   const [workOrders, setWorkOrders] = useState<any[]>([]);
+  const [invoices, setInvoices] = useState<any[]>([]);
   const [vendors, setVendors] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -75,6 +77,7 @@ export default function PaymentsPage() {
           organization_id,
           company_id,
           work_order_id,
+          invoice_id,
           vendor_id,
           company_bank_account_id,
           payment_number,
@@ -91,6 +94,7 @@ export default function PaymentsPage() {
           remarks,
           created_by_name,
           created_by_email,
+          created_at_user,
           created_at
         `)
         .order("payment_date", { ascending: false });
@@ -106,6 +110,9 @@ export default function PaymentsPage() {
       const vendorIds = Array.from(
         new Set(loadedPayments.map((p: any) => p.vendor_id).filter(Boolean))
       );
+      const invoiceIds = Array.from(
+        new Set(loadedPayments.map((p: any) => p.invoice_id).filter(Boolean))
+      );
       const accountIds = Array.from(
         new Set(
           loadedPayments
@@ -114,7 +121,11 @@ export default function PaymentsPage() {
         )
       );
 
-      const [{ data: workOrderData }, { data: vendorData }, { data: accountData }] =
+      const [
+        { data: workOrderData },
+        { data: invoiceData },
+        { data: vendorData },
+      ] =
         await Promise.all([
           workOrderIds.length
             ? supabase
@@ -122,21 +133,58 @@ export default function PaymentsPage() {
                 .select("id, wo_number, company_id, site_id")
                 .in("id", workOrderIds)
             : Promise.resolve({ data: [] }),
+          invoiceIds.length
+            ? supabase
+                .from("invoices")
+                .select("id, invoice_number")
+                .in("id", invoiceIds)
+            : Promise.resolve({ data: [] }),
           vendorIds.length
             ? supabase
                 .from("vendors")
                 .select("id, vendor_name")
                 .in("id", vendorIds)
             : Promise.resolve({ data: [] }),
-          accountIds.length
-            ? supabase
-                .from("company_bank_accounts")
-                .select("id, bank_name, account_number")
-                .in("id", accountIds)
-            : Promise.resolve({ data: [] }),
         ]);
 
+      let accountData: any[] = [];
+
+      if (accountIds.length) {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (session?.access_token) {
+          const response = await fetch(
+            "/api/company-bank-accounts?include_deleted=true",
+            {
+              headers: {
+                Authorization: `Bearer ${session.access_token}`,
+              },
+            }
+          );
+
+          if (response.ok) {
+            const result = await response.json();
+            const accountIdSet = new Set(accountIds);
+            accountData = (result.accounts || []).filter((account: any) =>
+              accountIdSet.has(account.id)
+            );
+          }
+        }
+
+        if (!accountData.length) {
+          const { data: browserAccountData } = await supabase
+            .from("company_bank_accounts")
+            .select("id, bank_name, account_number")
+            .in("id", accountIds);
+
+          accountData = browserAccountData || [];
+        }
+      }
+
       setWorkOrders(workOrderData || []);
+      setInvoices(invoiceData || []);
       setVendors(vendorData || []);
       setAccounts(accountData || []);
     } catch (loadError: any) {
@@ -200,6 +248,9 @@ export default function PaymentsPage() {
 
   const enrichedPayments = useMemo(() => {
     const woMap = new Map((workOrders || []).map((wo: any) => [wo.id, wo]));
+    const invoiceMap = new Map(
+      (invoices || []).map((invoice: any) => [invoice.id, invoice])
+    );
     const vendorMap = new Map(
       (vendors || []).map((vendor: any) => [vendor.id, vendor.vendor_name])
     );
@@ -209,6 +260,9 @@ export default function PaymentsPage() {
 
     return payments.map((payment: any) => {
       const wo = payment.work_order_id ? woMap.get(payment.work_order_id) : null;
+      const invoice = payment.invoice_id
+        ? invoiceMap.get(payment.invoice_id)
+        : null;
       const vendorName = payment.vendor_id
         ? vendorMap.get(payment.vendor_id)
         : "-";
@@ -218,6 +272,8 @@ export default function PaymentsPage() {
       const reference =
         payment.payment_type === "Work Order"
           ? wo?.wo_number || payment.reference_number || "-"
+          : payment.payment_type === "Invoice"
+          ? invoice?.invoice_number || payment.reference_number || "-"
           : payment.reference_number || "-";
       const party =
         payment.payment_type === "Internal Transfer"
@@ -227,7 +283,6 @@ export default function PaymentsPage() {
       const searchText = [
         party,
         reference,
-        payment.utr_number,
         payment.reference_number,
         payment.payment_number,
         accountName,
@@ -244,7 +299,7 @@ export default function PaymentsPage() {
         visible: !normalizedSearch || searchText.includes(normalizedSearch),
       };
     });
-  }, [accounts, normalizedSearch, payments, vendors, workOrders]);
+  }, [accounts, invoices, normalizedSearch, payments, vendors, workOrders]);
 
   const visiblePayments = enrichedPayments.filter((row) => row.visible);
 
@@ -326,7 +381,7 @@ export default function PaymentsPage() {
                 Payment Register
               </h2>
               <p className="mt-1 text-sm text-slate-500">
-                Date-wise payments with company, reference, party and account.
+                Date-wise payments with payment reference, party and account.
               </p>
             </div>
 
@@ -336,26 +391,25 @@ export default function PaymentsPage() {
                 name="q"
                 defaultValue={search}
                 className="h-10 w-80 rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none transition focus:border-slate-400 focus:bg-white"
-                placeholder="Search vendor, reference, UTR, account..."
+                placeholder="Search vendor, reference, payment no, account..."
               />
             </form>
           </div>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1500px] text-sm">
+          <table className="w-full min-w-[1350px] text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
+                <th className="px-4 py-3 text-left font-semibold">S. No.</th>
                 <th className="px-4 py-3 text-left font-semibold">Payment Date</th>
-                <th className="px-4 py-3 text-left font-semibold">Reference / UTR</th>
+                <th className="px-4 py-3 text-left font-semibold">Payment Type</th>
+                <th className="px-4 py-3 text-left font-semibold">Reference</th>
                 <th className="px-4 py-3 text-left font-semibold">Vendor / Party</th>
-                <th className="px-4 py-3 text-left font-semibold">Invoice / Reference</th>
                 <th className="px-4 py-3 text-left font-semibold">From Account</th>
                 <th className="px-4 py-3 text-right font-semibold">Total Payment</th>
-                <th className="px-4 py-3 text-right font-semibold">TDS Amount</th>
-                <th className="px-4 py-3 text-right font-semibold">Transferred Amount</th>
-                <th className="px-4 py-3 text-left font-semibold">Payment Mode</th>
-                <th className="px-4 py-3 text-left font-semibold">Remarks</th>
+                <th className="px-4 py-3 text-right font-semibold">TDS</th>
+                <th className="px-4 py-3 text-right font-semibold">Transferred</th>
                 <th className="px-4 py-3 text-left font-semibold">Created By</th>
                 <th className="px-4 py-3 text-left font-semibold">Created At</th>
                 <th className="px-4 py-3 text-center font-semibold">Action</th>
@@ -363,21 +417,22 @@ export default function PaymentsPage() {
             </thead>
 
             <tbody className="divide-y divide-slate-100">
-              {visiblePayments.map(({ payment, reference, party, accountName }) => {
+              {visiblePayments.map(({ payment, reference, party, accountName }, index) => {
                 const createdBy =
-                  payment.created_by_name || payment.created_by_email || "-";
+                  payment.created_by_email || payment.created_by_name || "-";
                 return (
                   <tr key={payment.id} className="transition hover:bg-slate-50">
+                    <td className="px-4 py-4 font-medium text-slate-950">
+                      {index + 1}
+                    </td>
                     <td className="px-4 py-4 text-slate-700">
                       {payment.payment_date || "-"}
                     </td>
-                    <td className="px-4 py-4 font-medium text-slate-950">
-                      {payment.utr_number || payment.reference_number || "-"}
-                    </td>
-                    <td className="px-4 py-4 text-slate-700">{party}</td>
                     <td className="px-4 py-4 text-slate-700">
-                      {reference}
+                      {payment.payment_type || "-"}
                     </td>
+                    <td className="px-4 py-4 text-slate-700">{reference}</td>
+                    <td className="px-4 py-4 text-slate-700">{party}</td>
                     <td className="px-4 py-4 text-slate-700">
                       {accountName}
                     </td>
@@ -392,15 +447,9 @@ export default function PaymentsPage() {
                         payment.transferred_amount || payment.payment_amount
                       )}
                     </td>
-                    <td className="px-4 py-4 text-slate-700">
-                      {payment.payment_mode || "-"}
-                    </td>
-                    <td className="max-w-[220px] px-4 py-4 text-slate-700">
-                      <div className="line-clamp-2">{payment.remarks || "-"}</div>
-                    </td>
                     <td className="px-4 py-4 text-slate-700">{createdBy}</td>
                     <td className="px-4 py-4 text-slate-700">
-                      {formatDateTime(payment.created_at)}
+                      {formatDateTime(payment.created_at_user || payment.created_at)}
                     </td>
                     <td className="px-4 py-4 text-center">
                       <div className="flex justify-center gap-2">
@@ -433,7 +482,7 @@ export default function PaymentsPage() {
 
               {visiblePayments.length === 0 && (
                 <tr>
-                  <td colSpan={13} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
                     No payments found.
                   </td>
                 </tr>

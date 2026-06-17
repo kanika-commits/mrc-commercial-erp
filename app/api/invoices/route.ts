@@ -47,6 +47,26 @@ function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
+function normalized(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function duplicateErrorMessage(error: any) {
+  const message = String(error?.message || "");
+  const details = String(error?.details || "");
+  const constraint = String(error?.constraint || "");
+  const haystack = `${message} ${details} ${constraint}`.toLowerCase();
+
+  if (
+    error?.code === "23505" &&
+    haystack.includes("invoices_unique_number_per_vendor_org")
+  ) {
+    return "Invoice number already exists for this vendor.";
+  }
+
+  return "";
+}
+
 function normalizeStoragePath(value: string | null) {
   const raw = String(value || "").trim();
 
@@ -242,6 +262,27 @@ export async function POST(request: Request) {
       );
     }
 
+    const { data: existingInvoices, error: duplicateError } = await admin
+      .from("invoices")
+      .select("id, invoice_number")
+      .eq("organization_id", workOrder.organization_id)
+      .eq("vendor_id", vendorId);
+
+    if (duplicateError) throw duplicateError;
+
+    const duplicate = (existingInvoices || []).find(
+      (invoice) =>
+        normalized(String(invoice.invoice_number || "")) ===
+        normalized(invoiceNumber)
+    );
+
+    if (duplicate) {
+      return NextResponse.json(
+        { error: "Invoice number already exists for this vendor." },
+        { status: 409 }
+      );
+    }
+
     const userEmail = auth.user.email || "platform.owner@mrc.local";
     const userName =
       auth.user.user_metadata?.full_name ||
@@ -316,6 +357,12 @@ export async function POST(request: Request) {
       throw error;
     }
   } catch (error: any) {
+    const friendlyDuplicate = duplicateErrorMessage(error);
+
+    if (friendlyDuplicate) {
+      return NextResponse.json({ error: friendlyDuplicate }, { status: 409 });
+    }
+
     return NextResponse.json(
       { error: error.message || "Failed to create invoice." },
       { status: 500 }

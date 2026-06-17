@@ -42,6 +42,26 @@ function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
+function normalized(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function duplicateErrorMessage(error: any) {
+  const message = String(error?.message || "");
+  const details = String(error?.details || "");
+  const constraint = String(error?.constraint || "");
+  const haystack = `${message} ${details} ${constraint}`.toLowerCase();
+
+  if (
+    error?.code === "23505" &&
+    haystack.includes("debit_notes_unique_number_per_org")
+  ) {
+    return "Debit Note number already exists.";
+  }
+
+  return "";
+}
+
 function normalizeStoragePath(value: string | null) {
   const raw = String(value || "").trim();
 
@@ -247,6 +267,26 @@ export async function POST(request: Request) {
       );
     }
 
+    const { data: existingDebitNotes, error: duplicateError } = await admin
+      .from("debit_notes")
+      .select("id, debit_note_number")
+      .eq("organization_id", workOrder.organization_id);
+
+    if (duplicateError) throw duplicateError;
+
+    const duplicate = (existingDebitNotes || []).find(
+      (note) =>
+        normalized(String(note.debit_note_number || "")) ===
+        normalized(debitNoteNumber)
+    );
+
+    if (duplicate) {
+      return NextResponse.json(
+        { error: "Debit Note number already exists." },
+        { status: 409 }
+      );
+    }
+
     const userEmail = auth.user.email || "platform.owner@mrc.local";
     const userName =
       auth.user.user_metadata?.full_name ||
@@ -317,6 +357,12 @@ export async function POST(request: Request) {
       throw error;
     }
   } catch (error: any) {
+    const friendlyDuplicate = duplicateErrorMessage(error);
+
+    if (friendlyDuplicate) {
+      return NextResponse.json({ error: friendlyDuplicate }, { status: 409 });
+    }
+
     return NextResponse.json(
       { error: error.message || "Failed to create Debit Note." },
       { status: 500 }

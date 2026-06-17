@@ -48,6 +48,33 @@ function roundAmount(value: FormDataEntryValue | null) {
   return Number.isFinite(amount) ? Math.round(amount) : 0;
 }
 
+function normalized(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function duplicateErrorMessage(error: any) {
+  const message = String(error?.message || "");
+  const details = String(error?.details || "");
+  const constraint = String(error?.constraint || "");
+  const haystack = `${message} ${details} ${constraint}`.toLowerCase();
+
+  if (
+    error?.code === "23505" &&
+    haystack.includes("payments_unique_number_per_org")
+  ) {
+    return "Payment number already exists.";
+  }
+
+  if (
+    error?.code === "23505" &&
+    haystack.includes("payments_unique_utr_per_org_when_present")
+  ) {
+    return "UTR number already exists.";
+  }
+
+  return "";
+}
+
 function isBankTransferMode(mode: string) {
   return ["bank transfer", "neft", "rtgs", "imps", "upi"].includes(
     mode.trim().toLowerCase()
@@ -273,6 +300,42 @@ export async function POST(request: Request) {
 
     const paymentNumber = `PAY/${Date.now()}`;
 
+    const { data: existingPayments, error: duplicateError } = await admin
+      .from("payments")
+      .select("id, payment_number, utr_number")
+      .eq("organization_id", invoice.organization_id)
+      .eq("is_deleted", false);
+
+    if (duplicateError) throw duplicateError;
+
+    const paymentNumberDuplicate = (existingPayments || []).find(
+      (payment) =>
+        normalized(String(payment.payment_number || "")) ===
+        normalized(paymentNumber)
+    );
+
+    if (paymentNumberDuplicate) {
+      return NextResponse.json(
+        { error: "Payment number already exists." },
+        { status: 409 }
+      );
+    }
+
+    if (referenceNumber) {
+      const utrDuplicate = (existingPayments || []).find(
+        (payment) =>
+          normalized(String(payment.utr_number || "")) ===
+          normalized(referenceNumber)
+      );
+
+      if (utrDuplicate) {
+        return NextResponse.json(
+          { error: "UTR number already exists." },
+          { status: 409 }
+        );
+      }
+    }
+
     const { data: payment, error: paymentError } = await admin
       .from("payments")
       .insert({
@@ -305,6 +368,12 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ id: payment.id });
   } catch (error: any) {
+    const friendlyDuplicate = duplicateErrorMessage(error);
+
+    if (friendlyDuplicate) {
+      return NextResponse.json({ error: friendlyDuplicate }, { status: 409 });
+    }
+
     return NextResponse.json(
       { error: error.message || "Failed to create payment." },
       { status: 500 }

@@ -55,9 +55,34 @@ function accountLabel(account: any) {
   return `${account.bank_name || "Bank"} • ****${last4}`;
 }
 
+function friendlyPaymentError(error: any) {
+  const message = String(error?.message || "");
+  const details = String(error?.details || "");
+  const constraint = String(error?.constraint || "");
+  const haystack = `${message} ${details} ${constraint}`.toLowerCase();
+
+  if (
+    error?.code === "23505" &&
+    haystack.includes("payments_unique_number_per_org")
+  ) {
+    return "Payment number already exists.";
+  }
+
+  if (
+    error?.code === "23505" &&
+    haystack.includes("payments_unique_utr_per_org_when_present")
+  ) {
+    return "UTR number already exists.";
+  }
+
+  return error?.message || "Failed to save payments.";
+}
+
 export default function NewPaymentPage() {
   const [rows, setRows] = useState<Row[]>(Array.from({ length: 10 }, emptyRow));
   const [companies, setCompanies] = useState<any[]>([]);
+  const [allCompanies, setAllCompanies] = useState<any[]>([]);
+  const [mrcCompanyId, setMrcCompanyId] = useState("");
   const [workOrders, setWorkOrders] = useState<any[]>([]);
   const [bankAccounts, setBankAccounts] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
@@ -79,7 +104,22 @@ export default function NewPaymentPage() {
       return;
     }
 
-    setCompanies(sortCompanies(companyData || []));
+    const sortedCompanies = sortCompanies(companyData || []);
+    const mrcCompany =
+      sortedCompanies.find(
+        (company: any) =>
+          String(company.company_code || "").trim().toUpperCase() === "MRC"
+      ) ||
+      sortedCompanies.find((company: any) =>
+        String(company.company_name || "")
+          .trim()
+          .toLowerCase()
+          .includes("mrc infracon")
+      );
+
+    setAllCompanies(sortedCompanies);
+    setCompanies(mrcCompany ? [mrcCompany] : []);
+    setMrcCompanyId(mrcCompany?.id || "");
 
     const { data: woData, error: woError } = await supabase
       .from("work_orders")
@@ -116,10 +156,24 @@ export default function NewPaymentPage() {
       return;
     }
 
-    setBankAccounts(
-      (accountResult.accounts || []).filter(
-        (account: any) => String(account.status || "active").toLowerCase() === "active"
-      )
+    const activeAccounts = (accountResult.accounts || []).filter(
+      (account: any) => String(account.status || "active").toLowerCase() === "active"
+    );
+    const mrcAccounts = mrcCompany?.id
+      ? activeAccounts.filter((account: any) => account.company_id === mrcCompany.id)
+      : [];
+
+    setBankAccounts(mrcAccounts);
+    setRows((prev) =>
+      prev.map((row) => ({
+        ...row,
+        company_id: row.company_id || mrcCompany?.id || "",
+        company_bank_account_id:
+          row.company_bank_account_id &&
+          mrcAccounts.some((account: any) => account.id === row.company_bank_account_id)
+            ? row.company_bank_account_id
+            : "",
+      }))
     );
   }
 
@@ -129,14 +183,43 @@ export default function NewPaymentPage() {
     return total - tds;
   }
 
-  function accountsForCompany(companyId: string) {
-    if (!companyId) return [];
-    return bankAccounts.filter((account) => account.company_id === companyId);
+  function newPaymentRow(): Row {
+    return { ...emptyRow(), company_id: mrcCompanyId };
   }
 
-  function workOrdersForCompany(companyId: string) {
-    if (!companyId) return [];
-    return workOrders.filter((wo) => wo.company_id === companyId);
+  function accountsForCompany(_companyId: string) {
+    return bankAccounts;
+  }
+
+  function workOrdersForCompany(_companyId: string) {
+    return workOrders;
+  }
+
+  function companyLabel(companyId: string | null) {
+    const company = allCompanies.find((item) => item.id === companyId);
+    if (!company) return "-";
+    return company.company_code
+      ? `${company.company_code} - ${company.company_name}`
+      : company.company_name || "-";
+  }
+
+  function workOrderLabel(workOrder: any) {
+    const company = companyLabel(workOrder.company_id);
+    return company === "-"
+      ? workOrder.wo_number || "-"
+      : `${workOrder.wo_number || "-"} - ${company}`;
+  }
+
+  function isPaymentRowFilled(row: Row) {
+    return Boolean(
+      row.reference_number.trim() ||
+        row.work_order_id ||
+        row.payment_date ||
+        Number(row.total_payment || 0) > 0 ||
+        Number(row.tds_amount || 0) > 0 ||
+        row.company_bank_account_id ||
+        row.vendor_id
+    );
   }
 
   const manualPaymentTypes = [
@@ -205,11 +288,7 @@ export default function NewPaymentPage() {
       const row = { ...updated[index], [field]: value };
 
       if (field === "company_id") {
-        row.reference_number = "";
-        row.work_order_id = "";
         row.company_bank_account_id = "";
-        row.vendor_id = "";
-        row.vendor_name = "";
       }
 
       if (field === "payment_type") {
@@ -236,7 +315,7 @@ export default function NewPaymentPage() {
         i === index
           ? {
               ...row,
-              company_id: wo?.company_id || row.company_id,
+              company_id: row.company_id || mrcCompanyId,
               work_order_id: workOrderId,
               reference_number: wo?.wo_number || "",
               vendor_id: "",
@@ -270,7 +349,7 @@ export default function NewPaymentPage() {
 
   function removeRow(index: number) {
     setRows((prev) => {
-      if (prev.length === 1) return [emptyRow()];
+      if (prev.length === 1) return [newPaymentRow()];
       return prev.filter((_, i) => i !== index);
     });
   }
@@ -293,14 +372,14 @@ export default function NewPaymentPage() {
       const updated = [...prev];
 
       while (updated.length < rowIndex + pastedRows.length) {
-        updated.push(emptyRow());
+        updated.push(newPaymentRow());
       }
 
       pastedRows.forEach((cols, i) => {
         const targetIndex = rowIndex + i;
 
         updated[targetIndex] = {
-          company_id: "",
+          company_id: mrcCompanyId,
           payment_type: cols[0] || "Work Order",
           reference_number: cols[1] || "",
           work_order_id: "",
@@ -320,18 +399,10 @@ export default function NewPaymentPage() {
   async function savePayments() {
   setMessage("");
 
-  const filledRows = rows.filter(
-    (row) =>
-      row.company_id ||
-      row.reference_number ||
-      row.work_order_id ||
-      row.company_bank_account_id ||
-      row.vendor_name ||
-      Number(row.total_payment || 0) > 0
-  );
+  const filledRows = rows.filter(isPaymentRowFilled);
 
   if (filledRows.length === 0) {
-    setMessage("Please fill at least one payment row.");
+    setMessage("Please enter at least one payment row.");
     return;
   }
 
@@ -435,13 +506,13 @@ export default function NewPaymentPage() {
         created_by_email: userEmail || null,
       });
 
-      if (error) throw error;
+      if (error) throw new Error(friendlyPaymentError(error));
     }
 
     setMessage("Payments saved successfully.");
-    setRows(Array.from({ length: 10 }, emptyRow));
+    setRows(Array.from({ length: 10 }, newPaymentRow));
   } catch (error: any) {
-    setMessage(error.message || "Failed to save payments.");
+    setMessage(friendlyPaymentError(error));
   } finally {
     setSaving(false);
   }
@@ -512,9 +583,10 @@ export default function NewPaymentPage() {
                     onChange={(e) =>
                       updateRow(index, "company_id", e.target.value)
                     }
+                    disabled
                     className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
                   >
-                    <option value="">Select Company</option>
+                    <option value="">MRC company not found</option>
                     {companies.map((company) => (
                       <option key={company.id} value={company.id}>
                         {company.company_name}
@@ -550,15 +622,11 @@ export default function NewPaymentPage() {
                       disabled={!row.company_id}
                       className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400 disabled:bg-slate-100"
                     >
-                      <option value="">
-                        {row.company_id
-                          ? "Select Work Order"
-                          : "Select Company First"}
-                      </option>
+                      <option value="">Select Work Order</option>
 
                       {workOrdersForCompany(row.company_id).map((wo) => (
                         <option key={wo.id} value={wo.id}>
-                          {wo.wo_number}
+                          {workOrderLabel(wo)}
                         </option>
                       ))}
                     </select>
@@ -579,9 +647,7 @@ export default function NewPaymentPage() {
                       className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400 disabled:bg-slate-100"
                     >
                       <option value="">
-                        {row.company_id
-                          ? "Select Receiving Account"
-                          : "Select Company First"}
+                        Select Receiving Account
                       </option>
 
                       {accountsForCompany(row.company_id).map((account) => (
@@ -622,15 +688,15 @@ export default function NewPaymentPage() {
                         e.target.value
                       )
                     }
-                    disabled={!row.company_id}
+                    disabled={bankAccounts.length === 0}
                     className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400 disabled:bg-slate-100"
                   >
                       <option value="">
                         {row.company_id
-                          ? accountsForCompany(row.company_id).length > 0
+                          ? bankAccounts.length > 0
                             ? "Select Account"
-                            : "No accounts found for this company"
-                          : "Select Company First"}
+                            : "No active MRC accounts found"
+                          : "MRC company not found"}
                       </option>
 
                     {accountsForCompany(row.company_id).map((account) => (
@@ -713,7 +779,10 @@ export default function NewPaymentPage() {
         <button
           type="button"
           onClick={() =>
-            setRows((prev) => [...prev, ...Array.from({ length: 10 }, emptyRow)])
+            setRows((prev) => [
+              ...prev,
+              ...Array.from({ length: 10 }, newPaymentRow),
+            ])
           }
           className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
         >
