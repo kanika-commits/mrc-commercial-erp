@@ -147,6 +147,7 @@ export default function NewRABillPage() {
         },
       }
     );
+
     const vendorResult = await vendorResponse.json();
 
     if (!vendorResponse.ok) {
@@ -170,6 +171,7 @@ export default function NewRABillPage() {
         net_amount,
         status,
         approval_status,
+        rejection_reason,
         created_at
       `)
       .eq("work_order_id", workOrderId)
@@ -181,7 +183,11 @@ export default function NewRABillPage() {
     }
 
     const previousBills = raData || [];
-    const suggestedNumber = String(previousBills.length + 1);
+    const approvedBills = previousBills.filter(
+      (bill) => String(bill.approval_status || "").toLowerCase() !== "rejected"
+    );
+
+    const suggestedNumber = String(approvedBills.length + 1);
 
     setPreviousRABills(previousBills);
 
@@ -240,12 +246,24 @@ export default function NewRABillPage() {
     return taxableAmount + gstAmount;
   }, [taxableAmount, gstAmount]);
 
+  const approvedPreviousRABills = useMemo(() => {
+    return previousRABills.filter(
+      (bill) => String(bill.approval_status || "").toLowerCase() !== "rejected"
+    );
+  }, [previousRABills]);
+
+  const rejectedPreviousRABills = useMemo(() => {
+    return previousRABills.filter(
+      (bill) => String(bill.approval_status || "").toLowerCase() === "rejected"
+    );
+  }, [previousRABills]);
+
   const previousRATotal = useMemo(() => {
-    return previousRABills.reduce(
+    return approvedPreviousRABills.reduce(
       (sum, item) => sum + Number(item.gross_amount || 0),
       0
     );
-  }, [previousRABills]);
+  }, [approvedPreviousRABills]);
 
   const currentRAValue = Number(form.value_of_work_done || 0);
   const woValue = Number(selectedWO?.wo_value || 0);
@@ -309,7 +327,10 @@ export default function NewRABillPage() {
       payload.append("vendor_id", linkedVendorId);
       payload.append("ra_number", form.ra_number.trim());
       payload.append("ra_date", form.ra_date);
-      payload.append("value_of_work_done", String(Number(form.value_of_work_done) || 0));
+      payload.append(
+        "value_of_work_done",
+        String(Number(form.value_of_work_done) || 0)
+      );
       payload.append("security_amount", String(Number(form.security_amount) || 0));
       payload.append("gst_rate", String(Number(form.gst_rate) || 0));
       payload.append("gst_amount", String(gstAmount));
@@ -324,6 +345,7 @@ export default function NewRABillPage() {
         },
         body: payload,
       });
+
       const result = await response.json();
 
       if (!response.ok) {
@@ -347,7 +369,9 @@ export default function NewRABillPage() {
             <span>/</span>
             <span className="text-sky-800">New RA Bill</span>
           </nav>
+
           <h1 className="text-3xl font-bold text-slate-950">New RA Bill</h1>
+
           <p className="mt-2 text-sm text-slate-600">
             Site-wise RA bill creation against approved work orders.
           </p>
@@ -370,8 +394,10 @@ export default function NewRABillPage() {
 
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <SectionTitle step="01" title="Select Site & Work Order" />
+
         <p className="mb-5 text-sm text-slate-500">
-          Select a site first. Work orders are filtered to approved active work orders for that site.
+          Select a site first. Work orders are filtered to approved active work
+          orders for that site.
         </p>
 
         <div className="grid gap-5 md:grid-cols-2">
@@ -401,6 +427,7 @@ export default function NewRABillPage() {
               <option value="">
                 {selectedSiteId ? "Select Work Order" : "Select Site First"}
               </option>
+
               {filteredWorkOrders.map((wo) => (
                 <option key={wo.id} value={wo.id}>
                   {wo.wo_number}
@@ -417,21 +444,35 @@ export default function NewRABillPage() {
                 <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
                   Work Order Details
                 </p>
+
                 <h3 className="mt-1 text-xl font-bold text-sky-800">
                   {selectedWO.wo_number}
                 </h3>
+
                 <p className="mt-2 text-sm text-slate-600">
-                  {selectedWO.companies?.company_name || "-"} / {selectedWO.sites?.site_name || selectedSite?.site_name || "-"}
+                  {selectedWO.companies?.company_name || "-"} /{" "}
+                  {selectedWO.sites?.site_name ||
+                    selectedSite?.site_name ||
+                    "-"}
                 </p>
               </div>
+
               <span className="inline-flex rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase text-emerald-700">
                 Active
               </span>
             </div>
 
-            <div className="mt-5 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              <MiniInfo title="Company" value={selectedWO.companies?.company_name || "-"} />
-              <MiniInfo title="Site" value={selectedWO.sites?.site_name || selectedSite?.site_name || "-"} />
+            <div className="mt-5 grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+              <MiniInfo
+                title="Company"
+                value={selectedWO.companies?.company_name || "-"}
+              />
+              <MiniInfo
+                title="Site"
+                value={
+                  selectedWO.sites?.site_name || selectedSite?.site_name || "-"
+                }
+              />
               <MiniInfo title="Vendor" value={linkedVendorName || "-"} />
               <MiniInfo title="Vendor Role" value={linkedVendorRole || "-"} />
               <MiniInfo title="WO Value" value={money(woValue)} />
@@ -455,15 +496,18 @@ export default function NewRABillPage() {
 
           {exceedsWO && (
             <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
-              Warning: Total billed amount after this RA exceeds the Work Order value by{" "}
-              {money(Math.abs(balanceAfterThisRA))}. You can still submit, but please verify before saving.
+              Warning: Total billed amount after this RA exceeds the Work Order
+              value by {money(Math.abs(balanceAfterThisRA))}. You can still
+              submit, but please verify before saving.
             </div>
           )}
 
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <SectionTitle step="02" title="New RA Bill Details" />
+
             <p className="mb-5 text-sm text-slate-500">
-              RA number is auto-suggested from previous bills and remains editable.
+              RA number is auto-suggested from previous approved bills and
+              remains editable.
             </p>
 
             <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
@@ -564,12 +608,18 @@ export default function NewRABillPage() {
 
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <SectionTitle step="03" title="Attachments" />
+
             <label className="mt-5 flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-10 text-center transition hover:border-sky-600 hover:bg-sky-50">
               <Upload className="mb-3 h-9 w-9 text-slate-400" />
-              <span className="text-sm font-semibold text-slate-800">Click to upload files</span>
+
+              <span className="text-sm font-semibold text-slate-800">
+                Click to upload files
+              </span>
+
               <span className="mt-1 text-xs text-slate-500">
                 Multiple files allowed. At least one attachment is required.
               </span>
+
               <input
                 type="file"
                 multiple
@@ -581,7 +631,10 @@ export default function NewRABillPage() {
             {files.length > 0 && (
               <div className="mt-4 grid gap-2 md:grid-cols-2">
                 {files.map((file) => (
-                  <div key={file.name} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                  <div
+                    key={`${file.name}-${file.size}`}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+                  >
                     {file.name}
                   </div>
                 ))}
@@ -591,7 +644,8 @@ export default function NewRABillPage() {
 
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <SectionTitle step="04" title="Previous RA Bills" icon />
-            <div className="mt-5 overflow-x-auto">
+
+            <div className="mt-5 overflow-x-auto rounded-lg border border-slate-200">
               <table className="w-full min-w-[700px] text-sm">
                 <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                   <tr>
@@ -603,22 +657,34 @@ export default function NewRABillPage() {
                     <th className="p-3 text-left">Approval</th>
                   </tr>
                 </thead>
+
                 <tbody>
-                  {previousRABills.length === 0 ? (
+                  {approvedPreviousRABills.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="p-8 text-center text-slate-500">
-                        No previous RA bills found for this Work Order.
+                      <td
+                        colSpan={6}
+                        className="p-8 text-center text-slate-500"
+                      >
+                        No previous approved RA bills found for this Work Order.
                       </td>
                     </tr>
                   ) : (
-                    previousRABills.map((bill) => (
+                    approvedPreviousRABills.map((bill) => (
                       <tr key={bill.id} className="border-t border-slate-100">
                         <td className="p-3 font-semibold">{bill.ra_number}</td>
                         <td className="p-3">{bill.ra_date || "-"}</td>
-                        <td className="p-3 text-right">{money(bill.gross_amount)}</td>
-                        <td className="p-3 text-right">{money(bill.gst_amount)}</td>
-                        <td className="p-3 text-right font-semibold">{money(bill.net_amount)}</td>
-                        <td className="p-3">{bill.approval_status || "Pending"}</td>
+                        <td className="p-3 text-right">
+                          {money(bill.gross_amount)}
+                        </td>
+                        <td className="p-3 text-right">
+                          {money(bill.gst_amount)}
+                        </td>
+                        <td className="p-3 text-right font-semibold">
+                          {money(bill.net_amount)}
+                        </td>
+                        <td className="p-3">
+                          {bill.approval_status || "Pending"}
+                        </td>
                       </tr>
                     ))
                   )}
@@ -627,14 +693,77 @@ export default function NewRABillPage() {
             </div>
           </section>
 
+          {rejectedPreviousRABills.length > 0 && (
+            <section className="rounded-xl border border-red-200 bg-white p-6 shadow-sm">
+              <div className="mb-4">
+                <h2 className="text-xl font-bold text-red-700">
+                  Rejected RA Bills
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Rejected bills are shown separately and are not included in
+                  Previous RA Total.
+                </p>
+              </div>
+
+              <div className="overflow-x-auto rounded-lg border border-red-100">
+                <table className="w-full min-w-[900px] text-sm">
+                  <thead className="bg-red-50 text-xs uppercase tracking-wide text-red-700">
+                    <tr>
+                      <th className="p-3 text-left">RA No</th>
+                      <th className="p-3 text-left">Date</th>
+                      <th className="p-3 text-right">Gross</th>
+                      <th className="p-3 text-right">GST</th>
+                      <th className="p-3 text-right">Net</th>
+                      <th className="p-3 text-left">Reason</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {rejectedPreviousRABills.map((bill) => (
+                      <tr key={bill.id} className="border-t border-red-100">
+                        <td className="p-3 font-semibold text-slate-900">
+                          {bill.ra_number}
+                        </td>
+                        <td className="p-3 text-slate-700">
+                          {bill.ra_date || "-"}
+                        </td>
+                        <td className="p-3 text-right">
+                          {money(bill.gross_amount)}
+                        </td>
+                        <td className="p-3 text-right">
+                          {money(bill.gst_amount)}
+                        </td>
+                        <td className="p-3 text-right font-semibold">
+                          {money(bill.net_amount)}
+                        </td>
+                        <td className="p-3">
+                          <div className="max-w-[360px] rounded-lg bg-red-50 px-3 py-2 text-red-700">
+                            {bill.rejection_reason || "-"}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
           <div className="sticky bottom-4 z-10 rounded-xl border border-slate-200 bg-white/95 p-4 shadow-lg backdrop-blur">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="grid flex-1 gap-4 md:grid-cols-4">
-                <Summary title="Value of Work Done" value={money(currentRAValue)} />
-                <Summary title="Security Deduction" value={money(form.security_amount)} />
+                <Summary
+                  title="Value of Work Done"
+                  value={money(currentRAValue)}
+                />
+                <Summary
+                  title="Security Deduction"
+                  value={money(form.security_amount)}
+                />
                 <Summary title="GST Amount" value={money(gstAmount)} />
                 <Summary title="Net Payable" value={money(netPayable)} />
               </div>
+
               <button
                 type="submit"
                 disabled={saving}

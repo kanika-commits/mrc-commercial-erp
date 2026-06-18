@@ -138,3 +138,19 @@ export function can(
           permission.action_code === actionCode))
   );
 }
+export function isSuperUser(access: CurrentUserAccess) {
+  return (
+    access.roleCodes.includes("platform_owner") ||
+    access.roleCodes.includes("super_admin") ||
+    access.permissions.some(
+      (permission) =>
+        permission.allowed === true &&
+        permission.module_code === "*" &&
+        permission.action_code === "*"
+    )
+  );
+}
+
+export function hasSiteRestriction(access: CurrentUserAccess) {
+  return !isSuperUser(access) && access.sites.length > 0;
+}

@@ -129,15 +129,18 @@ const [documents, setDocuments] = useState<any[]>([]);
         .from("ra_bills")
         .select("id, ra_number, ra_date, gross_amount, net_amount, status, approval_status")
         .eq("work_order_id", workOrderId)
+        .not("approval_status", "ilike", "rejected")
         .order("ra_date", { ascending: false });
+        
 
       if (raError) throw raError;
 
       const { data: invoiceData, error: invoiceError } = await supabase
-        .from("invoices")
-        .select("id, invoice_number, invoice_date, taxable_amount, gst_amount, invoice_amount, status, approval_status, itc_status")
-        .eq("work_order_id", workOrderId)
-        .order("invoice_date", { ascending: false });
+  .from("invoices")
+  .select("id, invoice_number, invoice_date, taxable_amount, gst_amount, invoice_amount, status, approval_status, itc_status")
+  .eq("work_order_id", workOrderId)
+  .not("approval_status", "ilike", "rejected")
+  .order("invoice_date", { ascending: false });
 
       if (invoiceError) throw invoiceError;
 
@@ -145,6 +148,7 @@ const [documents, setDocuments] = useState<any[]>([]);
   .from("payments")
   .select("id, payment_number, payment_date, payment_amount, payment_mode, utr_number, status, total_payment, tds_amount, transferred_amount, reference_number, created_at")
   .eq("work_order_id", workOrderId)
+  .not("approval_status", "ilike", "rejected")
   .order("payment_date", { ascending: false });
 
 if (paymentError) throw paymentError;
@@ -162,6 +166,7 @@ if (paymentError) throw paymentError;
     approval_status
   `)
   .eq("work_order_id", workOrderId)
+  .not("approval_status", "ilike", "rejected")
   .order("debit_note_date", { ascending: false });
 
 if (debitNoteError) throw debitNoteError;
@@ -335,7 +340,9 @@ const woLedgerRows = useMemo(() => {
     });
   });
 
-  debitNotes.forEach((note) => {
+  debitNotes
+  .filter((note) => String(note.approval_status || "").toLowerCase() !== "rejected")
+  .forEach((note) => {
     rows.push({
       date: note.debit_note_date || note.created_at,
       type: "Debit Note",

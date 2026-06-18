@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+
 const DOCUMENT_BUCKET = "ra-bill-documents";
 
 function adminClient() {
@@ -40,6 +41,11 @@ async function requireUser(request: Request) {
 
 function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9.]/g, "_");
+}
+
+async function fileToBase64(file: File) {
+  const buffer = Buffer.from(await file.arrayBuffer());
+  return buffer.toString("base64");
 }
 
 function normalized(value: string) {
@@ -162,6 +168,21 @@ export async function POST(request: Request) {
       );
     }
 
+    const { data: driveFolder, error: driveFolderLoadError } = await admin
+      .from("work_order_drive_folders")
+      .select("ra_bills_folder_id")
+      .eq("work_order_id", workOrderId)
+      .maybeSingle();
+
+    if (driveFolderLoadError) throw driveFolderLoadError;
+
+    if (!driveFolder?.ra_bills_folder_id) {
+      return NextResponse.json(
+        { error: "Work Order Google Drive RA Bills folder was not found." },
+        { status: 400 }
+      );
+    }
+
     const { data: vendorLink, error: vendorLinkError } = await admin
       .from("work_order_vendors")
       .select("id")
@@ -180,14 +201,16 @@ export async function POST(request: Request) {
 
     const { data: existingRaBills, error: duplicateError } = await admin
       .from("ra_bills")
-      .select("id, ra_number")
+      .select("id, ra_number, approval_status")
       .eq("work_order_id", workOrderId);
 
     if (duplicateError) throw duplicateError;
 
     const duplicate = (existingRaBills || []).find(
-      (bill) => normalized(String(bill.ra_number || "")) === normalized(raNumber)
-    );
+  (bill) =>
+    normalized(String(bill.ra_number || "")) === normalized(raNumber) &&
+    normalized(String(bill.approval_status || "")) !== "rejected"
+);
 
     if (duplicate) {
       return NextResponse.json(
@@ -204,7 +227,6 @@ export async function POST(request: Request) {
       "Platform Owner";
 
     let raBillId = "";
-    const uploadedPaths: string[] = [];
 
     try {
       const { data: raBill, error: raBillError } = await admin
@@ -235,31 +257,39 @@ export async function POST(request: Request) {
       raBillId = raBill.id;
 
       for (const file of files) {
-        const path = `${workOrder.organization_id}/ra-bills/${raBill.id}/${Date.now()}_${safeFileName(file.name)}`;
+  const safeName = safeFileName(file.name);
+  const filePath = `${workOrder.organization_id}/${raBill.id}/${Date.now()}-${safeName}`;
 
-        const { error: uploadError } = await admin.storage
-          .from(DOCUMENT_BUCKET)
-          .upload(path, file);
+  const { error: uploadError } = await admin.storage
+    .from(DOCUMENT_BUCKET)
+    .upload(filePath, file, {
+      contentType: file.type || "application/octet-stream",
+      upsert: false,
+    });
 
-        if (uploadError) throw uploadError;
+  if (uploadError) throw uploadError;
 
-        uploadedPaths.push(path);
+  const {
+    data: { publicUrl },
+  } = admin.storage.from(DOCUMENT_BUCKET).getPublicUrl(filePath);
 
-        const { error: documentError } = await admin
-          .from("ra_bill_documents")
-          .insert({
-            organization_id: workOrder.organization_id,
-            ra_bill_id: raBill.id,
-            file_name: file.name,
-            file_url: path,
-          });
+  const { error: documentError } = await admin
+    .from("ra_bill_documents")
+    .insert({
+      organization_id: workOrder.organization_id,
+      ra_bill_id: raBill.id,
+      file_name: file.name,
+      file_url: publicUrl,
+      file_path: filePath,
+      uploaded_at: new Date().toISOString(),
+    });
 
-        if (documentError) throw documentError;
-      }
+  if (documentError) throw documentError;
+}
 
       return NextResponse.json({ id: raBill.id });
     } catch (error) {
-      await cleanupRABill(admin, raBillId, uploadedPaths);
+      await cleanupRABill(admin, raBillId);
       throw error;
     }
   } catch (error: any) {

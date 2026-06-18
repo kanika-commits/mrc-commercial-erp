@@ -7,24 +7,21 @@ import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { can, getCurrentUserAccess } from "@/lib/accessControl";
 
+const PAGE_SIZE = 50;
+
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
 function accountLabel(account: any) {
   if (!account) return "-";
-
   const accountNumber = account.account_number ? String(account.account_number) : "";
-  const last4 = accountNumber
-    ? accountNumber.slice(-4)
-    : "----";
-
+  const last4 = accountNumber ? accountNumber.slice(-4) : "----";
   return `${account.bank_name || "Bank"} • ****${last4}`;
 }
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "-";
-
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return "-";
 
@@ -41,11 +38,14 @@ export default function PaymentsPage() {
   const searchParams = useSearchParams();
   const search = String(searchParams.get("q") || "").trim();
   const normalizedSearch = search.toLowerCase();
+
   const [payments, setPayments] = useState<any[]>([]);
   const [workOrders, setWorkOrders] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [vendors, setVendors] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [page, setPage] = useState(0);
+  const [hasNextPage, setHasNextPage] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -56,8 +56,11 @@ export default function PaymentsPage() {
 
   useEffect(() => {
     loadAccess();
-    loadPayments();
   }, []);
+
+  useEffect(() => {
+    loadPayments();
+  }, [page, search]);
 
   async function loadAccess() {
     const access = await getCurrentUserAccess();
@@ -69,6 +72,9 @@ export default function PaymentsPage() {
       setLoading(true);
       setError("");
       setMessage("");
+
+      const from = page * PAGE_SIZE;
+      const to = from + PAGE_SIZE;
 
       const { data: paymentData, error: paymentError } = await supabase
         .from("payments")
@@ -97,25 +103,28 @@ export default function PaymentsPage() {
           created_at_user,
           created_at
         `)
-        .order("payment_date", { ascending: false });
+        .order("payment_date", { ascending: false })
+        .range(from, to);
 
       if (paymentError) throw paymentError;
 
       const loadedPayments = paymentData || [];
-      setPayments(loadedPayments);
+      setHasNextPage(loadedPayments.length > PAGE_SIZE);
+      const currentPagePayments = loadedPayments.slice(0, PAGE_SIZE);
+      setPayments(currentPagePayments);
 
       const workOrderIds = Array.from(
-        new Set(loadedPayments.map((p: any) => p.work_order_id).filter(Boolean))
+        new Set(currentPagePayments.map((p: any) => p.work_order_id).filter(Boolean))
       );
       const vendorIds = Array.from(
-        new Set(loadedPayments.map((p: any) => p.vendor_id).filter(Boolean))
+        new Set(currentPagePayments.map((p: any) => p.vendor_id).filter(Boolean))
       );
       const invoiceIds = Array.from(
-        new Set(loadedPayments.map((p: any) => p.invoice_id).filter(Boolean))
+        new Set(currentPagePayments.map((p: any) => p.invoice_id).filter(Boolean))
       );
       const accountIds = Array.from(
         new Set(
-          loadedPayments
+          currentPagePayments
             .map((p: any) => p.company_bank_account_id)
             .filter(Boolean)
         )
@@ -125,27 +134,20 @@ export default function PaymentsPage() {
         { data: workOrderData },
         { data: invoiceData },
         { data: vendorData },
-      ] =
-        await Promise.all([
-          workOrderIds.length
-            ? supabase
-                .from("work_orders")
-                .select("id, wo_number, company_id, site_id")
-                .in("id", workOrderIds)
-            : Promise.resolve({ data: [] }),
-          invoiceIds.length
-            ? supabase
-                .from("invoices")
-                .select("id, invoice_number")
-                .in("id", invoiceIds)
-            : Promise.resolve({ data: [] }),
-          vendorIds.length
-            ? supabase
-                .from("vendors")
-                .select("id, vendor_name")
-                .in("id", vendorIds)
-            : Promise.resolve({ data: [] }),
-        ]);
+      ] = await Promise.all([
+        workOrderIds.length
+          ? supabase
+              .from("work_orders")
+              .select("id, wo_number, company_id, site_id")
+              .in("id", workOrderIds)
+          : Promise.resolve({ data: [] }),
+        invoiceIds.length
+          ? supabase.from("invoices").select("id, invoice_number").in("id", invoiceIds)
+          : Promise.resolve({ data: [] }),
+        vendorIds.length
+          ? supabase.from("vendors").select("id, vendor_name").in("id", vendorIds)
+          : Promise.resolve({ data: [] }),
+      ]);
 
       let accountData: any[] = [];
 
@@ -227,6 +229,7 @@ export default function PaymentsPage() {
           body: JSON.stringify({ deletion_reason: reason }),
         }
       );
+
       const result = await response.json();
 
       if (!response.ok) {
@@ -260,26 +263,26 @@ export default function PaymentsPage() {
 
     return payments.map((payment: any) => {
       const wo = payment.work_order_id ? woMap.get(payment.work_order_id) : null;
-      const invoice = payment.invoice_id
-        ? invoiceMap.get(payment.invoice_id)
-        : null;
-      const vendorName = payment.vendor_id
-        ? vendorMap.get(payment.vendor_id)
-        : "-";
+      const invoice = payment.invoice_id ? invoiceMap.get(payment.invoice_id) : null;
+      const vendorName = payment.vendor_id ? vendorMap.get(payment.vendor_id) : "-";
       const account = payment.company_bank_account_id
         ? accountMap.get(payment.company_bank_account_id)
         : null;
+
       const reference =
         payment.payment_type === "Work Order"
           ? wo?.wo_number || payment.reference_number || "-"
           : payment.payment_type === "Invoice"
           ? invoice?.invoice_number || payment.reference_number || "-"
           : payment.reference_number || "-";
+
       const party =
         payment.payment_type === "Internal Transfer"
           ? "Internal Transfer"
           : vendorName || "-";
+
       const accountName = accountLabel(account);
+
       const searchText = [
         party,
         reference,
@@ -302,25 +305,6 @@ export default function PaymentsPage() {
   }, [accounts, invoices, normalizedSearch, payments, vendors, workOrders]);
 
   const visiblePayments = enrichedPayments.filter((row) => row.visible);
-
-  const paymentCount = visiblePayments.length;
-
-  const totalPaid = visiblePayments.reduce(
-    (sum: number, row: any) => sum + Number(row.payment.total_payment || 0),
-    0
-  );
-
-  const totalTds = visiblePayments.reduce(
-    (sum: number, row: any) => sum + Number(row.payment.tds_amount || 0),
-    0
-  );
-
-  const totalTransferred = visiblePayments.reduce(
-    (sum: number, row: any) =>
-      sum +
-      Number(row.payment.transferred_amount || row.payment.payment_amount || 0),
-    0
-  );
 
   if (loading) {
     return <p className="text-sm text-slate-500">Loading payments...</p>;
@@ -360,13 +344,6 @@ export default function PaymentsPage() {
         </Link>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <Summary title="Total Payments" value={money(totalPaid)} />
-        <Summary title="Total TDS" value={money(totalTds)} />
-        <Summary title="Total Transferred" value={money(totalTransferred)} />
-        <Summary title="Payment Count" value={String(paymentCount)} />
-      </div>
-
       {message && (
         <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm font-medium text-sky-800">
           {message}
@@ -381,7 +358,7 @@ export default function PaymentsPage() {
                 Payment Register
               </h2>
               <p className="mt-1 text-sm text-slate-500">
-                Date-wise payments with payment reference, party and account.
+                Showing {page * PAGE_SIZE + 1}–{page * PAGE_SIZE + visiblePayments.length}
               </p>
             </div>
 
@@ -391,7 +368,7 @@ export default function PaymentsPage() {
                 name="q"
                 defaultValue={search}
                 className="h-10 w-80 rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none transition focus:border-slate-400 focus:bg-white"
-                placeholder="Search vendor, reference, payment no, account..."
+                placeholder="Search current page..."
               />
             </form>
           </div>
@@ -420,10 +397,11 @@ export default function PaymentsPage() {
               {visiblePayments.map(({ payment, reference, party, accountName }, index) => {
                 const createdBy =
                   payment.created_by_email || payment.created_by_name || "-";
+
                 return (
                   <tr key={payment.id} className="transition hover:bg-slate-50">
                     <td className="px-4 py-4 font-medium text-slate-950">
-                      {index + 1}
+                      {page * PAGE_SIZE + index + 1}
                     </td>
                     <td className="px-4 py-4 text-slate-700">
                       {payment.payment_date || "-"}
@@ -433,9 +411,7 @@ export default function PaymentsPage() {
                     </td>
                     <td className="px-4 py-4 text-slate-700">{reference}</td>
                     <td className="px-4 py-4 text-slate-700">{party}</td>
-                    <td className="px-4 py-4 text-slate-700">
-                      {accountName}
-                    </td>
+                    <td className="px-4 py-4 text-slate-700">{accountName}</td>
                     <td className="px-4 py-4 text-right font-semibold text-slate-950">
                       {money(payment.total_payment)}
                     </td>
@@ -443,9 +419,7 @@ export default function PaymentsPage() {
                       {money(payment.tds_amount)}
                     </td>
                     <td className="px-4 py-4 text-right font-semibold text-slate-950">
-                      {money(
-                        payment.transferred_amount || payment.payment_amount
-                      )}
+                      {money(payment.transferred_amount || payment.payment_amount)}
                     </td>
                     <td className="px-4 py-4 text-slate-700">{createdBy}</td>
                     <td className="px-4 py-4 text-slate-700">
@@ -489,6 +463,28 @@ export default function PaymentsPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4">
+          <button
+            type="button"
+            onClick={() => setPage((prev) => Math.max(prev - 1, 0))}
+            disabled={page === 0}
+            className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Previous
+          </button>
+
+          <p className="text-sm text-slate-500">Page {page + 1}</p>
+
+          <button
+            type="button"
+            onClick={() => setPage((prev) => prev + 1)}
+            disabled={!hasNextPage}
+            className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Next
+          </button>
         </div>
       </div>
 
@@ -567,18 +563,5 @@ export default function PaymentsPage() {
         </div>
       )}
     </section>
-  );
-}
-
-function Summary({ title, value }: { title: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-        {title}
-      </p>
-      <p className="mt-2 text-2xl font-bold tracking-tight text-slate-950">
-        {value}
-      </p>
-    </div>
   );
 }

@@ -264,17 +264,18 @@ export async function POST(request: Request) {
 
     const { data: existingInvoices, error: duplicateError } = await admin
       .from("invoices")
-      .select("id, invoice_number")
+      .select("id, invoice_number, approval_status")
       .eq("organization_id", workOrder.organization_id)
       .eq("vendor_id", vendorId);
 
     if (duplicateError) throw duplicateError;
 
-    const duplicate = (existingInvoices || []).find(
-      (invoice) =>
-        normalized(String(invoice.invoice_number || "")) ===
-        normalized(invoiceNumber)
-    );
+   const duplicate = (existingInvoices || []).find(
+  (invoice) =>
+    normalized(String(invoice.invoice_number || "")) ===
+      normalized(invoiceNumber) &&
+    normalized(String(invoice.approval_status || "")) !== "rejected"
+);
 
     if (duplicate) {
       return NextResponse.json(

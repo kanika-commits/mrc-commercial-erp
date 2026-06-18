@@ -271,6 +271,7 @@ export default function ApprovalsPage() {
     if (action === "Rejected" && !remark) {
       setMessage("Reason is required for Reject.");
       setSavingId("");
+      
       return;
     }
 
@@ -309,116 +310,134 @@ export default function ApprovalsPage() {
     }
 
     const { error } = await supabase
-      .from("ra_bills")
-      .update(updateData)
-      .eq("id", billId);
+  .from("ra_bills")
+  .update(updateData)
+  .eq("id", billId);
 
-    if (error) {
-      setMessage(error.message);
+if (error) {
+  setMessage(error.message);
+  setSavingId("");
+  return;
+}
+
+if (action === "Rejected") {
+  const bill = bills.find((b) => b.id === billId);
+
+  if (bill) {
+    const { error: rejectionError } = await supabase
+      .from("ra_bill_rejections")
+      .insert({
+        organization_id: bill.organization_id,
+        ra_bill_id: bill.id,
+        rejected_by_name: name,
+        rejected_by_email: email,
+        rejection_reason: remark,
+        rejected_at: now,
+      });
+
+    if (rejectionError) {
+      setMessage(rejectionError.message);
       setSavingId("");
       return;
     }
+  }
+}
 
     setBills((prev) => prev.filter((bill) => bill.id !== billId));
     setSavingId("");
   }
 
   async function updateDebitNoteStatus(
-    debitNoteId: string,
-    action: ApprovalAction
-  ) {
-    setMessage("");
-    setSavingId(`dn-${debitNoteId}`);
+  debitNoteId: string,
+  action: ApprovalAction
+) {
+  setMessage("");
+  setSavingId(`dn-${debitNoteId}`);
 
-    const remark = remarks[`dn-${debitNoteId}`]?.trim() || "";
+  const remark = remarks[`dn-${debitNoteId}`]?.trim() || "";
 
-    if (action === "Rejected" && remark.length < 10) {
-      setMessage("Reason must be at least 10 characters for Reject/Delete.");
-      setSavingId("");
-      return;
-    }
-
-    const { data: userData } = await supabase.auth.getUser();
-    const email = userData.user?.email || "";
-    const name =
-      userData.user?.user_metadata?.full_name ||
-      userData.user?.email ||
-      "HO User";
-
-    const now = new Date().toISOString();
-
-    if (action === "Rejected") {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session?.access_token) {
-        setMessage("Please sign in again to delete the Debit Note.");
-        setSavingId("");
-        return;
-      }
-
-      const response = await fetch(
-        `/api/debit-notes?debit_note_id=${encodeURIComponent(debitNoteId)}`,
-        {
-          method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ deletion_reason: remark }),
-        }
-      );
-      const result = await response.json();
-
-      if (!response.ok) {
-        setMessage(result.error || "Failed to delete Debit Note.");
-        setSavingId("");
-        return;
-      }
-
-      setDebitNotes((prev) =>
-        prev.filter((note) => note.id !== debitNoteId)
-      );
-      setDebitDocuments((prev) =>
-        prev.filter((document) => document.debit_note_id !== debitNoteId)
-      );
-      setSavingId("");
-      return;
-    }
-
-    let updateData: any = {
-      approval_status: action,
-    };
-
-    if (action === "Approved") {
-      updateData = {
-        ...updateData,
-        status: "Approved",
-        approved_by_name: name,
-        approved_by_email: email,
-        approved_at: now,
-      };
-    }
-
-    const { error } = await supabase
-      .from("debit_notes")
-      .update(updateData)
-      .eq("id", debitNoteId);
-
-    if (error) {
-      setMessage(error.message);
-      setSavingId("");
-      return;
-    }
-
-    setDebitNotes((prev) =>
-      prev.filter((note) => note.id !== debitNoteId)
-    );
+  if (action === "Rejected" && remark.length < 10) {
+    setMessage("Reason must be at least 10 characters for Reject.");
     setSavingId("");
+    return;
   }
 
+  const { data: userData } = await supabase.auth.getUser();
+  const email = userData.user?.email || "";
+  const name =
+    userData.user?.user_metadata?.full_name ||
+    userData.user?.email ||
+    "HO User";
+
+  const now = new Date().toISOString();
+
+  const note = debitNotes.find((item) => item.id === debitNoteId);
+
+  let updateData: any = {
+    approval_status: action,
+  };
+
+  if (action === "Approved") {
+    updateData = {
+      ...updateData,
+      status: "Approved",
+      approved_by_name: name,
+      approved_by_email: email,
+      approved_at: now,
+    };
+  }
+
+  if (action === "Rejected") {
+    updateData = {
+      ...updateData,
+      status: "Rejected",
+      rejected_by_name: name,
+      rejected_by_email: email,
+      rejected_at: now,
+      rejection_reason: remark,
+    };
+  }
+
+  const { error } = await supabase
+    .from("debit_notes")
+    .update(updateData)
+    .eq("id", debitNoteId);
+
+  if (error) {
+    setMessage(error.message);
+    setSavingId("");
+    return;
+  }
+
+  if (action === "Rejected" && note) {
+    const { error: rejectionError } = await supabase
+      .from("debit_note_rejections")
+      .insert({
+        organization_id: note.organization_id,
+        debit_note_id: note.id,
+        rejected_by_name: name,
+        rejected_by_email: email,
+        rejection_reason: remark,
+        rejected_at: now,
+      });
+
+    if (rejectionError) {
+      setMessage(rejectionError.message);
+      setSavingId("");
+      return;
+    }
+  }
+
+  setDebitNotes((prev) => prev.filter((note) => note.id !== debitNoteId));
+  setSavingId("");
+}
+
+  
+
+   
+
   if (loading) {
+    
     return <p className="text-sm text-slate-500">Loading approvals...</p>;
   }
 
@@ -641,7 +660,7 @@ export default function ApprovalsPage() {
             </h2>
           </div>
           <p className="text-xs text-slate-500">
-            Approve or reject/delete debit notes.
+            Approve or reject debit notes. Rejected records remain available for audit.
           </p>
         </div>
 
@@ -764,7 +783,7 @@ export default function ApprovalsPage() {
                           }))
                         }
                         className="min-h-24 w-64 rounded-xl border px-3 py-2 text-sm outline-none focus:border-slate-400"
-                        placeholder="Required for reject/delete"
+                        placeholder="Required for reject"
                       />
                     </td>
 

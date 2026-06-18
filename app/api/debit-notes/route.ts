@@ -279,16 +279,17 @@ export async function POST(request: Request) {
 
     const { data: existingDebitNotes, error: duplicateError } = await admin
       .from("debit_notes")
-      .select("id, debit_note_number")
+      .select("id, debit_note_number, approval_status")
       .eq("organization_id", workOrder.organization_id);
 
     if (duplicateError) throw duplicateError;
 
     const duplicate = (existingDebitNotes || []).find(
-      (note) =>
-        normalized(String(note.debit_note_number || "")) ===
-        normalized(debitNoteNumber)
-    );
+  (note) =>
+    normalized(String(note.debit_note_number || "")) ===
+      normalized(debitNoteNumber) &&
+    normalized(String(note.approval_status || "")) !== "rejected"
+);
 
     if (duplicate) {
       return NextResponse.json(

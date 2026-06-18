@@ -4,7 +4,11 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { FileText, Plus, Search, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import {
+  can,
+  getCurrentUserAccess,
+  hasSiteRestriction,
+} from "@/lib/accessControl";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -12,7 +16,6 @@ function money(value: any) {
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "-";
-
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return "-";
 
@@ -52,6 +55,7 @@ export default function InvoicesPage() {
   const [deletionReason, setDeletionReason] = useState("");
   const [deleting, setDeleting] = useState(false);
 
+
   useEffect(() => {
     loadAccess();
     loadInvoices();
@@ -63,92 +67,128 @@ export default function InvoicesPage() {
   }
 
   async function loadInvoices() {
-    setLoading(true);
-    setMessage("");
+  setLoading(true);
+  setMessage("");
 
-    const { data: invoiceData, error } = await supabase
-      .from("invoices")
-      .select(`
-        id,
-        work_order_id,
-        vendor_id,
-        invoice_number,
-        invoice_date,
-        taxable_amount,
-        gst_rate,
-        gst_amount,
-        invoice_amount,
-        status,
-        approval_status,
-        itc_status,
-        created_by_name,
-        created_by_email,
-        itc_claimed_by_name,
-        itc_claimed_by_email,
-        itc_claimed_at,
-        created_at
-      `)
-      .order("created_at", { ascending: false });
+  const access = await getCurrentUserAccess();
+  const restrictedSiteIds = hasSiteRestriction(access) ? access.sites : [];
 
-    if (error) {
-      setMessage(error.message);
-      setLoading(false);
-      return;
-    }
+  let workOrderQuery = supabase
+    .from("work_orders")
+    .select("id, wo_number, company_id, site_id");
 
-    const items = invoiceData || [];
-    setInvoices(items);
-
-    const workOrderIds = Array.from(
-      new Set(items.map((i: any) => i.work_order_id).filter(Boolean))
-    );
-
-    const vendorIds = Array.from(
-      new Set(items.map((i: any) => i.vendor_id).filter(Boolean))
-    );
-
-    const { data: woData } = workOrderIds.length
-      ? await supabase
-          .from("work_orders")
-          .select("id, wo_number, company_id, site_id")
-          .in("id", workOrderIds)
-      : { data: [] };
-
-    const siteIds = Array.from(
-      new Set((woData || []).map((wo: any) => wo.site_id).filter(Boolean))
-    );
-
-    const companyIds = Array.from(
-      new Set((woData || []).map((wo: any) => wo.company_id).filter(Boolean))
-    );
-
-    const { data: vendorData } = vendorIds.length
-      ? await supabase
-          .from("vendors")
-          .select("id, vendor_name")
-          .in("id", vendorIds)
-      : { data: [] };
-
-    const { data: siteData } = siteIds.length
-      ? await supabase
-          .from("sites")
-          .select("id, site_name, site_code")
-          .in("id", siteIds)
-      : { data: [] };
-
-    const { data: companyData } = companyIds.length
-      ? await supabase
-          .from("companies")
-          .select("id, company_name, company_code")
-          .in("id", companyIds)
-      : { data: [] };
-
-    setWorkOrders(woData || []);
-    setVendors(vendorData || []);
-    setSites(siteData || []);
-    setCompanies(companyData || []);
-    setLoading(false);
+  if (restrictedSiteIds.length > 0) {
+    workOrderQuery = workOrderQuery.in("site_id", restrictedSiteIds);
   }
+
+  const { data: allowedWorkOrders, error: woLoadError } = await workOrderQuery;
+
+  if (woLoadError) {
+    setMessage(woLoadError.message);
+    setLoading(false);
+    return;
+  }
+
+  const allowedWorkOrderIds = (allowedWorkOrders || []).map((wo: any) => wo.id);
+
+  if (restrictedSiteIds.length > 0 && allowedWorkOrderIds.length === 0) {
+    setInvoices([]);
+    setWorkOrders([]);
+    setVendors([]);
+    setSites([]);
+    setCompanies([]);
+    setLoading(false);
+    return;
+  }
+
+  let invoiceQuery = supabase
+    .from("invoices")
+    .select(`
+      id,
+      work_order_id,
+      vendor_id,
+      invoice_number,
+      invoice_date,
+      taxable_amount,
+      gst_rate,
+      gst_amount,
+      invoice_amount,
+      status,
+      approval_status,
+      itc_status,
+      created_by_name,
+      created_by_email,
+      itc_claimed_by_name,
+      itc_claimed_by_email,
+      itc_claimed_at,
+      created_at
+    `)
+    .order("created_at", { ascending: false });
+
+  if (restrictedSiteIds.length > 0) {
+    invoiceQuery = invoiceQuery.in("work_order_id", allowedWorkOrderIds);
+  }
+
+  const { data: invoiceData, error } = await invoiceQuery;
+
+  if (error) {
+    setMessage(error.message);
+    setLoading(false);
+    return;
+  }
+
+  const items = invoiceData || [];
+  setInvoices(items);
+
+  const workOrderIds = Array.from(
+    new Set(items.map((i: any) => i.work_order_id).filter(Boolean))
+  );
+
+  const vendorIds = Array.from(
+    new Set(items.map((i: any) => i.vendor_id).filter(Boolean))
+  );
+
+  const visibleWorkOrders =
+    restrictedSiteIds.length > 0
+      ? (allowedWorkOrders || []).filter((wo: any) => workOrderIds.includes(wo.id))
+      : workOrderIds.length
+      ? (
+          await supabase
+            .from("work_orders")
+            .select("id, wo_number, company_id, site_id")
+            .in("id", workOrderIds)
+        ).data || []
+      : [];
+
+  const siteIds = Array.from(
+    new Set(visibleWorkOrders.map((wo: any) => wo.site_id).filter(Boolean))
+  );
+
+  const companyIds = Array.from(
+    new Set(visibleWorkOrders.map((wo: any) => wo.company_id).filter(Boolean))
+  );
+
+  const { data: vendorData } = vendorIds.length
+    ? await supabase.from("vendors").select("id, vendor_name").in("id", vendorIds)
+    : { data: [] };
+
+  const { data: siteData } = siteIds.length
+    ? await supabase.from("sites").select("id, site_name, site_code").in("id", siteIds)
+    : { data: [] };
+
+  const { data: companyData } = companyIds.length
+    ? await supabase
+        .from("companies")
+        .select("id, company_name, company_code")
+        .in("id", companyIds)
+    : { data: [] };
+
+  setWorkOrders(visibleWorkOrders || []);
+  setVendors(vendorData || []);
+  setSites(siteData || []);
+  setCompanies(companyData || []);
+  setLoading(false);
+}
 
   async function confirmDelete() {
     if (!deleteInvoice) return;
@@ -183,6 +223,7 @@ export default function InvoicesPage() {
           body: JSON.stringify({ deletion_reason: reason }),
         }
       );
+
       const result = await response.json();
 
       if (!response.ok) {
@@ -211,18 +252,28 @@ export default function InvoicesPage() {
     };
   }, [workOrders, vendors, sites, companies]);
 
-  const totalInvoices = invoices.length;
+  const activeInvoices = invoices.filter(
+    (invoice) =>
+      String(invoice.approval_status || "").toLowerCase() !== "rejected"
+  );
 
-  const pendingITC = invoices.filter(
+  const rejectedInvoices = invoices.filter(
+    (invoice) =>
+      String(invoice.approval_status || "").toLowerCase() === "rejected"
+  );
+
+  const totalInvoices = activeInvoices.length;
+
+  const pendingITC = activeInvoices.filter(
     (invoice) =>
       String(invoice.itc_status || "Pending").toLowerCase() === "pending"
   ).length;
 
-  const claimedITC = invoices.filter(
+  const claimedITC = activeInvoices.filter(
     (invoice) => String(invoice.itc_status || "").toLowerCase() === "claimed"
   ).length;
 
-  const pendingITCValue = invoices
+  const pendingITCValue = activeInvoices
     .filter(
       (invoice) =>
         String(invoice.itc_status || "Pending").toLowerCase() === "pending"
@@ -244,7 +295,7 @@ export default function InvoicesPage() {
 
           <h1 className="text-3xl font-bold text-slate-950">Invoices</h1>
           <p className="text-sm text-slate-500">
-            Invoice register with ITC status tracking.
+            Approved invoices are shown separately from rejected invoices.
           </p>
         </div>
 
@@ -264,7 +315,7 @@ export default function InvoicesPage() {
       )}
 
       <div className="grid gap-4 md:grid-cols-4">
-        <Summary title="Total Invoices" value={String(totalInvoices)} />
+        <Summary title="Active Invoices" value={String(totalInvoices)} />
         <Summary title="Pending ITC" value={String(pendingITC)} />
         <Summary title="ITC Claimed" value={String(claimedITC)} />
         <Summary title="Pending ITC Value" value={money(pendingITCValue)} />
@@ -278,7 +329,7 @@ export default function InvoicesPage() {
                 Invoice Register
               </h2>
               <p className="text-xs text-slate-500">
-                Read-only invoice status and audit trail.
+                Active invoice status and audit trail.
               </p>
             </div>
 
@@ -313,14 +364,16 @@ export default function InvoicesPage() {
             </thead>
 
             <tbody>
-              {invoices.map((invoice: any) => {
+              {activeInvoices.map((invoice: any) => {
                 const wo = maps.woMap.get(invoice.work_order_id);
                 const vendor = maps.vendorMap.get(invoice.vendor_id);
-
                 const itcStatus = invoice.itc_status || "Pending";
 
                 return (
-                  <tr key={invoice.id} className="border-t align-top hover:bg-slate-50">
+                  <tr
+                    key={invoice.id}
+                    className="border-t align-top hover:bg-slate-50"
+                  >
                     <td className="p-3 font-semibold text-slate-950">
                       {invoice.invoice_number}
                     </td>
@@ -339,7 +392,6 @@ export default function InvoicesPage() {
                     </td>
 
                     <td className="p-3">{vendor?.vendor_name || "-"}</td>
-
                     <td className="p-3">{invoice.invoice_date || "-"}</td>
 
                     <td className="p-3 text-right font-semibold">
@@ -366,13 +418,18 @@ export default function InvoicesPage() {
 
                     <td className="p-3">
                       <div className="max-w-[180px] truncate font-medium">
-                        {auditName(invoice.created_by_name, invoice.created_by_email)}
+                        {auditName(
+                          invoice.created_by_name,
+                          invoice.created_by_email
+                        )}
                       </div>
-                      {invoice.created_by_name && invoice.created_by_email && invoice.created_by_name !== invoice.created_by_email && (
-                        <div className="max-w-[180px] truncate text-xs text-slate-500">
-                          {invoice.created_by_email}
-                        </div>
-                      )}
+                      {invoice.created_by_name &&
+                        invoice.created_by_email &&
+                        invoice.created_by_name !== invoice.created_by_email && (
+                          <div className="max-w-[180px] truncate text-xs text-slate-500">
+                            {invoice.created_by_email}
+                          </div>
+                        )}
                     </td>
 
                     <td className="p-3 text-slate-700">
@@ -381,13 +438,19 @@ export default function InvoicesPage() {
 
                     <td className="p-3">
                       <div className="max-w-[180px] truncate font-medium">
-                        {auditName(invoice.itc_claimed_by_name, invoice.itc_claimed_by_email)}
+                        {auditName(
+                          invoice.itc_claimed_by_name,
+                          invoice.itc_claimed_by_email
+                        )}
                       </div>
-                      {invoice.itc_claimed_by_name && invoice.itc_claimed_by_email && invoice.itc_claimed_by_name !== invoice.itc_claimed_by_email && (
-                        <div className="max-w-[180px] truncate text-xs text-slate-500">
-                          {invoice.itc_claimed_by_email}
-                        </div>
-                      )}
+                      {invoice.itc_claimed_by_name &&
+                        invoice.itc_claimed_by_email &&
+                        invoice.itc_claimed_by_name !==
+                          invoice.itc_claimed_by_email && (
+                          <div className="max-w-[180px] truncate text-xs text-slate-500">
+                            {invoice.itc_claimed_by_email}
+                          </div>
+                        )}
                     </td>
 
                     <td className="p-3 text-slate-700">
@@ -423,10 +486,10 @@ export default function InvoicesPage() {
                 );
               })}
 
-              {invoices.length === 0 && (
+              {activeInvoices.length === 0 && (
                 <tr>
                   <td colSpan={13} className="p-8 text-center text-slate-500">
-                    No invoices found.
+                    No active invoices found.
                   </td>
                 </tr>
               )}
@@ -434,6 +497,68 @@ export default function InvoicesPage() {
           </table>
         </div>
       </div>
+
+      {rejectedInvoices.length > 0 && (
+        <div className="rounded-2xl border border-red-200 bg-white shadow-sm">
+          <div className="border-b border-red-100 p-4">
+            <h2 className="font-semibold text-red-700">Rejected Invoices</h2>
+            <p className="text-xs text-slate-500">
+              Rejected invoices are shown separately and are not included in
+              invoice totals.
+            </p>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1100px] text-sm">
+              <thead className="bg-red-50 text-xs uppercase text-red-700">
+                <tr>
+                  <th className="p-3 text-left">Invoice Number</th>
+                  <th className="p-3 text-left">WO Number</th>
+                  <th className="p-3 text-left">Vendor</th>
+                  <th className="p-3 text-left">Invoice Date</th>
+                  <th className="p-3 text-right">Total</th>
+                  <th className="p-3 text-left">Rejection Reason</th>
+                  <th className="p-3 text-right">Action</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {rejectedInvoices.map((invoice: any) => {
+                  const wo = maps.woMap.get(invoice.work_order_id);
+                  const vendor = maps.vendorMap.get(invoice.vendor_id);
+
+                  return (
+                    <tr key={invoice.id} className="border-t border-red-100">
+                      <td className="p-3 font-semibold">
+                        {invoice.invoice_number}
+                      </td>
+                      <td className="p-3">{wo?.wo_number || "-"}</td>
+                      <td className="p-3">{vendor?.vendor_name || "-"}</td>
+                      <td className="p-3">{invoice.invoice_date || "-"}</td>
+                      <td className="p-3 text-right font-semibold">
+                        {money(invoice.invoice_amount)}
+                      </td>
+                      <td className="p-3">
+                        <div className="max-w-[360px] rounded-lg bg-red-50 px-3 py-2 text-red-700">
+                          {invoice.rejection_reason || "-"}
+                        </div>
+                      </td>
+                      <td className="p-3 text-right">
+                        <Link
+                          href={`/invoices/${invoice.id}`}
+                          className="inline-flex justify-center rounded-xl border px-3 py-2 text-xs font-medium hover:bg-slate-50"
+                        >
+                          View
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {deleteInvoice && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4">
@@ -510,7 +635,13 @@ export default function InvoicesPage() {
   );
 }
 
-function Summary({ title, value }: { title: string; value: string }) {
+function Summary({
+  title,
+  value,
+}: {
+  title: string;
+  value: string;
+}) {
   return (
     <div className="rounded-2xl border bg-white p-5 shadow-sm">
       <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
