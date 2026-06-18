@@ -19,7 +19,7 @@ import { can, getCurrentUserAccess, type UserPermission } from "@/lib/accessCont
 
 const sidebarItems = [
   { label: "Dashboard", href: "/", icon: Home, groupCode: "dashboard" },
-  { label: "Modules", href: "/modules", icon: LayoutGrid, alwaysShow: true },
+  { label: "Modules", href: "/modules", icon: LayoutGrid, superOnly: true },
   { label: "Master Setup", href: "/modules/master-setup", icon: Building2, groupCode: "master_setup" },
   { label: "Contract Management", href: "/modules/contract-management", icon: FileText, groupCode: "contract_management" },
   { label: "Reports", href: "/modules/reports", icon: BarChart3, groupCode: "reports" },
@@ -30,6 +30,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [visibleGroupCodes, setVisibleGroupCodes] = useState<Set<string>>(new Set());
   const [permissions, setPermissions] = useState<UserPermission[]>([]);
+  const [roleCodes, setRoleCodes] = useState<string[]>([]);
 
   useEffect(() => {
     async function loadNavigationAccess() {
@@ -39,6 +40,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       ]);
 
       setPermissions(access.permissions || []);
+      setRoleCodes(access.roleCodes || []);
 
       if (!navigationResponse.ok) {
         setVisibleGroupCodes(new Set());
@@ -62,9 +64,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   const visibleSidebarItems = sidebarItems.filter((item) => {
-    if (item.alwaysShow) return true;
+    if (item.superOnly) {
+      return (
+        roleCodes.includes("platform_owner") ||
+        roleCodes.includes("super_admin") ||
+        can(permissions, "*", "*")
+      );
+    }
     if (item.groupCode === "dashboard") {
-      return can(permissions, "dashboard", "view") || permissions.length === 0;
+      return can(permissions, "dashboard", "view");
     }
     if (!item.groupCode) return true;
     return visibleGroupCodes.has(item.groupCode);

@@ -39,6 +39,8 @@ type FormState = {
   wo_number: string;
   wo_date: string;
   wo_type: string;
+  wo_value: string;
+  gst_percent: string;
   description: string;
   primary_vendor_id: string;
   primary_vendor_role: string;
@@ -90,6 +92,8 @@ export default function NewWorkOrderPage() {
     wo_number: "",
     wo_date: "",
     wo_type: "Consultant",
+    wo_value: "",
+    gst_percent: "18",
     description: "",
     primary_vendor_id: "",
     primary_vendor_role: "Main Contractor",
@@ -113,6 +117,22 @@ export default function NewWorkOrderPage() {
     () => vendors.find((item) => item.id === form.primary_vendor_id),
     [vendors, form.primary_vendor_id]
   );
+
+  const commercialTotals = useMemo(() => {
+    const basicValue = Number(form.wo_value || 0);
+    const gstPercent = Number(form.gst_percent || 0);
+    const gstAmount =
+      Number.isFinite(basicValue) && Number.isFinite(gstPercent)
+        ? (basicValue * gstPercent) / 100
+        : 0;
+
+    return {
+      basicValue: Number.isFinite(basicValue) ? basicValue : 0,
+      gstPercent: Number.isFinite(gstPercent) ? gstPercent : 0,
+      gstAmount,
+      totalValue: (Number.isFinite(basicValue) ? basicValue : 0) + gstAmount,
+    };
+  }, [form.wo_value, form.gst_percent]);
 
   async function loadData() {
     const { data: vendorData, error: vendorError } = await supabase
@@ -248,6 +268,12 @@ export default function NewWorkOrderPage() {
     if (step === 2) {
       if (!form.wo_date) errors.wo_date = "WO Date is required.";
       if (!form.wo_type) errors.wo_type = "WO Type is required.";
+      if (!form.wo_value || Number(form.wo_value) <= 0) {
+        errors.wo_value = "WO Basic Value is required.";
+      }
+      if (form.gst_percent === "" || Number(form.gst_percent) < 0) {
+        errors.gst_percent = "GST % is required.";
+      }
       if (!workOrderFile) errors.work_order_file = "Work Order file is required.";
     }
 
@@ -323,6 +349,8 @@ export default function NewWorkOrderPage() {
       payload.append("wo_number", form.wo_number.trim());
       payload.append("wo_date", form.wo_date);
       payload.append("wo_type", form.wo_type);
+      payload.append("wo_value", String(commercialTotals.basicValue));
+      payload.append("gst_percent", String(commercialTotals.gstPercent));
       payload.append("description", form.description);
       payload.append("primary_vendor_id", form.primary_vendor_id);
       payload.append("primary_vendor_role", form.primary_vendor_role);
@@ -570,6 +598,52 @@ export default function NewWorkOrderPage() {
                       <option>Rental</option>
                     </select>
                   </FieldShell>
+
+                  <FieldShell
+                    label="WO Basic Value"
+                    required
+                    error={fieldErrors.wo_value}
+                  >
+                    <input
+                      name="wo_value"
+                      value={form.wo_value}
+                      onChange={handleChange}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="Enter WO Basic Value"
+                      className={inputClass}
+                    />
+                  </FieldShell>
+
+                  <FieldShell label="GST %" required error={fieldErrors.gst_percent}>
+                    <input
+                      name="gst_percent"
+                      value={form.gst_percent}
+                      onChange={handleChange}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="Enter GST %"
+                      className={inputClass}
+                    />
+                  </FieldShell>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-3">
+                  <CommercialSummary
+                    label="WO Basic Value"
+                    value={money(commercialTotals.basicValue)}
+                  />
+                  <CommercialSummary
+                    label="GST Amount"
+                    value={money(commercialTotals.gstAmount)}
+                  />
+                  <CommercialSummary
+                    label="Total Value of WO"
+                    value={money(commercialTotals.totalValue)}
+                    highlight
+                  />
                 </div>
 
                 <FieldShell
@@ -686,6 +760,18 @@ export default function NewWorkOrderPage() {
                   <ReviewItem label="WO Date" value={form.wo_date} />
                   <ReviewItem label="WO Type" value={form.wo_type} />
                   <ReviewItem
+                    label="WO Basic Value"
+                    value={money(commercialTotals.basicValue)}
+                  />
+                  <ReviewItem
+                    label="GST"
+                    value={`${money(commercialTotals.gstAmount)} (${commercialTotals.gstPercent}%)`}
+                  />
+                  <ReviewItem
+                    label="Total Value of WO"
+                    value={money(commercialTotals.totalValue)}
+                  />
+                  <ReviewItem
                     label="Uploaded File"
                     value={workOrderFile?.name || "-"}
                     wide
@@ -763,6 +849,37 @@ function StepPanel({
         <p className="mt-2 text-sm text-slate-600">{description}</p>
       </header>
       <div className="space-y-6">{children}</div>
+    </div>
+  );
+}
+
+function money(value: number) {
+  return `Rs. ${Number(value || 0).toLocaleString("en-IN", {
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function CommercialSummary({
+  label,
+  value,
+  highlight = false,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div
+      className={`rounded-xl border p-4 ${
+        highlight
+          ? "border-sky-200 bg-sky-50"
+          : "border-slate-200 bg-slate-50"
+      }`}
+    >
+      <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
+        {label}
+      </p>
+      <p className="mt-2 text-lg font-bold text-slate-950">{value}</p>
     </div>
   );
 }

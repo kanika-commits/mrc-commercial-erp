@@ -5,7 +5,11 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Eye, FileText, Plus, Search, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import {
+  can,
+  getCurrentUserAccess,
+  hasSiteRestriction,
+} from "@/lib/accessControl";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -65,86 +69,138 @@ export default function RABillsPage() {
   }
 
   async function loadBills() {
-    try {
-      setLoading(true);
-      setError("");
+  try {
+    setLoading(true);
+    setError("");
 
-      const { data: billData, error: billError } = await supabase
-        .from("ra_bills")
-        .select(`
-          id,
-          work_order_id,
-          vendor_id,
-          ra_number,
-          ra_date,
-          gross_amount,
-          recovery_amount,
-          retention_amount,
-          gst_amount,
-          net_amount,
-          status,
-          approval_status,
-          approved_by_name,
-          approved_by_email,
-          approved_at,
-          created_at
-        `)
-        .ilike("approval_status", "approved")
-        .order("created_at", { ascending: false });
+    const access = await getCurrentUserAccess();
+    const restrictedSiteIds = hasSiteRestriction(access) ? access.sites : [];
 
-      if (billError) throw billError;
+    let workOrderQuery = supabase
+      .from("work_orders")
+      .select("id, wo_number, site_id, company_id");
 
-      const loadedBills = billData || [];
-      setBills(loadedBills);
-
-      const workOrderIds = Array.from(
-        new Set(loadedBills.map((b: any) => b.work_order_id).filter(Boolean))
-      );
-      const vendorIds = Array.from(
-        new Set(loadedBills.map((b: any) => b.vendor_id).filter(Boolean))
-      );
-
-      const { data: workOrderData } = workOrderIds.length
-        ? await supabase
-            .from("work_orders")
-            .select("id, wo_number, site_id, company_id")
-            .in("id", workOrderIds)
-        : { data: [] };
-
-      setWorkOrders(workOrderData || []);
-
-      const siteIds = Array.from(
-        new Set((workOrderData || []).map((wo: any) => wo.site_id).filter(Boolean))
-      );
-      const companyIds = Array.from(
-        new Set((workOrderData || []).map((wo: any) => wo.company_id).filter(Boolean))
-      );
-
-      const [{ data: vendorData }, { data: siteData }, { data: companyData }] =
-        await Promise.all([
-          vendorIds.length
-            ? supabase.from("vendors").select("id, vendor_name").in("id", vendorIds)
-            : Promise.resolve({ data: [] }),
-          siteIds.length
-            ? supabase.from("sites").select("id, site_name, site_code").in("id", siteIds)
-            : Promise.resolve({ data: [] }),
-          companyIds.length
-            ? supabase
-                .from("companies")
-                .select("id, company_name, company_code")
-                .in("id", companyIds)
-            : Promise.resolve({ data: [] }),
-        ]);
-
-      setVendors(vendorData || []);
-      setSites(siteData || []);
-      setCompanies(companyData || []);
-    } catch (loadError: any) {
-      setError(loadError.message || "Failed to load RA Bills.");
-    } finally {
-      setLoading(false);
+    if (restrictedSiteIds.length > 0) {
+      workOrderQuery = workOrderQuery.in("site_id", restrictedSiteIds);
     }
+
+    const { data: allowedWorkOrders, error: workOrderError } =
+      await workOrderQuery;
+
+    if (workOrderError) throw workOrderError;
+
+    const allowedWorkOrderIds = (allowedWorkOrders || []).map(
+      (wo: any) => wo.id
+    );
+
+    if (restrictedSiteIds.length > 0 && allowedWorkOrderIds.length === 0) {
+      setBills([]);
+      setWorkOrders([]);
+      setVendors([]);
+      setSites([]);
+      setCompanies([]);
+      return;
+    }
+
+    let billQuery = supabase
+      .from("ra_bills")
+      .select(`
+        id,
+        work_order_id,
+        vendor_id,
+        ra_number,
+        ra_date,
+        gross_amount,
+        recovery_amount,
+        retention_amount,
+        gst_amount,
+        net_amount,
+        status,
+        approval_status,
+        approved_by_name,
+        approved_by_email,
+        approved_at,
+        created_at
+      `)
+      .ilike("approval_status", "approved")
+      .order("created_at", { ascending: false });
+
+    if (restrictedSiteIds.length > 0) {
+      billQuery = billQuery.in("work_order_id", allowedWorkOrderIds);
+    }
+
+    const { data: billData, error: billError } = await billQuery;
+
+    if (billError) throw billError;
+
+    const loadedBills = billData || [];
+    setBills(loadedBills);
+
+    const workOrderIds = Array.from(
+      new Set(loadedBills.map((b: any) => b.work_order_id).filter(Boolean))
+    );
+
+    const vendorIds = Array.from(
+      new Set(loadedBills.map((b: any) => b.vendor_id).filter(Boolean))
+    );
+
+    const visibleWorkOrders =
+      restrictedSiteIds.length > 0
+        ? (allowedWorkOrders || []).filter((wo: any) =>
+            workOrderIds.includes(wo.id)
+          )
+        : workOrderIds.length
+        ? (
+            await supabase
+              .from("work_orders")
+              .select("id, wo_number, site_id, company_id")
+              .in("id", workOrderIds)
+          ).data || []
+        : [];
+
+    setWorkOrders(visibleWorkOrders || []);
+
+    const siteIds = Array.from(
+      new Set(
+        (visibleWorkOrders || [])
+          .map((wo: any) => wo.site_id)
+          .filter(Boolean)
+      )
+    );
+
+    const companyIds = Array.from(
+      new Set(
+        (visibleWorkOrders || [])
+          .map((wo: any) => wo.company_id)
+          .filter(Boolean)
+      )
+    );
+
+    const [{ data: vendorData }, { data: siteData }, { data: companyData }] =
+      await Promise.all([
+        vendorIds.length
+          ? supabase.from("vendors").select("id, vendor_name").in("id", vendorIds)
+          : Promise.resolve({ data: [] }),
+        siteIds.length
+          ? supabase.from("sites").select("id, site_name, site_code").in("id", siteIds)
+          : Promise.resolve({ data: [] }),
+        companyIds.length
+          ? supabase
+              .from("companies")
+              .select("id, company_name, company_code")
+              .in("id", companyIds)
+          : Promise.resolve({ data: [] }),
+      ]);
+
+    setVendors(vendorData || []);
+    setSites(siteData || []);
+    setCompanies(companyData || []);
+  } catch (loadError: any) {
+    setError(loadError.message || "Failed to load RA Bills.");
+  } finally {
+    setLoading(false);
   }
+}
 
   const rows = useMemo(() => {
     const woMap = new Map((workOrders || []).map((wo: any) => [wo.id, wo]));

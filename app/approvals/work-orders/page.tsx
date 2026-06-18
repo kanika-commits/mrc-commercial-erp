@@ -9,6 +9,21 @@ function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
+function workOrderCommercials(wo: any) {
+  const basicValue = Number(wo?.wo_value || 0);
+  const gstPercent = Number(wo?.gst_percent ?? 18);
+  const safeBasic = Number.isFinite(basicValue) ? basicValue : 0;
+  const safeGstPercent = Number.isFinite(gstPercent) ? gstPercent : 0;
+  const gstAmount = (safeBasic * safeGstPercent) / 100;
+
+  return {
+    basicValue: safeBasic,
+    gstPercent: safeGstPercent,
+    gstAmount,
+    totalValue: safeBasic + gstAmount,
+  };
+}
+
 function formatDate(date: string | null | undefined) {
   if (!date) return "";
 
@@ -74,6 +89,7 @@ export default function WorkOrderApprovalPage() {
           description,
           status,
           wo_value,
+          gst_percent,
           approval_status,
           department,
           cost_code,
@@ -338,6 +354,7 @@ export default function WorkOrderApprovalPage() {
                 pendingWorkOrders.map((wo) => {
                   const currentDocuments = documents.get(wo.id) || [];
                   const isSaving = savingId === wo.id;
+                  const commercials = workOrderCommercials(wo);
 
                   return (
                     <tr key={wo.id} className="align-top transition-colors hover:bg-slate-50">
@@ -364,6 +381,18 @@ export default function WorkOrderApprovalPage() {
                         <div className="mt-1 text-sm text-slate-700">
                           <span className="text-slate-400">Type:</span>{" "}
                           {wo.wo_type || "-"}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-700">
+                          <span className="text-slate-400">Basic:</span>{" "}
+                          {money(commercials.basicValue)}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-700">
+                          <span className="text-slate-400">GST:</span>{" "}
+                          {money(commercials.gstAmount)} ({commercials.gstPercent}%)
+                        </div>
+                        <div className="mt-1 text-sm font-semibold text-slate-950">
+                          <span className="text-slate-400">Total:</span>{" "}
+                          {money(commercials.totalValue)}
                         </div>
                       </td>
 

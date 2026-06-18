@@ -60,7 +60,7 @@ export async function GET(
       supabase
         .from("erp_modules")
         .select("id, module_group, module_code, module_name, sort_order")
-        .eq("status", "active"),
+        .or("status.eq.active,module_code.eq.dashboard"),
       supabase.from("user_roles").select("role_id").eq("user_id", id),
       supabase
         .from("user_access_assignments")

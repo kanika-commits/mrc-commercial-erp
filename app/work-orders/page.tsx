@@ -13,7 +13,11 @@ import {
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import {
+  can,
+  getCurrentUserAccess,
+  hasSiteRestriction,
+} from "@/lib/accessControl";
 
 type WorkOrder = {
   id: string;
@@ -23,6 +27,7 @@ type WorkOrder = {
   description: string | null;
   status: string | null;
   wo_value: number | string | null;
+  gst_percent: number | string | null;
   approval_status: string | null;
   approved_by_name: string | null;
   approved_by_email: string | null;
@@ -178,6 +183,21 @@ function formatCurrency(value: number | string | null) {
     currency: "INR",
     maximumFractionDigits: 0,
   }).format(amount);
+}
+
+function workOrderCommercials(wo: Pick<WorkOrder, "wo_value" | "gst_percent">) {
+  const basicValue = Number(wo.wo_value || 0);
+  const gstPercent = Number(wo.gst_percent ?? 18);
+  const safeBasic = Number.isFinite(basicValue) ? basicValue : 0;
+  const safeGstPercent = Number.isFinite(gstPercent) ? gstPercent : 0;
+  const gstAmount = (safeBasic * safeGstPercent) / 100;
+
+  return {
+    basicValue: safeBasic,
+    gstPercent: safeGstPercent,
+    gstAmount,
+    totalValue: safeBasic + gstAmount,
+  };
 }
 
 function formatDate(date: string | null) {
@@ -343,31 +363,46 @@ export default function WorkOrdersPage() {
     setLoading(true);
     setError(null);
 
-    const { data, error: loadError } = await supabase
-      .from("work_orders")
-      .select(
-        `
-          id,
-          wo_number,
-          wo_date,
-          wo_type,
-          description,
-          status,
-          wo_value,
-          approval_status,
-          approved_by_name,
-          approved_by_email,
-          approved_at,
-          company_id,
-          site_id,
-          organization_id,
-          department,
-          cost_code,
-          created_at
-        `,
-      )
-      .ilike("approval_status", "approved")
-      .order("created_at", { ascending: false });
+    const access = await getCurrentUserAccess();
+const restrictedSiteIds = hasSiteRestriction(access)
+  ? access.sites
+  : [];
+
+let workOrderQuery = supabase
+  .from("work_orders")
+  .select(
+    `
+      id,
+      wo_number,
+      wo_date,
+      wo_type,
+      description,
+      status,
+      wo_value,
+      gst_percent,
+      approval_status,
+      approved_by_name,
+      approved_by_email,
+      approved_at,
+      company_id,
+      site_id,
+      organization_id,
+      department,
+      cost_code,
+      created_at
+    `,
+  )
+  .ilike("approval_status", "approved")
+  .order("created_at", { ascending: false });
+
+if (restrictedSiteIds.length > 0) {
+  workOrderQuery = workOrderQuery.in(
+    "site_id",
+    restrictedSiteIds
+  );
+}
+
+const { data, error: loadError } = await workOrderQuery;
 
     if (loadError) {
       setError(loadError.message);
@@ -914,8 +949,8 @@ export default function WorkOrdersPage() {
                   <th className="w-[16%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Description
                   </th>
-                  <th className="w-[9%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
-                    Value
+                  <th className="w-[11%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
+                    WO Value
                   </th>
                   <th className="w-[14%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Documentation
@@ -943,6 +978,7 @@ export default function WorkOrdersPage() {
               <tbody className="divide-y divide-slate-200">
                 {sortedWorkOrders.map((wo) => {
                   const lifecycleStatus = lifecycleStatusValue(wo.status);
+                  const commercials = workOrderCommercials(wo);
 
                   return (
                   <tr key={wo.id} className="transition hover:bg-[#f6f3f5]">
@@ -956,8 +992,16 @@ export default function WorkOrdersPage() {
                     <td className="px-6 py-5 align-top text-base text-slate-700">
                       <p className="line-clamp-2 max-w-[280px] leading-6">{wo.description || "-"}</p>
                     </td>
-                    <td className="px-6 py-5 align-top text-base font-bold text-slate-950">
-                      {formatCurrency(wo.wo_value)}
+                    <td className="px-6 py-5 align-top">
+                      <div className="text-base font-bold text-slate-950">
+                        {formatCurrency(commercials.totalValue)}
+                      </div>
+                      <div className="mt-1 space-y-0.5 text-xs font-medium text-slate-500">
+                        <p>Basic: {formatCurrency(commercials.basicValue)}</p>
+                        <p>
+                          GST: {formatCurrency(commercials.gstAmount)} ({commercials.gstPercent}%)
+                        </p>
+                      </div>
                     </td>
                     <td className="px-6 py-5 align-top">
                       {wo.documents && wo.documents.length > 0 ? (

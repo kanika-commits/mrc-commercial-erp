@@ -146,9 +146,10 @@ const [documents, setDocuments] = useState<any[]>([]);
 
       const { data: paymentData, error: paymentError } = await supabase
   .from("payments")
-  .select("id, payment_number, payment_date, payment_amount, payment_mode, utr_number, status, total_payment, tds_amount, transferred_amount, reference_number, created_at")
+  .select(
+    "id, payment_number, payment_date, payment_amount, total_payment, transferred_amount, tds_amount, payment_mode, utr_number, status"
+  )
   .eq("work_order_id", workOrderId)
-  .not("approval_status", "ilike", "rejected")
   .order("payment_date", { ascending: false });
 
 if (paymentError) throw paymentError;
@@ -265,7 +266,12 @@ setDebitNotes(debitNoteData || []);
   }
 
  const totals = useMemo(() => {
-  const woValue = Number(workOrder?.wo_value || 0);
+  const woBasicValue = Number(workOrder?.wo_value || 0);
+  const gstPercent = Number(workOrder?.gst_percent ?? 18);
+  const safeWoBasicValue = Number.isFinite(woBasicValue) ? woBasicValue : 0;
+  const safeGstPercent = Number.isFinite(gstPercent) ? gstPercent : 0;
+  const woGstAmount = (safeWoBasicValue * safeGstPercent) / 100;
+  const woTotalValue = safeWoBasicValue + woGstAmount;
 
   const totalRa = raBills
     .filter((item) => String(item.approval_status || "").toLowerCase() === "approved")
@@ -287,12 +293,15 @@ setDebitNotes(debitNoteData || []);
     .reduce((sum, item) => sum + Number(item.total_amount || 0), 0);
 
   return {
-    woValue,
+    woBasicValue: safeWoBasicValue,
+    woGstAmount,
+    woTotalValue,
+    gstPercent: safeGstPercent,
     totalRa,
     totalInvoices,
     totalPayments,
     totalDebitNotes,
-    balanceWoValue: woValue - totalRa,
+    balanceWoValue: woTotalValue - totalRa,
     payableOutstanding: totalInvoices - totalPayments - totalDebitNotes,
     raMinusInvoices: totalRa - totalInvoices,
   };
@@ -305,7 +314,7 @@ const woLedgerRows = useMemo(() => {
       date: workOrder.wo_date || workOrder.created_at,
       type: "Work Order",
       reference: workOrder.wo_number,
-      amount: Number(workOrder.wo_value || 0),
+      amount: totals.woTotalValue,
       status: workOrder.approval_status || workOrder.status || "-",
     });
   }
@@ -356,7 +365,7 @@ const woLedgerRows = useMemo(() => {
     (a, b) =>
       new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime()
   );
-}, [workOrder, raBills, invoices, payments, debitNotes]);
+}, [workOrder, raBills, invoices, payments, debitNotes, totals.woTotalValue]);
 function downloadWOLedger() {
   const headers = ["Date", "Type", "Reference", "Amount", "Status"];
 
@@ -451,22 +460,27 @@ function downloadWOLedger() {
       </div>
 
       <section className="grid gap-4 md:grid-cols-4">
-        <Summary title="Work Order Value" value={money(totals.woValue)} />
+        <Summary title="WO Basic Value" value={money(totals.woBasicValue)} />
+        <Summary title="GST Amount" value={money(totals.woGstAmount)} />
+        <Summary title="Total Value of WO" value={money(totals.woTotalValue)} />
         <Summary title="Total RA Bills" value={money(totals.totalRa)} />
-        <Summary title="Total Invoices" value={money(totals.totalInvoices)} />
-        <Summary title="Total Payments" value={money(totals.totalPayments)} />
       </section>
 
       <section className="grid gap-4 md:grid-cols-4">
+        <Summary title="Total Invoices" value={money(totals.totalInvoices)} />
+        <Summary title="Total Payments" value={money(totals.totalPayments)} />
         <Summary title="RA Bills" value={String(raBills.length)} />
         <Summary title="Invoices" value={String(invoices.length)} />
+      </section>
+
+      <section className="grid gap-4 md:grid-cols-4">
         <Summary title="Payments" value={String(payments.length)} />
         <Summary title="Debit Notes" value={String(debitNotes.length)} />
+        <Summary title="Balance WO Value" value={money(totals.balanceWoValue)} />
+        <Summary title="RA Bills Minus Invoices" value={money(totals.raMinusInvoices)} />
       </section>
 
       <section className="grid gap-4 md:grid-cols-3">
-<Summary title="Balance WO Value" value={money(totals.balanceWoValue)} />
-<Summary title="RA Bills Minus Invoices" value={money(totals.raMinusInvoices)} />
 <Summary title="Payable Outstanding" value={money(totals.payableOutstanding)} />
       </section>
 
@@ -482,8 +496,10 @@ function downloadWOLedger() {
           <Info label="WO Type" value={workOrder.wo_type || "-"} />
           <Info label="Status" value={statusLabel(workOrder.status)} />
           <Info label="Approval Status" value={workOrder.approval_status || "-"} />
-          <Info label="WO Value" value={money(workOrder.wo_value)} />
-          <Info label="GST Percent" value={workOrder.gst_percent ? `${workOrder.gst_percent}%` : "-"} />
+          <Info label="WO Basic Value" value={money(totals.woBasicValue)} />
+          <Info label="GST %" value={`${totals.gstPercent}%`} />
+          <Info label="GST Amount" value={money(totals.woGstAmount)} />
+          <Info label="Total Value of WO" value={money(totals.woTotalValue)} />
           <Info label="Department" value={workOrder.department || "-"} />
           <Info label="Cost Code" value={workOrder.cost_code || "-"} />
           <Info label="Created By" value={workOrder.created_by_name || workOrder.created_by_email || "-"} />

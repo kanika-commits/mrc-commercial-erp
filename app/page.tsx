@@ -8,20 +8,21 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getCurrentUserAccess, can } from "@/lib/accessControl";
+import {
+  getCurrentUserAccess,
+  can,
+  hasSiteRestriction,
+} from "@/lib/accessControl";
 
 export default function Home() {
   const [permissions, setPermissions] = useState<any[]>([]);
 
+  const [pendingWOApprovals, setPendingWOApprovals] = useState(0);
   const [pendingRA, setPendingRA] = useState(0);
   const [pendingDebitNotes, setPendingDebitNotes] = useState(0);
   const [pendingITC, setPendingITC] = useState(0);
-  const [activeWorkOrders, setActiveWorkOrders] = useState(0);
-
-  const [, setTotalWOValue] = useState(0);
-  const [, setApprovedRAValue] = useState(0);
-  const [, setInvoiceValue] = useState(0);
-  const [, setPaymentValue] = useState(0);
+  const [pendingInvoiceApprovals, setPendingInvoiceApprovals] = useState(0);
+  const [pendingPayments] = useState(0);
 
   const [totalVendors, setTotalVendors] = useState(0);
   const [panAadhaarPending, setPanAadhaarPending] = useState(0);
@@ -38,126 +39,127 @@ export default function Home() {
     setLoading(true);
 
     try {
+      const access = await getCurrentUserAccess();
+      const restrictedSiteIds = hasSiteRestriction(access) ? access.sites : [];
+      let allowedWorkOrderIds: string[] | null = null;
+
+      if (restrictedSiteIds.length > 0) {
+        const { data: allowedWorkOrders, error: allowedWorkOrdersError } =
+          await supabase
+            .from("work_orders")
+            .select("id")
+            .in("site_id", restrictedSiteIds);
+
+        if (allowedWorkOrdersError) throw allowedWorkOrdersError;
+
+        allowedWorkOrderIds = (allowedWorkOrders || [])
+          .map((workOrder) => workOrder.id)
+          .filter(Boolean);
+      }
+
+      const applyWorkOrderScope = (query: any, column = "work_order_id") => {
+        if (allowedWorkOrderIds === null) return query;
+        if (allowedWorkOrderIds.length === 0) return null;
+        return query.in(column, allowedWorkOrderIds);
+      };
+
+      const pendingWOQuery = applyWorkOrderScope(
+        supabase
+          .from("work_orders")
+          .select("id", { count: "exact", head: true })
+          .ilike("approval_status", "pending"),
+        "id"
+      );
+      const pendingRAQuery = applyWorkOrderScope(
+        supabase
+          .from("ra_bills")
+          .select("id", { count: "exact", head: true })
+          .ilike("approval_status", "pending")
+      );
+      const pendingDebitQuery = applyWorkOrderScope(
+        supabase
+          .from("debit_notes")
+          .select("id", { count: "exact", head: true })
+          .ilike("approval_status", "pending")
+      );
+      const pendingITCQuery = applyWorkOrderScope(
+        supabase
+          .from("invoices")
+          .select("id", { count: "exact", head: true })
+          .or("itc_status.is.null,itc_status.ilike.pending")
+      );
+      const pendingInvoiceApprovalQuery = applyWorkOrderScope(
+        supabase
+          .from("invoices")
+          .select("id", { count: "exact", head: true })
+          .ilike("approval_status", "pending")
+      );
+
       const [
-        access,
+        pendingWORes,
         pendingRARes,
         pendingDebitRes,
         pendingITCRes,
-        activeWORes,
+        pendingInvoiceApprovalRes,
         vendorCountRes,
         panCountRes,
         blockedCountRes,
         inactiveCountRes,
-        woValueRes,
-        approvedRARes,
-        invoiceValueRes,
-        paymentValueRes,
       ] = await Promise.all([
-        getCurrentUserAccess(),
-
-        supabase
-          .from("ra_bills")
-          .select("*", { count: "exact", head: true })
-          .in("approval_status", ["pending", "Pending"]),
-
-        supabase
-          .from("debit_notes")
-          .select("*", { count: "exact", head: true })
-          .in("approval_status", ["pending", "Pending"]),
-
-       supabase
-  .from("invoices")
-  .select("*", { count: "exact", head: true })
-  .is("itc_status", null),
-
-        supabase
-          .from("work_orders")
-          .select("*", { count: "exact", head: true })
-          .eq("status", "active"),
-
-        supabase
-  .from("vendors")
-  .select("*", { count: "exact", head: true })
-  .neq("status", "deleted"),
-
-     supabase
-  .from("vendors")
-  .select("*", { count: "exact", head: true })
-  .neq("status", "deleted")
-  .neq("pan_aadhaar_link_status", "Yes"),
+        pendingWOQuery || Promise.resolve({ count: 0, error: null }),
+        pendingRAQuery || Promise.resolve({ count: 0, error: null }),
+        pendingDebitQuery || Promise.resolve({ count: 0, error: null }),
+        pendingITCQuery || Promise.resolve({ count: 0, error: null }),
+        pendingInvoiceApprovalQuery || Promise.resolve({ count: 0, error: null }),
 
         supabase
           .from("vendors")
-          .select("*", { count: "exact", head: true })
+          .select("id", { count: "exact", head: true })
+          .neq("status", "deleted"),
+
+        supabase
+          .from("vendors")
+          .select("id", { count: "exact", head: true })
+          .neq("status", "deleted")
+          .neq("pan_aadhaar_link_status", "Yes"),
+
+        supabase
+          .from("vendors")
+          .select("id", { count: "exact", head: true })
           .eq("status", "blocked"),
 
         supabase
           .from("vendors")
-          .select("*", { count: "exact", head: true })
+          .select("id", { count: "exact", head: true })
           .eq("status", "inactive"),
-
-       supabase
-  .from("work_orders")
-  .select("wo_value")
-  .eq("status", "active"),
-
-supabase
-  .from("ra_bills")
-  .select("net_amount, approval_status")
-  .eq("status", "active")
-  .in("approval_status", ["approved", "Approved"]),
-
-        supabase
-  .from("invoices")
-  .select("invoice_amount")
-  .eq("status", "active"),
-
-        supabase
-  .from("payments")
-  .select("transferred_amount, payment_amount")
-  .eq("status", "active"),
       ]);
+
+      for (const result of [
+        pendingWORes,
+        pendingRARes,
+        pendingDebitRes,
+        pendingITCRes,
+        pendingInvoiceApprovalRes,
+        vendorCountRes,
+        panCountRes,
+        blockedCountRes,
+        inactiveCountRes,
+      ]) {
+        if (result.error) throw result.error;
+      }
 
       setPermissions(access.permissions || []);
 
+      setPendingWOApprovals(pendingWORes.count || 0);
       setPendingRA(pendingRARes.count || 0);
       setPendingDebitNotes(pendingDebitRes.count || 0);
       setPendingITC(pendingITCRes.count || 0);
-      setActiveWorkOrders(activeWORes.count || 0);
+      setPendingInvoiceApprovals(pendingInvoiceApprovalRes.count || 0);
 
       setTotalVendors(vendorCountRes.count || 0);
       setPanAadhaarPending(panCountRes.count || 0);
       setBlockedVendors(blockedCountRes.count || 0);
       setInactiveVendors(inactiveCountRes.count || 0);
-
-      setTotalWOValue(
-        (woValueRes.data || []).reduce(
-          (sum: number, item: any) => sum + Number(item.wo_value || 0),
-          0
-        )
-      );
-
-      setApprovedRAValue(
-        (approvedRARes.data || []).reduce(
-          (sum: number, item: any) => sum + Number(item.net_amount || 0),
-          0
-        )
-      );
-
-      setInvoiceValue(
-        (invoiceValueRes.data || []).reduce(
-          (sum: number, item: any) => sum + Number(item.invoice_amount || 0),
-          0
-        )
-      );
-
-      setPaymentValue(
-        (paymentValueRes.data || []).reduce(
-          (sum: number, item: any) =>
-            sum + Number(item.transferred_amount || item.payment_amount || 0),
-          0
-        )
-      );
     } catch (error) {
       console.error("Dashboard load failed:", error);
     } finally {
@@ -174,20 +176,21 @@ supabase
 
   const metricCards: MetricCardData[] = [
     {
-      label: "Pending RA Bills",
+      label: "Pending Work Order Approvals",
+      value: String(pendingWOApprovals),
+      href: "/approvals/work-orders",
+      accent: "ink",
+      status: "Review",
+    },
+    {
+      label: "Pending RA Bill Approvals",
       value: String(pendingRA),
       href: "/approvals",
       accent: "teal",
       status: "In Progress",
     },
     {
-      label: "Active Work Orders",
-      value: String(activeWorkOrders),
-      href: "/work-orders",
-      accent: "ink",
-    },
-    {
-      label: "Pending Debit Notes",
+      label: "Pending Debit Note Approvals",
       value: String(pendingDebitNotes),
       href: "/approvals",
       accent: "ink",
@@ -199,14 +202,27 @@ supabase
       accent: "teal",
     },
     {
-      label: "Blocked Vendors",
-      value: String(blockedVendors),
-      href: "/vendors",
+      label: "Pending Invoice Approval",
+      value: String(pendingInvoiceApprovals),
+      href: "/invoices",
       accent: "ink",
+    },
+    {
+      label: "Pending Payments",
+      value: String(pendingPayments),
+      href: "/payments",
+      accent: "teal",
     },
   ];
 
   const approvalRows = [
+    {
+      id: "WO Queue",
+      subtitle: "Work Order Approvals",
+      type: "WO",
+      value: String(pendingWOApprovals),
+      href: "/approvals/work-orders",
+    },
     {
       id: "RA Queue",
       subtitle: "Running Account Bills",
@@ -230,10 +246,10 @@ supabase
     },
     {
       id: "Work Orders",
-      subtitle: "Active Contracts",
-      type: "WO",
-      value: String(activeWorkOrders),
-      href: "/work-orders",
+      subtitle: "Invoice Approval",
+      type: "Invoice",
+      value: String(pendingInvoiceApprovals),
+      href: "/invoices",
     },
   ];
 

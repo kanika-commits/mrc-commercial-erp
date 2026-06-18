@@ -210,6 +210,8 @@ export async function POST(request: Request) {
     const woNumber = String(formData.get("wo_number") || "").trim();
     const woDate = String(formData.get("wo_date") || "").trim();
     const woType = String(formData.get("wo_type") || "").trim();
+    const woValue = Number(formData.get("wo_value") || 0);
+    const gstPercent = Number(formData.get("gst_percent") || 0);
     const description = String(formData.get("description") || "").trim();
     const vendorId = String(formData.get("primary_vendor_id") || "").trim();
     const vendorRole = String(formData.get("primary_vendor_role") || "").trim();
@@ -243,6 +245,20 @@ export async function POST(request: Request) {
     if (!woType) {
       return NextResponse.json(
         { error: "WO Type is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!Number.isFinite(woValue) || woValue <= 0) {
+      return NextResponse.json(
+        { error: "WO Basic Value is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!Number.isFinite(gstPercent) || gstPercent < 0) {
+      return NextResponse.json(
+        { error: "GST % is required." },
         { status: 400 }
       );
     }
@@ -369,6 +385,8 @@ export async function POST(request: Request) {
           wo_number: woNumber,
           wo_date: woDate,
           wo_type: woType,
+          wo_value: woValue,
+          gst_percent: gstPercent,
           description: description || null,
           status: "active",
           approval_status: "pending",

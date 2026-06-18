@@ -8,6 +8,10 @@ import { sortCompanies } from "@/lib/companyOrdering";
 
 const actions = ["view", "add", "edit", "delete", "approve", "reject", "upload", "export"];
 
+function availableActionsForModule(moduleCode: string) {
+  return moduleCode === "dashboard" ? ["view"] : actions;
+}
+
 export default function UserAccessPage() {
   const params = useParams();
   const userId = params.id as string;
@@ -197,7 +201,7 @@ export default function UserAccessPage() {
   function setRow(moduleCode: string, allowed: boolean) {
     setPermissionMap((prev) => {
       const next = { ...prev };
-      actions.forEach((action) => {
+      availableActionsForModule(moduleCode).forEach((action) => {
         next[key(moduleCode, action)] = allowed;
       });
       return next;
@@ -208,7 +212,7 @@ export default function UserAccessPage() {
     setPermissionMap((prev) => {
       const next = { ...prev };
       (groupedModules[groupName] || []).forEach((module) => {
-        actions.forEach((action) => {
+        availableActionsForModule(module.module_code).forEach((action) => {
           next[key(module.module_code, action)] = allowed;
         });
       });
@@ -220,7 +224,7 @@ export default function UserAccessPage() {
     setPermissionMap((prev) => {
       const next = { ...prev };
       modules.forEach((module) => {
-        actions.forEach((action) => {
+        availableActionsForModule(module.module_code).forEach((action) => {
           next[key(module.module_code, action)] = allowed;
         });
       });
@@ -229,7 +233,9 @@ export default function UserAccessPage() {
   }
 
   function rowChecked(moduleCode: string) {
-    return actions.every((action) => isAllowed(moduleCode, action));
+    return availableActionsForModule(moduleCode).every((action) =>
+      isAllowed(moduleCode, action)
+    );
   }
 
   async function saveAccess() {
@@ -250,17 +256,17 @@ export default function UserAccessPage() {
       const permissionRows: any[] = [];
 
       modules.forEach((module) => {
-  actions.forEach((action) => {
-    if (isAllowed(module.module_code, action)) {
-      permissionRows.push({
-        user_id: userId,
-        module_code: module.module_code,
-        action_code: action,
-        allowed: true,
+        availableActionsForModule(module.module_code).forEach((action) => {
+          if (isAllowed(module.module_code, action)) {
+            permissionRows.push({
+              user_id: userId,
+              module_code: module.module_code,
+              action_code: action,
+              allowed: true,
+            });
+          }
+        });
       });
-    }
-  });
-});
 
       const response = await fetch(`/api/admin/users/${userId}`, {
         method: "PUT",
@@ -545,31 +551,39 @@ export default function UserAccessPage() {
                 </thead>
 
                 <tbody>
-                  {items.map((module: any) => (
-                    <tr key={module.id} className="border-t">
-                      <td className="p-2 font-medium">{module.module_name}</td>
+                  {items.map((module: any) => {
+                    const availableActions = availableActionsForModule(module.module_code);
 
-                      <td className="p-2 text-center">
-                        <input
-                          type="checkbox"
-                          checked={rowChecked(module.module_code)}
-                          onChange={(e) => setRow(module.module_code, e.target.checked)}
-                        />
-                      </td>
+                    return (
+                      <tr key={module.id} className="border-t">
+                        <td className="p-2 font-medium">{module.module_name}</td>
 
-                      {actions.map((action) => (
-                        <td key={action} className="p-2 text-center">
+                        <td className="p-2 text-center">
                           <input
                             type="checkbox"
-                            checked={isAllowed(module.module_code, action)}
-                            onChange={(e) =>
-                              setPermission(module.module_code, action, e.target.checked)
-                            }
+                            checked={rowChecked(module.module_code)}
+                            onChange={(e) => setRow(module.module_code, e.target.checked)}
                           />
                         </td>
-                      ))}
-                    </tr>
-                  ))}
+
+                        {actions.map((action) => (
+                          <td key={action} className="p-2 text-center">
+                            {availableActions.includes(action) ? (
+                              <input
+                                type="checkbox"
+                                checked={isAllowed(module.module_code, action)}
+                                onChange={(e) =>
+                                  setPermission(module.module_code, action, e.target.checked)
+                                }
+                              />
+                            ) : (
+                              <span className="text-slate-300">-</span>
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
