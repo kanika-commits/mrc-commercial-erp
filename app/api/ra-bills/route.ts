@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { optimizeUploadFile } from "@/lib/fileOptimization";
 
 
 const DOCUMENT_BUCKET = "ra-bill-documents";
@@ -39,17 +40,12 @@ async function requireUser(request: Request) {
   return { user };
 }
 
-function safeFileName(name: string) {
-  return name.replace(/[^a-zA-Z0-9.]/g, "_");
-}
-
-async function fileToBase64(file: File) {
-  const buffer = Buffer.from(await file.arrayBuffer());
-  return buffer.toString("base64");
-}
-
 function normalized(value: string) {
   return value.trim().toLowerCase();
+}
+
+function safeFileName(fileName: string) {
+  return fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
 function duplicateErrorMessage(error: any) {
@@ -168,21 +164,6 @@ export async function POST(request: Request) {
       );
     }
 
-    const { data: driveFolder, error: driveFolderLoadError } = await admin
-      .from("work_order_drive_folders")
-      .select("ra_bills_folder_id")
-      .eq("work_order_id", workOrderId)
-      .maybeSingle();
-
-    if (driveFolderLoadError) throw driveFolderLoadError;
-
-    if (!driveFolder?.ra_bills_folder_id) {
-      return NextResponse.json(
-        { error: "Work Order Google Drive RA Bills folder was not found." },
-        { status: 400 }
-      );
-    }
-
     const { data: vendorLink, error: vendorLinkError } = await admin
       .from("work_order_vendors")
       .select("id")
@@ -227,6 +208,7 @@ export async function POST(request: Request) {
       "Platform Owner";
 
     let raBillId = "";
+    const uploadedPaths: string[] = [];
 
     try {
       const { data: raBill, error: raBillError } = await admin
@@ -257,39 +239,44 @@ export async function POST(request: Request) {
       raBillId = raBill.id;
 
       for (const file of files) {
-  const safeName = safeFileName(file.name);
-  const filePath = `${workOrder.organization_id}/${raBill.id}/${Date.now()}-${safeName}`;
+        const fileBuffer = Buffer.from(await file.arrayBuffer());
+        const optimizedFile = await optimizeUploadFile(
+          fileBuffer,
+          file.type || "application/octet-stream",
+          file.name
+        );
+        const storagePath = `${workOrder.organization_id}/pending/${raBill.id}/${Date.now()}-${safeFileName(
+          file.name
+        )}`;
 
-  const { error: uploadError } = await admin.storage
-    .from(DOCUMENT_BUCKET)
-    .upload(filePath, file, {
-      contentType: file.type || "application/octet-stream",
-      upsert: false,
-    });
+        const { error: uploadError } = await admin.storage
+          .from(DOCUMENT_BUCKET)
+          .upload(storagePath, optimizedFile.buffer, {
+            contentType: optimizedFile.mimeType || "application/octet-stream",
+            upsert: false,
+          });
 
-  if (uploadError) throw uploadError;
+        if (uploadError) throw uploadError;
 
-  const {
-    data: { publicUrl },
-  } = admin.storage.from(DOCUMENT_BUCKET).getPublicUrl(filePath);
+        uploadedPaths.push(storagePath);
 
-  const { error: documentError } = await admin
-    .from("ra_bill_documents")
-    .insert({
-      organization_id: workOrder.organization_id,
-      ra_bill_id: raBill.id,
-      file_name: file.name,
-      file_url: publicUrl,
-      file_path: filePath,
-      uploaded_at: new Date().toISOString(),
-    });
+        const { error: documentError } = await admin
+          .from("ra_bill_documents")
+          .insert({
+            organization_id: workOrder.organization_id,
+            ra_bill_id: raBill.id,
+            file_name: file.name,
+            file_url: storagePath,
+            file_path: storagePath,
+            uploaded_at: new Date().toISOString(),
+          });
 
-  if (documentError) throw documentError;
-}
+        if (documentError) throw documentError;
+      }
 
       return NextResponse.json({ id: raBill.id });
     } catch (error) {
-      await cleanupRABill(admin, raBillId);
+      await cleanupRABill(admin, raBillId, uploadedPaths);
       throw error;
     }
   } catch (error: any) {

@@ -42,6 +42,8 @@ function statusClass(value?: string | null) {
   return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
+const PAGE_SIZE = 50;
+
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [workOrders, setWorkOrders] = useState<any[]>([]);
@@ -54,6 +56,7 @@ export default function InvoicesPage() {
   const [deleteInvoice, setDeleteInvoice] = useState<any | null>(null);
   const [deletionReason, setDeletionReason] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [activePage, setActivePage] = useState(1);
 
 
   useEffect(() => {
@@ -262,6 +265,25 @@ export default function InvoicesPage() {
       String(invoice.approval_status || "").toLowerCase() === "rejected"
   );
 
+  const activeTotalPages = Math.max(1, Math.ceil(activeInvoices.length / PAGE_SIZE));
+  const currentActivePage = Math.min(activePage, activeTotalPages);
+  const activeStartIndex = (currentActivePage - 1) * PAGE_SIZE;
+  const activeEndIndex = Math.min(
+    activeStartIndex + PAGE_SIZE,
+    activeInvoices.length
+  );
+  const paginatedActiveInvoices = activeInvoices.slice(
+    activeStartIndex,
+    activeEndIndex
+  );
+  const activeRangeStart = activeInvoices.length === 0 ? 0 : activeStartIndex + 1;
+
+  useEffect(() => {
+    if (activePage > activeTotalPages) {
+      setActivePage(activeTotalPages);
+    }
+  }, [activePage, activeTotalPages]);
+
   const totalInvoices = activeInvoices.length;
 
   const pendingITC = activeInvoices.filter(
@@ -364,7 +386,7 @@ export default function InvoicesPage() {
             </thead>
 
             <tbody>
-              {activeInvoices.map((invoice: any) => {
+              {paginatedActiveInvoices.map((invoice: any) => {
                 const wo = maps.woMap.get(invoice.work_order_id);
                 const vendor = maps.vendorMap.get(invoice.vendor_id);
                 const itcStatus = invoice.itc_status || "Pending";
@@ -495,6 +517,32 @@ export default function InvoicesPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          <div>
+            Showing {activeRangeStart}–{activeEndIndex} of {activeInvoices.length}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setActivePage((page) => Math.max(1, page - 1))}
+              disabled={currentActivePage <= 1}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setActivePage((page) => Math.min(activeTotalPages, page + 1))
+              }
+              disabled={currentActivePage >= activeTotalPages}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
 

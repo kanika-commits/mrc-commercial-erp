@@ -11,11 +11,16 @@ import {
   Home,
   LayoutGrid,
   RefreshCcw,
-  Search,
   Settings,
 } from "lucide-react";
 import UserHeader from "@/components/UserHeader";
-import { can, getCurrentUserAccess, type UserPermission } from "@/lib/accessControl";
+import { supabase } from "@/lib/supabase";
+import {
+  can,
+  getCurrentUserAccess,
+  hasSiteRestriction,
+  type UserPermission,
+} from "@/lib/accessControl";
 
 const sidebarItems = [
   { label: "Dashboard", href: "/", icon: Home, groupCode: "dashboard" },
@@ -26,11 +31,43 @@ const sidebarItems = [
   { label: "Administration", href: "/modules/administration", icon: Settings, groupCode: "administration" },
 ];
 
+const notificationLinks = [
+  {
+    label: "Pending Work Orders",
+    key: "pendingWorkOrders",
+    href: "/approvals/work-orders",
+  },
+  {
+    label: "Pending RA Bills",
+    key: "pendingRaBills",
+    href: "/approvals",
+  },
+  {
+    label: "Pending Debit Notes",
+    key: "pendingDebitNotes",
+    href: "/approvals",
+  },
+  {
+    label: "Pending ITC Review",
+    key: "pendingItcReview",
+    href: "/invoices/itc",
+  },
+] as const;
+
+type NotificationCounts = Record<(typeof notificationLinks)[number]["key"], number>;
+
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [visibleGroupCodes, setVisibleGroupCodes] = useState<Set<string>>(new Set());
   const [permissions, setPermissions] = useState<UserPermission[]>([]);
   const [roleCodes, setRoleCodes] = useState<string[]>([]);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationCounts, setNotificationCounts] = useState<NotificationCounts>({
+    pendingWorkOrders: 0,
+    pendingRaBills: 0,
+    pendingDebitNotes: 0,
+    pendingItcReview: 0,
+  });
 
   useEffect(() => {
     async function loadNavigationAccess() {
@@ -41,6 +78,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       setPermissions(access.permissions || []);
       setRoleCodes(access.roleCodes || []);
+      loadNotificationCounts(access);
 
       if (!navigationResponse.ok) {
         setVisibleGroupCodes(new Set());
@@ -63,6 +101,92 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     loadNavigationAccess();
   }, []);
 
+  useEffect(() => {
+    setNotificationsOpen(false);
+  }, [pathname]);
+
+  async function loadNotificationCounts(access: Awaited<ReturnType<typeof getCurrentUserAccess>>) {
+    try {
+      const restrictedSiteIds = hasSiteRestriction(access) ? access.sites : [];
+      let allowedWorkOrderIds: string[] | null = null;
+
+      if (restrictedSiteIds.length > 0) {
+        const { data: allowedWorkOrders, error } = await supabase
+          .from("work_orders")
+          .select("id")
+          .in("site_id", restrictedSiteIds);
+
+        if (error) throw error;
+
+        allowedWorkOrderIds = (allowedWorkOrders || [])
+          .map((workOrder) => workOrder.id)
+          .filter(Boolean);
+      }
+
+      const applyWorkOrderScope = (query: any, column = "work_order_id") => {
+        if (allowedWorkOrderIds === null) return query;
+        if (allowedWorkOrderIds.length === 0) return null;
+        return query.in(column, allowedWorkOrderIds);
+      };
+
+      const pendingWorkOrdersQuery = applyWorkOrderScope(
+        supabase
+          .from("work_orders")
+          .select("id", { count: "exact", head: true })
+          .ilike("approval_status", "pending"),
+        "id",
+      );
+      const pendingRaBillsQuery = applyWorkOrderScope(
+        supabase
+          .from("ra_bills")
+          .select("id", { count: "exact", head: true })
+          .ilike("approval_status", "pending"),
+      );
+      const pendingDebitNotesQuery = applyWorkOrderScope(
+        supabase
+          .from("debit_notes")
+          .select("id", { count: "exact", head: true })
+          .ilike("approval_status", "pending"),
+      );
+      const pendingItcQuery = applyWorkOrderScope(
+        supabase
+          .from("invoices")
+          .select("id", { count: "exact", head: true })
+          .or("itc_status.is.null,itc_status.ilike.pending"),
+      );
+
+      const [
+        pendingWorkOrders,
+        pendingRaBills,
+        pendingDebitNotes,
+        pendingItcReview,
+      ] = await Promise.all([
+        pendingWorkOrdersQuery || Promise.resolve({ count: 0, error: null }),
+        pendingRaBillsQuery || Promise.resolve({ count: 0, error: null }),
+        pendingDebitNotesQuery || Promise.resolve({ count: 0, error: null }),
+        pendingItcQuery || Promise.resolve({ count: 0, error: null }),
+      ]);
+
+      for (const result of [
+        pendingWorkOrders,
+        pendingRaBills,
+        pendingDebitNotes,
+        pendingItcReview,
+      ]) {
+        if (result.error) throw result.error;
+      }
+
+      setNotificationCounts({
+        pendingWorkOrders: pendingWorkOrders.count || 0,
+        pendingRaBills: pendingRaBills.count || 0,
+        pendingDebitNotes: pendingDebitNotes.count || 0,
+        pendingItcReview: pendingItcReview.count || 0,
+      });
+    } catch (error) {
+      console.error("Notification count load failed:", error);
+    }
+  }
+
   const visibleSidebarItems = sidebarItems.filter((item) => {
     if (item.superOnly) {
       return (
@@ -77,6 +201,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     if (!item.groupCode) return true;
     return visibleGroupCodes.has(item.groupCode);
   });
+  const totalNotifications = Object.values(notificationCounts).reduce(
+    (sum, value) => sum + value,
+    0,
+  );
 
   return (
     <div className="min-h-screen bg-[#f3f6f8]">
@@ -140,30 +268,70 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       <main className="min-h-screen pl-[224px]">
         <header className="sticky top-0 z-30 border-b border-[#d7dde3] bg-[#fbf9fa] px-10 py-4">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="relative w-full max-w-sm">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-              <input
-                className="h-11 w-full rounded-xl border-0 bg-white px-11 text-sm font-semibold text-slate-700 shadow-sm outline-none ring-1 ring-black/5 placeholder:text-slate-500 focus:ring-[#04779e]"
-                placeholder="Search projects..."
-              />
-            </div>
-
-            <div className="flex items-center gap-7 text-sm font-bold text-slate-700">
-              {visibleGroupCodes.has("master_setup") && (
-                <Link href="/modules/master-setup">Directory</Link>
-              )}
-              {visibleGroupCodes.has("reports") && (
-                <Link href="/modules/reports">Reports</Link>
-              )}
-              {can(permissions, "approvals", "view") && (
-                <Link href="/approvals">Archives</Link>
-              )}
-            </div>
-
+          <div className="flex flex-wrap items-center justify-end gap-4">
             <div className="flex items-center gap-5">
-              <Bell className="h-5 w-5 text-slate-700" />
-              <RefreshCcw className="h-5 w-5 text-slate-700" />
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setNotificationsOpen((open) => !open)}
+                  className="relative flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 transition hover:bg-slate-100"
+                  aria-label="Notifications"
+                  aria-expanded={notificationsOpen}
+                >
+                  <Bell className="h-5 w-5" />
+                  {totalNotifications > 0 && (
+                    <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold leading-4 text-white">
+                      {totalNotifications}
+                    </span>
+                  )}
+                </button>
+
+                {notificationsOpen && (
+                  <div className="absolute right-0 top-11 z-50 w-80 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
+                    <div className="border-b border-slate-100 px-2 pb-2">
+                      <p className="text-sm font-bold text-slate-950">
+                        Notifications
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        Pending workflow alerts
+                      </p>
+                    </div>
+
+                    {totalNotifications === 0 ? (
+                      <div className="px-2 py-4 text-sm text-slate-500">
+                        No pending alerts
+                      </div>
+                    ) : (
+                      <div className="mt-2 space-y-1">
+                        {notificationLinks
+                          .filter((item) => notificationCounts[item.key] > 0)
+                          .map((item) => (
+                            <Link
+                              key={item.key}
+                              href={item.href}
+                              className="flex items-center justify-between rounded-lg px-2 py-2 text-sm transition hover:bg-slate-50"
+                            >
+                              <span className="font-medium text-slate-700">
+                                {item.label}
+                              </span>
+                              <span className="rounded-full bg-slate-900 px-2 py-0.5 text-xs font-bold text-white">
+                                {notificationCounts[item.key]}
+                              </span>
+                            </Link>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 transition hover:bg-slate-100"
+                aria-label="Refresh"
+              >
+                <RefreshCcw className="h-5 w-5" />
+              </button>
               <div className="hidden h-8 w-px bg-slate-300 md:block" />
               <UserHeader />
             </div>

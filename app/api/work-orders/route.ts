@@ -4,6 +4,7 @@ import {
   insertDeleteAudit,
   requireDeletePermission,
 } from "@/lib/serverDeleteAudit";
+import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { createWorkOrderDriveFolder } from "@/src/lib/googleDrive";
 
 const MODULE_CODE = "work_orders";
@@ -48,9 +49,18 @@ function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
-async function fileToBase64(file: File) {
+async function fileToOptimizedDrivePayload(file: File) {
   const buffer = Buffer.from(await file.arrayBuffer());
-  return buffer.toString("base64");
+  const optimized = await optimizeUploadFile(
+    buffer,
+    file.type || "application/octet-stream",
+    file.name,
+  );
+  return {
+    fileName: optimized.fileName,
+    mimeType: optimized.mimeType,
+    base64: optimized.buffer.toString("base64"),
+  };
 }
 
 async function readDeletionReason(request: Request) {
@@ -434,11 +444,8 @@ export async function POST(request: Request) {
         throw new Error("Work Order vendor link could not be verified.");
       }
 
-      const driveFolder = await createWorkOrderDriveFolder(woNumber, {
-        fileName: file.name,
-        mimeType: file.type || "application/pdf",
-        base64: await fileToBase64(file),
-      });
+      const optimizedFile = await fileToOptimizedDrivePayload(file);
+      const driveFolder = await createWorkOrderDriveFolder(woNumber, optimizedFile);
 
       if (!driveFolder.work_order_file_id || !driveFolder.work_order_file_url) {
         throw new Error("Google Drive Work Order file was not created.");

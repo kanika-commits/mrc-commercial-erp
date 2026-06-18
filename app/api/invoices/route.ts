@@ -4,6 +4,8 @@ import {
   insertDeleteAudit,
   requireDeletePermission,
 } from "@/lib/serverDeleteAudit";
+import { optimizeUploadFile } from "@/lib/fileOptimization";
+import { uploadDriveFile } from "@/src/lib/googleDrive";
 
 const DOCUMENT_BUCKET = "invoice-documents";
 const MODULE_CODE = "invoices";
@@ -81,6 +83,59 @@ function normalizeStoragePath(value: string | null) {
   }
 
   return raw;
+}
+
+function isGoogleDriveUrl(value: string | null | undefined) {
+  const url = String(value || "").trim();
+  return (
+    url.startsWith("https://drive.google.com/") ||
+    url.startsWith("https://docs.google.com/")
+  );
+}
+
+function documentStoragePath(document: any) {
+  const filePath = String(document?.file_path || "").trim();
+  const fileUrl = String(document?.file_url || "").trim();
+
+  if (isGoogleDriveUrl(fileUrl) || isGoogleDriveUrl(filePath)) {
+    return "";
+  }
+
+  return normalizeStoragePath(filePath || fileUrl);
+}
+
+function mimeTypeFromFileName(fileName: string) {
+  const extension = fileName.split(".").pop()?.toLowerCase();
+
+  switch (extension) {
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "png":
+      return "image/png";
+    case "pdf":
+      return "application/pdf";
+    case "xlsx":
+      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    case "xls":
+      return "application/vnd.ms-excel";
+    case "docx":
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case "doc":
+      return "application/msword";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+async function readApprovalAction(request: Request) {
+  const body = await request.json().catch(() => ({}));
+  const action = String(body.action || body.approval_status || "").trim();
+  const rejectionReason = String(
+    body.rejection_reason || body.rejectionReason || ""
+  ).trim();
+
+  return { action, rejectionReason };
 }
 
 async function readDeletionReason(request: Request) {
@@ -329,13 +384,22 @@ export async function POST(request: Request) {
 
       invoiceId = invoice.id;
 
-      const filePath = `${workOrder.organization_id}/invoices/${
-        invoice.id
-      }/${Date.now()}_${safeFileName(file.name)}`;
+      const fileBuffer = Buffer.from(await file.arrayBuffer());
+      const optimizedFile = await optimizeUploadFile(
+        fileBuffer,
+        file.type || "application/octet-stream",
+        file.name
+      );
+      const filePath = `${workOrder.organization_id}/pending/${invoice.id}/${Date.now()}-${safeFileName(
+        file.name
+      )}`;
 
       const { error: uploadError } = await admin.storage
         .from(DOCUMENT_BUCKET)
-        .upload(filePath, file, { upsert: false });
+        .upload(filePath, optimizedFile.buffer, {
+          contentType: optimizedFile.mimeType || "application/octet-stream",
+          upsert: false,
+        });
 
       if (uploadError) throw uploadError;
 
@@ -348,6 +412,7 @@ export async function POST(request: Request) {
           invoice_id: invoice.id,
           file_name: file.name,
           file_url: filePath,
+          file_path: filePath,
         });
 
       if (documentError) throw documentError;
@@ -369,6 +434,246 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
+}
+
+export async function PATCH(request: Request) {
+  const fail = (message: string, status = 500, details?: any) => {
+    if (details) {
+      console.error("[Invoice APPROVAL]", message, details);
+    }
+
+    return NextResponse.json({ error: message, details }, { status });
+  };
+
+  const auth = await requireUser(request).catch((error) => ({
+    error,
+    status: 401,
+  }));
+
+  if ("error" in auth) {
+    return fail(auth.error?.message || String(auth.error), auth.status);
+  }
+
+  const { searchParams } = new URL(request.url);
+  const invoiceId = searchParams.get("invoice_id")?.trim() || "";
+
+  if (!invoiceId) {
+    return fail("invoice_id is required.", 400);
+  }
+
+  const { action, rejectionReason } = await readApprovalAction(request);
+  const normalizedAction = action.toLowerCase();
+
+  if (!["approved", "rejected"].includes(normalizedAction)) {
+    return fail("Approval action must be Approved or Rejected.", 400);
+  }
+
+  if (normalizedAction === "rejected" && !rejectionReason) {
+    return fail("Reason is required for Reject.", 400);
+  }
+
+  const admin = adminClient();
+  const { data: invoice, error: invoiceError } = await admin
+    .from("invoices")
+    .select("*")
+    .eq("id", invoiceId)
+    .maybeSingle();
+
+  if (invoiceError) {
+    return fail("Failed to load invoice.", 500, invoiceError);
+  }
+
+  if (!invoice) {
+    return fail("Invoice was not found.", 404);
+  }
+
+  const { data: documents, error: documentsError } = await admin
+    .from("invoice_documents")
+    .select("*")
+    .eq("invoice_id", invoiceId);
+
+  if (documentsError) {
+    return fail("Failed to load invoice documents.", 500, documentsError);
+  }
+
+  const userEmail = auth.user.email || "";
+  const userName =
+    auth.user.user_metadata?.full_name ||
+    auth.user.user_metadata?.name ||
+    userEmail ||
+    "HO User";
+  const now = new Date().toISOString();
+
+  if (normalizedAction === "approved") {
+    const { data: driveFolder, error: driveFolderError } = await admin
+      .from("work_order_drive_folders")
+      .select("invoices_folder_id")
+      .eq("work_order_id", invoice.work_order_id)
+      .maybeSingle();
+
+    if (driveFolderError) {
+      return fail("Failed to load Work Order Drive folder.", 500, driveFolderError);
+    }
+
+    if (!driveFolder?.invoices_folder_id) {
+      return fail("Work Order Google Drive Invoices folder was not found.", 400);
+    }
+
+    for (const document of documents || []) {
+      if (isGoogleDriveUrl(document.file_url)) {
+        continue;
+      }
+
+      const tempPath = documentStoragePath(document);
+
+      if (!tempPath) {
+        return fail(
+          `Temporary file path was not found for ${document.file_name || "attachment"}.`,
+          400
+        );
+      }
+
+      const { data: fileBlob, error: downloadError } = await admin.storage
+        .from(DOCUMENT_BUCKET)
+        .download(tempPath);
+
+      if (downloadError || !fileBlob) {
+        return fail("Failed to read temporary invoice attachment.", 500, downloadError);
+      }
+
+      const fileBuffer = Buffer.from(await fileBlob.arrayBuffer());
+      const fileName = document.file_name || "invoice-attachment";
+      const optimizedFile = await optimizeUploadFile(
+        fileBuffer,
+        mimeTypeFromFileName(fileName),
+        fileName
+      );
+      const driveFile = await uploadDriveFile({
+        targetFolderId: driveFolder.invoices_folder_id,
+        fileName,
+        mimeType: optimizedFile.mimeType || mimeTypeFromFileName(fileName),
+        base64: optimizedFile.buffer.toString("base64"),
+      });
+
+      const { error: documentUpdateError } = await admin
+        .from("invoice_documents")
+        .update({
+          file_name: driveFile.file_name || fileName,
+          file_url: driveFile.file_url,
+          file_path: driveFile.file_id,
+        })
+        .eq("id", document.id);
+
+      if (documentUpdateError) {
+        return fail(
+          "Failed to update invoice document after Google Drive upload.",
+          500,
+          documentUpdateError
+        );
+      }
+
+      const { error: storageDeleteError } = await admin.storage
+        .from(DOCUMENT_BUCKET)
+        .remove([tempPath]);
+
+      if (storageDeleteError) {
+        return fail(
+          "Failed to delete temporary invoice attachment after Google Drive upload.",
+          500,
+          storageDeleteError
+        );
+      }
+    }
+
+    const { error: approvalError } = await admin
+      .from("invoices")
+      .update({
+        approval_status: "Approved",
+        status: "Approved",
+        approved_by_name: userName,
+        approved_by_email: userEmail,
+        approved_at: now,
+      })
+      .eq("id", invoiceId);
+
+    if (approvalError) {
+      return fail("Failed to approve invoice.", 500, approvalError);
+    }
+
+    return NextResponse.json({ approved: true });
+  }
+
+  const tempPaths = Array.from(
+    new Set((documents || []).map(documentStoragePath).filter(Boolean))
+  );
+  const driveDocuments = (documents || []).filter((document) =>
+    isGoogleDriveUrl(document.file_url)
+  );
+
+  const { error: rejectionUpdateError } = await admin
+    .from("invoices")
+    .update({
+      approval_status: "Rejected",
+      status: "Rejected",
+      rejected_by_name: userName,
+      rejected_by_email: userEmail,
+      rejected_at: now,
+      rejection_reason: rejectionReason,
+    })
+    .eq("id", invoiceId);
+
+  if (rejectionUpdateError) {
+    return fail("Failed to save invoice rejection reason.", 500, rejectionUpdateError);
+  }
+
+  if (tempPaths.length > 0) {
+    const { error: storageDeleteError } = await admin.storage
+      .from(DOCUMENT_BUCKET)
+      .remove(tempPaths);
+
+    if (storageDeleteError) {
+      return fail("Failed to delete temporary invoice attachments.", 500, storageDeleteError);
+    }
+  }
+
+  if (driveDocuments.length > 0) {
+    console.warn(
+      "[Invoice REJECTION] Google Drive deletion helper is not available; Drive files were not deleted.",
+      {
+        invoice_id: invoiceId,
+        drive_files: driveDocuments.map((document) => ({
+          id: document.id,
+          file_name: document.file_name,
+          file_path: document.file_path,
+          file_url: document.file_url,
+        })),
+      }
+    );
+  }
+
+  const { error: documentDeleteError } = await admin
+    .from("invoice_documents")
+    .delete()
+    .eq("invoice_id", invoiceId);
+
+  if (documentDeleteError) {
+    return fail("Failed to delete rejected invoice document rows.", 500, documentDeleteError);
+  }
+
+  const { error: invoiceDeleteError } = await admin
+    .from("invoices")
+    .delete()
+    .eq("id", invoiceId);
+
+  if (invoiceDeleteError) {
+    return fail("Failed to delete rejected invoice.", 500, invoiceDeleteError);
+  }
+
+  return NextResponse.json({
+    rejected: true,
+    deleted: true,
+    drive_files_not_deleted: driveDocuments.length,
+  });
 }
 
 export async function DELETE(request: Request) {
@@ -458,7 +763,7 @@ export async function DELETE(request: Request) {
     const paths = Array.from(
       new Set(
         (documents || [])
-          .map((document) => normalizeStoragePath(document.file_url))
+          .map(documentStoragePath)
           .filter(Boolean)
       )
     );

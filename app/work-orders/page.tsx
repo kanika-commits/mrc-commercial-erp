@@ -96,6 +96,8 @@ const LIFECYCLE_STATUS_OPTIONS = [
   { value: "terminated", label: "Terminated" },
 ];
 
+const PAGE_SIZE = 50;
+
 function cleanValue(...values: Array<string | null | undefined>) {
   const value = values.find((item) => item && item.trim().length > 0);
   return value?.trim() || "Unassigned";
@@ -204,6 +206,13 @@ function workOrderCommercials(wo: Pick<WorkOrder, "wo_value" | "gst_percent">) {
 function addAmount(map: Map<string, number>, workOrderId: string | null, amount: number) {
   if (!workOrderId || !Number.isFinite(amount)) return;
   map.set(workOrderId, (map.get(workOrderId) || 0) + amount);
+}
+
+function amountDueClass(value: number | null | undefined) {
+  const amount = Number(value || 0);
+  if (amount > 0) return "text-emerald-600";
+  if (amount < 0) return "text-red-600";
+  return "text-slate-500";
 }
 
 function formatDate(date: string | null) {
@@ -343,8 +352,8 @@ export default function WorkOrdersPage() {
   const [selectedSites, setSelectedSites] = useState<SelectionMap>({});
   const [selectedStatuses, setSelectedStatuses] = useState<SelectionMap>({});
   const [selectedTypes, setSelectedTypes] = useState<SelectionMap>({});
-  const [sortField, setSortField] = useState<SortField>("wo_date");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [sortField, setSortField] = useState<SortField>("wo_number");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [message, setMessage] = useState("");
   const [canEdit, setCanEdit] = useState(false);
   const [canDelete, setCanDelete] = useState(false);
@@ -352,6 +361,7 @@ export default function WorkOrdersPage() {
   const [deleteWorkOrder, setDeleteWorkOrder] = useState<WorkOrder | null>(null);
   const [deletionReason, setDeletionReason] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [pageIndex, setPageIndex] = useState(0);
 
   function openDocument(document: WorkOrderDocument) {
     if (!document.signed_url) {
@@ -860,6 +870,30 @@ const { data, error: loadError } = await workOrderQuery;
     });
   }, [filteredWorkOrders, sortDirection, sortField]);
 
+  useEffect(() => {
+    setPageIndex(0);
+  }, [
+    woSearch,
+    contractorSearch,
+    selectedCompanies,
+    selectedSites,
+    selectedStatuses,
+    selectedTypes,
+  ]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedWorkOrders.length / PAGE_SIZE));
+  const currentPageIndex = Math.min(pageIndex, totalPages - 1);
+  const startIndex = currentPageIndex * PAGE_SIZE;
+  const endIndex = Math.min(startIndex + PAGE_SIZE, sortedWorkOrders.length);
+  const paginatedWorkOrders = sortedWorkOrders.slice(startIndex, endIndex);
+  const rangeStart = sortedWorkOrders.length === 0 ? 0 : startIndex + 1;
+
+  useEffect(() => {
+    if (pageIndex > totalPages - 1) {
+      setPageIndex(totalPages - 1);
+    }
+  }, [pageIndex, totalPages]);
+
   return (
     <div className="space-y-8">
       <section className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -1011,7 +1045,7 @@ const { data, error: loadError } = await workOrderQuery;
             <span className="text-xs text-slate-500">
               {sortedWorkOrders.length === 0
                 ? "Showing 0 of 0"
-                : `Showing 1-${sortedWorkOrders.length} of ${sortedWorkOrders.length}`}
+                : `Showing ${rangeStart}–${endIndex} of ${sortedWorkOrders.length}`}
             </span>
           </div>
         </div>
@@ -1066,7 +1100,7 @@ const { data, error: loadError } = await workOrderQuery;
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {sortedWorkOrders.map((wo) => {
+                {paginatedWorkOrders.map((wo) => {
                   const lifecycleStatus = lifecycleStatusValue(wo.status);
                   const commercials = workOrderCommercials(wo);
 
@@ -1093,7 +1127,11 @@ const { data, error: loadError } = await workOrderQuery;
                         </p>
                       </div>
                     </td>
-                    <td className="px-6 py-5 align-top text-base font-bold text-slate-950">
+                    <td
+                      className={`px-6 py-5 text-right align-top text-base font-semibold ${amountDueClass(
+                        wo.amount_due,
+                      )}`}
+                    >
                       {formatCurrency(wo.amount_due || 0)}
                     </td>
                     <td className="px-6 py-5 align-top">
@@ -1211,6 +1249,31 @@ const { data, error: loadError } = await workOrderQuery;
                 })}
               </tbody>
             </table>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              <div>
+                Showing {rangeStart}–{endIndex} of {sortedWorkOrders.length}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPageIndex((value) => Math.max(0, value - 1))}
+                  disabled={currentPageIndex <= 0}
+                  className="border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPageIndex((value) => Math.min(totalPages - 1, value + 1))
+                  }
+                  disabled={currentPageIndex >= totalPages - 1}
+                  className="border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </section>

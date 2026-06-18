@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { sortCompanies } from "@/lib/companyOrdering";
+import AlertMessage from "@/components/AlertMessage";
 
 type Vendor = {
   id: string;
@@ -480,22 +481,21 @@ export default function NewWorkOrderPage() {
         <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="h-1 rounded-t-xl bg-gradient-to-r from-sky-200 to-sky-700" />
           <div className="p-6 lg:p-8">
-            {message && (
-              <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-                {message}
-              </div>
-            )}
+            <div className="mb-6">
+              <AlertMessage
+                type="error"
+                message={message}
+                onClose={() => setMessage("")}
+              />
+            </div>
 
             {currentErrors.length > 0 && (
-              <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
-                <p className="text-sm font-semibold text-amber-900">
-                  Please resolve these fields:
-                </p>
-                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-800">
-                  {currentErrors.map((error) => (
-                    <li key={error}>{error}</li>
-                  ))}
-                </ul>
+              <div className="mb-6">
+                <AlertMessage
+                  type="error"
+                  message={`Please resolve these fields: ${currentErrors.join(" ")}`}
+                  onClose={() => setFieldErrors({})}
+                />
               </div>
             )}
 

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, FileMinus, Upload } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import AlertMessage from "@/components/AlertMessage";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -300,11 +301,11 @@ export default function NewDebitNotePage() {
         </Link>
       </div>
 
-      {message && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {message}
-        </div>
-      )}
+      <AlertMessage
+        type="error"
+        message={message}
+        onClose={() => setMessage("")}
+      />
 
       <section className="rounded-2xl border bg-white p-6 shadow-sm">
         <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">

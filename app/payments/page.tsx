@@ -277,8 +277,8 @@ export default function PaymentsPage() {
           : payment.reference_number || "-";
 
       const party =
-        payment.payment_type === "Internal Transfer"
-          ? "Internal Transfer"
+        payment.payment_type === "Bank Transfer" || payment.payment_type === "Internal Transfer"
+          ? "Bank Transfer"
           : vendorName || "-";
 
       const accountName = accountLabel(account);
@@ -380,7 +380,7 @@ export default function PaymentsPage() {
               <tr>
                 <th className="px-4 py-3 text-left font-semibold">S. No.</th>
                 <th className="px-4 py-3 text-left font-semibold">Payment Date</th>
-                <th className="px-4 py-3 text-left font-semibold">Payment Type</th>
+                <th className="px-4 py-3 text-left font-semibold">Payment Against</th>
                 <th className="px-4 py-3 text-left font-semibold">Reference</th>
                 <th className="px-4 py-3 text-left font-semibold">Vendor / Party</th>
                 <th className="px-4 py-3 text-left font-semibold">From Account</th>

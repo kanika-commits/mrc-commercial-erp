@@ -12,6 +12,7 @@ import {
   Upload,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import AlertMessage from "@/components/AlertMessage";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -405,11 +406,11 @@ export default function NewInvoicePage() {
         </Link>
       </div>
 
-      {message && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {message}
-        </div>
-      )}
+      <AlertMessage
+        type="error"
+        message={message}
+        onClose={() => setMessage("")}
+      />
 
       <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
         <aside className="h-fit rounded-2xl border bg-white p-5 shadow-sm lg:sticky lg:top-24">
@@ -539,11 +540,13 @@ export default function NewInvoicePage() {
               </section>
 
               {invoiceExceedsRA && (
-                <div className="rounded-2xl border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
-                  Warning: Total invoices after this entry exceed approved RA
-                  bills by {money(Math.abs(raVsInvoiceBalance))}. You can still
-                  submit, but please verify before saving.
-                </div>
+                <AlertMessage
+                  type="warning"
+                  message={`Warning: Total invoices after this entry exceed approved RA bills by ${money(
+                    Math.abs(raVsInvoiceBalance)
+                  )}. You can still submit, but please verify before saving.`}
+                  scrollIntoView={false}
+                />
               )}
 
               <section className="rounded-2xl border bg-white p-6 shadow-sm">

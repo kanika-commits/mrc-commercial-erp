@@ -4,7 +4,11 @@ import { createClient } from "@supabase/supabase-js";
 const DOCUMENT_BUCKET = "invoice-documents";
 
 function isGoogleDriveUrl(value: string | null | undefined) {
-  return String(value || "").trim().startsWith("https://drive.google.com/");
+  const url = String(value || "").trim();
+  return (
+    url.startsWith("https://drive.google.com/") ||
+    url.startsWith("https://docs.google.com/")
+  );
 }
 
 function adminClient() {

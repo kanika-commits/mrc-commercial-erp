@@ -183,9 +183,9 @@ export default function PaymentDetailPage() {
       <div className="grid gap-6 lg:grid-cols-2">
         <Card icon={<CreditCard className="h-5 w-5" />} title="Payment Details">
           <Info label="Payment Date" value={payment.payment_date || "-"} />
-          <Info label="Payment Type" value={payment.payment_type || "Invoice"} />
+          <Info label="Payment Against" value={payment.payment_type || "Invoice"} />
           <Info
-            label="UTR / Reference Number"
+            label="Reference Number"
             value={payment.utr_number || payment.reference_number || "-"}
           />
           <Info label="From Account" value={accountLabel(account)} />

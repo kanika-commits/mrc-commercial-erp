@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { optimizeUploadFile } from "@/lib/fileOptimization";
 
 const ORGANIZATION_ID = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
 const DOCUMENT_BUCKET = "Vendor-Documents";
@@ -255,11 +256,16 @@ async function uploadDocument(
     file.name
   )}`;
   const bytes = Buffer.from(await file.arrayBuffer());
+  const optimizedFile = await optimizeUploadFile(
+    bytes,
+    file.type || "application/octet-stream",
+    file.name,
+  );
 
   const { error: uploadError } = await supabase.storage
     .from(DOCUMENT_BUCKET)
-    .upload(path, bytes, {
-      contentType: file.type || "application/octet-stream",
+    .upload(path, optimizedFile.buffer, {
+      contentType: optimizedFile.mimeType || "application/octet-stream",
       upsert: false,
     });
 

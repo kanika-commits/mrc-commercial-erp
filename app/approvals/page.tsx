@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { CheckCircle2, FileMinus, FileText, Trash2 } from "lucide-react";
+import AlertMessage from "@/components/AlertMessage";
 import { supabase } from "@/lib/supabase";
 import { can, getCurrentUserAccess } from "@/lib/accessControl";
 
@@ -28,6 +29,7 @@ export default function ApprovalsPage() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState("");
   const [message, setMessage] = useState("");
+  const [messageType, setMessageType] = useState<"success" | "error">("error");
   const [remarks, setRemarks] = useState<Record<string, string>>({});
   const [canDeleteDebitNotes, setCanDeleteDebitNotes] = useState(false);
 
@@ -41,6 +43,11 @@ export default function ApprovalsPage() {
     setCanDeleteDebitNotes(can(access.permissions, "debit_notes", "delete"));
   }
 
+  function showMessage(type: "success" | "error", text: string) {
+    setMessageType(type);
+    setMessage(text);
+  }
+
   async function loadApprovals() {
     setLoading(true);
     setMessage("");
@@ -52,7 +59,7 @@ export default function ApprovalsPage() {
       .order("created_at", { ascending: false });
 
     if (billError) {
-      setMessage(billError.message);
+      showMessage("error", billError.message);
       setLoading(false);
       return;
     }
@@ -64,7 +71,7 @@ export default function ApprovalsPage() {
       .order("created_at", { ascending: false });
 
     if (debitError) {
-      setMessage(debitError.message);
+      showMessage("error", debitError.message);
       setLoading(false);
       return;
     }
@@ -141,7 +148,7 @@ export default function ApprovalsPage() {
       const token = session?.access_token;
 
       if (!token) {
-        setMessage("Unable to load RA Bill documents: missing auth session.");
+        showMessage("error", "Unable to load RA Bill documents: missing auth session.");
         setLoading(false);
         return;
       }
@@ -159,7 +166,7 @@ export default function ApprovalsPage() {
       const documentResult = await documentResponse.json();
 
       if (!documentResponse.ok) {
-        setMessage(documentResult.error || "Failed to load RA Bill documents.");
+        showMessage("error", documentResult.error || "Failed to load RA Bill documents.");
         setLoading(false);
         return;
       }
@@ -176,7 +183,7 @@ export default function ApprovalsPage() {
       const token = session?.access_token;
 
       if (!token) {
-        setMessage("Unable to load Debit Note documents: missing auth session.");
+        showMessage("error", "Unable to load Debit Note documents: missing auth session.");
         setLoading(false);
         return;
       }
@@ -194,7 +201,7 @@ export default function ApprovalsPage() {
       const documentResult = await documentResponse.json();
 
       if (!documentResponse.ok) {
-        setMessage(documentResult.error || "Failed to load Debit Note documents.");
+        showMessage("error", documentResult.error || "Failed to load Debit Note documents.");
         setLoading(false);
         return;
       }
@@ -231,7 +238,8 @@ export default function ApprovalsPage() {
 
   function openRaDocument(document: any) {
     if (!document.signed_url) {
-      setMessage(
+      showMessage(
+        "error",
         document.signed_url_error ||
           "Unable to open RA Bill file. Signed URL was not available."
       );
@@ -252,7 +260,8 @@ export default function ApprovalsPage() {
 
   function openDebitDocument(document: any) {
     if (!document.signed_url) {
-      setMessage(
+      showMessage(
+        "error",
         document.signed_url_error ||
           "Unable to open Debit Note file. Signed URL was not available."
       );
@@ -269,81 +278,52 @@ export default function ApprovalsPage() {
     const remark = remarks[`ra-${billId}`]?.trim() || "";
 
     if (action === "Rejected" && !remark) {
-      setMessage("Reason is required for Reject.");
+      showMessage("error", "Reason is required for Reject.");
       setSavingId("");
       
       return;
     }
 
-    const { data: userData } = await supabase.auth.getUser();
-    const email = userData.user?.email || "";
-    const name =
-      userData.user?.user_metadata?.full_name ||
-      userData.user?.email ||
-      "HO User";
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-    const now = new Date().toISOString();
-
-    let updateData: any = {
-      approval_status: action,
-    };
-
-    if (action === "Approved") {
-      updateData = {
-        ...updateData,
-        status: "Approved",
-        approved_by_name: name,
-        approved_by_email: email,
-        approved_at: now,
-      };
-    }
-
-    if (action === "Rejected") {
-      updateData = {
-        ...updateData,
-        status: "Rejected",
-        rejected_by_name: name,
-        rejected_by_email: email,
-        rejected_at: now,
-        rejection_reason: remark,
-      };
-    }
-
-    const { error } = await supabase
-  .from("ra_bills")
-  .update(updateData)
-  .eq("id", billId);
-
-if (error) {
-  setMessage(error.message);
-  setSavingId("");
-  return;
-}
-
-if (action === "Rejected") {
-  const bill = bills.find((b) => b.id === billId);
-
-  if (bill) {
-    const { error: rejectionError } = await supabase
-      .from("ra_bill_rejections")
-      .insert({
-        organization_id: bill.organization_id,
-        ra_bill_id: bill.id,
-        rejected_by_name: name,
-        rejected_by_email: email,
-        rejection_reason: remark,
-        rejected_at: now,
-      });
-
-    if (rejectionError) {
-      setMessage(rejectionError.message);
+    if (!session?.access_token) {
+      showMessage("error", "Your session has expired. Please sign in again.");
       setSavingId("");
       return;
     }
-  }
-}
+
+    const response = await fetch(`/api/ra-bills/${billId}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action,
+        rejection_reason: remark,
+      }),
+    });
+
+    const result = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      showMessage(
+        "error",
+        result.error || `Failed to ${action === "Approved" ? "approve" : "reject"} RA Bill.`
+      );
+      setSavingId("");
+      return;
+    }
 
     setBills((prev) => prev.filter((bill) => bill.id !== billId));
+    showMessage(
+      "success",
+      action === "Approved"
+        ? "RA Bill approved successfully."
+        : "RA Bill rejected successfully."
+    );
     setSavingId("");
   }
 
@@ -357,78 +337,55 @@ if (action === "Rejected") {
   const remark = remarks[`dn-${debitNoteId}`]?.trim() || "";
 
   if (action === "Rejected" && remark.length < 10) {
-    setMessage("Reason must be at least 10 characters for Reject.");
+    showMessage("error", "Reason must be at least 10 characters for Reject.");
     setSavingId("");
     return;
   }
 
-  const { data: userData } = await supabase.auth.getUser();
-  const email = userData.user?.email || "";
-  const name =
-    userData.user?.user_metadata?.full_name ||
-    userData.user?.email ||
-    "HO User";
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
 
-  const now = new Date().toISOString();
-
-  const note = debitNotes.find((item) => item.id === debitNoteId);
-
-  let updateData: any = {
-    approval_status: action,
-  };
-
-  if (action === "Approved") {
-    updateData = {
-      ...updateData,
-      status: "Approved",
-      approved_by_name: name,
-      approved_by_email: email,
-      approved_at: now,
-    };
-  }
-
-  if (action === "Rejected") {
-    updateData = {
-      ...updateData,
-      status: "Rejected",
-      rejected_by_name: name,
-      rejected_by_email: email,
-      rejected_at: now,
-      rejection_reason: remark,
-    };
-  }
-
-  const { error } = await supabase
-    .from("debit_notes")
-    .update(updateData)
-    .eq("id", debitNoteId);
-
-  if (error) {
-    setMessage(error.message);
+  if (!session?.access_token) {
+    showMessage("error", "Your session has expired. Please sign in again.");
     setSavingId("");
     return;
   }
 
-  if (action === "Rejected" && note) {
-    const { error: rejectionError } = await supabase
-      .from("debit_note_rejections")
-      .insert({
-        organization_id: note.organization_id,
-        debit_note_id: note.id,
-        rejected_by_name: name,
-        rejected_by_email: email,
+  const response = await fetch(
+    `/api/debit-notes?debit_note_id=${encodeURIComponent(debitNoteId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action,
         rejection_reason: remark,
-        rejected_at: now,
-      });
-
-    if (rejectionError) {
-      setMessage(rejectionError.message);
-      setSavingId("");
-      return;
+      }),
     }
+  );
+
+  const result = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    showMessage(
+      "error",
+      result.error ||
+        `Failed to ${action === "Approved" ? "approve" : "reject"} Debit Note.`
+    );
+    setSavingId("");
+    return;
   }
 
   setDebitNotes((prev) => prev.filter((note) => note.id !== debitNoteId));
+  showMessage(
+    "success",
+    action === "Approved"
+      ? "Debit Note approved successfully."
+      : "Debit Note rejected successfully."
+  );
   setSavingId("");
 }
 
@@ -465,11 +422,11 @@ if (action === "Rejected") {
         </button>
       </div>
 
-      {message && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {message}
-        </div>
-      )}
+      <AlertMessage
+        type={messageType}
+        message={message}
+        onClose={() => setMessage("")}
+      />
 
       <div className="grid gap-4 md:grid-cols-4">
         <Summary title="Pending RA Bills" value={String(bills.length)} />

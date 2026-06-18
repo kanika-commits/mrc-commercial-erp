@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, FileText, Upload } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import AlertMessage from "@/components/AlertMessage";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -386,11 +387,11 @@ export default function NewRABillPage() {
         </Link>
       </div>
 
-      {message && (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {message}
-        </div>
-      )}
+      <AlertMessage
+        type="error"
+        message={message}
+        onClose={() => setMessage("")}
+      />
 
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <SectionTitle step="01" title="Select Site & Work Order" />
@@ -495,11 +496,13 @@ export default function NewRABillPage() {
           </section>
 
           {exceedsWO && (
-            <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
-              Warning: Total billed amount after this RA exceeds the Work Order
-              value by {money(Math.abs(balanceAfterThisRA))}. You can still
-              submit, but please verify before saving.
-            </div>
+            <AlertMessage
+              type="warning"
+              message={`Warning: Total billed amount after this RA exceeds the Work Order value by ${money(
+                Math.abs(balanceAfterThisRA)
+              )}. You can still submit, but please verify before saving.`}
+              scrollIntoView={false}
+            />
           )}
 
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">

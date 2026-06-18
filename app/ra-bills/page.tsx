@@ -42,6 +42,8 @@ function statusClass(value?: string | null) {
   return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
+const PAGE_SIZE = 50;
+
 export default function RABillsPage() {
   const searchParams = useSearchParams();
   const query = String(searchParams.get("q") || "").trim();
@@ -57,11 +59,16 @@ export default function RABillsPage() {
   const [deleteBill, setDeleteBill] = useState<any | null>(null);
   const [deletionReason, setDeletionReason] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     loadAccess();
     loadBills();
   }, []);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query]);
 
   async function loadAccess() {
     const access = await getCurrentUserAccess();
@@ -240,6 +247,19 @@ export default function RABillsPage() {
     return matchesSearch;
   });
 
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const paginatedRows = filteredRows.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE
+  );
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
   const totalBills = bills.length;
   const totalGross = bills.reduce(
     (sum: number, bill: any) => sum + Number(bill.gross_amount || 0),
@@ -403,7 +423,7 @@ export default function RABillsPage() {
             </thead>
 
             <tbody className="divide-y divide-slate-100">
-              {filteredRows.map(({ bill, wo, vendor, site, company }) => (
+              {paginatedRows.map(({ bill, wo, vendor, site, company }) => (
                 <tr key={bill.id} className="hover:bg-slate-50">
                   <td className="px-5 py-4 font-bold text-sky-800">{bill.ra_number}</td>
                   <td className="px-5 py-4 text-slate-700">{bill.ra_date || "-"}</td>
@@ -484,8 +504,40 @@ export default function RABillsPage() {
           </table>
         </div>
 
-        <div className="border-t border-slate-200 bg-slate-50 px-5 py-3 text-xs font-medium text-slate-500">
-          Showing {filteredRows.length} of {totalBills} RA bills
+        <div className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-5 py-3 text-xs font-medium text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            Showing{" "}
+            {filteredRows.length === 0
+              ? "0"
+              : `${(currentPage - 1) * PAGE_SIZE + 1}-${Math.min(
+                  currentPage * PAGE_SIZE,
+                  filteredRows.length
+                )}`}{" "}
+            of {filteredRows.length} filtered RA bills
+            {filteredRows.length !== totalBills ? ` (${totalBills} total)` : ""}
+          </span>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPage((value) => Math.max(1, value - 1))}
+              disabled={currentPage <= 1}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Previous
+            </button>
+            <span>
+              Page {currentPage} of {totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
+              disabled={currentPage >= totalPages}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
 

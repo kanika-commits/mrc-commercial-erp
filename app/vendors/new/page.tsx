@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import AlertMessage from "@/components/AlertMessage";
 
 type Contact = {
   contact_name: string;
@@ -425,11 +426,13 @@ if (form.gstin && !files.GST_CERTIFICATE) {
         </Link>
       </div>
 
-      {message && (
-        <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {message}
-        </div>
-      )}
+      <div className="mb-6">
+        <AlertMessage
+          type="error"
+          message={message}
+          onClose={() => setMessage("")}
+        />
+      </div>
 
       <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
         <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:sticky lg:top-24 lg:self-start">
@@ -493,16 +496,13 @@ if (form.gstin && !files.GST_CERTIFICATE) {
 
         <div className="space-y-6">
           {currentStepErrors.length > 0 && (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-              <p className="font-semibold">
-                Please fix these required fields before continuing:
-              </p>
-              <ul className="mt-2 list-disc space-y-1 pl-5">
-                {currentStepErrors.map(([key, error]) => (
-                  <li key={key}>{error}</li>
-                ))}
-              </ul>
-            </div>
+            <AlertMessage
+              type="error"
+              message={`Please fix these required fields before continuing: ${currentStepErrors
+                .map(([, error]) => error)
+                .join(" ")}`}
+              onClose={() => setErrors({})}
+            />
           )}
 
           {currentStep === 1 && (

@@ -4,17 +4,15 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { sortCompanies } from "@/lib/companyOrdering";
+import AlertMessage from "@/components/AlertMessage";
 
 const PAYMENT_TYPES = [
   "Work Order",
+  "Invoice",
   "Purchase Order",
-  "Internal Transfer",
-  "Fuel",
-  "Local Purchase",
-  "Bank Interest/EMI/Charges",
-  "Salary",
-  "Reimbursement",
-  "Others",
+  "Advance",
+  "Bank Transfer",
+  "Other",
 ];
 
 type Row = {
@@ -22,6 +20,7 @@ type Row = {
   payment_type: string;
   reference_number: string;
   work_order_id: string;
+  invoice_id: string;
   company_bank_account_id: string;
   vendor_id: string;
   vendor_name: string;
@@ -35,6 +34,7 @@ const emptyRow = (): Row => ({
   payment_type: "Work Order",
   reference_number: "",
   work_order_id: "",
+  invoice_id: "",
   company_bank_account_id: "",
   vendor_id: "",
   vendor_name: "",
@@ -84,6 +84,9 @@ export default function NewPaymentPage() {
   const [allCompanies, setAllCompanies] = useState<any[]>([]);
   const [mrcCompanyId, setMrcCompanyId] = useState("");
   const [workOrders, setWorkOrders] = useState<any[]>([]);
+  const [invoices, setInvoices] = useState<any[]>([]);
+  const [vendors, setVendors] = useState<any[]>([]);
+  const [purchaseOrderVendors, setPurchaseOrderVendors] = useState<any[]>([]);
   const [bankAccounts, setBankAccounts] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -134,6 +137,52 @@ export default function NewPaymentPage() {
     }
 
     setWorkOrders(woData || []);
+
+    const { data: invoiceData, error: invoiceError } = await supabase
+      .from("invoices")
+      .select("id, invoice_number, work_order_id, vendor_id, invoice_amount, itc_status")
+      .ilike("itc_status", "claimed")
+      .order("invoice_number");
+
+    if (invoiceError) {
+      setMessage(invoiceError.message);
+      return;
+    }
+
+    setInvoices(invoiceData || []);
+
+    const invoiceVendorIds = Array.from(
+      new Set((invoiceData || []).map((invoice: any) => invoice.vendor_id).filter(Boolean))
+    );
+
+    if (invoiceVendorIds.length) {
+      const { data: vendorData, error: vendorError } = await supabase
+        .from("vendors")
+        .select("id, vendor_name")
+        .in("id", invoiceVendorIds);
+
+      if (vendorError) {
+        setMessage(vendorError.message);
+        return;
+      }
+
+      setVendors(vendorData || []);
+    } else {
+      setVendors([]);
+    }
+
+    const { data: activeVendorData, error: activeVendorError } = await supabase
+      .from("vendors")
+      .select("id, vendor_name")
+      .eq("status", "active")
+      .order("vendor_name");
+
+    if (activeVendorError) {
+      setMessage(activeVendorError.message);
+      return;
+    }
+
+    setPurchaseOrderVendors(activeVendorData || []);
 
     const {
       data: { session },
@@ -195,6 +244,10 @@ export default function NewPaymentPage() {
     return workOrders;
   }
 
+  function invoicesForCompany(_companyId: string) {
+    return invoices;
+  }
+
   function companyLabel(companyId: string | null) {
     const company = allCompanies.find((item) => item.id === companyId);
     if (!company) return "-";
@@ -210,10 +263,25 @@ export default function NewPaymentPage() {
       : `${workOrder.wo_number || "-"} - ${company}`;
   }
 
+  function invoiceLabel(invoice: any) {
+    const wo = workOrders.find((item) => item.id === invoice.work_order_id);
+    const parts = [
+      invoice.invoice_number || "-",
+      wo?.wo_number,
+      invoice.invoice_amount ? `₹ ${Number(invoice.invoice_amount).toLocaleString("en-IN")}` : "",
+    ].filter(Boolean);
+    return parts.join(" - ");
+  }
+
+  function vendorNameById(vendorId: string | null | undefined) {
+    return vendors.find((vendor) => vendor.id === vendorId)?.vendor_name || "";
+  }
+
   function isPaymentRowFilled(row: Row) {
     return Boolean(
-      row.reference_number.trim() ||
+        row.reference_number.trim() ||
         row.work_order_id ||
+        row.invoice_id ||
         row.payment_date ||
         Number(row.total_payment || 0) > 0 ||
         Number(row.tds_amount || 0) > 0 ||
@@ -222,14 +290,12 @@ export default function NewPaymentPage() {
     );
   }
 
-  const manualPaymentTypes = [
-    "Fuel",
-    "Local Purchase",
-    "Bank Interest/EMI/Charges",
-    "Salary",
-    "Reimbursement",
-    "Others",
-  ];
+  const textReferenceLabels: Record<string, string> = {
+    "Purchase Order": "Purchase Order Number",
+    Advance: "Advance Reference / Purpose",
+    "Bank Transfer": "Transfer Reference",
+    Other: "Reference / Remarks",
+  };
 
   async function loadVendorForWorkOrder(index: number, workOrderId: string) {
     const {
@@ -294,6 +360,7 @@ export default function NewPaymentPage() {
       if (field === "payment_type") {
         row.reference_number = "";
         row.work_order_id = "";
+        row.invoice_id = "";
         row.vendor_id = "";
         row.vendor_name = "";
       }
@@ -317,6 +384,7 @@ export default function NewPaymentPage() {
               ...row,
               company_id: row.company_id || mrcCompanyId,
               work_order_id: workOrderId,
+              invoice_id: "",
               reference_number: wo?.wo_number || "",
               vendor_id: "",
               vendor_name: "",
@@ -328,6 +396,28 @@ export default function NewPaymentPage() {
     if (workOrderId) {
       loadVendorForWorkOrder(index, workOrderId);
     }
+  }
+
+  function handleInvoiceSelect(index: number, invoiceId: string) {
+    const invoice = invoices.find((item) => item.id === invoiceId);
+    const wo = workOrders.find((item) => item.id === invoice?.work_order_id);
+    const vendorName = vendorNameById(invoice?.vendor_id);
+
+    setRows((prev) =>
+      prev.map((row, i) =>
+        i === index
+          ? {
+              ...row,
+              company_id: row.company_id || mrcCompanyId,
+              invoice_id: invoiceId,
+              work_order_id: invoice?.work_order_id || "",
+              reference_number: invoice?.invoice_number || "",
+              vendor_id: invoice?.vendor_id || "",
+              vendor_name: vendorName,
+            }
+          : row
+      )
+    );
   }
 
   function handleInternalTransferSelect(index: number, accountId: string) {
@@ -383,6 +473,7 @@ export default function NewPaymentPage() {
           payment_type: cols[0] || "Work Order",
           reference_number: cols[1] || "",
           work_order_id: "",
+          invoice_id: "",
           company_bank_account_id: "",
           vendor_id: "",
           vendor_name: cols[3] || "",
@@ -427,7 +518,7 @@ export default function NewPaymentPage() {
       }
 
       if (!row.payment_type) {
-        throw new Error(`Row ${rowNo}: Payment Type is required.`);
+        throw new Error(`Row ${rowNo}: Payment Against is required.`);
       }
 
       if (!row.company_bank_account_id) {
@@ -438,13 +529,13 @@ export default function NewPaymentPage() {
         throw new Error(`Row ${rowNo}: Work Order is required.`);
       }
 
-      if (row.payment_type === "Internal Transfer" && !row.reference_number) {
-        throw new Error(`Row ${rowNo}: Receiving Account is required.`);
+      if (row.payment_type === "Invoice" && !row.invoice_id) {
+        throw new Error(`Row ${rowNo}: Invoice is required.`);
       }
 
       if (
-        row.payment_type !== "Internal Transfer" &&
         row.payment_type !== "Work Order" &&
+        row.payment_type !== "Invoice" &&
         !row.reference_number.trim()
       ) {
         throw new Error(`Row ${rowNo}: Reference is required.`);
@@ -454,11 +545,11 @@ export default function NewPaymentPage() {
         throw new Error(`Row ${rowNo}: No vendor linked to selected Work Order.`);
       }
 
-      if (
-        row.payment_type !== "Internal Transfer" &&
-        row.payment_type !== "Work Order" &&
-        !row.vendor_name.trim()
-      ) {
+      if (row.payment_type === "Invoice" && !row.vendor_id) {
+        throw new Error(`Row ${rowNo}: Vendor could not be found for selected Invoice.`);
+      }
+
+      if (row.payment_type === "Purchase Order" && !row.vendor_id) {
         throw new Error(`Row ${rowNo}: Vendor / Party is required.`);
       }
 
@@ -487,6 +578,7 @@ export default function NewPaymentPage() {
         reference_number: reference,
 
         work_order_id: row.work_order_id || null,
+        invoice_id: row.invoice_id || null,
         vendor_id: row.vendor_id || null,
         company_bank_account_id: row.company_bank_account_id,
 
@@ -541,11 +633,11 @@ export default function NewPaymentPage() {
         </Link>
       </div>
 
-      {message && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          {message}
-        </div>
-      )}
+      <AlertMessage
+        type={message === "Payments saved successfully." ? "success" : "error"}
+        message={message}
+        onClose={() => setMessage("")}
+      />
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 bg-white px-5 py-4">
@@ -562,7 +654,7 @@ export default function NewPaymentPage() {
           <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-600">
             <tr>
               <th className="px-3 py-3 text-left font-semibold">Company</th>
-              <th className="px-3 py-3 text-left font-semibold">Payment Type</th>
+              <th className="px-3 py-3 text-left font-semibold">Payment Against</th>
               <th className="px-3 py-3 text-left font-semibold">Reference</th>
               <th className="px-3 py-3 text-left font-semibold">From Account</th>
               <th className="px-3 py-3 text-left font-semibold">Vendor / Party</th>
@@ -630,33 +722,24 @@ export default function NewPaymentPage() {
                         </option>
                       ))}
                     </select>
-                  ) : row.payment_type === "Purchase Order" ? (
+                  ) : row.payment_type === "Invoice" ? (
                     <select
-                      disabled
-                      className="h-10 w-full rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-500"
-                    >
-                      <option>Purchase Order module not built yet</option>
-                    </select>
-                  ) : row.payment_type === "Internal Transfer" ? (
-                    <select
-                      value={row.reference_number}
+                      value={row.invoice_id}
                       onChange={(e) =>
-                        handleInternalTransferSelect(index, e.target.value)
+                        handleInvoiceSelect(index, e.target.value)
                       }
                       disabled={!row.company_id}
                       className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400 disabled:bg-slate-100"
                     >
-                      <option value="">
-                        Select Receiving Account
-                      </option>
+                      <option value="">Select Invoice</option>
 
-                      {accountsForCompany(row.company_id).map((account) => (
-                        <option key={account.id} value={account.id}>
-                          {accountLabel(account)}
+                      {invoicesForCompany(row.company_id).map((invoice) => (
+                        <option key={invoice.id} value={invoice.id}>
+                          {invoiceLabel(invoice)}
                         </option>
                       ))}
                     </select>
-                  ) : manualPaymentTypes.includes(row.payment_type) ? (
+                  ) : (
                     <input
                       value={row.reference_number}
                       onChange={(e) =>
@@ -664,16 +747,7 @@ export default function NewPaymentPage() {
                       }
                       onPaste={(e) => handlePaste(e, index)}
                       className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
-                      placeholder="Reference"
-                    />
-                  ) : (
-                    <input
-                      value={row.reference_number}
-                      onChange={(e) =>
-                        updateRow(index, "reference_number", e.target.value)
-                      }
-                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
-                      placeholder="Reference"
+                      placeholder={textReferenceLabels[row.payment_type] || "Reference"}
                     />
                   )}
                 </td>
@@ -708,27 +782,44 @@ export default function NewPaymentPage() {
                 </td>
 
                 <td className="px-3 py-3 align-top">
-                  <input
-                    value={
-                      row.payment_type === "Internal Transfer"
-                        ? "Internal Transfer"
-                        : row.vendor_name
-                    }
-                    onChange={(e) =>
-                      updateRow(index, "vendor_name", e.target.value)
-                    }
-                    readOnly={
-                      row.payment_type === "Work Order" ||
-                      row.payment_type === "Purchase Order" ||
-                      row.payment_type === "Internal Transfer"
-                    }
-                    className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition focus:border-slate-400 read-only:text-slate-600"
-                    placeholder={
-                      manualPaymentTypes.includes(row.payment_type)
-                        ? "Vendor / Party"
-                        : ""
-                    }
-                  />
+                  {row.payment_type === "Purchase Order" ? (
+                    <select
+                      value={row.vendor_id}
+                      onChange={(e) => {
+                        const vendor = purchaseOrderVendors.find(
+                          (item) => item.id === e.target.value
+                        );
+                        updateRow(index, "vendor_id", e.target.value);
+                        updateRow(index, "vendor_name", vendor?.vendor_name || "");
+                      }}
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
+                    >
+                      <option value="">Select Vendor</option>
+                      {purchaseOrderVendors.map((vendor) => (
+                        <option key={vendor.id} value={vendor.id}>
+                          {vendor.vendor_name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      value={
+                        row.payment_type === "Bank Transfer"
+                          ? "Bank Transfer"
+                          : row.vendor_name
+                      }
+                      onChange={(e) =>
+                        updateRow(index, "vendor_name", e.target.value)
+                      }
+                      readOnly={
+                        row.payment_type === "Work Order" ||
+                        row.payment_type === "Invoice" ||
+                        row.payment_type === "Bank Transfer"
+                      }
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition focus:border-slate-400 read-only:text-slate-600"
+                      placeholder="Vendor / Party"
+                    />
+                  )}
                 </td>
 
                 <Cell

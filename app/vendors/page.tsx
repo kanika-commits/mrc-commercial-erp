@@ -29,6 +29,8 @@ type Vendor = {
   created_at: string | null;
 };
 
+const PAGE_SIZE = 50;
+
 export default function VendorsPage() {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [canAdd, setCanAdd] = useState(false);
@@ -38,6 +40,7 @@ export default function VendorsPage() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [complianceFilter, setComplianceFilter] = useState("all");
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -140,6 +143,23 @@ export default function VendorsPage() {
       return matchesSearch && matchesType && matchesStatus && matchesCompliance;
     });
   }, [complianceFilter, search, statusFilter, typeFilter, vendors]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [complianceFilter, search, statusFilter, typeFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredVendors.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const startIndex = (currentPage - 1) * PAGE_SIZE;
+  const endIndex = Math.min(startIndex + PAGE_SIZE, filteredVendors.length);
+  const paginatedVendors = filteredVendors.slice(startIndex, endIndex);
+  const rangeStart = filteredVendors.length === 0 ? 0 : startIndex + 1;
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
   const vendorTypes = useMemo(() => {
     return Array.from(
@@ -293,7 +313,7 @@ export default function VendorsPage() {
         </div>
 
         <p className="mt-3 text-xs font-medium text-slate-500">
-          Showing {filteredVendors.length} of {vendors.length} vendors
+          Showing {rangeStart}–{endIndex} of {filteredVendors.length} vendors
         </p>
       </div>
 
@@ -314,7 +334,7 @@ export default function VendorsPage() {
           </thead>
 
           <tbody className="divide-y divide-slate-100">
-            {filteredVendors.map((vendor) => (
+            {paginatedVendors.map((vendor) => (
               <tr
                 key={vendor.id}
                 className="group transition-colors hover:bg-slate-50/80"
@@ -418,6 +438,30 @@ export default function VendorsPage() {
             )}
           </tbody>
         </table>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          <div>
+            Showing {rangeStart}–{endIndex} of {filteredVendors.length} vendors
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPage((value) => Math.max(1, value - 1))}
+              disabled={currentPage <= 1}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
+              disabled={currentPage >= totalPages}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
       </div>
