@@ -28,6 +28,7 @@ type WorkOrder = {
   status: string | null;
   wo_value: number | string | null;
   gst_percent: number | string | null;
+  amount_due?: number | null;
   approval_status: string | null;
   approved_by_name: string | null;
   approved_by_email: string | null;
@@ -198,6 +199,11 @@ function workOrderCommercials(wo: Pick<WorkOrder, "wo_value" | "gst_percent">) {
     gstAmount,
     totalValue: safeBasic + gstAmount,
   };
+}
+
+function addAmount(map: Map<string, number>, workOrderId: string | null, amount: number) {
+  if (!workOrderId || !Number.isFinite(amount)) return;
+  map.set(workOrderId, (map.get(workOrderId) || 0) + amount);
 }
 
 function formatDate(date: string | null) {
@@ -446,8 +452,88 @@ const { data, error: loadError } = await workOrderQuery;
 
       let documentsByWorkOrder = new Map<string, WorkOrderDocument[]>();
       let vendorsByWorkOrder = new Map<string, WorkOrderVendorSummary>();
+      const amountDueByWorkOrder = new Map<string, number>();
 
       if (workOrderIds.length) {
+        const [
+          raBillsResult,
+          invoicesResult,
+          paymentsResult,
+          debitNotesResult,
+        ] = await Promise.all([
+          supabase
+            .from("ra_bills")
+            .select("id, work_order_id, gross_amount, recovery_amount, approval_status")
+            .in("work_order_id", workOrderIds),
+          supabase
+            .from("invoices")
+            .select("id, work_order_id, gst_amount, itc_status, approval_status")
+            .in("work_order_id", workOrderIds),
+          supabase
+            .from("payments")
+            .select("id, work_order_id, transferred_amount, payment_amount, total_payment, is_deleted")
+            .in("work_order_id", workOrderIds),
+          supabase
+            .from("debit_notes")
+            .select("id, work_order_id, total_amount, debit_note_type, approval_status")
+            .in("work_order_id", workOrderIds),
+        ]);
+
+        if (
+          raBillsResult.error ||
+          invoicesResult.error ||
+          paymentsResult.error ||
+          debitNotesResult.error
+        ) {
+          setError(
+            raBillsResult.error?.message ||
+              invoicesResult.error?.message ||
+              paymentsResult.error?.message ||
+              debitNotesResult.error?.message ||
+              "Could not load Work Order amount due values.",
+          );
+          setWorkOrders([]);
+          setLoading(false);
+          return;
+        }
+
+        (raBillsResult.data || []).forEach((bill: any) => {
+          if (String(bill.approval_status || "").trim().toLowerCase() !== "approved") {
+            return;
+          }
+          addAmount(
+            amountDueByWorkOrder,
+            bill.work_order_id,
+            Number(bill.gross_amount || 0) - Number(bill.recovery_amount || 0),
+          );
+        });
+
+        (invoicesResult.data || []).forEach((invoice: any) => {
+          const itcStatus = String(invoice.itc_status || "").trim().toLowerCase();
+          const approvalStatus = String(invoice.approval_status || "").trim().toLowerCase();
+          if (itcStatus !== "claimed" || approvalStatus === "rejected") {
+            return;
+          }
+          addAmount(amountDueByWorkOrder, invoice.work_order_id, Number(invoice.gst_amount || 0));
+        });
+
+        (paymentsResult.data || []).forEach((payment: any) => {
+          if (payment.is_deleted === true) return;
+          const paymentAmount = Number(payment.total_payment || 0);
+          addAmount(amountDueByWorkOrder, payment.work_order_id, -paymentAmount);
+        });
+
+        (debitNotesResult.data || []).forEach((note: any) => {
+          if (String(note.approval_status || "").trim().toLowerCase() !== "approved") {
+            return;
+          }
+          const debitNoteType = String(note.debit_note_type || "").trim().toLowerCase();
+          if (debitNoteType !== "withheld" && debitNoteType !== "deduction") {
+            return;
+          }
+          addAmount(amountDueByWorkOrder, note.work_order_id, -Number(note.total_amount || 0));
+        });
+
         const {
           data: { session },
         } = await supabase.auth.getSession();
@@ -544,6 +630,7 @@ const { data, error: loadError } = await workOrderQuery;
           site_code: site?.site_code || null,
           vendor_names: vendorName ? [vendorName] : [],
           vendor_name: vendorName,
+          amount_due: amountDueByWorkOrder.get(row.id) || 0,
           documents: documentsByWorkOrder.get(row.id) || [],
         };
       });
@@ -937,7 +1024,7 @@ const { data, error: loadError } = await workOrderQuery;
           <div className="p-10 text-center text-slate-500">No work orders match the selected filters.</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1420px] border-collapse text-left text-sm">
+            <table className="w-full min-w-[1540px] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-300 bg-[#f6f3f5]">
                   <th className="w-[12%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
@@ -951,6 +1038,9 @@ const { data, error: loadError } = await workOrderQuery;
                   </th>
                   <th className="w-[11%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     WO Value
+                  </th>
+                  <th className="w-[9%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
+                    Amount Due
                   </th>
                   <th className="w-[14%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Documentation
@@ -1002,6 +1092,9 @@ const { data, error: loadError } = await workOrderQuery;
                           GST: {formatCurrency(commercials.gstAmount)} ({commercials.gstPercent}%)
                         </p>
                       </div>
+                    </td>
+                    <td className="px-6 py-5 align-top text-base font-bold text-slate-950">
+                      {formatCurrency(wo.amount_due || 0)}
                     </td>
                     <td className="px-6 py-5 align-top">
                       {wo.documents && wo.documents.length > 0 ? (
