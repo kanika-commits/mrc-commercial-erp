@@ -12,7 +12,7 @@ function adminClient() {
   return createClient(supabaseUrl, serviceRoleKey);
 }
 
-async function assertEditPermission(request: Request) {
+async function assertSitePermission(request: Request, actionCode: "edit" | "delete") {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -46,7 +46,10 @@ async function assertEditPermission(request: Request) {
   const roleIds = (userRoles || []).map((row) => row.role_id).filter(Boolean);
 
   if (roleIds.length === 0) {
-    return { error: "You do not have permission to edit sites.", status: 403 };
+    return {
+      error: `You do not have permission to ${actionCode} sites.`,
+      status: 403,
+    };
   }
 
   const { data: roles, error: rolesError } = await admin
@@ -90,10 +93,13 @@ async function assertEditPermission(request: Request) {
 
   const allowed =
     permissionMap.get("*:*") === true ||
-    permissionMap.get("sites:edit") === true;
+    permissionMap.get(`sites:${actionCode}`) === true;
 
   if (!allowed) {
-    return { error: "You do not have permission to edit sites.", status: 403 };
+    return {
+      error: `You do not have permission to ${actionCode} sites.`,
+      status: 403,
+    };
   }
 
   return { user };
@@ -104,7 +110,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const access = await assertEditPermission(request);
+    const access = await assertSitePermission(request, "edit");
 
     if ("error" in access) {
       return NextResponse.json({ error: access.error }, { status: access.status });
@@ -156,6 +162,143 @@ export async function PUT(
   } catch (error: any) {
     return NextResponse.json(
       { error: error.message || "Failed to update site." },
+      { status: 500 }
+    );
+  }
+}
+
+async function getDependencyCount(
+  supabase: ReturnType<typeof adminClient>,
+  table: string,
+  column: string,
+  value: string
+) {
+  const { count, error } = await supabase
+    .from(table)
+    .select("id", { count: "exact", head: true })
+    .eq(column, value);
+
+  if (error) throw error;
+  return count || 0;
+}
+
+async function getWorkOrderChildCount(
+  supabase: ReturnType<typeof adminClient>,
+  table: "ra_bills" | "invoices" | "payments" | "debit_notes",
+  workOrderIds: string[]
+) {
+  if (workOrderIds.length === 0) return 0;
+
+  const { count, error } = await supabase
+    .from(table)
+    .select("id", { count: "exact", head: true })
+    .in("work_order_id", workOrderIds);
+
+  if (error) throw error;
+  return count || 0;
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const access = await assertSitePermission(request, "delete");
+
+    if ("error" in access) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
+    const { id } = await params;
+    const supabase = adminClient();
+
+    const { data: site, error: siteError } = await supabase
+      .from("sites")
+      .select("id, site_name")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (siteError) throw siteError;
+
+    if (!site) {
+      return NextResponse.json({ error: "Site was not found." }, { status: 404 });
+    }
+
+    const { data: linkedWorkOrders, error: linkedWorkOrdersError } = await supabase
+      .from("work_orders")
+      .select("id")
+      .eq("site_id", id);
+
+    if (linkedWorkOrdersError) throw linkedWorkOrdersError;
+
+    const workOrderIds = (linkedWorkOrders || [])
+      .map((workOrder) => workOrder.id)
+      .filter(Boolean);
+
+    const [
+      workOrderCount,
+      raBillCount,
+      invoiceCount,
+      paymentCount,
+      debitNoteCount,
+    ] = await Promise.all([
+      getDependencyCount(supabase, "work_orders", "site_id", id),
+      getWorkOrderChildCount(supabase, "ra_bills", workOrderIds),
+      getWorkOrderChildCount(supabase, "invoices", workOrderIds),
+      getWorkOrderChildCount(supabase, "payments", workOrderIds),
+      getWorkOrderChildCount(supabase, "debit_notes", workOrderIds),
+    ]);
+
+    const dependencyCounts = {
+      work_orders: workOrderCount,
+      ra_bills: raBillCount,
+      invoices: invoiceCount,
+      payments: paymentCount,
+      debit_notes: debitNoteCount,
+    };
+    const blockers = Object.entries(dependencyCounts).filter(
+      ([, count]) => count > 0
+    );
+
+    if (blockers.length > 0) {
+      const details = blockers
+        .map(([key, count]) => {
+          const labels: Record<string, string> = {
+            work_orders: "Work Orders",
+            ra_bills: "RA Bills",
+            invoices: "Invoices",
+            payments: "Payments",
+            debit_notes: "Debit Notes",
+          };
+
+          return `${count} ${labels[key] || key}`;
+        })
+        .join(", ");
+
+      return NextResponse.json(
+        {
+          error: `Cannot delete site. Used in ${details}.`,
+          dependencies: dependencyCounts,
+        },
+        { status: 409 }
+      );
+    }
+
+    const { error: accessDeleteError } = await supabase
+      .from("user_access_assignments")
+      .delete()
+      .eq("site_id", id);
+
+    if (accessDeleteError) throw accessDeleteError;
+
+    const { error: deleteError } = await supabase.from("sites").delete().eq("id", id);
+
+    if (deleteError) throw deleteError;
+
+    return NextResponse.json({ site_id: id, deleted: true });
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: error.message || "Failed to delete site." },
       { status: 500 }
     );
   }

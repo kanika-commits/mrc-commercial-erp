@@ -2,8 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { sortCompanies } from "@/lib/companyOrdering";
+import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import AlertMessage from "@/components/AlertMessage";
 
 export default function AdminUsersPage() {
   const [profiles, setProfiles] = useState<any[]>([]);
@@ -14,6 +17,9 @@ export default function AdminUsersPage() {
   const [companies, setCompanies] = useState<any[]>([]);
   const [sites, setSites] = useState<any[]>([]);
   const [message, setMessage] = useState("");
+  const [canDeleteUsers, setCanDeleteUsers] = useState(false);
+  const [deleteUser, setDeleteUser] = useState<any | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -22,7 +28,10 @@ export default function AdminUsersPage() {
   async function loadData() {
     setMessage("");
 
-    const response = await fetch("/api/admin/users");
+    const [access, response] = await Promise.all([
+      getCurrentUserAccess(),
+      fetch("/api/admin/users"),
+    ]);
     const result = await response.json();
 
     if (!response.ok) {
@@ -30,6 +39,7 @@ export default function AdminUsersPage() {
       return;
     }
 
+    setCanDeleteUsers(can(access.permissions, "users", "delete"));
     setProfiles(result.profiles || []);
     setRoles(result.roles || []);
     setUserRoles(result.userRoles || []);
@@ -76,19 +86,41 @@ export default function AdminUsersPage() {
       .join(", ");
   }
 
-  async function updateStatus(userId: string, status: string) {
-    const { error } = await supabase
-      .from("profiles")
-      .update({ status })
-      .eq("id", userId);
+  async function confirmDeleteUser() {
+    if (!deleteUser) return;
 
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      setDeleting(true);
+      setMessage("");
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/admin/users/${deleteUser.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to delete user.");
+      }
+
+      setProfiles((prev) => prev.filter((profile) => profile.id !== deleteUser.id));
+      setUserRoles((prev) => prev.filter((row) => row.user_id !== deleteUser.id));
+      setAccessRows((prev) => prev.filter((row) => row.user_id !== deleteUser.id));
+      setDeleteUser(null);
+      setMessage("User deleted successfully.");
+    } catch (error: any) {
+      setMessage(error.message || "Failed to delete user.");
+    } finally {
+      setDeleting(false);
     }
-
-    await loadData();
-    setMessage("User status updated successfully.");
   }
 
   return (
@@ -109,11 +141,11 @@ export default function AdminUsersPage() {
         </Link>
       </div>
 
-      {message && (
-        <div className="rounded-lg border bg-yellow-50 p-3 text-sm text-yellow-800">
-          {message}
-        </div>
-      )}
+      <AlertMessage
+        type={message.toLowerCase().includes("success") ? "success" : "error"}
+        message={message}
+        onClose={() => setMessage("")}
+      />
 
       <div className="overflow-x-auto rounded-lg border bg-white">
         <table className="w-full min-w-[1200px] text-sm">
@@ -143,22 +175,17 @@ export default function AdminUsersPage() {
                 <td className="p-3">{profile.status || "active"}</td>
 
                 <td className="p-3">
-                  {profile.status === "inactive" ? (
+                  {canDeleteUsers ? (
                     <button
                       type="button"
-                      onClick={() => updateStatus(profile.id, "active")}
-                      className="rounded bg-blue-600 px-3 py-1 text-white"
+                      onClick={() => setDeleteUser(profile)}
+                      className="inline-flex items-center gap-2 rounded border border-red-200 px-3 py-1 text-red-700 hover:bg-red-50"
                     >
-                      Activate
+                      <Trash2 className="h-4 w-4" />
+                      Delete
                     </button>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => updateStatus(profile.id, "inactive")}
-                      className="rounded bg-red-600 px-3 py-1 text-white"
-                    >
-                      Deactivate
-                    </button>
+                    "-"
                   )}
                 </td>
 
@@ -183,6 +210,41 @@ export default function AdminUsersPage() {
           </tbody>
         </table>
       </div>
+
+      {deleteUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h2 className="text-xl font-bold text-slate-950">Delete User</h2>
+            <p className="mt-3 text-sm leading-6 text-slate-600">
+              Delete app user record for{" "}
+              <span className="font-semibold text-slate-950">
+                {deleteUser.full_name || deleteUser.email || "-"}
+              </span>
+              ? This removes the ERP profile, roles, permissions and access
+              assignments. The Supabase Auth user is not deleted.
+            </p>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setDeleteUser(null)}
+                disabled={deleting}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteUser}
+                disabled={deleting}
+                className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+              >
+                {deleting ? "Deleting..." : "Delete User"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

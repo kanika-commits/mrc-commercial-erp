@@ -6,7 +6,10 @@ import {
   requireDeletePermission,
 } from "@/lib/serverDeleteAudit";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
-import { uploadDriveFile } from "@/src/lib/googleDrive";
+import {
+  createWorkOrderDriveFolder,
+  uploadDriveFile,
+} from "@/src/lib/googleDrive";
 
 const DOCUMENT_BUCKET = "ra-bill-documents";
 const MODULE_CODE = "ra_bills";
@@ -68,6 +71,71 @@ function mimeTypeFromFileName(fileName: string) {
     default:
       return "application/octet-stream";
   }
+}
+
+async function resolveRABillsDriveFolder(
+  admin: ReturnType<typeof createServiceRoleClient>,
+  workOrderId: string
+) {
+  const { data: existingFolder, error: existingFolderError } = await admin
+    .from("work_order_drive_folders")
+    .select(
+      "id, organization_id, work_order_id, drive_folder_id, drive_folder_name, ra_bills_folder_id, invoices_folder_id, debit_notes_folder_id, contractor_docs_folder_id"
+    )
+    .eq("work_order_id", workOrderId)
+    .maybeSingle();
+
+  if (existingFolderError) throw existingFolderError;
+
+  if (existingFolder?.ra_bills_folder_id) {
+    return existingFolder.ra_bills_folder_id as string;
+  }
+
+  const { data: workOrder, error: workOrderError } = await admin
+    .from("work_orders")
+    .select("id, organization_id, wo_number")
+    .eq("id", workOrderId)
+    .maybeSingle();
+
+  if (workOrderError) throw workOrderError;
+
+  if (!workOrder?.wo_number) {
+    throw new Error("Work Order number was not found for Drive folder resolution.");
+  }
+
+  const driveFolder = await createWorkOrderDriveFolder(workOrder.wo_number);
+
+  if (!driveFolder?.folder_id || !driveFolder?.ra_bills_folder_id) {
+    throw new Error("Google Drive RA Bills folder was not created.");
+  }
+
+  const folderPayload = {
+    organization_id: existingFolder?.organization_id || workOrder.organization_id,
+    work_order_id: workOrderId,
+    drive_folder_id: driveFolder.folder_id,
+    drive_folder_name: driveFolder.folder_name,
+    ra_bills_folder_id: driveFolder.ra_bills_folder_id,
+    invoices_folder_id: driveFolder.invoices_folder_id,
+    debit_notes_folder_id: driveFolder.debit_notes_folder_id,
+    contractor_docs_folder_id: driveFolder.contractor_docs_folder_id,
+  };
+
+  if (existingFolder?.id) {
+    const { error: updateFolderError } = await admin
+      .from("work_order_drive_folders")
+      .update(folderPayload)
+      .eq("id", existingFolder.id);
+
+    if (updateFolderError) throw updateFolderError;
+  } else {
+    const { error: insertFolderError } = await admin
+      .from("work_order_drive_folders")
+      .insert(folderPayload);
+
+    if (insertFolderError) throw insertFolderError;
+  }
+
+  return driveFolder.ra_bills_folder_id;
 }
 
 async function readApprovalAction(request: Request) {
@@ -182,18 +250,17 @@ export async function PATCH(
   const now = new Date().toISOString();
 
   if (normalizedAction === "approved") {
-    const { data: driveFolder, error: driveFolderError } = await admin
-      .from("work_order_drive_folders")
-      .select("ra_bills_folder_id")
-      .eq("work_order_id", raBill.work_order_id)
-      .maybeSingle();
+    const raBillsFolderId = await resolveRABillsDriveFolder(
+      admin,
+      raBill.work_order_id
+    ).catch((error) => ({ error }));
 
-    if (driveFolderError) {
-      return fail("Failed to load Work Order Drive folder.", 500, driveFolderError);
-    }
-
-    if (!driveFolder?.ra_bills_folder_id) {
-      return fail("Work Order Google Drive RA Bills folder was not found.", 400);
+    if (typeof raBillsFolderId !== "string") {
+      return fail(
+        "Failed to resolve Work Order Google Drive RA Bills folder.",
+        500,
+        raBillsFolderId.error
+      );
     }
 
     for (const document of documents || []) {
@@ -226,7 +293,7 @@ export async function PATCH(
         fileName
       );
       const driveFile = await uploadDriveFile({
-        targetFolderId: driveFolder.ra_bills_folder_id,
+        targetFolderId: raBillsFolderId,
         fileName,
         mimeType: optimizedFile.mimeType || mimeTypeFromFileName(fileName),
         base64: optimizedFile.buffer.toString("base64"),

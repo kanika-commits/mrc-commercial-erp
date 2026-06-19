@@ -121,6 +121,9 @@ export default function InvoicesPage() {
       itc_status,
       created_by_name,
       created_by_email,
+      approved_by_name,
+      approved_by_email,
+      approved_at,
       itc_claimed_by_name,
       itc_claimed_by_email,
       itc_claimed_at,
@@ -366,7 +369,7 @@ export default function InvoicesPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1420px] text-sm">
+          <table className="w-full min-w-[1660px] text-sm">
             <thead className="bg-slate-50 text-xs uppercase text-slate-500">
               <tr>
                 <th className="p-3 text-left">Invoice Number</th>
@@ -379,6 +382,8 @@ export default function InvoicesPage() {
                 <th className="p-3 text-left">ITC Status</th>
                 <th className="p-3 text-left">Created By</th>
                 <th className="p-3 text-left">Created At</th>
+                <th className="p-3 text-left">Approved By</th>
+                <th className="p-3 text-left">Approved At</th>
                 <th className="p-3 text-left">ITC Claimed By</th>
                 <th className="p-3 text-left">ITC Claimed At</th>
                 <th className="p-3 text-right">Action</th>
@@ -461,6 +466,26 @@ export default function InvoicesPage() {
                     <td className="p-3">
                       <div className="max-w-[180px] truncate font-medium">
                         {auditName(
+                          invoice.approved_by_name,
+                          invoice.approved_by_email
+                        )}
+                      </div>
+                      {invoice.approved_by_name &&
+                        invoice.approved_by_email &&
+                        invoice.approved_by_name !== invoice.approved_by_email && (
+                          <div className="max-w-[180px] truncate text-xs text-slate-500">
+                            {invoice.approved_by_email}
+                          </div>
+                        )}
+                    </td>
+
+                    <td className="p-3 text-slate-700">
+                      {formatDateTime(invoice.approved_at)}
+                    </td>
+
+                    <td className="p-3">
+                      <div className="max-w-[180px] truncate font-medium">
+                        {auditName(
                           invoice.itc_claimed_by_name,
                           invoice.itc_claimed_by_email
                         )}
@@ -510,7 +535,7 @@ export default function InvoicesPage() {
 
               {activeInvoices.length === 0 && (
                 <tr>
-                  <td colSpan={13} className="p-8 text-center text-slate-500">
+                  <td colSpan={15} className="p-8 text-center text-slate-500">
                     No active invoices found.
                   </td>
                 </tr>

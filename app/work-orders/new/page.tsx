@@ -279,15 +279,12 @@ export default function NewWorkOrderPage() {
     }
 
     if (step === 3) {
-      if (!form.primary_vendor_id) {
-        errors.primary_vendor_id = "Primary vendor is required.";
-      }
-      if (!form.primary_vendor_role) {
-        errors.primary_vendor_role = "Vendor role is required.";
-      }
-    }
+  if (!form.primary_vendor_id) {
+    errors.primary_vendor_id = "Primary vendor is required.";
+  }
+}
 
-    setFieldErrors(errors);
+setFieldErrors(errors);
     if (Object.keys(errors).length > 0) {
       setMessage("Please fix the highlighted fields before continuing.");
       return false;
@@ -316,9 +313,31 @@ export default function NewWorkOrderPage() {
     return null;
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function parseApiResponse(response: Response) {
+    const contentType = response.headers.get("content-type") || "";
+
+    if (contentType.includes("application/json")) {
+      return response.json();
+    }
+
+    const text = await response.text();
+    console.error(
+      "POST /api/work-orders returned non-JSON response:",
+      text.slice(0, 200)
+    );
+
+    return {
+      error: "Server returned an invalid response. Check API logs.",
+    };
+  }
+
+  async function handleSubmit(e?: React.FormEvent | React.MouseEvent) {
+  e?.preventDefault();
     setMessage("");
+
+    if (saving) return;
+
+  
 
     const firstInvalidStep = await findFirstInvalidStep();
     if (firstInvalidStep) {
@@ -365,7 +384,7 @@ export default function NewWorkOrderPage() {
         body: payload,
       });
 
-      const result = await response.json();
+      const result = await parseApiResponse(response);
 
       if (!response.ok) {
         throw new Error(result.error || "Failed to create work order.");
@@ -384,7 +403,7 @@ export default function NewWorkOrderPage() {
     "w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-950 shadow-sm outline-none transition focus:border-sky-700 focus:ring-2 focus:ring-sky-100";
 
   return (
-    <form onSubmit={handleSubmit} className="mx-auto max-w-7xl space-y-8">
+    <div className="mx-auto max-w-7xl space-y-8">
       <header className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <nav className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -698,25 +717,7 @@ export default function NewWorkOrderPage() {
                     </select>
                   </FieldShell>
 
-                  <FieldShell
-                    label="Role in Work Order"
-                    required
-                    error={fieldErrors.primary_vendor_role}
-                  >
-                    <select
-                      name="primary_vendor_role"
-                      value={form.primary_vendor_role}
-                      onChange={handleChange}
-                      className={inputClass}
-                    >
-                      <option>Main Contractor</option>
-                      <option>Subcontractor</option>
-                      <option>Supplier</option>
-                      <option>Consultant</option>
-                      <option>Labour Contractor</option>
-                      <option>Equipment Rental</option>
-                    </select>
-                  </FieldShell>
+            
                 </div>
 
                 {selectedVendor && (
@@ -780,7 +781,7 @@ export default function NewWorkOrderPage() {
 
                 <ReviewSection title="Vendor Details" onEdit={() => setCurrentStep(3)}>
                   <ReviewItem label="Vendor" value={selectedVendor?.vendor_name} />
-                  <ReviewItem label="Role" value={form.primary_vendor_role} />
+                  
                 </ReviewSection>
               </StepPanel>
             )}
@@ -816,20 +817,21 @@ export default function NewWorkOrderPage() {
                   </button>
                 ) : (
                   <button
-                    type="submit"
-                    disabled={saving}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-sky-700 px-6 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-sky-800 disabled:opacity-60"
-                  >
-                    <FileText className="h-4 w-4" />
-                    {saving ? "Saving..." : "Submit Work Order"}
-                  </button>
+  type="button"
+  onClick={handleSubmit}
+  disabled={saving}
+  className="inline-flex items-center justify-center gap-2 rounded-lg bg-sky-700 px-6 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-sky-800 disabled:opacity-60"
+>
+  <FileText className="h-4 w-4" />
+  {saving ? "Saving..." : "Submit Work Order"}
+</button>
                 )}
               </div>
             </footer>
           </div>
         </section>
       </div>
-    </form>
+    </div>
   );
 }
 

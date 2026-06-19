@@ -11,6 +11,24 @@ function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "-";
+
+  return parsed.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function auditName(name: string | null | undefined, email: string | null | undefined) {
+  return name || email || "-";
+}
+
 type ApprovalAction = "Approved" | "Rejected";
 type RaApprovalAction = "Approved" | "Rejected";
 
@@ -458,12 +476,14 @@ export default function ApprovalsPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1300px] text-sm">
+          <table className="w-full min-w-[1480px] text-sm">
             <thead className="bg-slate-50 text-xs uppercase text-slate-500">
               <tr>
                 <th className="p-3 text-left">RA Details</th>
                 <th className="p-3 text-left">Site / WO</th>
                 <th className="p-3 text-left">Vendor</th>
+                <th className="p-3 text-left">Created By</th>
+                <th className="p-3 text-left">Created At</th>
                 <th className="p-3 text-right">Gross</th>
                 <th className="p-3 text-right">GST</th>
                 <th className="p-3 text-right">Net</th>
@@ -520,6 +540,21 @@ export default function ApprovalsPage() {
                     </td>
 
                     <td className="p-3">{vendor?.vendor_name || "-"}</td>
+
+                    <td className="p-3">
+                      <div className="max-w-[180px] truncate font-medium text-slate-800">
+                        {auditName(bill.created_by_name, bill.created_by_email)}
+                      </div>
+                      {bill.created_by_name && bill.created_by_email && bill.created_by_name !== bill.created_by_email && (
+                        <div className="max-w-[180px] truncate text-xs text-slate-500">
+                          {bill.created_by_email}
+                        </div>
+                      )}
+                    </td>
+
+                    <td className="p-3 text-slate-700">
+                      {formatDateTime(bill.created_at)}
+                    </td>
 
                     <td className="p-3 text-right font-semibold">
                       {money(bill.gross_amount)}
@@ -598,7 +633,7 @@ export default function ApprovalsPage() {
 
               {bills.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="p-8 text-center text-slate-500">
+                  <td colSpan={11} className="p-8 text-center text-slate-500">
                     No pending RA Bills found.
                   </td>
                 </tr>
@@ -622,12 +657,14 @@ export default function ApprovalsPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1250px] text-sm">
+          <table className="w-full min-w-[1430px] text-sm">
             <thead className="bg-slate-50 text-xs uppercase text-slate-500">
               <tr>
                 <th className="p-3 text-left">DN Details</th>
                 <th className="p-3 text-left">Site / WO</th>
                 <th className="p-3 text-left">Vendor</th>
+                <th className="p-3 text-left">Created By</th>
+                <th className="p-3 text-left">Created At</th>
                 <th className="p-3 text-left">Type</th>
                 <th className="p-3 text-right">Amount</th>
                 <th className="p-3 text-left">Reason</th>
@@ -685,6 +722,19 @@ export default function ApprovalsPage() {
                     </td>
 
                     <td className="p-3">{vendor?.vendor_name || "-"}</td>
+                    <td className="p-3">
+                      <div className="max-w-[180px] truncate font-medium text-slate-800">
+                        {auditName(note.created_by_name, note.created_by_email)}
+                      </div>
+                      {note.created_by_name && note.created_by_email && note.created_by_name !== note.created_by_email && (
+                        <div className="max-w-[180px] truncate text-xs text-slate-500">
+                          {note.created_by_email}
+                        </div>
+                      )}
+                    </td>
+                    <td className="p-3 text-slate-700">
+                      {formatDateTime(note.created_at)}
+                    </td>
                     <td className="p-3">{note.debit_note_type || "-"}</td>
 
                     <td className="p-3 text-right font-semibold">
@@ -763,7 +813,7 @@ export default function ApprovalsPage() {
 
               {debitNotes.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="p-8 text-center text-slate-500">
+                  <td colSpan={11} className="p-8 text-center text-slate-500">
                     No pending Debit Notes found.
                   </td>
                 </tr>

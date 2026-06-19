@@ -47,7 +47,7 @@ function adminClient() {
   return createClient(supabaseUrl, serviceRoleKey);
 }
 
-async function assertPermission(request: Request, actionCode: "add" | "edit") {
+async function assertPermission(request: Request, actionCode: "view" | "add" | "edit") {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -178,6 +178,70 @@ async function uploadDocument(
     file_name: file.name,
     file_url: path,
   };
+}
+
+export async function GET(request: Request) {
+  try {
+    const access = await assertPermission(request, "view");
+
+    if ("error" in access) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
+    const supabase = adminClient();
+    const [vendorsResult, contactsResult, bankAccountsResult] = await Promise.all([
+      supabase
+        .from("vendors")
+        .select(
+          "id, vendor_name, vendor_type, gstin, pan, aadhaar_cin, created_at"
+        )
+        .neq("status", "deleted")
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("vendor_contacts")
+        .select("id, vendor_id, contact_name, contact_number, email, designation, is_primary")
+        .order("is_primary", { ascending: false }),
+      supabase
+        .from("vendor_bank_accounts")
+        .select("id, vendor_id, account_number, ifsc_code, bank_name, branch_name, is_primary")
+        .order("is_primary", { ascending: false }),
+    ]);
+
+    for (const result of [vendorsResult, contactsResult, bankAccountsResult]) {
+      if (result.error) throw result.error;
+    }
+
+    const contactsByVendor = new Map<string, any[]>();
+    (contactsResult.data || []).forEach((contact) => {
+      if (!contact.vendor_id) return;
+      contactsByVendor.set(contact.vendor_id, [
+        ...(contactsByVendor.get(contact.vendor_id) || []),
+        contact,
+      ]);
+    });
+
+    const bankAccountsByVendor = new Map<string, any[]>();
+    (bankAccountsResult.data || []).forEach((account) => {
+      if (!account.vendor_id) return;
+      bankAccountsByVendor.set(account.vendor_id, [
+        ...(bankAccountsByVendor.get(account.vendor_id) || []),
+        account,
+      ]);
+    });
+
+    const vendors = (vendorsResult.data || []).map((vendor) => ({
+      ...vendor,
+      contacts: contactsByVendor.get(vendor.id) || [],
+      bank_accounts: bankAccountsByVendor.get(vendor.id) || [],
+    }));
+
+    return NextResponse.json({ vendors });
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: error.message || "Failed to load vendors." },
+      { status: 500 }
+    );
+  }
 }
 
 export async function POST(request: Request) {
@@ -392,6 +456,8 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error: `Vendor already exists with same PAN / Aadhaar-CIN / GSTIN: ${duplicateVendor.vendor_name}`,
+          duplicate_vendor_id: duplicateVendor.id,
+          duplicate_vendor_name: duplicateVendor.vendor_name,
         },
         { status: 409 }
       );

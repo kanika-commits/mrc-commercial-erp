@@ -230,7 +230,7 @@ export async function POST(request: Request) {
 
     const formData = await request.formData();
     const workOrderId = String(formData.get("work_order_id") || "").trim();
-    const vendorId = String(formData.get("vendor_id") || "").trim();
+    let vendorId = String(formData.get("vendor_id") || "").trim();
     const raBillId = String(formData.get("ra_bill_id") || "").trim();
     const debitNoteNumber = String(
       formData.get("debit_note_number") || ""
@@ -246,13 +246,6 @@ export async function POST(request: Request) {
     if (!workOrderId) {
       return NextResponse.json(
         { error: "Work Order is required." },
-        { status: 400 }
-      );
-    }
-
-    if (!vendorId) {
-      return NextResponse.json(
-        { error: "Vendor is required." },
         { status: 400 }
       );
     }
@@ -292,13 +285,6 @@ export async function POST(request: Request) {
       );
     }
 
-    if (files.length === 0) {
-      return NextResponse.json(
-        { error: "At least one Debit Note attachment is required." },
-        { status: 400 }
-      );
-    }
-
     const admin = adminClient();
 
     const { data: workOrder, error: workOrderError } = await admin
@@ -316,18 +302,35 @@ export async function POST(request: Request) {
       );
     }
 
-    const { data: vendorLink, error: vendorLinkError } = await admin
+    let vendorLinkQuery = admin
       .from("work_order_vendors")
-      .select("id")
-      .eq("work_order_id", workOrderId)
-      .eq("vendor_id", vendorId)
-      .maybeSingle();
+      .select("id, vendor_id, is_primary")
+      .eq("work_order_id", workOrderId);
+
+    if (vendorId) {
+      vendorLinkQuery = vendorLinkQuery.eq("vendor_id", vendorId);
+    }
+
+    const { data: vendorLinks, error: vendorLinkError } = await vendorLinkQuery
+      .order("is_primary", { ascending: false });
 
     if (vendorLinkError) throw vendorLinkError;
 
+    const vendorLink =
+      vendorLinks?.find((link) => link.is_primary) || vendorLinks?.[0];
+
     if (!vendorLink) {
       return NextResponse.json(
-        { error: "Selected vendor is not linked to this Work Order." },
+        { error: "No vendor is linked to this Work Order." },
+        { status: 400 }
+      );
+    }
+
+    vendorId = vendorId || vendorLink.vendor_id;
+
+    if (!vendorId) {
+      return NextResponse.json(
+        { error: "Vendor could not be found for this Work Order." },
         { status: 400 }
       );
     }
@@ -421,7 +424,6 @@ export async function POST(request: Request) {
             debit_note_id: debitNote.id,
             file_name: file.name,
             file_url: filePath,
-            file_path: filePath,
           });
 
         if (documentError) throw documentError;
@@ -433,14 +435,26 @@ export async function POST(request: Request) {
       throw error;
     }
   } catch (error: any) {
+    console.error("[Debit Note POST] Failed to create Debit Note", {
+      message: error?.message,
+      code: error?.code,
+      details: error?.details,
+      hint: error?.hint,
+    });
+
     const friendlyDuplicate = duplicateErrorMessage(error);
 
     if (friendlyDuplicate) {
       return NextResponse.json({ error: friendlyDuplicate }, { status: 409 });
     }
 
+    const message = String(error?.message || "");
+    const friendlyMessage = message.includes("file_path")
+      ? "Failed to save Debit Note attachment metadata. Please contact support."
+      : message || "Failed to create Debit Note.";
+
     return NextResponse.json(
-      { error: error.message || "Failed to create Debit Note." },
+      { error: friendlyMessage },
       { status: 500 }
     );
   }
@@ -570,7 +584,6 @@ export async function PATCH(request: Request) {
         .update({
           file_name: driveFile.file_name || fileName,
           file_url: driveFile.file_url,
-          file_path: driveFile.file_id,
         })
         .eq("id", document.id);
 

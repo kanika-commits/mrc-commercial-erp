@@ -8,10 +8,11 @@ import AlertMessage from "@/components/AlertMessage";
 
 const PAYMENT_TYPES = [
   "Work Order",
-  "Invoice",
   "Purchase Order",
-  "Advance",
-  "Bank Transfer",
+  "Salary",
+  "Local Purchase",
+  "Fuel",
+  "Internal Transfer",
   "Other",
 ];
 
@@ -22,8 +23,10 @@ type Row = {
   work_order_id: string;
   invoice_id: string;
   company_bank_account_id: string;
+  to_company_bank_account_id: string;
   vendor_id: string;
   vendor_name: string;
+  linked_vendors: any[];
   payment_date: string;
   total_payment: string;
   tds_amount: string;
@@ -36,8 +39,10 @@ const emptyRow = (): Row => ({
   work_order_id: "",
   invoice_id: "",
   company_bank_account_id: "",
+  to_company_bank_account_id: "",
   vendor_id: "",
   vendor_name: "",
+  linked_vendors: [],
   payment_date: "",
   total_payment: "",
   tds_amount: "0",
@@ -82,7 +87,7 @@ export default function NewPaymentPage() {
   const [rows, setRows] = useState<Row[]>(Array.from({ length: 10 }, emptyRow));
   const [companies, setCompanies] = useState<any[]>([]);
   const [allCompanies, setAllCompanies] = useState<any[]>([]);
-  const [mrcCompanyId, setMrcCompanyId] = useState("");
+  const [defaultCompanyId, setDefaultCompanyId] = useState("");
   const [workOrders, setWorkOrders] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [vendors, setVendors] = useState<any[]>([]);
@@ -108,21 +113,9 @@ export default function NewPaymentPage() {
     }
 
     const sortedCompanies = sortCompanies(companyData || []);
-    const mrcCompany =
-      sortedCompanies.find(
-        (company: any) =>
-          String(company.company_code || "").trim().toUpperCase() === "MRC"
-      ) ||
-      sortedCompanies.find((company: any) =>
-        String(company.company_name || "")
-          .trim()
-          .toLowerCase()
-          .includes("mrc infracon")
-      );
-
     setAllCompanies(sortedCompanies);
-    setCompanies(mrcCompany ? [mrcCompany] : []);
-    setMrcCompanyId(mrcCompany?.id || "");
+    setCompanies(sortedCompanies);
+    setDefaultCompanyId(sortedCompanies[0]?.id || "");
 
     const { data: woData, error: woError } = await supabase
       .from("work_orders")
@@ -208,21 +201,26 @@ export default function NewPaymentPage() {
     const activeAccounts = (accountResult.accounts || []).filter(
       (account: any) => String(account.status || "active").toLowerCase() === "active"
     );
-    const mrcAccounts = mrcCompany?.id
-      ? activeAccounts.filter((account: any) => account.company_id === mrcCompany.id)
-      : [];
 
-    setBankAccounts(mrcAccounts);
+    setBankAccounts(activeAccounts);
     setRows((prev) =>
-      prev.map((row) => ({
-        ...row,
-        company_id: row.company_id || mrcCompany?.id || "",
-        company_bank_account_id:
-          row.company_bank_account_id &&
-          mrcAccounts.some((account: any) => account.id === row.company_bank_account_id)
-            ? row.company_bank_account_id
-            : "",
-      }))
+      prev.map((row) => {
+        const companyId = row.company_id || sortedCompanies[0]?.id || "";
+        const fromAccount = activeAccounts.find(
+          (account: any) => account.id === row.company_bank_account_id
+        );
+        const toAccount = activeAccounts.find(
+          (account: any) => account.id === row.to_company_bank_account_id
+        );
+
+        return {
+          ...row,
+          company_id: companyId,
+          company_bank_account_id:
+            fromAccount?.company_id === companyId ? row.company_bank_account_id : "",
+          to_company_bank_account_id: toAccount ? row.to_company_bank_account_id : "",
+        };
+      })
     );
   }
 
@@ -233,11 +231,11 @@ export default function NewPaymentPage() {
   }
 
   function newPaymentRow(): Row {
-    return { ...emptyRow(), company_id: mrcCompanyId };
+    return { ...emptyRow(), company_id: defaultCompanyId };
   }
 
-  function accountsForCompany(_companyId: string) {
-    return bankAccounts;
+  function accountsForCompany(companyId: string) {
+    return bankAccounts.filter((account) => account.company_id === companyId);
   }
 
   function workOrdersForCompany(_companyId: string) {
@@ -257,10 +255,7 @@ export default function NewPaymentPage() {
   }
 
   function workOrderLabel(workOrder: any) {
-    const company = companyLabel(workOrder.company_id);
-    return company === "-"
-      ? workOrder.wo_number || "-"
-      : `${workOrder.wo_number || "-"} - ${company}`;
+    return workOrder.wo_number || "-";
   }
 
   function invoiceLabel(invoice: any) {
@@ -286,14 +281,17 @@ export default function NewPaymentPage() {
         Number(row.total_payment || 0) > 0 ||
         Number(row.tds_amount || 0) > 0 ||
         row.company_bank_account_id ||
+        row.to_company_bank_account_id ||
         row.vendor_id
     );
   }
 
   const textReferenceLabels: Record<string, string> = {
     "Purchase Order": "Purchase Order Number",
-    Advance: "Advance Reference / Purpose",
-    "Bank Transfer": "Transfer Reference",
+    Salary: "Salary Reference / Employee",
+    "Local Purchase": "Local Purchase Reference",
+    Fuel: "Fuel Reference",
+    "Internal Transfer": "Transfer Reference",
     Other: "Reference / Remarks",
   };
 
@@ -323,13 +321,23 @@ export default function NewPaymentPage() {
       return;
     }
 
-    const linkedVendor = result.vendors?.[workOrderId];
+    const linkedVendors = (result.all_vendors?.[workOrderId] || [])
+      .map((row: any) => ({
+        vendor_id: row.vendor_id,
+        vendor_name: row.vendor?.vendor_name || "",
+        vendor_role: row.vendor_role || "-",
+      }))
+      .filter((row: any) => row.vendor_id);
+    const linkedVendor =
+      linkedVendors.length === 1
+        ? linkedVendors[0]
+        : result.vendors?.[workOrderId];
 
-    if (!linkedVendor?.vendor_id) {
+    if (linkedVendors.length === 0 && !linkedVendor?.vendor_id) {
       setMessage("No vendor linked to selected Work Order");
       setRows((prev) =>
         prev.map((row, i) =>
-          i === index ? { ...row, vendor_id: "", vendor_name: "" } : row
+          i === index ? { ...row, vendor_id: "", vendor_name: "", linked_vendors: [] } : row
         )
       );
       return;
@@ -340,8 +348,9 @@ export default function NewPaymentPage() {
         i === index
           ? {
               ...row,
-              vendor_id: linkedVendor.vendor_id || "",
-              vendor_name: linkedVendor.vendor_name || "",
+              linked_vendors: linkedVendors,
+              vendor_id: linkedVendors.length === 1 ? linkedVendor.vendor_id || "" : "",
+              vendor_name: linkedVendors.length === 1 ? linkedVendor.vendor_name || "" : "",
             }
           : row
       )
@@ -361,8 +370,10 @@ export default function NewPaymentPage() {
         row.reference_number = "";
         row.work_order_id = "";
         row.invoice_id = "";
+        row.to_company_bank_account_id = "";
         row.vendor_id = "";
         row.vendor_name = "";
+        row.linked_vendors = [];
       }
 
       if (field === "total_payment" || field === "tds_amount") {
@@ -382,12 +393,13 @@ export default function NewPaymentPage() {
         i === index
           ? {
               ...row,
-              company_id: row.company_id || mrcCompanyId,
+              company_id: row.company_id || wo?.company_id || defaultCompanyId,
               work_order_id: workOrderId,
               invoice_id: "",
               reference_number: wo?.wo_number || "",
               vendor_id: "",
               vendor_name: "",
+              linked_vendors: [],
             }
           : row
       )
@@ -408,12 +420,13 @@ export default function NewPaymentPage() {
         i === index
           ? {
               ...row,
-              company_id: row.company_id || mrcCompanyId,
+              company_id: row.company_id || wo?.company_id || defaultCompanyId,
               invoice_id: invoiceId,
               work_order_id: invoice?.work_order_id || "",
               reference_number: invoice?.invoice_number || "",
               vendor_id: invoice?.vendor_id || "",
               vendor_name: vendorName,
+              linked_vendors: [],
             }
           : row
       )
@@ -422,13 +435,17 @@ export default function NewPaymentPage() {
 
   function handleInternalTransferSelect(index: number, accountId: string) {
     const account = bankAccounts.find((item) => item.id === accountId);
+    const reference = account
+      ? `Internal Transfer to ${companyLabel(account.company_id)} - ${accountLabel(account)}`
+      : "";
 
     setRows((prev) =>
       prev.map((row, i) =>
         i === index
           ? {
               ...row,
-              reference_number: account ? accountLabel(account) : "",
+              to_company_bank_account_id: accountId,
+              reference_number: reference,
               vendor_id: "",
               vendor_name: "",
             }
@@ -469,14 +486,16 @@ export default function NewPaymentPage() {
         const targetIndex = rowIndex + i;
 
         updated[targetIndex] = {
-          company_id: mrcCompanyId,
+          company_id: defaultCompanyId,
           payment_type: cols[0] || "Work Order",
           reference_number: cols[1] || "",
           work_order_id: "",
           invoice_id: "",
           company_bank_account_id: "",
+          to_company_bank_account_id: "",
           vendor_id: "",
           vendor_name: cols[3] || "",
+          linked_vendors: [],
           payment_date: cols[4] || "",
           total_payment: onlyNumber(cols[5] || ""),
           tds_amount: onlyNumber(cols[6] || "0"),
@@ -525,17 +544,22 @@ export default function NewPaymentPage() {
         throw new Error(`Row ${rowNo}: From Account is required.`);
       }
 
+      if (row.payment_type === "Internal Transfer") {
+        if (!row.to_company_bank_account_id) {
+          throw new Error(`Row ${rowNo}: To Account is required for Internal Transfer.`);
+        }
+
+        if (row.to_company_bank_account_id === row.company_bank_account_id) {
+          throw new Error(`Row ${rowNo}: From Account and To Account cannot be same.`);
+        }
+      }
+
       if (row.payment_type === "Work Order" && !row.work_order_id) {
         throw new Error(`Row ${rowNo}: Work Order is required.`);
       }
 
-      if (row.payment_type === "Invoice" && !row.invoice_id) {
-        throw new Error(`Row ${rowNo}: Invoice is required.`);
-      }
-
       if (
         row.payment_type !== "Work Order" &&
-        row.payment_type !== "Invoice" &&
         !row.reference_number.trim()
       ) {
         throw new Error(`Row ${rowNo}: Reference is required.`);
@@ -543,10 +567,6 @@ export default function NewPaymentPage() {
 
       if (row.payment_type === "Work Order" && !row.vendor_id) {
         throw new Error(`Row ${rowNo}: No vendor linked to selected Work Order.`);
-      }
-
-      if (row.payment_type === "Invoice" && !row.vendor_id) {
-        throw new Error(`Row ${rowNo}: Vendor could not be found for selected Invoice.`);
       }
 
       if (row.payment_type === "Purchase Order" && !row.vendor_id) {
@@ -675,10 +695,9 @@ export default function NewPaymentPage() {
                     onChange={(e) =>
                       updateRow(index, "company_id", e.target.value)
                     }
-                    disabled
                     className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
                   >
-                    <option value="">MRC company not found</option>
+                    <option value="">Select Company</option>
                     {companies.map((company) => (
                       <option key={company.id} value={company.id}>
                         {company.company_name}
@@ -711,31 +730,13 @@ export default function NewPaymentPage() {
                       onChange={(e) =>
                         handleWorkOrderSelect(index, e.target.value)
                       }
-                      disabled={!row.company_id}
-                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400 disabled:bg-slate-100"
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
                     >
                       <option value="">Select Work Order</option>
 
                       {workOrdersForCompany(row.company_id).map((wo) => (
                         <option key={wo.id} value={wo.id}>
                           {workOrderLabel(wo)}
-                        </option>
-                      ))}
-                    </select>
-                  ) : row.payment_type === "Invoice" ? (
-                    <select
-                      value={row.invoice_id}
-                      onChange={(e) =>
-                        handleInvoiceSelect(index, e.target.value)
-                      }
-                      disabled={!row.company_id}
-                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400 disabled:bg-slate-100"
-                    >
-                      <option value="">Select Invoice</option>
-
-                      {invoicesForCompany(row.company_id).map((invoice) => (
-                        <option key={invoice.id} value={invoice.id}>
-                          {invoiceLabel(invoice)}
                         </option>
                       ))}
                     </select>
@@ -753,6 +754,9 @@ export default function NewPaymentPage() {
                 </td>
 
                 <td className="px-3 py-3 align-top">
+                  {(() => {
+                    const companyAccounts = accountsForCompany(row.company_id);
+                    return (
                   <select
                     value={row.company_bank_account_id}
                     onChange={(e) =>
@@ -762,27 +766,48 @@ export default function NewPaymentPage() {
                         e.target.value
                       )
                     }
-                    disabled={bankAccounts.length === 0}
+                    disabled={!row.company_id || companyAccounts.length === 0}
                     className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400 disabled:bg-slate-100"
                   >
                       <option value="">
                         {row.company_id
-                          ? bankAccounts.length > 0
+                          ? companyAccounts.length > 0
                             ? "Select Account"
-                            : "No active MRC accounts found"
-                          : "MRC company not found"}
+                            : "No active accounts for this company"
+                          : "Select Company first"}
                       </option>
 
-                    {accountsForCompany(row.company_id).map((account) => (
+                    {companyAccounts.map((account) => (
                       <option key={account.id} value={account.id}>
                         {accountLabel(account)}
                       </option>
                     ))}
                   </select>
+                    );
+                  })()}
                 </td>
 
                 <td className="px-3 py-3 align-top">
-                  {row.payment_type === "Purchase Order" ? (
+                  {row.payment_type === "Work Order" && row.linked_vendors.length > 1 ? (
+                    <select
+                      value={row.vendor_id}
+                      onChange={(e) => {
+                        const vendor = row.linked_vendors.find(
+                          (item: any) => item.vendor_id === e.target.value
+                        );
+                        updateRow(index, "vendor_id", e.target.value);
+                        updateRow(index, "vendor_name", vendor?.vendor_name || "");
+                      }}
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
+                    >
+                      <option value="">Select Vendor</option>
+                      {row.linked_vendors.map((vendor: any) => (
+                        <option key={vendor.vendor_id} value={vendor.vendor_id}>
+                          {vendor.vendor_name} — {vendor.vendor_role}
+                        </option>
+                      ))}
+                    </select>
+                  ) : row.payment_type === "Purchase Order" ? (
                     <select
                       value={row.vendor_id}
                       onChange={(e) => {
@@ -801,20 +826,34 @@ export default function NewPaymentPage() {
                         </option>
                       ))}
                     </select>
+                  ) : row.payment_type === "Internal Transfer" ? (
+                    <select
+                      value={row.to_company_bank_account_id}
+                      onChange={(e) =>
+                        handleInternalTransferSelect(index, e.target.value)
+                      }
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
+                    >
+                      <option value="">Select To Account</option>
+                      {bankAccounts.map((account) => (
+                        <option
+                          key={account.id}
+                          value={account.id}
+                          disabled={account.id === row.company_bank_account_id}
+                        >
+                          {companyLabel(account.company_id)} - {accountLabel(account)}
+                        </option>
+                      ))}
+                    </select>
                   ) : (
                     <input
-                      value={
-                        row.payment_type === "Bank Transfer"
-                          ? "Bank Transfer"
-                          : row.vendor_name
-                      }
+                      value={row.vendor_name}
                       onChange={(e) =>
                         updateRow(index, "vendor_name", e.target.value)
                       }
                       readOnly={
                         row.payment_type === "Work Order" ||
-                        row.payment_type === "Invoice" ||
-                        row.payment_type === "Bank Transfer"
+                        row.payment_type === "Invoice"
                       }
                       className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition focus:border-slate-400 read-only:text-slate-600"
                       placeholder="Vendor / Party"

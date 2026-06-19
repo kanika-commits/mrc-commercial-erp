@@ -183,6 +183,11 @@ function normalizeStoragePath(value: string | null) {
   return decodeURIComponent(path);
 }
 
+function addAmount(map: Map<string, number>, workOrderId: string | null, amount: number) {
+  if (!workOrderId || !Number.isFinite(amount)) return;
+  map.set(workOrderId, (map.get(workOrderId) || 0) + amount);
+}
+
 async function createDocumentSignedUrl(
   supabase: ReturnType<typeof adminClient>,
   document: any
@@ -326,12 +331,139 @@ export async function GET(
       return NextResponse.json({ error: "Vendor was not found." }, { status: 404 });
     }
 
+    const { data: vendorWorkOrderLinks, error: vendorWorkOrderLinksError } =
+      await supabase
+        .from("work_order_vendors")
+        .select("work_order_id")
+        .eq("vendor_id", id);
+
+    if (vendorWorkOrderLinksError) throw vendorWorkOrderLinksError;
+
+    const workOrderIds = new Set(
+      (vendorWorkOrderLinks || [])
+        .map((link) => link.work_order_id)
+        .filter(Boolean)
+    );
+
+    const { data: raBillWorkOrders, error: raBillWorkOrdersError } = await supabase
+      .from("ra_bills")
+      .select("work_order_id")
+      .eq("vendor_id", id);
+
+    if (raBillWorkOrdersError) throw raBillWorkOrdersError;
+
+    (raBillWorkOrders || []).forEach((bill) => {
+      if (bill.work_order_id) workOrderIds.add(bill.work_order_id);
+    });
+
+    const { data: primaryVendorWorkOrders, error: primaryVendorWorkOrdersError } =
+      await supabase
+        .from("work_orders")
+        .select("id")
+        .eq("primary_vendor_id", id);
+
+    if (primaryVendorWorkOrdersError) {
+      const message = String(primaryVendorWorkOrdersError.message || "").toLowerCase();
+      if (!message.includes("primary_vendor_id")) {
+        throw primaryVendorWorkOrdersError;
+      }
+    } else {
+      (primaryVendorWorkOrders || []).forEach((workOrder) => {
+        if (workOrder.id) workOrderIds.add(workOrder.id);
+      });
+    }
+
+    const linkedWorkOrderIds = Array.from(workOrderIds);
+    const { data: workOrders, error: workOrdersError } = linkedWorkOrderIds.length
+      ? await supabase
+          .from("work_orders")
+          .select("id, company_id, site_id, wo_number, wo_date, wo_value, gst_percent")
+          .in("id", linkedWorkOrderIds)
+          .order("wo_number", { ascending: true })
+      : { data: [], error: null };
+
+    if (workOrdersError) throw workOrdersError;
+
+    const amountDueByWorkOrder = new Map<string, number>();
+
+    if (linkedWorkOrderIds.length > 0) {
+      const [
+        raBillsResult,
+        invoicesResult,
+        paymentsResult,
+        debitNotesResult,
+      ] = await Promise.all([
+        supabase
+          .from("ra_bills")
+          .select("id, work_order_id, gross_amount, recovery_amount, approval_status")
+          .in("work_order_id", linkedWorkOrderIds),
+        supabase
+          .from("invoices")
+          .select("id, work_order_id, gst_amount, itc_status, approval_status")
+          .in("work_order_id", linkedWorkOrderIds),
+        supabase
+          .from("payments")
+          .select("id, work_order_id, total_payment, is_deleted")
+          .in("work_order_id", linkedWorkOrderIds),
+        supabase
+          .from("debit_notes")
+          .select("id, work_order_id, total_amount, debit_note_type, approval_status")
+          .in("work_order_id", linkedWorkOrderIds),
+      ]);
+
+      for (const result of [raBillsResult, invoicesResult, paymentsResult, debitNotesResult]) {
+        if (result.error) throw result.error;
+      }
+
+      (raBillsResult.data || []).forEach((bill: any) => {
+        if (String(bill.approval_status || "").trim().toLowerCase() !== "approved") {
+          return;
+        }
+        addAmount(
+          amountDueByWorkOrder,
+          bill.work_order_id,
+          Number(bill.gross_amount || 0) - Number(bill.recovery_amount || 0)
+        );
+      });
+
+      (invoicesResult.data || []).forEach((invoice: any) => {
+        const itcStatus = String(invoice.itc_status || "").trim().toLowerCase();
+        const approvalStatus = String(invoice.approval_status || "").trim().toLowerCase();
+        if (itcStatus !== "claimed" || approvalStatus === "rejected") {
+          return;
+        }
+        addAmount(amountDueByWorkOrder, invoice.work_order_id, Number(invoice.gst_amount || 0));
+      });
+
+      (paymentsResult.data || []).forEach((payment: any) => {
+        if (payment.is_deleted === true) return;
+        addAmount(amountDueByWorkOrder, payment.work_order_id, -Number(payment.total_payment || 0));
+      });
+
+      (debitNotesResult.data || []).forEach((note: any) => {
+        if (String(note.approval_status || "").trim().toLowerCase() !== "approved") {
+          return;
+        }
+        const debitNoteType = String(note.debit_note_type || "").trim().toLowerCase();
+        if (debitNoteType !== "withheld" && debitNoteType !== "deduction") {
+          return;
+        }
+        addAmount(amountDueByWorkOrder, note.work_order_id, -Number(note.total_amount || 0));
+      });
+    }
+
+    const workOrdersWithAmountDue = (workOrders || []).map((workOrder: any) => ({
+      ...workOrder,
+      amount_due: amountDueByWorkOrder.get(workOrder.id) || 0,
+    }));
+
     return NextResponse.json({
       vendor: vendor.data,
       contacts: contacts.data || [],
       bankAccounts: bankAccounts.data || [],
       documents: documents.data || [],
       gstins: gstins.data || [],
+      workOrders: workOrdersWithAmountDue,
     });
   } catch (error: any) {
     return NextResponse.json(

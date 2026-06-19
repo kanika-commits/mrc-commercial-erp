@@ -222,19 +222,6 @@ export default function EditSitePage() {
               />
             </label>
 
-            <label className="space-y-2">
-              <span className="text-sm font-medium text-slate-600">Status</span>
-              <select
-                value={status}
-                onChange={(event) => setStatus(event.target.value)}
-                className="w-full rounded border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#00658b] focus:ring-1 focus:ring-[#00658b]"
-              >
-                <option value="active">active</option>
-                <option value="inactive">inactive</option>
-                <option value="under construction">under construction</option>
-                <option value="pending">pending</option>
-              </select>
-            </label>
           </div>
         )}
       </section>

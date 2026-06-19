@@ -33,6 +33,8 @@ type WorkOrder = {
   approved_by_name: string | null;
   approved_by_email: string | null;
   approved_at: string | null;
+  created_by_name: string | null;
+  created_by_email: string | null;
   company_id: string | null;
   site_id: string | null;
   organization_id: string | null;
@@ -251,6 +253,14 @@ function getApprovedBy(wo: WorkOrder) {
   return value?.trim() || "-";
 }
 
+function getCreatedBy(wo: WorkOrder) {
+  const value = [wo.created_by_name, wo.created_by_email].find(
+    (item) => item && item.trim().length > 0,
+  );
+
+  return value?.trim() || "-";
+}
+
 function statusBadgeClass(status: string | null) {
   const normalized = status?.toLowerCase();
 
@@ -400,6 +410,8 @@ let workOrderQuery = supabase
       approved_by_name,
       approved_by_email,
       approved_at,
+      created_by_name,
+      created_by_email,
       company_id,
       site_id,
       organization_id,
@@ -1058,7 +1070,7 @@ const { data, error: loadError } = await workOrderQuery;
           <div className="p-10 text-center text-slate-500">No work orders match the selected filters.</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1540px] border-collapse text-left text-sm">
+            <table className="w-full min-w-[1780px] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-300 bg-[#f6f3f5]">
                   <th className="w-[12%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
@@ -1086,6 +1098,12 @@ const { data, error: loadError } = await workOrderQuery;
                     Approval
                   </th>
                   <th className="w-[12%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
+                    Created By
+                  </th>
+                  <th className="w-[11%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
+                    Created At
+                  </th>
+                  <th className="w-[12%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Approved By
                   </th>
                   <th className="w-[11%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
@@ -1103,14 +1121,22 @@ const { data, error: loadError } = await workOrderQuery;
                 {paginatedWorkOrders.map((wo) => {
                   const lifecycleStatus = lifecycleStatusValue(wo.status);
                   const commercials = workOrderCommercials(wo);
+                  const vendorName = getVendorName(wo);
 
                   return (
                   <tr key={wo.id} className="transition hover:bg-[#f6f3f5]">
-                    <td className="px-6 py-5 align-top text-base font-bold text-[#00658b]">
-                      {wo.wo_number || "-"}
+                    <td className="px-6 py-5 align-top">
+                      <div className="max-w-[320px] text-base font-bold leading-6">
+                        <Link
+                          href={`/work-orders/${wo.id}`}
+                          className="text-[#00658b] hover:underline"
+                        >
+                          {wo.wo_number || "-"}
+                        </Link>
+                      </div>
                     </td>
                     <td className="px-6 py-5 align-top">
-                      <div className="text-base font-semibold text-slate-950">{getVendorName(wo)}</div>
+                      <div className="text-base font-semibold text-slate-950">{vendorName}</div>
                       <div className="mt-1 text-sm text-slate-500">{getSiteName(wo)}</div>
                     </td>
                     <td className="px-6 py-5 align-top text-base text-slate-700">
@@ -1201,6 +1227,19 @@ const { data, error: loadError } = await workOrderQuery;
                       >
                         {titleCase(wo.approval_status)}
                       </span>
+                    </td>
+                    <td className="px-6 py-5 align-top">
+                      <div className="max-w-[180px] truncate text-sm font-medium text-slate-800">
+                        {getCreatedBy(wo)}
+                      </div>
+                      {wo.created_by_name && wo.created_by_email && wo.created_by_name !== wo.created_by_email && (
+                        <div className="mt-1 max-w-[180px] truncate text-xs text-slate-500">
+                          {wo.created_by_email}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-6 py-5 align-top text-sm font-medium text-slate-700">
+                      {formatDateTime(wo.created_at)}
                     </td>
                     <td className="px-6 py-5 align-top">
                       <div className="max-w-[180px] truncate text-sm font-medium text-slate-800">

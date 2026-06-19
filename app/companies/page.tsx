@@ -5,6 +5,7 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { can, getCurrentUserAccess } from "@/lib/accessControl";
 import { sortCompanies } from "@/lib/companyOrdering";
+import { formatStatusLabel } from "@/lib/statusLabels";
 
 type Company = {
   id: string;
@@ -184,7 +185,7 @@ export default function CompaniesPage() {
                         }`
                       : "-"}
                   </td>
-                  <td className="p-3">{company.status}</td>
+                  <td className="p-3">{formatStatusLabel(company.status)}</td>
                   <td className="p-3">
                     {new Date(company.created_at).toLocaleDateString("en-IN")}
                   </td>

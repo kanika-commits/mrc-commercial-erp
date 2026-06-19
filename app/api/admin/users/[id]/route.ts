@@ -13,6 +13,98 @@ function adminClient() {
   return createClient(supabaseUrl, serviceRoleKey);
 }
 
+async function requireUserPermission(request: Request, actionCode: "delete") {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+  const token = request.headers.get("authorization")?.replace("Bearer ", "");
+
+  if (!token) {
+    return { error: "Missing auth token.", status: 401 };
+  }
+
+  if (!serviceRoleKey) {
+    throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY.");
+  }
+
+  const authClient = createClient(supabaseUrl, anonKey);
+  const supabase = createClient(supabaseUrl, serviceRoleKey);
+
+  const {
+    data: { user },
+    error: userError,
+  } = await authClient.auth.getUser(token);
+
+  if (userError) throw userError;
+
+  if (!user) {
+    return { error: "User not found.", status: 401 };
+  }
+
+  const { data: userRoles, error: userRolesError } = await supabase
+    .from("user_roles")
+    .select("role_id")
+    .eq("user_id", user.id);
+
+  if (userRolesError) throw userRolesError;
+
+  const roleIds = (userRoles || []).map((row) => row.role_id).filter(Boolean);
+
+  if (roleIds.length === 0) {
+    return {
+      error: `You do not have permission to ${actionCode} users.`,
+      status: 403,
+    };
+  }
+
+  const { data: roles, error: rolesError } = await supabase
+    .from("roles")
+    .select("id, role_code")
+    .in("id", roleIds);
+
+  if (rolesError) throw rolesError;
+
+  const roleCodes = (roles || []).map((role) => role.role_code).filter(Boolean);
+
+  if (roleCodes.includes("platform_owner") || roleCodes.includes("super_admin")) {
+    return { user };
+  }
+
+  const [
+    { data: rolePermissions, error: rolePermissionError },
+    { data: userPermissions, error: userPermissionError },
+  ] = await Promise.all([
+    supabase
+      .from("role_permissions")
+      .select("module_code, action_code, allowed")
+      .in("role_id", roleIds),
+    supabase
+      .from("user_permissions")
+      .select("module_code, action_code, allowed")
+      .eq("user_id", user.id),
+  ]);
+
+  if (rolePermissionError) throw rolePermissionError;
+  if (userPermissionError) throw userPermissionError;
+
+  const allowed = [...(rolePermissions || []), ...(userPermissions || [])].some(
+    (permission) =>
+      permission.allowed === true &&
+      ((permission.module_code === "*" && permission.action_code === "*") ||
+        (permission.module_code === "users" &&
+          permission.action_code === actionCode))
+  );
+
+  if (!allowed) {
+    return {
+      error: `You do not have permission to ${actionCode} users.`,
+      status: 403,
+    };
+  }
+
+  return { user };
+}
+
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -309,6 +401,77 @@ export async function PUT(
   } catch (error: any) {
     return NextResponse.json(
       { error: error.message || "Failed to save user access." },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const access = await requireUserPermission(request, "delete");
+
+    if ("error" in access) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
+    const { id } = await params;
+
+    if (access.user.id === id) {
+      return NextResponse.json(
+        { error: "You cannot delete your own app user record." },
+        { status: 400 }
+      );
+    }
+
+    const supabase = adminClient();
+
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (profileError) throw profileError;
+
+    if (!profile) {
+      return NextResponse.json(
+        { error: "User profile was not found." },
+        { status: 404 }
+      );
+    }
+
+    const [
+      deletePermissions,
+      deleteAccess,
+      deleteRoles,
+    ] = await Promise.all([
+      supabase.from("user_permissions").delete().eq("user_id", id),
+      supabase.from("user_access_assignments").delete().eq("user_id", id),
+      supabase.from("user_roles").delete().eq("user_id", id),
+    ]);
+
+    for (const result of [deletePermissions, deleteAccess, deleteRoles]) {
+      if (result.error) throw result.error;
+    }
+
+    const { error: deleteProfileError } = await supabase
+      .from("profiles")
+      .delete()
+      .eq("id", id);
+
+    if (deleteProfileError) throw deleteProfileError;
+
+    return NextResponse.json({
+      user_id: id,
+      deleted: true,
+      auth_user_deleted: false,
+    });
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: error.message || "Failed to delete user." },
       { status: 500 }
     );
   }

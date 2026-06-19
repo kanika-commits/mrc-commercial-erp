@@ -124,6 +124,8 @@ export default function RABillsPage() {
         net_amount,
         status,
         approval_status,
+        created_by_name,
+        created_by_email,
         approved_by_name,
         approved_by_email,
         approved_at,
@@ -261,10 +263,6 @@ export default function RABillsPage() {
   }, [page, totalPages]);
 
   const totalBills = bills.length;
-  const totalGross = bills.reduce(
-    (sum: number, bill: any) => sum + Number(bill.gross_amount || 0),
-    0
-  );
 
   async function confirmDelete() {
     if (!deleteBill) return;
@@ -349,11 +347,6 @@ export default function RABillsPage() {
         </Link>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Summary title="Total Approved RA Bills" value={String(totalBills)} tone="emerald" />
-        <Summary title="Approved RA Value" value={money(totalGross)} tone="cyan" />
-      </div>
-
       {message && (
         <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm font-medium text-sky-800">
           {message}
@@ -404,7 +397,7 @@ export default function RABillsPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1360px] border-collapse text-sm">
+          <table className="w-full min-w-[1580px] border-collapse text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="border-b border-slate-200 px-5 py-3 text-left">RA No</th>
@@ -416,6 +409,8 @@ export default function RABillsPage() {
                 <th className="border-b border-slate-200 px-5 py-3 text-right">GST</th>
                 <th className="border-b border-slate-200 px-5 py-3 text-right">Net</th>
                 <th className="border-b border-slate-200 px-5 py-3 text-left">Approval</th>
+                <th className="border-b border-slate-200 px-5 py-3 text-left">Created By</th>
+                <th className="border-b border-slate-200 px-5 py-3 text-left">Created At</th>
                 <th className="border-b border-slate-200 px-5 py-3 text-left">Approved By</th>
                 <th className="border-b border-slate-200 px-5 py-3 text-left">Approved At</th>
                 <th className="border-b border-slate-200 px-5 py-3 text-right">Actions</th>
@@ -449,6 +444,17 @@ export default function RABillsPage() {
                       {bill.approval_status || "Pending"}
                     </span>
                   </td>
+                  <td className="px-5 py-4 text-slate-700">
+                    <div className="max-w-[180px] truncate font-medium">
+                      {bill.created_by_name || bill.created_by_email || "-"}
+                    </div>
+                    {bill.created_by_name && bill.created_by_email && bill.created_by_name !== bill.created_by_email && (
+                      <div className="max-w-[180px] truncate text-xs text-slate-500">
+                        {bill.created_by_email}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-5 py-4 text-slate-700">{formatDateTime(bill.created_at)}</td>
                   <td className="px-5 py-4 text-slate-700">
                     <div className="max-w-[180px] truncate font-medium">
                       {bill.approved_by_name || bill.approved_by_email || "-"}
@@ -491,7 +497,7 @@ export default function RABillsPage() {
 
               {filteredRows.length === 0 && (
                 <tr>
-                  <td colSpan={12} className="px-5 py-16 text-center">
+                  <td colSpan={14} className="px-5 py-16 text-center">
                     <FileText className="mx-auto h-10 w-10 text-slate-300" />
                     <h3 className="mt-3 text-lg font-bold text-slate-800">No RA Bills found</h3>
                     <p className="mt-1 text-sm text-slate-500">
@@ -611,30 +617,5 @@ export default function RABillsPage() {
         </div>
       )}
     </section>
-  );
-}
-
-function Summary({
-  title,
-  value,
-  tone,
-}: {
-  title: string;
-  value: string;
-  tone: "slate" | "sky" | "emerald" | "red" | "cyan";
-}) {
-  const toneClass = {
-    slate: "border-t-slate-900",
-    sky: "border-t-sky-600",
-    emerald: "border-t-emerald-600",
-    red: "border-t-red-600",
-    cyan: "border-t-cyan-500",
-  }[tone];
-
-  return (
-    <div className={`rounded-lg border border-slate-200 border-t-4 ${toneClass} bg-white p-5 shadow-sm`}>
-      <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{title}</p>
-      <p className="mt-3 text-xl font-bold text-slate-950">{value}</p>
-    </div>
   );
 }

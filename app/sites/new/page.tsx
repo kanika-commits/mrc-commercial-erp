@@ -174,32 +174,16 @@ export default function NewSitePage() {
                     />
                   </div>
 
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-slate-600">
-                        State
-                      </label>
-                      <input
-                        value={state}
-                        onChange={(e) => setState(e.target.value)}
-                        className="w-full rounded border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-900 focus:ring-0"
-                        placeholder="State"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-slate-600">
-                        Status
-                      </label>
-                      <select
-                        value={status}
-                        onChange={(e) => setStatus(e.target.value)}
-                        className="w-full rounded border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-900 focus:ring-0"
-                      >
-                        <option value="active">active</option>
-                        <option value="inactive">inactive</option>
-                      </select>
-                    </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-600">
+                      State
+                    </label>
+                    <input
+                      value={state}
+                      onChange={(e) => setState(e.target.value)}
+                      className="w-full rounded border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-900 focus:ring-0"
+                      placeholder="State"
+                    />
                   </div>
                 </div>
               </div>

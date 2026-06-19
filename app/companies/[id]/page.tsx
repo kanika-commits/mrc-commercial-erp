@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { formatStatusLabel } from "@/lib/statusLabels";
 
 export default function CompanyDetailPage() {
   const params = useParams<{ id: string }>();
@@ -190,7 +191,7 @@ export default function CompanyDetailPage() {
         <div className="grid gap-4 md:grid-cols-4">
           <Info label="Company" value={company.company_name || "-"} />
           <Info label="Code" value={company.company_code || "-"} />
-          <Info label="Status" value={company.status || "active"} />
+          <Info label="Status" value={formatStatusLabel(company.status || "active")} />
           <Info
             label="Organization"
             value={
@@ -227,7 +228,7 @@ export default function CompanyDetailPage() {
                 <tr key={site.id} className="border-t">
                   <td className="p-3">{site.site_name}</td>
                   <td className="p-3">{site.site_code || "-"}</td>
-                  <td className="p-3">{site.status || "active"}</td>
+                  <td className="p-3">{formatStatusLabel(site.status || "active")}</td>
                 </tr>
               ))}
 
@@ -261,7 +262,7 @@ export default function CompanyDetailPage() {
                 <tr key={user.id} className="border-t">
                   <td className="p-3">{user.full_name || "-"}</td>
                   <td className="p-3">{user.email || "-"}</td>
-                  <td className="p-3">{user.status || "active"}</td>
+                  <td className="p-3">{formatStatusLabel(user.status || "active")}</td>
                 </tr>
               ))}
 

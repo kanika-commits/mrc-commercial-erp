@@ -37,6 +37,25 @@ function formatDate(date: string | null | undefined) {
   });
 }
 
+function formatDateTime(date: string | null | undefined) {
+  if (!date) return "-";
+
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) return "-";
+
+  return parsed.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function auditName(name: string | null | undefined, email: string | null | undefined) {
+  return name || email || "-";
+}
+
 function badgeClass(value?: string | null) {
   const status = String(value || "")
     .trim()
@@ -93,6 +112,8 @@ export default function WorkOrderApprovalPage() {
           approval_status,
           department,
           cost_code,
+          created_by_name,
+          created_by_email,
           created_at,
           approved_at
         `)
@@ -323,13 +344,15 @@ export default function WorkOrderApprovalPage() {
 
       <div className="overflow-hidden rounded border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1320px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[1500px] border-collapse text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-3 font-semibold">Company / Site</th>
                 <th className="px-4 py-3 font-semibold">WO Number</th>
                 <th className="px-4 py-3 font-semibold">WO Details</th>
                 <th className="w-[18%] px-4 py-3 font-semibold">Description</th>
+                <th className="px-4 py-3 font-semibold">Created By</th>
+                <th className="px-4 py-3 font-semibold">Created At</th>
                 <th className="px-4 py-3 text-center font-semibold">Documentation</th>
                 <th className="px-4 py-3 text-center font-semibold">Status</th>
                 <th className="px-4 py-3 text-center font-semibold">Approval</th>
@@ -340,13 +363,13 @@ export default function WorkOrderApprovalPage() {
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-slate-500">
+                  <td colSpan={10} className="p-8 text-center text-slate-500">
                     Loading work orders...
                   </td>
                 </tr>
               ) : pendingWorkOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-slate-500">
+                  <td colSpan={10} className="p-8 text-center text-slate-500">
                     No pending work orders found.
                   </td>
                 </tr>
@@ -400,6 +423,21 @@ export default function WorkOrderApprovalPage() {
                         <p className="line-clamp-2 text-sm leading-5 text-slate-600">
                           {wo.description || "-"}
                         </p>
+                      </td>
+
+                      <td className="px-4 py-5">
+                        <div className="max-w-[180px] truncate text-sm font-medium text-slate-800">
+                          {auditName(wo.created_by_name, wo.created_by_email)}
+                        </div>
+                        {wo.created_by_name && wo.created_by_email && wo.created_by_name !== wo.created_by_email && (
+                          <div className="mt-1 max-w-[180px] truncate text-xs text-slate-500">
+                            {wo.created_by_email}
+                          </div>
+                        )}
+                      </td>
+
+                      <td className="px-4 py-5 text-sm font-medium text-slate-700">
+                        {formatDateTime(wo.created_at)}
                       </td>
 
                       <td className="px-4 py-5">

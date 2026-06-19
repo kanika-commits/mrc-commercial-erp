@@ -7,26 +7,19 @@ import { ArrowLeft, FileMinus, Upload } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import AlertMessage from "@/components/AlertMessage";
 
-function money(value: any) {
-  return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
-}
-
 export default function NewDebitNotePage() {
   const router = useRouter();
 
   const [sites, setSites] = useState<any[]>([]);
   const [workOrders, setWorkOrders] = useState<any[]>([]);
-  const [raBills, setRaBills] = useState<any[]>([]);
   const [selectedSiteId, setSelectedSiteId] = useState("");
   const [selectedWO, setSelectedWO] = useState<any>(null);
-  const [linkedVendor, setLinkedVendor] = useState<any>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
 
   const [form, setForm] = useState({
     work_order_id: "",
-    ra_bill_id: "",
     vendor_id: "",
     debit_note_number: "",
     debit_note_date: "",
@@ -72,43 +65,13 @@ export default function NewDebitNotePage() {
     return workOrders.filter((wo) => wo.site_id === selectedSiteId);
   }, [workOrders, selectedSiteId]);
 
-  function handleSiteChange(e: React.ChangeEvent<HTMLSelectElement>) {
-    const siteId = e.target.value;
-
-    setSelectedSiteId(siteId);
-    setSelectedWO(null);
-    setLinkedVendor(null);
-    setRaBills([]);
-
-    setForm((prev) => ({
-      ...prev,
-      work_order_id: "",
-      ra_bill_id: "",
-      vendor_id: "",
-      debit_note_number: "",
-      amount: "",
-      reason: "",
-    }));
-  }
-
-  async function loadWorkOrderDetails(workOrderId: string) {
-    setMessage("");
-    setSelectedWO(null);
-    setLinkedVendor(null);
-    setRaBills([]);
-
-    if (!workOrderId) return;
-
-    const wo = workOrders.find((item) => item.id === workOrderId);
-    setSelectedWO(wo || null);
-
+  async function fetchLinkedVendorId(workOrderId: string) {
     const {
       data: { session },
     } = await supabase.auth.getSession();
 
     if (!session?.access_token) {
-      setMessage("Please sign in again to resolve the linked vendor.");
-      return;
+      throw new Error("Please sign in again to resolve the linked vendor.");
     }
 
     const vendorResponse = await fetch(
@@ -124,39 +87,60 @@ export default function NewDebitNotePage() {
     const vendorResult = await vendorResponse.json();
 
     if (!vendorResponse.ok) {
-      setMessage(vendorResult.error || "Failed to resolve Work Order vendor.");
-      return;
+      throw new Error(
+        vendorResult.error || "Failed to resolve Work Order vendor."
+      );
     }
 
     const linkedVendor = vendorResult.vendors?.[workOrderId];
 
     if (!linkedVendor?.vendor_id) {
-      setMessage("No vendor is linked to this Work Order.");
-      return;
+      throw new Error("No vendor is linked to this Work Order.");
     }
 
-    setLinkedVendor(linkedVendor);
+    return linkedVendor.vendor_id;
+  }
 
-    const { data: raData, error: raError } = await supabase
-      .from("ra_bills")
-      .select("id, ra_number, ra_date, gross_amount, net_amount, approval_status")
-      .eq("work_order_id", workOrderId)
-      .ilike("approval_status", "approved")
-      .order("created_at", { ascending: false });
+  function handleSiteChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const siteId = e.target.value;
 
-    if (raError) {
-      setMessage(raError.message);
+    setSelectedSiteId(siteId);
+    setSelectedWO(null);
+
+    setForm((prev) => ({
+      ...prev,
+      work_order_id: "",
+      vendor_id: "",
+      debit_note_number: "",
+      amount: "",
+      reason: "",
+    }));
+  }
+
+  async function loadWorkOrderDetails(workOrderId: string) {
+    setMessage("");
+    setSelectedWO(null);
+
+    if (!workOrderId) return;
+
+    const wo = workOrders.find((item) => item.id === workOrderId);
+    setSelectedWO(wo || null);
+
+    let vendorId = "";
+
+    try {
+      vendorId = await fetchLinkedVendorId(workOrderId);
+    } catch (error: any) {
+      setMessage(error.message || "Failed to resolve Work Order vendor.");
       return;
     }
-
-    setRaBills(raData || []);
 
     const suggestedNumber = `DN-${Date.now().toString().slice(-6)}`;
 
     setForm((prev) => ({
       ...prev,
       work_order_id: workOrderId,
-      vendor_id: linkedVendor.vendor_id,
+      vendor_id: vendorId,
       debit_note_number: suggestedNumber,
     }));
   }
@@ -172,7 +156,6 @@ export default function NewDebitNotePage() {
       setForm((prev) => ({
         ...prev,
         work_order_id: value,
-        ra_bill_id: "",
         vendor_id: "",
         debit_note_number: "",
       }));
@@ -201,9 +184,16 @@ export default function NewDebitNotePage() {
       return;
     }
 
-    if (!form.vendor_id) {
-      setMessage("Vendor could not be found for this Work Order.");
-      return;
+    let vendorId = form.vendor_id;
+
+    if (!vendorId) {
+      try {
+        vendorId = await fetchLinkedVendorId(form.work_order_id);
+        setForm((prev) => ({ ...prev, vendor_id: vendorId }));
+      } catch (error: any) {
+        setMessage(error.message || "Vendor could not be found for this Work Order.");
+        return;
+      }
     }
 
     if (!form.debit_note_number.trim()) {
@@ -226,11 +216,6 @@ export default function NewDebitNotePage() {
       return;
     }
 
-    if (files.length === 0) {
-      setMessage("At least one Debit Note attachment is required.");
-      return;
-    }
-
     try {
       setSaving(true);
 
@@ -246,8 +231,7 @@ export default function NewDebitNotePage() {
 
       const formData = new FormData();
       formData.append("work_order_id", form.work_order_id);
-      formData.append("vendor_id", form.vendor_id);
-      formData.append("ra_bill_id", form.ra_bill_id);
+      formData.append("vendor_id", vendorId);
       formData.append("debit_note_number", form.debit_note_number.trim());
       formData.append("debit_note_date", form.debit_note_date);
       formData.append("debit_note_type", form.debit_note_type);
@@ -288,7 +272,7 @@ export default function NewDebitNotePage() {
             New Debit Note
           </h1>
           <p className="text-sm text-slate-500">
-            Create debit note against a work order or approved RA bill.
+            Create debit note against a selected Site and Work Order.
           </p>
         </div>
 
@@ -354,16 +338,6 @@ export default function NewDebitNotePage() {
 
       {selectedWO && (
         <>
-          <section className="grid gap-4 md:grid-cols-4">
-            <Summary title="WO Number" value={selectedWO.wo_number || "-"} />
-            <Summary title="WO Value" value={money(selectedWO.wo_value)} />
-            <Summary
-              title="Vendor"
-              value={linkedVendor?.vendor_name || "-"}
-            />
-            <Summary title="Approved RA Bills" value={String(raBills.length)} />
-          </section>
-
           <section className="rounded-2xl border bg-white p-6 shadow-sm">
             <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
               Step 2
@@ -390,22 +364,6 @@ export default function NewDebitNotePage() {
                   onChange={handleChange}
                   className="h-11 w-full rounded-xl border px-3 text-sm"
                 />
-              </Field>
-
-              <Field label="Link Approved RA Bill optional">
-                <select
-                  name="ra_bill_id"
-                  value={form.ra_bill_id}
-                  onChange={handleChange}
-                  className="h-11 w-full rounded-xl border px-3 text-sm"
-                >
-                  <option value="">Not linked to RA Bill</option>
-                  {raBills.map((bill) => (
-                    <option key={bill.id} value={bill.id}>
-                      RA {bill.ra_number} - {money(bill.net_amount)}
-                    </option>
-                  ))}
-                </select>
               </Field>
 
               <Field label="Debit Note Type">
@@ -462,7 +420,7 @@ export default function NewDebitNotePage() {
                 Click to upload files
               </span>
               <span className="mt-1 text-xs text-slate-500">
-                Supporting files are required.
+                Supporting files are optional.
               </span>
               <input
                 type="file"
@@ -515,16 +473,5 @@ function Field({
       </span>
       {children}
     </label>
-  );
-}
-
-function Summary({ title, value }: { title: string; value: string }) {
-  return (
-    <div className="rounded-2xl border bg-white p-5 shadow-sm">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-        {title}
-      </p>
-      <p className="mt-2 text-lg font-bold text-slate-950">{value}</p>
-    </div>
   );
 }

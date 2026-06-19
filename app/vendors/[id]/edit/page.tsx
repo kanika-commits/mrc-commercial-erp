@@ -86,6 +86,34 @@ const emptyGstin: GstinRow = {
   is_primary: true,
 };
 
+const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+const aadhaarRegex = /^[2-9][0-9]{11}$/;
+const cinRegex = /^[A-Z][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}$/;
+const gstRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+const mobileRegex = /^[6-9][0-9]{9}$/;
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+
+function isProprietorship(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "proprietor" || normalized === "proprietorship";
+}
+
+function duplicateValues(values: string[]) {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+
+  values
+    .map((value) => value.trim().toUpperCase())
+    .filter(Boolean)
+    .forEach((value) => {
+      if (seen.has(value)) duplicates.add(value);
+      seen.add(value);
+    });
+
+  return duplicates;
+}
+
 export default function EditVendorPage() {
   const params = useParams();
   const router = useRouter();
@@ -239,7 +267,20 @@ export default function EditVendorPage() {
       ? value.toUpperCase()
       : value;
 
-    setForm((prev) => ({ ...prev, [name]: finalValue }));
+    setForm((prev) => {
+      const next = { ...prev, [name]: finalValue };
+
+      if (name === "msme_registered" && finalValue !== "Yes") {
+        next.msme_number = "";
+        next.msme_category = "";
+      }
+
+      if (name === "contractor_type" && !isProprietorship(finalValue)) {
+        next.pan_aadhaar_link_status = "";
+      }
+
+      return next;
+    });
   }
 
   function updateContact(index: number, field: keyof Contact, value: string | boolean) {
@@ -394,16 +435,6 @@ export default function EditVendorPage() {
     e.preventDefault();
     setMessage("");
 
-    if (!form.vendor_name.trim()) {
-      setMessage("Vendor Name is required.");
-      return;
-    }
-
-    if (form.status === "active" && !form.pan.trim()) {
-      setMessage("PAN is required when vendor status is active.");
-      return;
-    }
-
     const contactRows = contacts.filter((contact) =>
       [
         contact.contact_name,
@@ -412,13 +443,6 @@ export default function EditVendorPage() {
         contact.designation,
       ].some((value) => value.trim())
     );
-
-    for (const contact of contactRows) {
-      if (!contact.contact_name.trim() || !contact.contact_number.trim()) {
-        setMessage("Contact name and contact number are required for contact rows.");
-        return;
-      }
-    }
 
     const bankRows = bankAccounts.filter((bank) =>
       [
@@ -430,29 +454,84 @@ export default function EditVendorPage() {
       ].some((value) => value.trim())
     );
 
-    for (const bank of bankRows) {
-      if (
-        !bank.account_holder_name.trim() ||
-        !bank.account_number.trim() ||
-        !bank.ifsc_code.trim() ||
-        !bank.bank_name.trim()
-      ) {
-        setMessage(
-          "Account holder, account number, IFSC and bank name are required for bank rows."
-        );
-        return;
-      }
-    }
-
     const gstinRows = gstins.filter((gstin) => gstin.gstin.trim());
     const primaryGstin = gstinRows.find((gstin) => gstin.is_primary) || gstinRows[0];
+    const validationErrors: string[] = [];
 
-    if (
-      form.pan_aadhaar_link_status === "Yes" &&
-      !documents.some((document) => document.document_type === "PAN_AADHAAR_ATTACHMENT") &&
-      !files.PAN_AADHAAR_ATTACHMENT
-    ) {
-      setMessage("PAN-Aadhaar Link Proof is required when PAN is linked with Aadhaar.");
+    if (!form.vendor_type.trim()) validationErrors.push("Vendor Type is required.");
+    if (!form.contractor_type.trim()) validationErrors.push("Contractor Type is required.");
+
+    if (!form.pan.trim()) {
+      validationErrors.push("PAN is required.");
+    } else if (!panRegex.test(form.pan.trim())) {
+      validationErrors.push("Invalid PAN. Example: ABCDE1234F.");
+    }
+
+    if (!form.aadhaar_cin.trim()) {
+      validationErrors.push("Aadhaar / CIN is required.");
+    } else if (isProprietorship(form.contractor_type) && !aadhaarRegex.test(form.aadhaar_cin.trim())) {
+      validationErrors.push("Invalid Aadhaar. It must be 12 digits.");
+    } else if (!isProprietorship(form.contractor_type) && !cinRegex.test(form.aadhaar_cin.trim())) {
+      validationErrors.push("Invalid CIN format.");
+    }
+
+    const gstinDuplicates = duplicateValues(gstinRows.map((gstin) => gstin.gstin));
+    if (gstinDuplicates.size > 0) {
+      validationErrors.push("Duplicate GSTIN rows are not allowed.");
+    }
+
+    gstinRows.forEach((gstin) => {
+      const value = gstin.gstin.trim().toUpperCase();
+      if (!gstRegex.test(value)) {
+        validationErrors.push(`Invalid GSTIN format: ${value}.`);
+      } else if (form.pan && value.substring(2, 12) !== form.pan.trim().toUpperCase()) {
+        validationErrors.push(`GSTIN PAN does not match entered PAN: ${value}.`);
+      }
+    });
+
+    if (contactRows.length === 0) {
+      validationErrors.push("At least one contact is required.");
+    }
+
+    contactRows.forEach((contact) => {
+      if (!contact.contact_name.trim()) validationErrors.push("Contact name is required.");
+      if (!contact.contact_number.trim()) {
+        validationErrors.push("Contact number is required.");
+      } else if (!mobileRegex.test(contact.contact_number.trim())) {
+        validationErrors.push("Enter valid 10 digit contact mobile number.");
+      }
+      if (contact.email.trim() && !emailRegex.test(contact.email.trim())) {
+        validationErrors.push("Invalid contact email format.");
+      }
+    });
+
+    if (bankRows.length === 0) {
+      validationErrors.push("At least one bank account is required.");
+    }
+
+    const bankDuplicates = duplicateValues(bankRows.map((bank) => bank.account_number));
+    if (bankDuplicates.size > 0) {
+      validationErrors.push("Duplicate bank account numbers are not allowed.");
+    }
+
+    bankRows.forEach((bank) => {
+      if (!bank.account_holder_name.trim()) validationErrors.push("Account holder name is required.");
+      if (!bank.bank_name.trim()) validationErrors.push("Bank name is required.");
+      if (!bank.account_number.trim()) validationErrors.push("Account number is required.");
+      if (!bank.ifsc_code.trim()) {
+        validationErrors.push("IFSC code is required.");
+      } else if (!ifscRegex.test(bank.ifsc_code.trim().toUpperCase())) {
+        validationErrors.push("Invalid IFSC. Example: HDFC0001234.");
+      }
+    });
+
+    if (form.msme_registered === "Yes") {
+      if (!form.msme_number.trim()) validationErrors.push("MSME number is required.");
+      if (!form.msme_category.trim()) validationErrors.push("MSME category is required.");
+    }
+
+    if (validationErrors.length > 0) {
+      setMessage(Array.from(new Set(validationErrors)).join(" "));
       return;
     }
 
@@ -478,10 +557,12 @@ export default function EditVendorPage() {
           pan: form.pan,
           aadhaar_cin: form.aadhaar_cin,
           gstin: primaryGstin?.gstin || form.gstin,
-          pan_aadhaar_link_status: form.pan_aadhaar_link_status,
+          pan_aadhaar_link_status: isProprietorship(form.contractor_type)
+            ? form.pan_aadhaar_link_status
+            : "",
           msme_registered: form.msme_registered,
-          msme_number: form.msme_number,
-          msme_category: form.msme_category,
+          msme_number: form.msme_registered === "Yes" ? form.msme_number : "",
+          msme_category: form.msme_registered === "Yes" ? form.msme_category : "",
         })
       );
       payload.append("contacts", JSON.stringify(contactRows));
@@ -542,7 +623,6 @@ export default function EditVendorPage() {
       PAN: "PAN",
       AADHAAR_CIN: "Aadhaar/CIN",
       GST_CERTIFICATE: "GST Certificate",
-      PAN_AADHAAR_ATTACHMENT: "PAN-Aadhaar Link Proof",
       MSME_CERTIFICATE: "MSME Certificate",
       BANK_PROOF: "Bank Proof",
       ADDITIONAL_DOCUMENT: "Additional Document",
@@ -566,8 +646,6 @@ export default function EditVendorPage() {
         return form.aadhaar_cin || "-";
       case "GST_CERTIFICATE":
         return primaryGstin || "-";
-      case "PAN_AADHAAR_ATTACHMENT":
-        return [form.pan, form.pan_aadhaar_link_status].filter(Boolean).join(" / ") || "-";
       case "MSME_CERTIFICATE":
         return form.msme_number || "-";
       case "BANK_PROOF":
@@ -605,9 +683,6 @@ export default function EditVendorPage() {
               Edit Vendor:{" "}
               <span className="text-sky-700">{form.vendor_name || "Vendor"}</span>
             </h1>
-            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold uppercase text-emerald-700">
-              {form.status || "active"}
-            </span>
           </div>
           <p className="mt-2 text-sm text-slate-500">
             Update vendor master information, contacts, bank accounts and documents.
@@ -683,19 +758,6 @@ export default function EditVendorPage() {
               </select>
             </div>
 
-            <div>
-              <label className={labelClass}>Status *</label>
-              <select
-                name="status"
-                value={form.status}
-                onChange={handleChange}
-                className={inputClass}
-              >
-                <option value="active">active</option>
-                <option value="inactive">inactive</option>
-                <option value="blocked">blocked</option>
-              </select>
-            </div>
           </div>
         </section>
 
@@ -724,7 +786,8 @@ export default function EditVendorPage() {
                 name="msme_number"
                 value={form.msme_number}
                 onChange={handleChange}
-                className={inputClass}
+                disabled={form.msme_registered !== "Yes"}
+                className={`${inputClass} disabled:bg-slate-100 disabled:text-slate-400`}
                 placeholder="UDYAM-XX-00-0000000"
               />
             </div>
@@ -735,8 +798,10 @@ export default function EditVendorPage() {
                 name="msme_category"
                 value={form.msme_category}
                 onChange={handleChange}
-                className={inputClass}
+                disabled={form.msme_registered !== "Yes"}
+                className={`${inputClass} disabled:bg-slate-100 disabled:text-slate-400`}
               >
+                <option value="">Select category</option>
                 <option>Micro</option>
                 <option>Small</option>
                 <option>Medium</option>
@@ -747,10 +812,7 @@ export default function EditVendorPage() {
 
         <section className={`${cardClass} col-span-12 border-t-4 border-t-sky-700`}>
           <div className="mb-5 flex items-center justify-between border-b border-slate-100 pb-3">
-            <h2 className={sectionTitleClass}>Tax & Compliance</h2>
-            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
-              Master tax profile
-            </span>
+            <h2 className={sectionTitleClass}>Tax Details</h2>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -791,20 +853,6 @@ export default function EditVendorPage() {
                 }}
                 className={`${inputClass} uppercase`}
               />
-            </div>
-
-            <div>
-              <label className={labelClass}>PAN-Aadhaar Link Status</label>
-              <select
-                name="pan_aadhaar_link_status"
-                value={form.pan_aadhaar_link_status}
-                onChange={handleChange}
-                className={inputClass}
-              >
-                <option>Yet to check</option>
-                <option>Yes</option>
-                <option>No</option>
-              </select>
             </div>
           </div>
         </section>
@@ -1127,7 +1175,6 @@ export default function EditVendorPage() {
               ["PAN", "PAN Copy"],
               ["AADHAAR_CIN", "Aadhaar / CIN Copy"],
               ["GST_CERTIFICATE", "GST Certificate"],
-              ["PAN_AADHAAR_ATTACHMENT", "PAN-Aadhaar Link Proof"],
               ["MSME_CERTIFICATE", "MSME Certificate"],
               ["BANK_PROOF", "Cancelled Cheque / Bank Proof"],
               ["ADDITIONAL_DOCUMENT", "Additional Documents"],
