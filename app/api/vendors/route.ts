@@ -189,6 +189,147 @@ export async function GET(request: Request) {
     }
 
     const supabase = adminClient();
+    const { searchParams } = new URL(request.url);
+    const includeChildren = searchParams.get("include_children");
+    const search = String(searchParams.get("search") || "").trim();
+    const page = Math.max(1, Number(searchParams.get("page") || 1) || 1);
+    const pageSize = Math.min(
+      100,
+      Math.max(1, Number(searchParams.get("page_size") || 50) || 50)
+    );
+    const typeFilter = String(searchParams.get("type_filter") || "").trim();
+
+    if (includeChildren === "summary") {
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+      const normalizedType = typeFilter.toLowerCase();
+      let matchedVendorIds: string[] | null = null;
+
+      if (search) {
+        const pattern = `%${search.replace(/[%_]/g, "\\$&")}%`;
+        const [vendorMatches, contactMatches] = await Promise.all([
+          supabase
+            .from("vendors")
+            .select("id")
+            .neq("status", "deleted")
+            .or(
+              [
+                `vendor_name.ilike.${pattern}`,
+                `pan.ilike.${pattern}`,
+                `gstin.ilike.${pattern}`,
+                `aadhaar_cin.ilike.${pattern}`,
+              ].join(",")
+            ),
+          supabase
+            .from("vendor_contacts")
+            .select("vendor_id")
+            .or(
+              [
+                `contact_name.ilike.${pattern}`,
+                `contact_number.ilike.${pattern}`,
+                `email.ilike.${pattern}`,
+              ].join(",")
+            ),
+        ]);
+
+        if (vendorMatches.error) throw vendorMatches.error;
+        if (contactMatches.error) throw contactMatches.error;
+
+        matchedVendorIds = Array.from(
+          new Set(
+            [
+              ...(vendorMatches.data || []).map((vendor) => vendor.id),
+              ...(contactMatches.data || []).map((contact) => contact.vendor_id),
+            ].filter(Boolean)
+          )
+        );
+      }
+
+      let vendorQuery = supabase
+        .from("vendors")
+        .select(
+          "id, vendor_name, vendor_type, gstin, pan, aadhaar_cin, created_at",
+          { count: "exact" }
+        )
+        .neq("status", "deleted")
+        .order("created_at", { ascending: false });
+
+      if (normalizedType && normalizedType !== "all") {
+        vendorQuery = vendorQuery.ilike("vendor_type", normalizedType);
+      }
+
+      if (matchedVendorIds) {
+        if (matchedVendorIds.length === 0) {
+          const { data: vendorTypeRows, error: vendorTypeError, count: totalAll } = await supabase
+            .from("vendors")
+            .select("vendor_type", { count: "exact" })
+            .neq("status", "deleted");
+
+          if (vendorTypeError) throw vendorTypeError;
+
+          return NextResponse.json({
+            vendors: [],
+            total: 0,
+            total_all: totalAll || 0,
+            page,
+            page_size: pageSize,
+            vendor_types: Array.from(
+              new Set((vendorTypeRows || []).map((row) => row.vendor_type).filter(Boolean))
+            ).sort(),
+          });
+        }
+
+        vendorQuery = vendorQuery.in("id", matchedVendorIds);
+      }
+
+      const vendorsResult = await vendorQuery.range(from, to);
+
+      if (vendorsResult.error) throw vendorsResult.error;
+
+      const vendors = vendorsResult.data || [];
+      const vendorIds = vendors.map((vendor) => vendor.id).filter(Boolean);
+
+      const [contactsResult, vendorTypeRows] = await Promise.all([
+        vendorIds.length
+          ? supabase
+              .from("vendor_contacts")
+              .select("id, vendor_id, contact_name, contact_number, email, designation, is_primary")
+              .in("vendor_id", vendorIds)
+              .order("is_primary", { ascending: false })
+          : Promise.resolve({ data: [], error: null }),
+        supabase
+          .from("vendors")
+          .select("vendor_type", { count: "exact" })
+          .neq("status", "deleted"),
+      ]);
+
+      if (contactsResult.error) throw contactsResult.error;
+      if (vendorTypeRows.error) throw vendorTypeRows.error;
+
+      const contactsByVendor = new Map<string, any[]>();
+      (contactsResult.data || []).forEach((contact) => {
+        if (!contact.vendor_id) return;
+        const rows = contactsByVendor.get(contact.vendor_id) || [];
+        rows.push(contact);
+        contactsByVendor.set(contact.vendor_id, rows);
+      });
+
+      return NextResponse.json({
+        vendors: vendors.map((vendor) => ({
+          ...vendor,
+          contacts: contactsByVendor.get(vendor.id) || [],
+          bank_accounts: [],
+        })),
+        total: vendorsResult.count || 0,
+        total_all: vendorTypeRows.count || 0,
+        page,
+        page_size: pageSize,
+        vendor_types: Array.from(
+          new Set((vendorTypeRows.data || []).map((row) => row.vendor_type).filter(Boolean))
+        ).sort(),
+      });
+    }
+
     const [vendorsResult, contactsResult, bankAccountsResult] = await Promise.all([
       supabase
         .from("vendors")

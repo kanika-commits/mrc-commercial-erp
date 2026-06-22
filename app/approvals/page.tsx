@@ -72,7 +72,22 @@ export default function ApprovalsPage() {
 
     const { data: billData, error: billError } = await supabase
       .from("ra_bills")
-      .select("*")
+      .select(`
+        id,
+        organization_id,
+        work_order_id,
+        vendor_id,
+        ra_number,
+        ra_date,
+        gross_amount,
+        net_amount,
+        status,
+        approval_status,
+        created_at,
+        created_by_name,
+        created_by_email,
+        gst_amount
+      `)
       .eq("approval_status", "Pending")
       .order("created_at", { ascending: false });
 
@@ -84,7 +99,23 @@ export default function ApprovalsPage() {
 
     const { data: debitData, error: debitError } = await supabase
       .from("debit_notes")
-      .select("*")
+      .select(`
+        id,
+        organization_id,
+        work_order_id,
+        vendor_id,
+        debit_note_number,
+        debit_note_date,
+        debit_note_type,
+        reason,
+        gross_amount,
+        total_amount,
+        status,
+        approval_status,
+        created_at,
+        created_by_name,
+        created_by_email
+      `)
       .eq("approval_status", "Pending")
       .order("created_at", { ascending: false });
 

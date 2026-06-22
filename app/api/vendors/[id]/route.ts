@@ -300,25 +300,89 @@ export async function GET(
     const supabase = adminClient();
 
     const [vendor, contacts, bankAccounts, documents, gstins] = await Promise.all([
-      supabase.from("vendors").select("*").eq("id", id).maybeSingle(),
+      supabase
+        .from("vendors")
+        .select(`
+          id,
+          organization_id,
+          vendor_name,
+          vendor_type,
+          pan,
+          gstin,
+          aadhaar_cin,
+          status,
+          created_at,
+          pan_aadhaar_link_status,
+          contractor_type,
+          msme_registered,
+          msme_number,
+          msme_category,
+          updated_at,
+          is_deleted
+        `)
+        .eq("id", id)
+        .maybeSingle(),
       supabase
         .from("vendor_contacts")
-        .select("*")
+        .select(`
+          id,
+          organization_id,
+          vendor_id,
+          contact_name,
+          contact_number,
+          email,
+          designation,
+          is_primary,
+          created_at
+        `)
         .eq("vendor_id", id)
         .order("is_primary", { ascending: false }),
       supabase
         .from("vendor_bank_accounts")
-        .select("*")
+        .select(`
+          id,
+          organization_id,
+          vendor_id,
+          account_holder_name,
+          account_number,
+          ifsc_code,
+          bank_name,
+          branch_name,
+          is_primary,
+          created_at
+        `)
         .eq("vendor_id", id)
         .order("is_primary", { ascending: false }),
       supabase
         .from("vendor_documents")
-        .select("*")
+        .select(`
+          id,
+          organization_id,
+          vendor_id,
+          document_type,
+          file_name,
+          file_url,
+          uploaded_at,
+          document_number,
+          expiry_date,
+          remarks,
+          is_verified,
+          verified_at
+        `)
         .eq("vendor_id", id)
         .order("uploaded_at", { ascending: false }),
       supabase
         .from("vendor_gstins")
-        .select("*")
+        .select(`
+          id,
+          organization_id,
+          vendor_id,
+          gstin,
+          state_code,
+          state_name,
+          is_primary,
+          created_at
+        `)
         .eq("vendor_id", id)
         .order("is_primary", { ascending: false }),
     ]);
@@ -672,7 +736,7 @@ export async function POST(
     const supabase = adminClient();
     const { data: document, error: documentError } = await supabase
       .from("vendor_documents")
-      .select("*")
+      .select("id, organization_id, vendor_id, file_name, file_url")
       .eq("id", document_id)
       .eq("vendor_id", id)
       .maybeSingle();

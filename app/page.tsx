@@ -11,7 +11,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   getCurrentUserAccess,
   can,
-  hasSiteRestriction,
 } from "@/lib/accessControl";
 
 export default function Home() {
@@ -40,77 +39,34 @@ export default function Home() {
 
     try {
       const access = await getCurrentUserAccess();
-      const restrictedSiteIds = hasSiteRestriction(access) ? access.sites : [];
-      let allowedWorkOrderIds: string[] | null = null;
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (restrictedSiteIds.length > 0) {
-        const { data: allowedWorkOrders, error: allowedWorkOrdersError } =
-          await supabase
-            .from("work_orders")
-            .select("id")
-            .in("site_id", restrictedSiteIds);
-
-        if (allowedWorkOrdersError) throw allowedWorkOrdersError;
-
-        allowedWorkOrderIds = (allowedWorkOrders || [])
-          .map((workOrder) => workOrder.id)
-          .filter(Boolean);
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
       }
 
-      const applyWorkOrderScope = (query: any, column = "work_order_id") => {
-        if (allowedWorkOrderIds === null) return query;
-        if (allowedWorkOrderIds.length === 0) return null;
-        return query.in(column, allowedWorkOrderIds);
-      };
-
-      const pendingWOQuery = applyWorkOrderScope(
-        supabase
-          .from("work_orders")
-          .select("id", { count: "exact", head: true })
-          .ilike("approval_status", "pending"),
-        "id"
-      );
-      const pendingRAQuery = applyWorkOrderScope(
-        supabase
-          .from("ra_bills")
-          .select("id", { count: "exact", head: true })
-          .ilike("approval_status", "pending")
-      );
-      const pendingDebitQuery = applyWorkOrderScope(
-        supabase
-          .from("debit_notes")
-          .select("id", { count: "exact", head: true })
-          .ilike("approval_status", "pending")
-      );
-      const pendingITCQuery = applyWorkOrderScope(
-        supabase
-          .from("invoices")
-          .select("id", { count: "exact", head: true })
-          .or("itc_status.is.null,itc_status.ilike.pending")
-      );
-      const pendingInvoiceApprovalQuery = applyWorkOrderScope(
-        supabase
-          .from("invoices")
-          .select("id", { count: "exact", head: true })
-          .ilike("approval_status", "pending")
-      );
+      const notificationCountsPromise = fetch("/api/notifications/counts", {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      }).then(async (response) => {
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || "Failed to load notification counts.");
+        }
+        return result;
+      });
 
       const [
-        pendingWORes,
-        pendingRARes,
-        pendingDebitRes,
-        pendingITCRes,
-        pendingInvoiceApprovalRes,
+        notificationCounts,
         vendorCountRes,
         panCountRes,
         blockedCountRes,
         inactiveCountRes,
       ] = await Promise.all([
-        pendingWOQuery || Promise.resolve({ count: 0, error: null }),
-        pendingRAQuery || Promise.resolve({ count: 0, error: null }),
-        pendingDebitQuery || Promise.resolve({ count: 0, error: null }),
-        pendingITCQuery || Promise.resolve({ count: 0, error: null }),
-        pendingInvoiceApprovalQuery || Promise.resolve({ count: 0, error: null }),
+        notificationCountsPromise,
 
         supabase
           .from("vendors")
@@ -135,11 +91,6 @@ export default function Home() {
       ]);
 
       for (const result of [
-        pendingWORes,
-        pendingRARes,
-        pendingDebitRes,
-        pendingITCRes,
-        pendingInvoiceApprovalRes,
         vendorCountRes,
         panCountRes,
         blockedCountRes,
@@ -150,11 +101,11 @@ export default function Home() {
 
       setPermissions(access.permissions || []);
 
-      setPendingWOApprovals(pendingWORes.count || 0);
-      setPendingRA(pendingRARes.count || 0);
-      setPendingDebitNotes(pendingDebitRes.count || 0);
-      setPendingITC(pendingITCRes.count || 0);
-      setPendingInvoiceApprovals(pendingInvoiceApprovalRes.count || 0);
+      setPendingWOApprovals(notificationCounts.pendingWorkOrders || 0);
+      setPendingRA(notificationCounts.pendingRaBills || 0);
+      setPendingDebitNotes(notificationCounts.pendingDebitNotes || 0);
+      setPendingITC(notificationCounts.pendingItcReview || 0);
+      setPendingInvoiceApprovals(notificationCounts.pendingInvoiceApprovals || 0);
 
       setTotalVendors(vendorCountRes.count || 0);
       setPanAadhaarPending(panCountRes.count || 0);

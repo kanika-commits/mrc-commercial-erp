@@ -14,13 +14,12 @@ import {
   Settings,
 } from "lucide-react";
 import UserHeader from "@/components/UserHeader";
-import { supabase } from "@/lib/supabase";
 import {
   can,
   getCurrentUserAccess,
-  hasSiteRestriction,
   type UserPermission,
 } from "@/lib/accessControl";
+import { supabase } from "@/lib/supabase";
 
 const sidebarItems = [
   { label: "Dashboard", href: "/", icon: Home, groupCode: "dashboard" },
@@ -78,7 +77,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       setPermissions(access.permissions || []);
       setRoleCodes(access.roleCodes || []);
-      loadNotificationCounts(access);
+      loadNotificationCounts();
 
       if (!navigationResponse.ok) {
         setVisibleGroupCodes(new Set());
@@ -105,82 +104,32 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     setNotificationsOpen(false);
   }, [pathname]);
 
-  async function loadNotificationCounts(access: Awaited<ReturnType<typeof getCurrentUserAccess>>) {
+  async function loadNotificationCounts() {
     try {
-      const restrictedSiteIds = hasSiteRestriction(access) ? access.sites : [];
-      let allowedWorkOrderIds: string[] | null = null;
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (restrictedSiteIds.length > 0) {
-        const { data: allowedWorkOrders, error } = await supabase
-          .from("work_orders")
-          .select("id")
-          .in("site_id", restrictedSiteIds);
-
-        if (error) throw error;
-
-        allowedWorkOrderIds = (allowedWorkOrders || [])
-          .map((workOrder) => workOrder.id)
-          .filter(Boolean);
+      if (!session?.access_token) {
+        return;
       }
 
-      const applyWorkOrderScope = (query: any, column = "work_order_id") => {
-        if (allowedWorkOrderIds === null) return query;
-        if (allowedWorkOrderIds.length === 0) return null;
-        return query.in(column, allowedWorkOrderIds);
-      };
+      const response = await fetch("/api/notifications/counts", {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+      const counts = await response.json();
 
-      const pendingWorkOrdersQuery = applyWorkOrderScope(
-        supabase
-          .from("work_orders")
-          .select("id", { count: "exact", head: true })
-          .ilike("approval_status", "pending"),
-        "id",
-      );
-      const pendingRaBillsQuery = applyWorkOrderScope(
-        supabase
-          .from("ra_bills")
-          .select("id", { count: "exact", head: true })
-          .ilike("approval_status", "pending"),
-      );
-      const pendingDebitNotesQuery = applyWorkOrderScope(
-        supabase
-          .from("debit_notes")
-          .select("id", { count: "exact", head: true })
-          .ilike("approval_status", "pending"),
-      );
-      const pendingItcQuery = applyWorkOrderScope(
-        supabase
-          .from("invoices")
-          .select("id", { count: "exact", head: true })
-          .or("itc_status.is.null,itc_status.ilike.pending"),
-      );
-
-      const [
-        pendingWorkOrders,
-        pendingRaBills,
-        pendingDebitNotes,
-        pendingItcReview,
-      ] = await Promise.all([
-        pendingWorkOrdersQuery || Promise.resolve({ count: 0, error: null }),
-        pendingRaBillsQuery || Promise.resolve({ count: 0, error: null }),
-        pendingDebitNotesQuery || Promise.resolve({ count: 0, error: null }),
-        pendingItcQuery || Promise.resolve({ count: 0, error: null }),
-      ]);
-
-      for (const result of [
-        pendingWorkOrders,
-        pendingRaBills,
-        pendingDebitNotes,
-        pendingItcReview,
-      ]) {
-        if (result.error) throw result.error;
+      if (!response.ok) {
+        throw new Error(counts.error || "Failed to load notification counts.");
       }
 
       setNotificationCounts({
-        pendingWorkOrders: pendingWorkOrders.count || 0,
-        pendingRaBills: pendingRaBills.count || 0,
-        pendingDebitNotes: pendingDebitNotes.count || 0,
-        pendingItcReview: pendingItcReview.count || 0,
+        pendingWorkOrders: counts.pendingWorkOrders || 0,
+        pendingRaBills: counts.pendingRaBills || 0,
+        pendingDebitNotes: counts.pendingDebitNotes || 0,
+        pendingItcReview: counts.pendingItcReview || 0,
       });
     } catch (error) {
       console.error("Notification count load failed:", error);

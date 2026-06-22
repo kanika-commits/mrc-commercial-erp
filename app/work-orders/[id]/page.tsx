@@ -147,7 +147,29 @@ const [workOrderChanges, setWorkOrderChanges] = useState<any[]>([]);
 
       const { data: woData, error: woError } = await supabase
         .from("work_orders")
-        .select("*")
+        .select(`
+          id,
+          organization_id,
+          company_id,
+          site_id,
+          wo_number,
+          wo_date,
+          wo_type,
+          description,
+          status,
+          created_at,
+          wo_value,
+          gst_percent,
+          approval_status,
+          department,
+          cost_code,
+          created_by_name,
+          created_by_email,
+          created_at_user,
+          approved_by_name,
+          approved_by_email,
+          approved_at
+        `)
         .eq("id", workOrderId)
         .single();
 
@@ -262,11 +284,13 @@ let linkedVendors = normalizeLinkedVendorRows(
   vendorResult.all_vendors?.[workOrderId] || []
 );
 
-if (linkedVendors.length === 0 && woData.primary_vendor_id) {
+const primaryVendorId = (woData as any).primary_vendor_id;
+
+if (linkedVendors.length === 0 && primaryVendorId) {
   const { data: primaryVendor, error: primaryVendorError } = await supabase
     .from("vendors")
     .select("id, vendor_name, vendor_type, pan, gstin")
-    .eq("id", woData.primary_vendor_id)
+    .eq("id", primaryVendorId)
     .maybeSingle();
 
   if (primaryVendorError) throw primaryVendorError;
@@ -341,7 +365,27 @@ if (!documentResponse.ok) {
 
 const { data: changeData, error: changeError } = await supabase
   .from("work_order_changes")
-  .select("*")
+  .select(`
+    id,
+    organization_id,
+    work_order_id,
+    change_type,
+    change_number,
+    change_date,
+    applicable_date,
+    additional_work_value,
+    gst_percent,
+    gst_amount,
+    updated_wo_basic_value,
+    updated_total_wo_value,
+    description,
+    file_id,
+    file_url,
+    file_name,
+    file_mime_type,
+    created_by,
+    created_at
+  `)
   .eq("work_order_id", workOrderId)
   .order("created_at", { ascending: true });
 

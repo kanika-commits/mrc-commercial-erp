@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Filter,
@@ -55,11 +55,15 @@ export default function VendorsPage() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [page, setPage] = useState(1);
+  const [totalVendors, setTotalVendors] = useState(0);
+  const [totalFilteredVendors, setTotalFilteredVendors] = useState(0);
+  const [vendorTypes, setVendorTypes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
   const loadPage = useCallback(async () => {
     setLoading(true);
+    setErrorMessage("");
 
     const access = await getCurrentUserAccess();
 
@@ -77,7 +81,21 @@ export default function VendorsPage() {
       return;
     }
 
-    const response = await fetch("/api/vendors", {
+    const params = new URLSearchParams({
+      include_children: "summary",
+      page: String(page),
+      page_size: String(PAGE_SIZE),
+    });
+
+    if (search.trim()) {
+      params.set("search", search.trim());
+    }
+
+    if (typeFilter !== "all") {
+      params.set("type_filter", typeFilter);
+    }
+
+    const response = await fetch(`/api/vendors?${params.toString()}`, {
       headers: {
         Authorization: `Bearer ${session.access_token}`,
       },
@@ -88,10 +106,13 @@ export default function VendorsPage() {
       setErrorMessage(result.error || "Failed to load vendors.");
     } else {
       setVendors(result.vendors || []);
+      setTotalFilteredVendors(result.total || 0);
+      setTotalVendors(result.total_all || result.total || 0);
+      setVendorTypes(result.vendor_types || []);
     }
 
     setLoading(false);
-  }, []);
+  }, [page, search, typeFilter]);
 
   useEffect(() => {
     loadPage();
@@ -127,61 +148,22 @@ export default function VendorsPage() {
     setVendors((prev) => prev.filter((item) => item.id !== vendor.id));
   }
 
-  const filteredVendors = useMemo(() => {
-    const value = search.toLowerCase().trim();
-
-    return vendors.filter((vendor) => {
-      const contacts = vendor.contacts || [];
-      const bankAccounts = vendor.bank_accounts || [];
-      const matchesSearch =
-        !value ||
-        [
-          vendor.vendor_name,
-          vendor.vendor_type,
-          vendor.gstin,
-          vendor.pan,
-          vendor.aadhaar_cin,
-          ...contacts.flatMap((contact) => [
-            contact.contact_name,
-            contact.contact_number,
-            contact.email,
-          ]),
-          ...bankAccounts.map((account) => account.account_number),
-        ]
-          .filter(Boolean)
-          .some((field) => String(field).toLowerCase().includes(value));
-
-      const matchesType =
-        typeFilter === "all" || normalize(vendor.vendor_type) === typeFilter;
-
-      return matchesSearch && matchesType;
-    });
-  }, [search, typeFilter, vendors]);
-
   useEffect(() => {
     setPage(1);
   }, [search, typeFilter]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredVendors.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalFilteredVendors / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
   const startIndex = (currentPage - 1) * PAGE_SIZE;
-  const endIndex = Math.min(startIndex + PAGE_SIZE, filteredVendors.length);
-  const paginatedVendors = filteredVendors.slice(startIndex, endIndex);
-  const rangeStart = filteredVendors.length === 0 ? 0 : startIndex + 1;
+  const endIndex = Math.min(startIndex + vendors.length, totalFilteredVendors);
+  const paginatedVendors = vendors;
+  const rangeStart = totalFilteredVendors === 0 ? 0 : startIndex + 1;
 
   useEffect(() => {
     if (page > totalPages) {
       setPage(totalPages);
     }
   }, [page, totalPages]);
-
-  const vendorTypes = useMemo(() => {
-    return Array.from(
-      new Set(vendors.map((vendor) => vendor.vendor_type).filter(Boolean))
-    ).sort();
-  }, [vendors]);
-
-  const totalVendors = vendors.length;
 
   function clearFilters() {
     setSearch("");
@@ -279,7 +261,7 @@ export default function VendorsPage() {
         </div>
 
         <p className="mt-3 text-xs font-medium text-slate-500">
-          Showing {rangeStart}–{endIndex} of {filteredVendors.length} vendors
+          Showing {rangeStart}–{endIndex} of {totalFilteredVendors} vendors
         </p>
       </div>
 
@@ -379,7 +361,7 @@ export default function VendorsPage() {
               );
             })}
 
-            {filteredVendors.length === 0 && (
+            {totalFilteredVendors === 0 && (
               <tr>
                 <td className="px-6 py-14 text-center" colSpan={6}>
                   <div className="mx-auto max-w-sm">
@@ -412,7 +394,7 @@ export default function VendorsPage() {
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
           <div>
-            Showing {rangeStart}–{endIndex} of {filteredVendors.length} vendors
+            Showing {rangeStart}–{endIndex} of {totalFilteredVendors} vendors
           </div>
           <div className="flex items-center gap-2">
             <button
