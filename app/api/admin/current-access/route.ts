@@ -67,8 +67,7 @@ export async function GET(request: Request) {
       rolePermissionRows = rolePermissions.data || [];
     }
 
-    const isWildcard =
-      roleCodes.includes("platform_owner") || roleCodes.includes("super_admin");
+    const isWildcard = roleCodes.includes("platform_owner");
 
     if (isWildcard) {
       return NextResponse.json({

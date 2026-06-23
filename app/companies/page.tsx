@@ -7,6 +7,7 @@ import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { sortCompanies } from "@/lib/companyOrdering";
 import { formatStatusLabel } from "@/lib/statusLabels";
+import DeleteCompanyButton from "@/components/DeleteCompanyButton";
 
 type Company = {
   id: string;
@@ -28,15 +29,12 @@ export default function CompaniesPage() {
   const roleCodes = access?.roleCodes || [];
   const canEditCompanies =
     roleCodes.includes("platform_owner") ||
-    roleCodes.includes("super_admin") ||
     can(permissions, "companies", "edit");
   const canAddCompanies =
     roleCodes.includes("platform_owner") ||
-    roleCodes.includes("super_admin") ||
     can(permissions, "companies", "add");
   const canDeleteCompanies =
     roleCodes.includes("platform_owner") ||
-    roleCodes.includes("super_admin") ||
     can(permissions, "companies", "delete");
 
   useEffect(() => {
@@ -94,39 +92,9 @@ export default function CompaniesPage() {
     setLoading(false);
   }
 
-  async function deleteCompany(company: Company) {
-    const ok = window.confirm(
-      `Delete company "${company.company_name}"? This is blocked automatically if linked records exist.`
-    );
-
-    if (!ok) return;
-
-    try {
-      setMessage("");
-
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session?.access_token) {
-        throw new Error("Your session expired. Please log in again.");
-      }
-
-      const response = await fetch(`/api/companies/${company.id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to delete company.");
-      }
-
-      setCompanies((prev) => prev.filter((item) => item.id !== company.id));
-      setMessage("Company deleted successfully.");
-    } catch (error: any) {
-      setMessage(error.message || "Failed to delete company.");
-    }
+  function handleCompanyDeleted(company: Company) {
+    setCompanies((prev) => prev.filter((item) => item.id !== company.id));
+    setMessage("Company deleted successfully.");
   }
 
   return (
@@ -209,13 +177,11 @@ export default function CompaniesPage() {
                       </Link>
                       )}
                       {canDeleteCompanies && (
-                        <button
-                          type="button"
-                          onClick={() => deleteCompany(company)}
-                          className="rounded border border-red-200 px-3 py-1 text-red-700 hover:bg-red-50"
-                        >
-                          Delete
-                        </button>
+                        <DeleteCompanyButton
+                          companyId={company.id}
+                          companyName={company.company_name}
+                          onDeleted={() => handleCompanyDeleted(company)}
+                        />
                       )}
                     </div>
                   </td>

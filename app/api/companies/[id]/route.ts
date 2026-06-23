@@ -61,7 +61,7 @@ async function assertPermission(
 
   const roleCodes = (roles || []).map((role) => role.role_code).filter(Boolean);
 
-  if (roleCodes.includes("platform_owner") || roleCodes.includes("super_admin")) {
+  if (roleCodes.includes("platform_owner")) {
     return { user };
   }
 
@@ -116,6 +116,86 @@ async function getDependencyCount(
   if (error) throw error;
 
   return count || 0;
+}
+
+async function getIdsByColumn(
+  supabase: ReturnType<typeof adminClient>,
+  table: string,
+  column: string,
+  value: string
+) {
+  const { data, error } = await supabase
+    .from(table)
+    .select("id")
+    .eq(column, value);
+
+  if (error) throw error;
+
+  return (data || []).map((row) => row.id).filter(Boolean);
+}
+
+async function getLinkedTransactionCount(
+  supabase: ReturnType<typeof adminClient>,
+  table: string,
+  workOrderIds: string[]
+) {
+  if (workOrderIds.length === 0) return 0;
+
+  const { count, error } = await supabase
+    .from(table)
+    .select("id", { count: "exact", head: true })
+    .in("work_order_id", workOrderIds);
+
+  if (error) throw error;
+
+  return count || 0;
+}
+
+async function getLinkedVendorCount(
+  supabase: ReturnType<typeof adminClient>,
+  workOrderIds: string[]
+) {
+  if (workOrderIds.length === 0) return 0;
+
+  const { data, error } = await supabase
+    .from("work_order_vendors")
+    .select("vendor_id")
+    .in("work_order_id", workOrderIds);
+
+  if (error) throw error;
+
+  return new Set((data || []).map((row) => row.vendor_id).filter(Boolean)).size;
+}
+
+async function getLinkedPaymentCount(
+  supabase: ReturnType<typeof adminClient>,
+  companyId: string,
+  bankAccountIds: string[],
+  workOrderIds: string[]
+) {
+  const paymentIds = new Set<string>();
+
+  const queries = [
+    supabase.from("payments").select("id").eq("company_id", companyId),
+    bankAccountIds.length
+      ? supabase
+          .from("payments")
+          .select("id")
+          .in("company_bank_account_id", bankAccountIds)
+      : Promise.resolve({ data: [], error: null }),
+    workOrderIds.length
+      ? supabase.from("payments").select("id").in("work_order_id", workOrderIds)
+      : Promise.resolve({ data: [], error: null }),
+  ];
+
+  const results = await Promise.all(queries);
+
+  for (const result of results) {
+    if (result.error) throw result.error;
+    (result.data || []).forEach((payment) => paymentIds.add(payment.id));
+  }
+
+  return paymentIds.size;
 }
 
 export async function PUT(
@@ -194,10 +274,21 @@ export async function DELETE(
     }
 
     const { id } = await params;
+    const payload = await request.json().catch(() => ({}));
+    const deletionReason = String(payload.deletion_reason || "").trim();
+    const confirmationText = String(payload.confirmation_text || "").trim();
+
+    if (confirmationText !== "DELETE" && deletionReason.length < 5) {
+      return NextResponse.json(
+        { error: "Enter a delete reason or type DELETE to confirm." },
+        { status: 400 }
+      );
+    }
+
     const supabase = adminClient();
     const { data: company, error: companyError } = await supabase
       .from("companies")
-      .select("id, status")
+      .select("id, company_code, status")
       .eq("id", id)
       .maybeSingle();
 
@@ -207,57 +298,56 @@ export async function DELETE(
       return NextResponse.json({ error: "Company was not found." }, { status: 404 });
     }
 
-    const [sites, workOrders, bankAccounts] = await Promise.all([
+    const [sites, workOrderIds, bankAccountIds] = await Promise.all([
       getDependencyCount(supabase, "sites", "company_id", id),
-      getDependencyCount(supabase, "work_orders", "company_id", id),
-      getDependencyCount(supabase, "company_bank_accounts", "company_id", id),
+      getIdsByColumn(supabase, "work_orders", "company_id", id),
+      getIdsByColumn(supabase, "company_bank_accounts", "company_id", id),
     ]);
 
-    let payments = 0;
+    const [
+      vendors,
+      raBills,
+      invoices,
+      payments,
+      debitNotes,
+    ] = await Promise.all([
+      getLinkedVendorCount(supabase, workOrderIds),
+      getLinkedTransactionCount(supabase, "ra_bills", workOrderIds),
+      getLinkedTransactionCount(supabase, "invoices", workOrderIds),
+      getLinkedPaymentCount(supabase, id, bankAccountIds, workOrderIds),
+      getLinkedTransactionCount(supabase, "debit_notes", workOrderIds),
+    ]);
 
-    const { data: accountIds, error: accountError } = await supabase
-      .from("company_bank_accounts")
-      .select("id")
-      .eq("company_id", id);
+    const linkedCounts = {
+      sites,
+      work_orders: workOrderIds.length,
+      vendors,
+      company_bank_accounts: bankAccountIds.length,
+      payments,
+      invoices,
+      debit_notes: debitNotes,
+      ra_bills: raBills,
+    };
+    const hasLinkedRecords = Object.values(linkedCounts).some((count) => count > 0);
 
-    if (accountError) throw accountError;
-
-    const bankAccountIds = (accountIds || []).map((account) => account.id);
-
-    if (bankAccountIds.length > 0) {
-      const { count, error: paymentError } = await supabase
-        .from("payments")
-        .select("id", { count: "exact", head: true })
-        .in("company_bank_account_id", bankAccountIds);
-
-      if (paymentError) throw paymentError;
-      payments = count || 0;
-    }
-
-    const blockers = [
-      sites > 0 ? `${sites} site(s)` : "",
-      workOrders > 0 ? `${workOrders} work order(s)` : "",
-      bankAccounts > 0 ? `${bankAccounts} bank account(s)` : "",
-      payments > 0 ? `${payments} payment(s)` : "",
-    ].filter(Boolean);
-
-    if (blockers.length > 0) {
+    if (hasLinkedRecords) {
       return NextResponse.json(
         {
-          error: `Cannot delete Company because linked ${blockers.join(", ")} exist.`,
+          error: "Company cannot be deleted because it has linked records.",
+          linked_counts: linkedCounts,
         },
         { status: 409 }
       );
     }
 
-    const { error: updateError } = await supabase
+    const { error: deleteError } = await supabase
       .from("companies")
-      .update({ status: "deleted" })
+      .delete()
       .eq("id", id);
 
-    if (updateError) throw updateError;
+    if (deleteError) throw deleteError;
 
-    return NextResponse.json({ success: true, status: "deleted" });
+    return NextResponse.json({ success: true, deleted: true, company_id: id });
   } catch (error: any) {
     return NextResponse.json(
       { error: error.message || "Failed to delete company." },

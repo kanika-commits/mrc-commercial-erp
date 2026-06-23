@@ -55,10 +55,7 @@ export default function AppearanceSettingsPage() {
   );
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
-  const allowed =
-    access?.roleCodes.includes("platform_owner") ||
-    access?.roleCodes.includes("super_admin") ||
-    false;
+  const allowed = access?.roleCodes.includes("platform_owner") || false;
 
   useEffect(() => {
     async function loadPage() {

@@ -125,7 +125,7 @@ async function getRestrictedSiteIds(
       .map((role) => role.role_code)
       .filter(Boolean);
 
-    if (roleCodes.includes("platform_owner") || roleCodes.includes("super_admin")) {
+    if (roleCodes.includes("platform_owner")) {
       return [];
     }
 
@@ -144,7 +144,6 @@ async function getRestrictedSiteIds(
   ];
   const isSuperUser =
     roleCodes.includes("platform_owner") ||
-    roleCodes.includes("super_admin") ||
     hasWildcardPermission(permissions);
 
   if (isSuperUser) return [];

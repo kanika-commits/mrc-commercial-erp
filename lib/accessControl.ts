@@ -87,7 +87,7 @@ export async function getCurrentUserAccess(): Promise<CurrentUserAccess> {
     rolePermissionRows = rolePermissions || [];
   }
 
-  if (roleCodes.includes("platform_owner") || roleCodes.includes("super_admin")) {
+  if (roleCodes.includes("platform_owner")) {
     return {
       user,
       roleCodes,
@@ -139,9 +139,12 @@ export function can(
   );
 }
 export function isSuperUser(access: CurrentUserAccess) {
+  return isPlatformOwner(access);
+}
+
+export function isPlatformOwner(access: CurrentUserAccess) {
   return (
     access.roleCodes.includes("platform_owner") ||
-    access.roleCodes.includes("super_admin") ||
     access.permissions.some(
       (permission) =>
         permission.allowed === true &&
@@ -151,6 +154,10 @@ export function isSuperUser(access: CurrentUserAccess) {
   );
 }
 
+export function isOrganizationAdmin(access: CurrentUserAccess) {
+  return access.roleCodes.includes("super_admin");
+}
+
 export function hasSiteRestriction(access: CurrentUserAccess) {
-  return !isSuperUser(access) && access.sites.length > 0;
+  return !isPlatformOwner(access) && access.sites.length > 0;
 }

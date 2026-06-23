@@ -129,7 +129,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     if (item.superOnly) {
       return (
         roleCodes.includes("platform_owner") ||
-        roleCodes.includes("super_admin") ||
         can(permissions, "*", "*")
       );
     }

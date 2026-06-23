@@ -104,7 +104,7 @@ async function assertPermission(
 
   const roleCodes = (roles || []).map((role) => role.role_code).filter(Boolean);
 
-  if (roleCodes.includes("platform_owner") || roleCodes.includes("super_admin")) {
+  if (roleCodes.includes("platform_owner")) {
     return { user };
   }
 

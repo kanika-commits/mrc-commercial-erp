@@ -89,7 +89,6 @@ export async function GET(request: Request) {
     const permissions = [...rolePermissions, ...((userPermissions.data || []) as Permission[])];
     const isSuperUser =
       roleCodes.includes("platform_owner") ||
-      roleCodes.includes("super_admin") ||
       hasWildcardPermission(permissions);
     const restrictedSiteIds = isSuperUser
       ? []

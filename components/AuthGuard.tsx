@@ -43,7 +43,7 @@ function hasRouteAccess(
   if (pathname.startsWith("/settings")) {
     return (
       access.roleCodes.includes("platform_owner") ||
-      access.roleCodes.includes("super_admin")
+      can(access.permissions, "*", "*")
     );
   }
 

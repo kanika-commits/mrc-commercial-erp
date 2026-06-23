@@ -101,8 +101,7 @@ export async function GET(request: Request) {
       roleCodes = (roles.data || []).map((role) => role.role_code).filter(Boolean);
     }
 
-    const isWildcard =
-      roleCodes.includes("platform_owner") || roleCodes.includes("super_admin");
+    const isWildcard = roleCodes.includes("platform_owner");
     let permissions: Permission[] = [];
     let organizations: string[] = [];
     let companies: string[] = [];

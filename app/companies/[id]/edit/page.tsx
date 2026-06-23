@@ -41,7 +41,6 @@ export default function EditCompanyPage() {
 
     const canEditCompany =
       currentAccess.roleCodes.includes("platform_owner") ||
-      currentAccess.roleCodes.includes("super_admin") ||
       can(currentAccess.permissions, "companies", "edit");
 
     if (!canEditCompany) {

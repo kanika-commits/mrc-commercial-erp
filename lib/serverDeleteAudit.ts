@@ -107,7 +107,7 @@ async function loadUserDeletePermissions(admin: ServiceClient, userId: string) {
     rolePermissions = permissions.data || [];
   }
 
-  if (roleCodes.includes("platform_owner") || roleCodes.includes("super_admin")) {
+  if (roleCodes.includes("platform_owner")) {
     return [{ module_code: "*", action_code: "*", allowed: true }];
   }
 
