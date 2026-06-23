@@ -24,12 +24,15 @@ create table if not exists public.hr_designations (
 create table if not exists public.hr_employees (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null,
+  company_id uuid not null references public.companies(id) on delete restrict,
+  site_id uuid references public.sites(id) on delete set null,
   employee_code text not null,
   employee_name text not null,
   email text,
   phone text,
   department_id uuid references public.hr_departments(id) on delete set null,
   designation_id uuid references public.hr_designations(id) on delete set null,
+  reporting_manager_id uuid references public.hr_employees(id) on delete set null,
   date_of_joining date,
   employment_type text,
   status text not null default 'active',
@@ -41,12 +44,15 @@ create table if not exists public.hr_employees (
   updated_by_name text,
   updated_by_email text,
   updated_at timestamptz,
+  check (reporting_manager_id is null or reporting_manager_id <> id),
   unique (organization_id, employee_code)
 );
 
 create table if not exists public.reimbursement_claims (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null,
+  company_id uuid not null references public.companies(id) on delete restrict,
+  site_id uuid references public.sites(id) on delete set null,
   employee_id uuid not null references public.hr_employees(id) on delete restrict,
   claim_number text not null,
   claim_date date not null,
@@ -118,6 +124,15 @@ create index if not exists hr_designations_department_idx
 create index if not exists hr_employees_organization_idx
   on public.hr_employees (organization_id);
 
+create index if not exists hr_employees_company_idx
+  on public.hr_employees (company_id);
+
+create index if not exists hr_employees_site_idx
+  on public.hr_employees (site_id);
+
+create index if not exists hr_employees_manager_idx
+  on public.hr_employees (reporting_manager_id);
+
 create index if not exists hr_employees_department_idx
   on public.hr_employees (department_id);
 
@@ -126,6 +141,12 @@ create index if not exists hr_employees_designation_idx
 
 create index if not exists reimbursement_claims_organization_idx
   on public.reimbursement_claims (organization_id);
+
+create index if not exists reimbursement_claims_company_idx
+  on public.reimbursement_claims (company_id);
+
+create index if not exists reimbursement_claims_site_idx
+  on public.reimbursement_claims (site_id);
 
 create index if not exists reimbursement_claims_employee_idx
   on public.reimbursement_claims (employee_id);
