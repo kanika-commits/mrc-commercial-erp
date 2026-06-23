@@ -13,7 +13,12 @@ export default function DocumentUploader({ uploading, onUpload }: Props) {
 
   return (
     <div className="rounded-2xl border bg-white p-5 shadow-sm">
-      <h3 className="text-lg font-semibold text-slate-950">Upload Documents</h3>
+      <div>
+        <h3 className="text-lg font-semibold text-slate-950">Attachments</h3>
+        <p className="mt-1 text-sm text-slate-500">
+          Upload reimbursement supporting documents.
+        </p>
+      </div>
       <div className="mt-4 grid gap-4 md:grid-cols-[220px_1fr_auto]">
         <select
           value={documentType}

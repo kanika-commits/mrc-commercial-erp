@@ -84,6 +84,14 @@ export default function NewReimbursementPage() {
       ) : (
         <ReimbursementForm employees={lookups.employees} saving={saving || Boolean(claimId)} onSubmit={save} />
       )}
+      {!claimId && (
+        <section className="rounded-2xl border bg-white p-5 shadow-sm">
+          <h3 className="text-lg font-semibold text-slate-950">Attachments</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            Save the reimbursement claim first. The upload area will appear here immediately after the claim is created.
+          </p>
+        </section>
+      )}
       {claimId && (
         <div className="space-y-4">
           {canUpload ? (
