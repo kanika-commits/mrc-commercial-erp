@@ -12,20 +12,28 @@ import {
   LayoutGrid,
   RefreshCcw,
   Settings,
+  UsersRound,
 } from "lucide-react";
 import UserHeader from "@/components/UserHeader";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { supabase } from "@/lib/supabase";
 
-const sidebarItems = [
-  { label: "Dashboard", href: "/", icon: Home, groupCode: "dashboard" },
-  { label: "Modules", href: "/modules", icon: LayoutGrid, superOnly: true },
-  { label: "Master Setup", href: "/modules/master-setup", icon: Building2, groupCode: "master_setup" },
-  { label: "Contract Management", href: "/modules/contract-management", icon: FileText, groupCode: "contract_management" },
-  { label: "Reports", href: "/modules/reports", icon: BarChart3, groupCode: "reports" },
-  { label: "Administration", href: "/modules/administration", icon: Settings, groupCode: "administration" },
-];
+const sidebarGroupMeta = {
+  master_setup: { label: "Master Setup", href: "/modules/master-setup", icon: Building2 },
+  contract_management: { label: "Contract Management", href: "/modules/contract-management", icon: FileText },
+  reports: { label: "Reports", href: "/modules/reports", icon: BarChart3 },
+  administration: { label: "Administration", href: "/modules/administration", icon: Settings },
+  hr: { label: "HR", href: "/modules/hr", icon: UsersRound },
+} as const;
+
+type SidebarItem = {
+  label: string;
+  href: string;
+  icon: typeof Home;
+  groupCode?: string;
+  superOnly?: boolean;
+};
 
 const notificationLinks = [
   {
@@ -78,6 +86,35 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return nextVisibleGroups;
   }, [moduleNavigation.modules, permissions]);
 
+  const visibleSidebarItems = useMemo<SidebarItem[]>(() => {
+    const items: SidebarItem[] = [];
+
+    if (can(permissions, "dashboard", "view")) {
+      items.push({ label: "Dashboard", href: "/", icon: Home, groupCode: "dashboard" });
+    }
+
+    if (roleCodes.includes("platform_owner") || can(permissions, "*", "*")) {
+      items.push({ label: "Modules", href: "/modules", icon: LayoutGrid, superOnly: true });
+    }
+
+    (moduleNavigation.groups || [])
+      .filter((group: any) => group.module_code !== "dashboard")
+      .filter((group: any) => visibleGroupCodes.has(group.module_code))
+      .forEach((group: any) => {
+        const meta = sidebarGroupMeta[group.module_code as keyof typeof sidebarGroupMeta];
+        const fallbackHref = `/modules/${String(group.module_code || "").replace(/_/g, "-")}`;
+
+        items.push({
+          label: group.module_name || meta?.label || String(group.module_code || "Module"),
+          href: group.route || meta?.href || fallbackHref,
+          icon: meta?.icon || LayoutGrid,
+          groupCode: group.module_code,
+        });
+      });
+
+    return items;
+  }, [moduleNavigation.groups, permissions, roleCodes, visibleGroupCodes]);
+
   useEffect(() => {
     if (!user || notificationsStartedRef.current) return;
 
@@ -125,19 +162,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
   }
 
-  const visibleSidebarItems = sidebarItems.filter((item) => {
-    if (item.superOnly) {
-      return (
-        roleCodes.includes("platform_owner") ||
-        can(permissions, "*", "*")
-      );
-    }
-    if (item.groupCode === "dashboard") {
-      return can(permissions, "dashboard", "view");
-    }
-    if (!item.groupCode) return true;
-    return visibleGroupCodes.has(item.groupCode);
-  });
   const totalNotifications = Object.values(notificationCounts).reduce(
     (sum, value) => sum + value,
     0,
