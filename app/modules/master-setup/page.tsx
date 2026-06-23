@@ -2,12 +2,9 @@
 
 import Link from "next/link";
 import { ArrowRight, Building2, Landmark, LandmarkIcon, Users } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import {
-  can,
-  getCurrentUserAccess,
-  type UserPermission,
-} from "@/lib/accessControl";
+import { useMemo } from "react";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 
 type ModuleRow = {
   id: string;
@@ -112,33 +109,15 @@ function isVisibleCard(
 }
 
 export default function MasterSetupPage() {
-  const [permissions, setPermissions] = useState<UserPermission[]>([]);
-  const [modules, setModules] = useState<ModuleRow[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function loadPages() {
-      const [access, navigationResponse] = await Promise.all([
-        getCurrentUserAccess(),
-        fetch("/api/admin/module-navigation"),
-      ]);
-
-      setPermissions(access.permissions || []);
-
-      if (navigationResponse.ok) {
-        const navigation = await navigationResponse.json();
-        setModules(
-          ((navigation.modules || []) as ModuleRow[]).filter(
-            (module) => module.module_group === "master_setup",
-          ),
-        );
-      }
-
-      setLoading(false);
-    }
-
-    loadPages();
-  }, []);
+  const { access, moduleNavigation, loading } = useAccessContext();
+  const permissions = access?.permissions || [];
+  const modules = useMemo(
+    () =>
+      ((moduleNavigation.modules || []) as ModuleRow[]).filter(
+        (module) => module.module_group === "master_setup",
+      ),
+    [moduleNavigation.modules],
+  );
 
   const visibleCards = useMemo(
     () =>

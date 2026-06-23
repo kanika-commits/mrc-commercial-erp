@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 
 export default function RequirePermission({
   moduleCode,
@@ -15,18 +15,8 @@ export default function RequirePermission({
   children: React.ReactNode;
   fallback?: React.ReactNode;
 }) {
-  const [allowed, setAllowed] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function checkAccess() {
-      const access = await getCurrentUserAccess();
-      setAllowed(can(access.permissions, moduleCode, actionCode));
-      setLoading(false);
-    }
-
-    checkAccess();
-  }, [actionCode, moduleCode]);
+  const { access, loading } = useAccessContext();
+  const allowed = can(access?.permissions || [], moduleCode, actionCode);
 
   if (loading) {
     return <div className="p-8 text-gray-500">Checking access...</div>;

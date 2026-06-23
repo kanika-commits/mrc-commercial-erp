@@ -5,7 +5,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Download } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
+import AuditTrailCard from "@/components/AuditTrailCard";
 
 const STATUS_OPTIONS = [
   { value: "yet_to_start", label: "Yet to Start" },
@@ -93,6 +95,7 @@ function isMissingWorkOrderChangesTable(error: any) {
 }
 
 export default function WorkOrderDetailPage() {
+  const { access, loading: accessLoading } = useAccessContext();
   const params = useParams();
   const workOrderId = params.id as string;
 
@@ -109,8 +112,9 @@ const [workOrderChanges, setWorkOrderChanges] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
-  const [canUpdateStatus, setCanUpdateStatus] = useState(false);
-  const [canRemoveLinkedVendor, setCanRemoveLinkedVendor] = useState(false);
+  const permissions = access?.permissions || [];
+  const canUpdateStatus = can(permissions, "work_orders", "edit");
+  const canRemoveLinkedVendor = can(permissions, "work_orders", "delete");
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState("active");
   const [savingStatus, setSavingStatus] = useState(false);
@@ -132,18 +136,16 @@ const [workOrderChanges, setWorkOrderChanges] = useState<any[]>([]);
   const [savingChange, setSavingChange] = useState(false);
 
   useEffect(() => {
-    loadWorkOrder();
-  }, [workOrderId]);
+    if (!accessLoading && access) {
+      loadWorkOrder();
+    }
+  }, [access, accessLoading, workOrderId]);
 
   async function loadWorkOrder() {
     try {
       setLoading(true);
       setMessage("");
       setStatusMessage("");
-
-      const access = await getCurrentUserAccess();
-      setCanUpdateStatus(can(access.permissions, "work_orders", "edit"));
-      setCanRemoveLinkedVendor(can(access.permissions, "work_orders", "delete"));
 
       const { data: woData, error: woError } = await supabase
         .from("work_orders")
@@ -1043,6 +1045,15 @@ function downloadWOLedger() {
 <Summary title="Payable Outstanding" value={money(totals.payableOutstanding)} />
       </section>
 
+      <AuditTrailCard
+        createdBy={workOrder.created_by_name || workOrder.created_by_email}
+        createdAt={workOrder.created_at_user || workOrder.created_at}
+        updatedBy={workOrder.updated_by_name || workOrder.updated_by_email || workOrder.updated_by}
+        updatedAt={workOrder.updated_at_user || workOrder.updated_at}
+        approvedBy={workOrder.approved_by_name || workOrder.approved_by_email}
+        approvedAt={workOrder.approved_at}
+      />
+
       <section className="rounded-lg border bg-white p-6">
         <h2 className="mb-4 text-xl font-semibold">Work Order Information</h2>
 
@@ -1226,6 +1237,7 @@ function downloadWOLedger() {
                     "GST Rate",
                     "GST Amount",
                     "File",
+                    "Created By",
                     "Created At",
                   ].map((header) => (
                     <th key={header} className="p-3 text-left">
@@ -1237,7 +1249,7 @@ function downloadWOLedger() {
               <tbody>
                 {workOrderChanges.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="p-6 text-center text-gray-500">
+                    <td colSpan={11} className="p-6 text-center text-gray-500">
                       No post-approval changes added.
                     </td>
                   </tr>
@@ -1284,6 +1296,7 @@ function downloadWOLedger() {
                           "-"
                         )}
                       </td>
+                      <td className="p-3">{change.created_by || "-"}</td>
                       <td className="p-3">{formatDateTime(change.created_at)}</td>
                     </tr>
                   ))

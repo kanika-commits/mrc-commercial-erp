@@ -5,7 +5,8 @@ import Link from "next/link";
 import { CreditCard, Plus, Search, Trash2, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 
 const PAGE_SIZE = 50;
 
@@ -35,6 +36,7 @@ function formatDateTime(value: string | null | undefined) {
 }
 
 export default function PaymentsPage() {
+  const { access } = useAccessContext();
   const searchParams = useSearchParams();
   const search = String(searchParams.get("q") || "").trim();
   const normalizedSearch = search.toLowerCase();
@@ -49,23 +51,15 @@ export default function PaymentsPage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [canDelete, setCanDelete] = useState(false);
   const [deletePayment, setDeletePayment] = useState<any | null>(null);
   const [deletionReason, setDeletionReason] = useState("");
   const [deleting, setDeleting] = useState(false);
 
-  useEffect(() => {
-    loadAccess();
-  }, []);
+  const canDelete = can(access?.permissions || [], "payments", "delete");
 
   useEffect(() => {
     loadPayments();
   }, [page, search]);
-
-  async function loadAccess() {
-    const access = await getCurrentUserAccess();
-    setCanDelete(can(access.permissions, "payments", "delete"));
-  }
 
   async function loadPayments() {
     try {

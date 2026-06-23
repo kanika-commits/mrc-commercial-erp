@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
+import { createDriveSubfolder, uploadDriveFile } from "@/src/lib/googleDrive";
 
 const ORGANIZATION_ID = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
-const DOCUMENT_BUCKET = "Vendor-Documents";
+const VENDOR_MASTER_DRIVE_ROOT_FOLDER_ID =
+  process.env.GOOGLE_DRIVE_VENDOR_MASTER_FOLDER_ID ||
+  "1_3FCygGl8wOMS8IBEInhIkEFt-C93I-5";
 
 type VendorPayload = {
   vendor_name: string;
@@ -146,15 +149,94 @@ function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9.]/g, "_");
 }
 
-async function uploadDocument(
+function isProprietorship(value: string | undefined) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "proprietor" || normalized === "proprietorship";
+}
+
+function vendorDriveFolderName(vendorName: string, vendorId: string) {
+  return `${vendorName.trim()} - ${vendorId.slice(0, 8)}`;
+}
+
+async function findDuplicateVendor(
+  supabase: ReturnType<typeof adminClient>,
+  vendor: VendorPayload
+) {
+  const checks = [
+    { field: "pan", label: "PAN", value: vendor.pan },
+    { field: "aadhaar_cin", label: "Aadhaar/CIN", value: vendor.aadhaar_cin },
+    { field: "gstin", label: "GSTIN", value: vendor.gstin },
+  ].filter((check) => String(check.value || "").trim());
+
+  for (const check of checks) {
+    const { data, error } = await supabase
+      .from("vendors")
+      .select("id, vendor_name")
+      .eq("organization_id", ORGANIZATION_ID)
+      .neq("status", "deleted")
+      .eq(check.field, String(check.value).trim())
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (data) {
+      return {
+        ...data,
+        duplicate_field: check.label,
+      };
+    }
+  }
+
+  return null;
+}
+
+async function ensureVendorDriveFolder(
   supabase: ReturnType<typeof adminClient>,
   vendorId: string,
+  vendorName: string,
+  existingFolderId?: string | null,
+  existingFolderName?: string | null
+) {
+  if (existingFolderId) {
+    return {
+      folderId: existingFolderId,
+      folderName: existingFolderName || vendorDriveFolderName(vendorName, vendorId),
+    };
+  }
+
+  const folderName = vendorDriveFolderName(vendorName, vendorId);
+  const folder = await createDriveSubfolder({
+    parentFolderId: VENDOR_MASTER_DRIVE_ROOT_FOLDER_ID,
+    folderName,
+  });
+
+  if (!folder.folder_id) {
+    throw new Error("Google Drive Vendor folder was not created.");
+  }
+
+  const { error } = await supabase
+    .from("vendors")
+    .update({
+      vendor_drive_folder_id: folder.folder_id,
+      vendor_drive_folder_name: folder.folder_name || folderName,
+    })
+    .eq("id", vendorId);
+
+  if (error) throw error;
+
+  return {
+    folderId: folder.folder_id,
+    folderName: folder.folder_name || folderName,
+  };
+}
+
+async function uploadDocument(
+  vendorId: string,
+  driveFolderId: string,
   documentType: string,
   file: File
 ) {
-  const path = `${ORGANIZATION_ID}/${vendorId}/${documentType}_${Date.now()}_${safeFileName(
-    file.name
-  )}`;
   const bytes = Buffer.from(await file.arrayBuffer());
   const optimizedFile = await optimizeUploadFile(
     bytes,
@@ -162,21 +244,19 @@ async function uploadDocument(
     file.name,
   );
 
-  const { error: uploadError } = await supabase.storage
-    .from(DOCUMENT_BUCKET)
-    .upload(path, optimizedFile.buffer, {
-      contentType: optimizedFile.mimeType || "application/octet-stream",
-      upsert: false,
-    });
-
-  if (uploadError) throw uploadError;
+  const driveFile = await uploadDriveFile({
+    targetFolderId: driveFolderId,
+    fileName: `${documentType}_${Date.now()}_${safeFileName(file.name)}`,
+    mimeType: optimizedFile.mimeType || "application/octet-stream",
+    base64: optimizedFile.buffer.toString("base64"),
+  });
 
   return {
     organization_id: ORGANIZATION_ID,
     vendor_id: vendorId,
     document_type: documentType,
     file_name: file.name,
-    file_url: path,
+    file_url: driveFile.file_url,
   };
 }
 
@@ -289,18 +369,21 @@ export async function GET(request: Request) {
       const vendors = vendorsResult.data || [];
       const vendorIds = vendors.map((vendor) => vendor.id).filter(Boolean);
 
+      const contactsPromise = vendorIds.length
+        ? supabase
+            .from("vendor_contacts")
+            .select("id, vendor_id, contact_name, contact_number, email, designation, is_primary")
+            .in("vendor_id", vendorIds)
+            .order("is_primary", { ascending: false })
+        : Promise.resolve({ data: [], error: null });
+      const vendorTypesPromise = supabase
+        .from("vendors")
+        .select("vendor_type", { count: "exact" })
+        .neq("status", "deleted");
+
       const [contactsResult, vendorTypeRows] = await Promise.all([
-        vendorIds.length
-          ? supabase
-              .from("vendor_contacts")
-              .select("id, vendor_id, contact_name, contact_number, email, designation, is_primary")
-              .in("vendor_id", vendorIds)
-              .order("is_primary", { ascending: false })
-          : Promise.resolve({ data: [], error: null }),
-        supabase
-          .from("vendors")
-          .select("vendor_type", { count: "exact" })
-          .neq("status", "deleted"),
+        contactsPromise,
+        vendorTypesPromise,
       ]);
 
       if (contactsResult.error) throw contactsResult.error;
@@ -314,7 +397,7 @@ export async function GET(request: Request) {
         contactsByVendor.set(contact.vendor_id, rows);
       });
 
-      return NextResponse.json({
+      const responseBody = {
         vendors: vendors.map((vendor) => ({
           ...vendor,
           contacts: contactsByVendor.get(vendor.id) || [],
@@ -327,7 +410,8 @@ export async function GET(request: Request) {
         vendor_types: Array.from(
           new Set((vendorTypeRows.data || []).map((row) => row.vendor_type).filter(Boolean))
         ).sort(),
-      });
+      };
+      return NextResponse.json(responseBody);
     }
 
     const [vendorsResult, contactsResult, bankAccountsResult] = await Promise.all([
@@ -549,6 +633,7 @@ export async function POST(request: Request) {
     }
 
     if (
+      isProprietorship(vendor.contractor_type) &&
       vendor.pan_aadhaar_link_status === "Yes" &&
       !hasDocument("PAN_AADHAAR_ATTACHMENT")
     ) {
@@ -574,31 +659,15 @@ export async function POST(request: Request) {
       }
     }
 
-    const duplicateConditions = [
-      `pan.eq.${vendor.pan}`,
-      `aadhaar_cin.eq.${vendor.aadhaar_cin}`,
-    ];
-
-    if (vendor.gstin) {
-      duplicateConditions.push(`gstin.eq.${vendor.gstin}`);
-    }
-
-    const { data: duplicateVendor, error: duplicateError } = await supabase
-      .from("vendors")
-      .select("id, vendor_name")
-      .eq("organization_id", ORGANIZATION_ID)
-      .or(duplicateConditions.join(","))
-      .limit(1)
-      .maybeSingle();
-
-    if (duplicateError) throw duplicateError;
+    const duplicateVendor = await findDuplicateVendor(supabase, vendor);
 
     if (duplicateVendor) {
       return NextResponse.json(
         {
-          error: `Vendor already exists with same PAN / Aadhaar-CIN / GSTIN: ${duplicateVendor.vendor_name}`,
+          error: `Vendor already exists with same ${duplicateVendor.duplicate_field}: ${duplicateVendor.vendor_name}`,
           duplicate_vendor_id: duplicateVendor.id,
           duplicate_vendor_name: duplicateVendor.vendor_name,
+          duplicate_field: duplicateVendor.duplicate_field,
         },
         { status: 409 }
       );
@@ -628,6 +697,11 @@ export async function POST(request: Request) {
     if (vendorError) throw vendorError;
 
     const vendorId = createdVendor.id;
+    const vendorFolder = await ensureVendorDriveFolder(
+      supabase,
+      vendorId,
+      vendor.vendor_name.trim()
+    );
 
     if (contacts.length > 0) {
       const { error: contactError } = await supabase
@@ -684,7 +758,12 @@ export async function POST(request: Request) {
     for (const [key, value] of formData.entries()) {
       if (key.startsWith("document:") && value instanceof File && value.size > 0) {
         documentRows.push(
-          await uploadDocument(supabase, vendorId, key.replace("document:", ""), value)
+          await uploadDocument(
+            vendorId,
+            vendorFolder.folderId,
+            key.replace("document:", ""),
+            value
+          )
         );
       }
     }

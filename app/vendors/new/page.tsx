@@ -24,6 +24,11 @@ type FileKey =
   | "BANK_PROOF"
   | "ADDITIONAL_DOCUMENT";
 
+function isProprietorship(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "proprietor" || normalized === "proprietorship";
+}
+
 export default function NewVendorPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -171,6 +176,15 @@ if (form.gstin && !files.GST_CERTIFICATE) {
     "GST certificate is required when GSTIN is entered.";
 }
 
+    if (
+      isProprietorship(form.contractor_type) &&
+      form.pan_aadhaar_link_status === "Yes" &&
+      !files.PAN_AADHAAR_ATTACHMENT
+    ) {
+      newErrors.PAN_AADHAAR_ATTACHMENT =
+        "PAN-Aadhaar Linked Proof is required.";
+    }
+
     if (form.msme_registered === "Yes" && !files.MSME_CERTIFICATE) {
       newErrors.MSME_CERTIFICATE = "MSME certificate is required.";
     }
@@ -247,13 +261,20 @@ if (form.gstin && !files.GST_CERTIFICATE) {
 
       if (
         name === "contractor_type" &&
-        !["proprietor", "proprietorship"].includes(finalValue.toLowerCase())
+        !isProprietorship(finalValue)
       ) {
         next.pan_aadhaar_link_status = "";
       }
 
       return next;
     });
+
+    if (
+      (name === "contractor_type" && !isProprietorship(finalValue)) ||
+      (name === "pan_aadhaar_link_status" && finalValue !== "Yes")
+    ) {
+      setFiles((prev) => ({ ...prev, PAN_AADHAAR_ATTACHMENT: null }));
+    }
   }
 
   function updateContact(index: number, field: keyof Contact, value: string | boolean) {
@@ -300,6 +321,8 @@ if (form.gstin && !files.GST_CERTIFICATE) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (saving) return;
+
     setMessage("");
 
     const validationErrors = collectValidationErrors();
@@ -507,6 +530,12 @@ if (form.gstin && !files.GST_CERTIFICATE) {
       </div>
 
       <div className="mb-6">
+        {saving && (
+          <AlertMessage
+            type="info"
+            message="Creating vendor folder and uploading documents. Please wait."
+          />
+        )}
         <AlertMessage
           type="error"
           message={message}
@@ -846,6 +875,29 @@ if (form.gstin && !files.GST_CERTIFICATE) {
                   />
                   <ErrorText name="gstin" />
                 </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    PAN-Aadhaar Linked
+                  </label>
+                  <select
+                    name="pan_aadhaar_link_status"
+                    value={form.pan_aadhaar_link_status}
+                    onChange={handleChange}
+                    disabled={!isProprietorship(form.contractor_type)}
+                    className={`${inputClass} disabled:bg-slate-100 disabled:text-slate-400`}
+                  >
+                    <option value="">Not applicable</option>
+                    <option>Yet to check</option>
+                    <option>Yes</option>
+                    <option>No</option>
+                  </select>
+                  {!isProprietorship(form.contractor_type) && (
+                    <p className="mt-1 text-xs text-slate-500">
+                      Applicable only for Proprietorship vendors.
+                    </p>
+                  )}
+                </div>
               </div>
             </section>
           )}
@@ -961,6 +1013,15 @@ if (form.gstin && !files.GST_CERTIFICATE) {
                       form.msme_registered === "Yes" ? " *" : ""
                     }`,
                   ],
+                  ...(isProprietorship(form.contractor_type) &&
+                  form.pan_aadhaar_link_status === "Yes"
+                    ? ([
+                        [
+                          "PAN_AADHAAR_ATTACHMENT",
+                          "PAN-Aadhaar Linked Proof *",
+                        ],
+                      ] as [string, string][])
+                    : []),
                   ["BANK_PROOF", "Cancelled Cheque / Bank Proof *"],
                   ["ADDITIONAL_DOCUMENT", "Additional Documents"],
                 ].map(([key, label]) => (
@@ -1019,7 +1080,7 @@ if (form.gstin && !files.GST_CERTIFICATE) {
                   disabled={saving}
                   className="rounded-xl bg-sky-700 px-5 py-2 text-sm font-semibold text-white hover:bg-sky-800 disabled:opacity-60"
                 >
-                  {saving ? "Saving..." : "Save Vendor"}
+                  {saving ? "Saving vendor..." : "Save Vendor"}
                 </button>
               )}
             </div>

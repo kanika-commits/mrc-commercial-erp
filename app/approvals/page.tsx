@@ -5,7 +5,8 @@ import Link from "next/link";
 import { CheckCircle2, FileMinus, FileText, Trash2 } from "lucide-react";
 import AlertMessage from "@/components/AlertMessage";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -33,6 +34,7 @@ type ApprovalAction = "Approved" | "Rejected";
 type RaApprovalAction = "Approved" | "Rejected";
 
 export default function ApprovalsPage() {
+  const { access } = useAccessContext();
   const [bills, setBills] = useState<any[]>([]);
   const [debitNotes, setDebitNotes] = useState<any[]>([]);
 
@@ -49,17 +51,11 @@ export default function ApprovalsPage() {
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error">("error");
   const [remarks, setRemarks] = useState<Record<string, string>>({});
-  const [canDeleteDebitNotes, setCanDeleteDebitNotes] = useState(false);
+  const canDeleteDebitNotes = can(access?.permissions || [], "debit_notes", "delete");
 
   useEffect(() => {
-    loadAccess();
     loadApprovals();
   }, []);
-
-  async function loadAccess() {
-    const access = await getCurrentUserAccess();
-    setCanDeleteDebitNotes(can(access.permissions, "debit_notes", "delete"));
-  }
 
   function showMessage(type: "success" | "error", text: string) {
     setMessageType(type);

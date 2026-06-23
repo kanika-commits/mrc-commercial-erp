@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { sortCompanies } from "@/lib/companyOrdering";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 import AlertMessage from "@/components/AlertMessage";
 
 const actions = ["view", "add", "edit", "delete", "approve", "reject", "upload", "export"];
@@ -15,6 +16,7 @@ function availableActionsForModule(moduleCode: string) {
 }
 
 export default function UserAccessPage() {
+  const { access } = useAccessContext();
   const params = useParams();
   const userId = params.id as string;
 
@@ -36,9 +38,9 @@ export default function UserAccessPage() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [permissionsSaved, setPermissionsSaved] = useState(false);
-  const [canDeleteUser, setCanDeleteUser] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const canDeleteUser = can(access?.permissions || [], "users", "delete");
 
   useEffect(() => {
     loadData();
@@ -53,10 +55,7 @@ export default function UserAccessPage() {
       setLoading(true);
       setMessage("");
 
-      const [access, response] = await Promise.all([
-        getCurrentUserAccess(),
-        fetch(`/api/admin/users/${userId}`),
-      ]);
+      const response = await fetch(`/api/admin/users/${userId}`);
       const result = await response.json();
 
       if (!response.ok) {
@@ -66,8 +65,6 @@ export default function UserAccessPage() {
       if (!result.profile) {
         throw new Error("User profile was not found.");
       }
-
-      setCanDeleteUser(can(access.permissions, "users", "delete"));
 
       const roleIds = (result.userRoles || []).map((item: any) => item.role_id);
       const userPermissionData = result.userPermissions || [];

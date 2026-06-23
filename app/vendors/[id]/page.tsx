@@ -16,13 +16,16 @@ import {
   Trash2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { getCurrentUserAccess, can } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
+import AuditTrailCard from "@/components/AuditTrailCard";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
 export default function VendorDetailPage() {
+  const { access, loading: accessLoading } = useAccessContext();
   const params = useParams();
   const vendorId = params.id as string;
 
@@ -35,19 +38,16 @@ export default function VendorDetailPage() {
   const [payments, setPayments] = useState<any[]>([]);
   const [companies, setCompanies] = useState<any[]>([]);
   const [sites, setSites] = useState<any[]>([]);
-  const [canEdit, setCanEdit] = useState(false);
-  const [canDelete, setCanDelete] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const permissions = access?.permissions || [];
+  const canEdit = can(permissions, "vendors", "edit");
+  const canDelete = can(permissions, "vendors", "delete");
 
   const loadVendorLedger = useCallback(async () => {
     try {
       setLoading(true);
       setMessage("");
-
-      const access = await getCurrentUserAccess();
-      setCanEdit(can(access.permissions, "vendors", "edit"));
-      setCanDelete(can(access.permissions, "vendors", "delete"));
 
       const {
         data: { session },
@@ -128,8 +128,10 @@ export default function VendorDetailPage() {
   }, [vendorId]);
 
   useEffect(() => {
-    loadVendorLedger();
-  }, [loadVendorLedger]);
+    if (!accessLoading && access) {
+      loadVendorLedger();
+    }
+  }, [access, accessLoading, loadVendorLedger]);
 
   const companyMap = useMemo(() => {
     return new Map(companies.map((company: any) => [company.id, company]));
@@ -373,6 +375,11 @@ export default function VendorDetailPage() {
               )}
             </div>
           </VendorCard>
+
+          <AuditTrailCard
+            createdAt={vendor.created_at}
+            updatedAt={vendor.updated_at}
+          />
 
           <VendorCard title="GST Details" icon={<FileText className="h-5 w-5" />}>
             {uniqueGstins.length === 0 ? (
@@ -829,6 +836,7 @@ function formatDocumentType(value: string | null) {
     PAN: "PAN",
     AADHAAR_CIN: "Aadhaar/CIN",
     GST_CERTIFICATE: "GST Certificate",
+    PAN_AADHAAR_ATTACHMENT: "PAN-Aadhaar Linked Proof",
     MSME_CERTIFICATE: "MSME Certificate",
     BANK_PROOF: "Bank Proof",
     ADDITIONAL_DOCUMENT: "Additional Document",
@@ -859,6 +867,8 @@ function getDocumentDisplayNumber(
       return vendor?.aadhaar_cin || "-";
     case "GST_CERTIFICATE":
       return primaryGstin || "-";
+    case "PAN_AADHAAR_ATTACHMENT":
+      return vendor?.pan_aadhaar_link_status || "-";
     case "MSME_CERTIFICATE":
       return vendor?.msme_number || "-";
     case "BANK_PROOF":

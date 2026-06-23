@@ -1,24 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { getCurrentUserAccess, can } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 
 export default function DeleteWorkOrderButton({ id }: { id: string }) {
+  const { access } = useAccessContext();
   const router = useRouter();
-  const [allowed, setAllowed] = useState(false);
   const [deleting, setDeleting] = useState(false);
-
-  useEffect(() => {
-    async function checkAccess() {
-      const access = await getCurrentUserAccess();
-      setAllowed(can(access.permissions, "work_orders", "delete"));
-    }
-
-    checkAccess();
-  }, []);
+  const allowed = can(access?.permissions || [], "work_orders", "delete");
 
   async function handleDelete() {
     const ok = window.confirm(

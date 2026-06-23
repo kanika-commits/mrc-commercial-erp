@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
+import { createDriveSubfolder, uploadDriveFile } from "@/src/lib/googleDrive";
 
 const ORGANIZATION_ID = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
 const DOCUMENT_BUCKET = "Vendor-Documents";
+const VENDOR_MASTER_DRIVE_ROOT_FOLDER_ID = "1_3FCygGl8wOMS8IBEInhIkEFt-C93I-5";
 
 type VendorPayload = {
   vendor_type: string;
@@ -155,6 +157,15 @@ function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9.]/g, "_");
 }
 
+function isProprietorship(value: string | undefined) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "proprietor" || normalized === "proprietorship";
+}
+
+function vendorDriveFolderName(vendorName: string, vendorId: string) {
+  return `${vendorName.trim()} - ${vendorId.slice(0, 8)}`;
+}
+
 function normalizeStoragePath(value: string | null) {
   if (!value) return "";
 
@@ -192,7 +203,12 @@ async function createDocumentSignedUrl(
   supabase: ReturnType<typeof adminClient>,
   document: any
 ) {
-  if (String(document.file_url || "").trim().startsWith("https://drive.google.com/")) {
+  const fileUrl = String(document.file_url || "").trim();
+
+  if (
+    fileUrl.startsWith("https://drive.google.com/") ||
+    fileUrl.startsWith("https://docs.google.com/")
+  ) {
     return { signedUrl: document.file_url, path: document.file_url };
   }
 
@@ -250,16 +266,53 @@ async function createDocumentSignedUrl(
   );
 }
 
-async function uploadDocument(
+async function ensureVendorDriveFolder(
   supabase: ReturnType<typeof adminClient>,
+  vendorId: string,
+  vendorName: string,
+  existingFolderId?: string | null,
+  existingFolderName?: string | null
+) {
+  if (existingFolderId) {
+    return {
+      folderId: existingFolderId,
+      folderName: existingFolderName || vendorDriveFolderName(vendorName, vendorId),
+    };
+  }
+
+  const folderName = vendorDriveFolderName(vendorName, vendorId);
+  const folder = await createDriveSubfolder({
+    parentFolderId: VENDOR_MASTER_DRIVE_ROOT_FOLDER_ID,
+    folderName,
+  });
+
+  if (!folder.folder_id) {
+    throw new Error("Google Drive Vendor folder was not created.");
+  }
+
+  const { error } = await supabase
+    .from("vendors")
+    .update({
+      vendor_drive_folder_id: folder.folder_id,
+      vendor_drive_folder_name: folder.folder_name || folderName,
+    })
+    .eq("id", vendorId);
+
+  if (error) throw error;
+
+  return {
+    folderId: folder.folder_id,
+    folderName: folder.folder_name || folderName,
+  };
+}
+
+async function uploadDocument(
   organizationId: string,
   vendorId: string,
+  driveFolderId: string,
   documentType: string,
   file: File
 ) {
-  const path = `${organizationId}/${vendorId}/${documentType}_${Date.now()}_${safeFileName(
-    file.name
-  )}`;
   const bytes = Buffer.from(await file.arrayBuffer());
   const optimizedFile = await optimizeUploadFile(
     bytes,
@@ -267,21 +320,19 @@ async function uploadDocument(
     file.name,
   );
 
-  const { error: uploadError } = await supabase.storage
-    .from(DOCUMENT_BUCKET)
-    .upload(path, optimizedFile.buffer, {
-      contentType: optimizedFile.mimeType || "application/octet-stream",
-      upsert: false,
-    });
-
-  if (uploadError) throw uploadError;
+  const driveFile = await uploadDriveFile({
+    targetFolderId: driveFolderId,
+    fileName: `${documentType}_${Date.now()}_${safeFileName(file.name)}`,
+    mimeType: optimizedFile.mimeType || "application/octet-stream",
+    base64: optimizedFile.buffer.toString("base64"),
+  });
 
   return {
-    organization_id: ORGANIZATION_ID,
+    organization_id: organizationId,
     vendor_id: vendorId,
     document_type: documentType,
     file_name: file.name,
-    file_url: path,
+    file_url: driveFile.file_url,
   };
 }
 
@@ -317,6 +368,8 @@ export async function GET(
           msme_registered,
           msme_number,
           msme_category,
+          vendor_drive_folder_id,
+          vendor_drive_folder_name,
           updated_at,
           is_deleted
         `)
@@ -558,7 +611,7 @@ export async function PUT(
 
     const { data: existingVendor, error: existingError } = await supabase
       .from("vendors")
-      .select("id, organization_id")
+      .select("id, organization_id, vendor_name, vendor_drive_folder_id, vendor_drive_folder_name")
       .eq("id", id)
       .maybeSingle();
 
@@ -569,6 +622,30 @@ export async function PUT(
     }
 
     const organizationId = existingVendor.organization_id || ORGANIZATION_ID;
+    const hasNewPanAadhaarProof = formData.get("document:PAN_AADHAAR_ATTACHMENT") instanceof File &&
+      (formData.get("document:PAN_AADHAAR_ATTACHMENT") as File).size > 0;
+
+    if (
+      isProprietorship(vendor.contractor_type) &&
+      vendor.pan_aadhaar_link_status === "Yes" &&
+      !hasNewPanAadhaarProof
+    ) {
+      const { count: existingProofCount, error: existingProofError } = await supabase
+        .from("vendor_documents")
+        .select("id", { count: "exact", head: true })
+        .eq("vendor_id", id)
+        .eq("document_type", "PAN_AADHAAR_ATTACHMENT");
+
+      if (existingProofError) throw existingProofError;
+
+      if (!existingProofCount) {
+        return NextResponse.json(
+          { error: "PAN-Aadhaar Linked Proof is required." },
+          { status: 400 }
+        );
+      }
+    }
+
     const gstinRows = gstins
       .map((gstin) => ({
         gstin: gstin.gstin?.trim().toUpperCase() || "",
@@ -678,14 +755,26 @@ export async function PUT(
     }
 
     const documentRows = [];
+    const hasNewDocuments = Array.from(formData.entries()).some(
+      ([key, value]) => key.startsWith("document:") && value instanceof File && value.size > 0
+    );
+    const vendorFolder = hasNewDocuments
+      ? await ensureVendorDriveFolder(
+          supabase,
+          id,
+          existingVendor.vendor_name || id,
+          existingVendor.vendor_drive_folder_id,
+          existingVendor.vendor_drive_folder_name
+        )
+      : null;
 
     for (const [key, value] of formData.entries()) {
       if (key.startsWith("document:") && value instanceof File && value.size > 0) {
         documentRows.push(
           await uploadDocument(
-            supabase,
             organizationId,
             id,
+            vendorFolder!.folderId,
             key.replace("document:", ""),
             value
           )

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Building2, CreditCard, ReceiptText } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import AuditTrailCard from "@/components/AuditTrailCard";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -216,16 +217,12 @@ export default function PaymentDetailPage() {
           <Info label="Vendor" value={vendor?.vendor_name || "-"} />
         </Card>
 
-        <Card icon={<ReceiptText className="h-5 w-5" />} title="Audit">
-          <Info label="Created By" value={payment.created_by_name || "-"} />
-          <Info label="Created Email" value={payment.created_by_email || "-"} />
-          <Info label="Created At" value={formatDateTime(payment.created_at)} />
-          <Info
-            label="Created At User"
-            value={formatDateTime(payment.created_at_user)}
-          />
-        </Card>
       </div>
+
+      <AuditTrailCard
+        createdBy={payment.created_by_name || payment.created_by_email}
+        createdAt={payment.created_at_user || payment.created_at}
+      />
     </section>
   );
 }

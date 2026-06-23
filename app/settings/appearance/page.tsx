@@ -7,7 +7,7 @@ import {
   saveAppearanceSettings,
   type AppearanceSettings,
 } from "@/components/AppearanceProvider";
-import { getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
 
 const fontScales: Array<{
   value: AppearanceSettings["fontScale"];
@@ -49,27 +49,27 @@ const fontModes: Array<{
 ];
 
 export default function AppearanceSettingsPage() {
+  const { access, loading: accessLoading } = useAccessContext();
   const [settings, setSettings] = useState<AppearanceSettings>(
     defaultAppearanceSettings
   );
   const [loading, setLoading] = useState(true);
-  const [allowed, setAllowed] = useState(false);
   const [message, setMessage] = useState("");
+  const allowed =
+    access?.roleCodes.includes("platform_owner") ||
+    access?.roleCodes.includes("super_admin") ||
+    false;
 
   useEffect(() => {
     async function loadPage() {
-      const access = await getCurrentUserAccess();
-      const canManageAppearance =
-        access.roleCodes.includes("platform_owner") ||
-        access.roleCodes.includes("super_admin");
-
-      setAllowed(canManageAppearance);
       setSettings(readAppearanceSettings());
       setLoading(false);
     }
 
-    loadPage();
-  }, []);
+    if (!accessLoading && access) {
+      loadPage();
+    }
+  }, [access, accessLoading]);
 
   function updateSetting(next: AppearanceSettings) {
     setSettings(next);

@@ -2,11 +2,23 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useAccessContext } from "@/components/AccessContext";
 
 export default function UserHeader() {
+  const { user: contextUser } = useAccessContext();
   const [label, setLabel] = useState("Loading user...");
 
   useEffect(() => {
+    if (contextUser) {
+      setLabel(
+        contextUser.user_metadata?.full_name ||
+          contextUser.user_metadata?.name ||
+          contextUser.email ||
+          "Logged in"
+      );
+      return;
+    }
+
     async function loadUser() {
       const {
         data: { user },
@@ -26,7 +38,7 @@ export default function UserHeader() {
     }
 
     loadUser();
-  }, []);
+  }, [contextUser]);
 
   async function logout() {
     await supabase.auth.signOut();

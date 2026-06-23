@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Building2, ChevronRight, Eye, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 import AlertMessage from "@/components/AlertMessage";
 
 type Site = {
@@ -62,14 +63,16 @@ function formatSiteDisplayName(siteName: string, location: string | null) {
 }
 
 export default function SitesPage() {
+  const { access } = useAccessContext();
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
-  const [canEditSites, setCanEditSites] = useState(false);
-  const [canDeleteSites, setCanDeleteSites] = useState(false);
   const [deleteSite, setDeleteSite] = useState<Site | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const permissions = access?.permissions || [];
+  const canEditSites = can(permissions, "sites", "edit");
+  const canDeleteSites = can(permissions, "sites", "delete");
 
   useEffect(() => {
     loadSites();
@@ -78,10 +81,6 @@ export default function SitesPage() {
   async function loadSites() {
     setLoading(true);
     setMessage("");
-
-    const access = await getCurrentUserAccess();
-    setCanEditSites(can(access.permissions, "sites", "edit"));
-    setCanDeleteSites(can(access.permissions, "sites", "delete"));
 
     const { data, error } = await supabase
       .from("sites")

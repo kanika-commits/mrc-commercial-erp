@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 
 type VendorForm = {
   vendor_name: string;
@@ -115,6 +116,7 @@ function duplicateValues(values: string[]) {
 }
 
 export default function EditVendorPage() {
+  const { access, loading: accessLoading } = useAccessContext();
   const params = useParams();
   const router = useRouter();
   const vendorId = params.id as string;
@@ -164,9 +166,10 @@ export default function EditVendorPage() {
           throw new Error("Your session expired. Please log in again.");
         }
 
-        const access = await getCurrentUserAccess();
+        const currentAccess = access;
+        if (!currentAccess) return;
 
-        if (!can(access.permissions, "vendors", "edit")) {
+        if (!can(currentAccess.permissions, "vendors", "edit")) {
           setAccessDenied(true);
           setMessage("You do not have permission to edit vendors.");
           return;
@@ -256,8 +259,8 @@ export default function EditVendorPage() {
       }
     }
 
-    if (vendorId) loadVendor();
-  }, [vendorId]);
+    if (vendorId && !accessLoading && access) loadVendor();
+  }, [access, accessLoading, vendorId]);
 
   function handleChange(
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
@@ -281,6 +284,13 @@ export default function EditVendorPage() {
 
       return next;
     });
+
+    if (
+      (name === "contractor_type" && !isProprietorship(finalValue)) ||
+      (name === "pan_aadhaar_link_status" && finalValue !== "Yes")
+    ) {
+      setFiles((prev) => ({ ...prev, PAN_AADHAAR_ATTACHMENT: null }));
+    }
   }
 
   function updateContact(index: number, field: keyof Contact, value: string | boolean) {
@@ -530,6 +540,19 @@ export default function EditVendorPage() {
       if (!form.msme_category.trim()) validationErrors.push("MSME category is required.");
     }
 
+    const hasExistingPanAadhaarProof = documents.some(
+      (document) => document.document_type === "PAN_AADHAAR_ATTACHMENT"
+    );
+
+    if (
+      isProprietorship(form.contractor_type) &&
+      form.pan_aadhaar_link_status === "Yes" &&
+      !files.PAN_AADHAAR_ATTACHMENT &&
+      !hasExistingPanAadhaarProof
+    ) {
+      validationErrors.push("PAN-Aadhaar Linked Proof is required.");
+    }
+
     if (validationErrors.length > 0) {
       setMessage(Array.from(new Set(validationErrors)).join(" "));
       return;
@@ -623,6 +646,7 @@ export default function EditVendorPage() {
       PAN: "PAN",
       AADHAAR_CIN: "Aadhaar/CIN",
       GST_CERTIFICATE: "GST Certificate",
+      PAN_AADHAAR_ATTACHMENT: "PAN-Aadhaar Linked Proof",
       MSME_CERTIFICATE: "MSME Certificate",
       BANK_PROOF: "Bank Proof",
       ADDITIONAL_DOCUMENT: "Additional Document",
@@ -646,6 +670,8 @@ export default function EditVendorPage() {
         return form.aadhaar_cin || "-";
       case "GST_CERTIFICATE":
         return primaryGstin || "-";
+      case "PAN_AADHAAR_ATTACHMENT":
+        return form.pan_aadhaar_link_status || "-";
       case "MSME_CERTIFICATE":
         return form.msme_number || "-";
       case "BANK_PROOF":
@@ -853,6 +879,27 @@ export default function EditVendorPage() {
                 }}
                 className={`${inputClass} uppercase`}
               />
+            </div>
+
+            <div>
+              <label className={labelClass}>PAN-Aadhaar Linked</label>
+              <select
+                name="pan_aadhaar_link_status"
+                value={form.pan_aadhaar_link_status}
+                onChange={handleChange}
+                disabled={!isProprietorship(form.contractor_type)}
+                className={`${inputClass} disabled:bg-slate-100 disabled:text-slate-400`}
+              >
+                <option value="">Not applicable</option>
+                <option>Yet to check</option>
+                <option>Yes</option>
+                <option>No</option>
+              </select>
+              {!isProprietorship(form.contractor_type) && (
+                <p className="mt-1 text-xs text-slate-500">
+                  Applicable only for Proprietorship vendors.
+                </p>
+              )}
             </div>
           </div>
         </section>
@@ -1175,6 +1222,15 @@ export default function EditVendorPage() {
               ["PAN", "PAN Copy"],
               ["AADHAAR_CIN", "Aadhaar / CIN Copy"],
               ["GST_CERTIFICATE", "GST Certificate"],
+              ...(isProprietorship(form.contractor_type) &&
+              form.pan_aadhaar_link_status === "Yes"
+                ? ([
+                    [
+                      "PAN_AADHAAR_ATTACHMENT",
+                      "PAN-Aadhaar Linked Proof",
+                    ],
+                  ] as [string, string][])
+                : []),
               ["MSME_CERTIFICATE", "MSME Certificate"],
               ["BANK_PROOF", "Cancelled Cheque / Bank Proof"],
               ["ADDITIONAL_DOCUMENT", "Additional Documents"],

@@ -5,10 +5,12 @@ import Link from "next/link";
 import { Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { sortCompanies } from "@/lib/companyOrdering";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 import AlertMessage from "@/components/AlertMessage";
 
 export default function AdminUsersPage() {
+  const { access } = useAccessContext();
   const [profiles, setProfiles] = useState<any[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
   const [userRoles, setUserRoles] = useState<any[]>([]);
@@ -17,9 +19,9 @@ export default function AdminUsersPage() {
   const [companies, setCompanies] = useState<any[]>([]);
   const [sites, setSites] = useState<any[]>([]);
   const [message, setMessage] = useState("");
-  const [canDeleteUsers, setCanDeleteUsers] = useState(false);
   const [deleteUser, setDeleteUser] = useState<any | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const canDeleteUsers = can(access?.permissions || [], "users", "delete");
 
   useEffect(() => {
     loadData();
@@ -28,10 +30,7 @@ export default function AdminUsersPage() {
   async function loadData() {
     setMessage("");
 
-    const [access, response] = await Promise.all([
-      getCurrentUserAccess(),
-      fetch("/api/admin/users"),
-    ]);
+    const response = await fetch("/api/admin/users");
     const result = await response.json();
 
     if (!response.ok) {
@@ -39,7 +38,6 @@ export default function AdminUsersPage() {
       return;
     }
 
-    setCanDeleteUsers(can(access.permissions, "users", "delete"));
     setProfiles(result.profiles || []);
     setRoles(result.roles || []);
     setUserRoles(result.userRoles || []);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Eye,
@@ -13,11 +13,8 @@ import {
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import {
-  can,
-  getCurrentUserAccess,
-  hasSiteRestriction,
-} from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 
 type WorkOrder = {
   id: string;
@@ -47,6 +44,7 @@ type WorkOrder = {
   vendor_name?: string | null;
   vendor_names?: string[] | null;
   documents?: WorkOrderDocument[] | null;
+  document_count?: number | null;
   company?: { company_name?: string | null } | null;
   site?: { site_name?: string | null } | null;
   vendor?: { vendor_name?: string | null } | null;
@@ -145,15 +143,6 @@ function lifecycleStatusValue(status: string | null | undefined) {
   return LIFECYCLE_STATUS_OPTIONS.some((option) => option.value === normalized)
     ? normalized
     : "yet_to_start";
-}
-
-function getUniqueValues(values: string[]) {
-  const unique = Array.from(new Set(values.map((value) => value || "Unassigned")));
-  return unique.sort((a, b) => {
-    if (a === "Unassigned") return 1;
-    if (b === "Unassigned") return -1;
-    return a.localeCompare(b);
-  });
 }
 
 function selectAll(values: string[]) {
@@ -270,22 +259,17 @@ function statusBadgeClass(status: string | null) {
   return "bg-gray-100 text-gray-700 border-gray-200";
 }
 
-function chunkArray<T>(items: T[], size: number) {
-  const chunks: T[][] = [];
+function selectedFilterValues(values: string[], selection: SelectionMap) {
+  if (values.length === 0) return [];
+  const selected = values.filter((value) => selection[value] !== false);
 
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size));
-  }
-
-  return chunks;
+  if (selected.length === values.length) return [];
+  if (selected.length === 0) return ["__none__"];
+  return selected;
 }
 
-function compareValues(a: string | number, b: string | number) {
-  if (typeof a === "number" && typeof b === "number") {
-    return a - b;
-  }
-
-  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+function sameStringArray(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function FilterGroup({
@@ -339,16 +323,30 @@ function FilterGroup({
 }
 
 export default function WorkOrdersPage() {
+  const { access } = useAccessContext();
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [woSearch, setWoSearch] = useState("");
+  const [debouncedWoSearch, setDebouncedWoSearch] = useState("");
   const [contractorSearch, setContractorSearch] = useState("");
+  const [debouncedContractorSearch, setDebouncedContractorSearch] = useState("");
   const [selectedCompanies, setSelectedCompanies] = useState<SelectionMap>({});
   const [selectedSites, setSelectedSites] = useState<SelectionMap>({});
   const [selectedStatuses, setSelectedStatuses] = useState<SelectionMap>({});
   const [selectedTypes, setSelectedTypes] = useState<SelectionMap>({});
+  const [companyOptions, setCompanyOptions] = useState<string[]>([]);
+  const [siteOptions, setSiteOptions] = useState<string[]>([]);
+  const [typeOptions, setTypeOptions] = useState<string[]>([]);
+  const [totalWorkOrders, setTotalWorkOrders] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadedDocumentsByWorkOrder, setLoadedDocumentsByWorkOrder] = useState<
+    Record<string, WorkOrderDocument[]>
+  >({});
+  const [loadingDocumentsByWorkOrder, setLoadingDocumentsByWorkOrder] = useState<
+    Record<string, boolean>
+  >({});
   const [sortField, setSortField] = useState<SortField>("wo_number");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [message, setMessage] = useState("");
@@ -359,6 +357,11 @@ export default function WorkOrdersPage() {
   const [deletionReason, setDeletionReason] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const hasLoadedRef = useRef(false);
+  const requestIdRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const inFlightRequestKeyRef = useRef<string | null>(null);
 
   function openDocument(document: WorkOrderDocument) {
     if (!document.signed_url) {
@@ -372,209 +375,194 @@ export default function WorkOrdersPage() {
     window.open(document.signed_url, "_blank", "noopener,noreferrer");
   }
 
-  async function loadWorkOrders() {
-    setLoading(true);
+  async function loadDocumentsForWorkOrder(workOrderId: string) {
+    if (loadedDocumentsByWorkOrder[workOrderId] || loadingDocumentsByWorkOrder[workOrderId]) {
+      return;
+    }
+
+    setLoadingDocumentsByWorkOrder((previous) => ({
+      ...previous,
+      [workOrderId]: true,
+    }));
     setError(null);
 
-    const access = await getCurrentUserAccess();
-const restrictedSiteIds = hasSiteRestriction(access)
-  ? access.sites
-  : [];
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-let workOrderQuery = supabase
-  .from("work_orders")
-  .select(
-    `
-      id,
-      wo_number,
-      wo_date,
-      wo_type,
-      description,
-      status,
-      wo_value,
-      gst_percent,
-      approval_status,
-      approved_by_name,
-      approved_by_email,
-      approved_at,
-      created_by_name,
-      created_by_email,
-      company_id,
-      site_id,
-      organization_id,
-      department,
-      cost_code,
-      created_at
-    `,
-  )
-  .ilike("approval_status", "approved")
-  .order("created_at", { ascending: false });
-
-if (restrictedSiteIds.length > 0) {
-  workOrderQuery = workOrderQuery.in(
-    "site_id",
-    restrictedSiteIds
-  );
-}
-
-const { data, error: loadError } = await workOrderQuery;
-
-    if (loadError) {
-      setError(loadError.message);
-      setWorkOrders([]);
-    } else {
-      const rows = ((data as WorkOrder[]) || []).map((row) => ({ ...row }));
-      const companyIds = Array.from(new Set(rows.map((row) => row.company_id).filter(Boolean)));
-      const siteIds = Array.from(new Set(rows.map((row) => row.site_id).filter(Boolean)));
-      const workOrderIds = rows.map((row) => row.id);
-
-      const [companiesResult, sitesResult] = await Promise.all([
-        companyIds.length
-          ? supabase
-              .from("companies")
-              .select("id, company_name, company_code, organization_id")
-              .in("id", companyIds)
-          : Promise.resolve({ data: [] as Company[], error: null }),
-        siteIds.length
-          ? supabase
-              .from("sites")
-              .select("id, site_name, site_code, organization_id")
-              .in("id", siteIds)
-          : Promise.resolve({ data: [] as Site[], error: null }),
-      ]);
-
-      if (companiesResult.error || sitesResult.error) {
-        setError(
-          companiesResult.error?.message ||
-            sitesResult.error?.message ||
-            "Could not load related work order names.",
-        );
-        setWorkOrders([]);
-        setLoading(false);
-        return;
+      if (!session?.access_token) {
+        throw new Error("Unable to load Work Order documents: missing auth session.");
       }
 
-      const companyMap = new Map(
-        ((companiesResult.data as Company[]) || []).map((company) => [company.id, company]),
+      const response = await fetch(
+        `/api/work-orders/documents?work_order_id=${encodeURIComponent(workOrderId)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        },
       );
-      const siteMap = new Map(((sitesResult.data as Site[]) || []).map((site) => [site.id, site]));
+      const result = await response.json();
 
-      let documentsByWorkOrder = new Map<string, WorkOrderDocument[]>();
-      let vendorsByWorkOrder = new Map<string, WorkOrderVendorSummary>();
+      if (!response.ok) {
+        throw new Error(result.error || "Could not load Work Order documents.");
+      }
 
-      if (workOrderIds.length) {
+      setLoadedDocumentsByWorkOrder((previous) => ({
+        ...previous,
+        [workOrderId]: (result.documents || []) as WorkOrderDocument[],
+      }));
+    } catch (documentError: any) {
+      setError(documentError.message || "Could not load Work Order documents.");
+    } finally {
+      setLoadingDocumentsByWorkOrder((previous) => ({
+        ...previous,
+        [workOrderId]: false,
+      }));
+    }
+  }
+
+  const statusOptions = useMemo(
+    () => LIFECYCLE_STATUS_OPTIONS.map((option) => option.label),
+    [],
+  );
+  const companyFilterKey = selectedFilterValues(companyOptions, selectedCompanies).join("\u001f");
+  const siteFilterKey = selectedFilterValues(siteOptions, selectedSites).join("\u001f");
+  const statusFilterKey = selectedFilterValues(statusOptions, selectedStatuses).join("\u001f");
+  const typeFilterKey = selectedFilterValues(typeOptions, selectedTypes).join("\u001f");
+  const requestQuery = useMemo(() => {
+    const params = new URLSearchParams({
+      page: String(pageIndex + 1),
+      page_size: String(PAGE_SIZE),
+      sort_field: sortField,
+      sort_direction: sortDirection,
+      include_documents: "count",
+    });
+
+    if (debouncedWoSearch) params.set("wo_search", debouncedWoSearch);
+    if (debouncedContractorSearch) {
+      params.set("contractor_search", debouncedContractorSearch);
+    }
+
+    companyFilterKey
+      .split("\u001f")
+      .filter(Boolean)
+      .forEach((value) => params.append("company", value));
+    siteFilterKey
+      .split("\u001f")
+      .filter(Boolean)
+      .forEach((value) => params.append("site", value));
+    statusFilterKey
+      .split("\u001f")
+      .filter(Boolean)
+      .forEach((value) => params.append("statuses", value));
+    typeFilterKey
+      .split("\u001f")
+      .filter(Boolean)
+      .forEach((value) => params.append("wo_types", value));
+
+    return params.toString();
+  }, [
+    companyFilterKey,
+    debouncedContractorSearch,
+    debouncedWoSearch,
+    pageIndex,
+    siteFilterKey,
+    sortDirection,
+    sortField,
+    statusFilterKey,
+    typeFilterKey,
+  ]);
+  const requestKey = `${requestQuery}|refresh=${refreshNonce}`;
+
+  useEffect(() => {
+    if (!access) return;
+
+    if (inFlightRequestKeyRef.current === requestKey) {
+      return;
+    }
+
+    abortControllerRef.current?.abort();
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    inFlightRequestKeyRef.current = requestKey;
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    const hasLoaded = hasLoadedRef.current;
+
+    if (hasLoaded) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    setError(null);
+
+    async function fetchWorkOrders() {
+      try {
         const {
           data: { session },
         } = await supabase.auth.getSession();
-        const token = session?.access_token;
 
-        if (!token) {
-          setError("Unable to load Work Order documents: missing auth session.");
+        if (!session?.access_token) {
+          setError("Unable to load Work Orders: missing auth session.");
           setWorkOrders([]);
-          setLoading(false);
           return;
         }
 
-        const documentRows: WorkOrderDocument[] = [];
-
-        for (const idChunk of chunkArray(workOrderIds, 50)) {
-          const response = await fetch(
-            `/api/work-orders/documents?work_order_ids=${encodeURIComponent(
-              idChunk.join(","),
-            )}`,
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-              },
-            },
-          );
-          const result = await response.json();
-
-          if (!response.ok) {
-            setError(result.error || "Could not load Work Order documents.");
-            setWorkOrders([]);
-            setLoading(false);
-            return;
-          }
-
-          documentRows.push(...((result.documents as WorkOrderDocument[]) || []));
-        }
-
-        documentsByWorkOrder = documentRows.reduce<Map<string, WorkOrderDocument[]>>(
-          (map, document) => {
-            const existing = map.get(document.work_order_id) || [];
-            map.set(document.work_order_id, [...existing, document]);
-            return map;
+        const response = await fetch(`/api/work-orders/register?${requestQuery}`, {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
           },
-          new Map(),
-        );
+          signal: abortController.signal,
+        });
+        const result = await response.json();
 
-        const vendorRows: Array<[string, WorkOrderVendorSummary | null]> = [];
+        if (requestId !== requestIdRef.current) return;
 
-        for (const idChunk of chunkArray(workOrderIds, 50)) {
-          const response = await fetch(
-            `/api/work-orders/vendors?work_order_ids=${encodeURIComponent(
-              idChunk.join(","),
-            )}`,
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-              },
-            },
+        if (!response.ok) {
+          setError(result.error || "Could not load Work Orders.");
+          if (!hasLoaded) setWorkOrders([]);
+        } else {
+          setWorkOrders((result.rows || []) as WorkOrder[]);
+          setTotalWorkOrders(Number(result.total || 0));
+          const nextCompanies = result.filters?.companies || [];
+          const nextSites = result.filters?.sites || [];
+          const nextTypes = result.filters?.wo_types || [];
+
+          setCompanyOptions((previous) =>
+            sameStringArray(previous, nextCompanies) ? previous : nextCompanies,
           );
-          const result = await response.json();
-
-          if (!response.ok) {
-            setError(result.error || "Could not load Work Order vendors.");
-            setWorkOrders([]);
-            setLoading(false);
-            return;
-          }
-
-          vendorRows.push(
-            ...Object.entries(result.vendors || {}) as Array<
-              [string, WorkOrderVendorSummary | null]
-            >,
+          setSiteOptions((previous) =>
+            sameStringArray(previous, nextSites) ? previous : nextSites,
           );
+          setTypeOptions((previous) =>
+            sameStringArray(previous, nextTypes) ? previous : nextTypes,
+          );
+          setLastUpdated(result.last_updated ? new Date(result.last_updated) : new Date());
+          hasLoadedRef.current = true;
+      }
+    } catch (fetchError: any) {
+      if (fetchError?.name === "AbortError") {
+          return;
         }
 
-        vendorsByWorkOrder = new Map(
-          vendorRows.filter(([, vendor]) => vendor?.vendor_name) as Array<
-            [string, WorkOrderVendorSummary]
-          >,
-        );
+        setError(fetchError.message || "Could not load Work Orders.");
+        if (!hasLoaded) setWorkOrders([]);
+      } finally {
+        if (requestId === requestIdRef.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
+
+        if (inFlightRequestKeyRef.current === requestKey) {
+          inFlightRequestKeyRef.current = null;
+        }
       }
-
-      const enrichedRows = rows.map((row) => {
-        const company = row.company_id ? companyMap.get(row.company_id) : null;
-        const site = row.site_id ? siteMap.get(row.site_id) : null;
-        const vendor = vendorsByWorkOrder.get(row.id);
-        const vendorName = vendor?.vendor_name?.trim() || null;
-
-        return {
-          ...row,
-          company_name: company?.company_name || company?.company_code || null,
-          company_code: company?.company_code || null,
-          site_name: site?.site_name || site?.site_code || null,
-          site_code: site?.site_code || null,
-          vendor_names: vendorName ? [vendorName] : [],
-          vendor_name: vendorName,
-          documents: documentsByWorkOrder.get(row.id) || [],
-        };
-      });
-
-      setWorkOrders(enrichedRows);
-      setLastUpdated(new Date());
     }
 
-    setLoading(false);
-  }
-
-  async function loadAccess() {
-    const access = await getCurrentUserAccess();
-    setCanEdit(can(access.permissions, "work_orders", "edit"));
-    setCanDelete(can(access.permissions, "work_orders", "delete"));
-  }
+    fetchWorkOrders();
+  }, [access, requestKey, requestQuery]);
 
   async function updateLifecycleStatus(workOrderId: string, nextStatus: string) {
     const status = lifecycleStatusValue(nextStatus);
@@ -658,6 +646,7 @@ const { data, error: loadError } = await workOrderQuery;
       }
 
       setWorkOrders((prev) => prev.filter((wo) => wo.id !== deleteWorkOrder.id));
+      setTotalWorkOrders((prev) => Math.max(0, prev - 1));
       setDeleteWorkOrder(null);
       setDeletionReason("");
       setMessage("Work Order deleted successfully.");
@@ -669,29 +658,26 @@ const { data, error: loadError } = await workOrderQuery;
   }
 
   useEffect(() => {
-    loadAccess();
-    loadWorkOrders();
-  }, []);
+    if (!access) return;
+    setCanEdit(can(access.permissions, "work_orders", "edit"));
+    setCanDelete(can(access.permissions, "work_orders", "delete"));
+  }, [access]);
 
-  const companyOptions = useMemo(
-    () => getUniqueValues(workOrders.map((wo) => getCompanyName(wo))),
-    [workOrders],
-  );
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedWoSearch(woSearch.trim());
+    }, 450);
 
-  const siteOptions = useMemo(
-    () => getUniqueValues(workOrders.map((wo) => getSiteName(wo))),
-    [workOrders],
-  );
+    return () => window.clearTimeout(timer);
+  }, [woSearch]);
 
-  const statusOptions = useMemo(
-    () => LIFECYCLE_STATUS_OPTIONS.map((option) => option.label),
-    [],
-  );
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedContractorSearch(contractorSearch.trim());
+    }, 450);
 
-  const typeOptions = useMemo(
-    () => getUniqueValues(workOrders.map((wo) => titleCase(wo.wo_type))),
-    [workOrders],
-  );
+    return () => window.clearTimeout(timer);
+  }, [contractorSearch]);
 
   useEffect(() => {
     setSelectedCompanies(selectAll(companyOptions));
@@ -709,102 +695,27 @@ const { data, error: loadError } = await workOrderQuery;
     setSelectedTypes(selectAll(typeOptions));
   }, [typeOptions]);
 
-  const filteredWorkOrders = useMemo(() => {
-    const normalizedWoSearch = woSearch.trim().toLowerCase();
-    const normalizedContractorSearch = contractorSearch.trim().toLowerCase();
-
-    return workOrders.filter((wo) => {
-      const company = getCompanyName(wo);
-      const site = getSiteName(wo);
-      const status = getStatusFilterValue(wo);
-      const type = titleCase(wo.wo_type);
-
-      const matchesWo =
-        !normalizedWoSearch || (wo.wo_number || "").toLowerCase().includes(normalizedWoSearch);
-      const vendorSearchText = [getVendorName(wo), ...(wo.vendor_names || [])]
-        .join(" ")
-        .toLowerCase();
-      const matchesContractor =
-        !normalizedContractorSearch || vendorSearchText.includes(normalizedContractorSearch);
-
-      return (
-        matchesWo &&
-        matchesContractor &&
-        selectedCompanies[company] !== false &&
-        selectedSites[site] !== false &&
-        selectedStatuses[status] !== false &&
-        selectedTypes[type] !== false &&
-        hasAnySelected(selectedCompanies) &&
-        hasAnySelected(selectedSites) &&
-        hasAnySelected(selectedStatuses) &&
-        hasAnySelected(selectedTypes)
-      );
-    });
-  }, [
-    workOrders,
-    woSearch,
-    contractorSearch,
-    selectedCompanies,
-    selectedSites,
-    selectedStatuses,
-    selectedTypes,
-  ]);
-
-  const sortedWorkOrders = useMemo(() => {
-    const direction = sortDirection === "asc" ? 1 : -1;
-
-    return [...filteredWorkOrders].sort((a, b) => {
-      let aValue: string | number;
-      let bValue: string | number;
-
-      switch (sortField) {
-        case "vendor_name":
-          aValue = getVendorName(a);
-          bValue = getVendorName(b);
-          break;
-        case "wo_value":
-          aValue = typeof a.wo_value === "string" ? Number(a.wo_value) || 0 : a.wo_value || 0;
-          bValue = typeof b.wo_value === "string" ? Number(b.wo_value) || 0 : b.wo_value || 0;
-          break;
-        case "status":
-          aValue = titleCase(lifecycleStatusValue(a.status));
-          bValue = titleCase(lifecycleStatusValue(b.status));
-          break;
-        case "approval_status":
-          aValue = titleCase(a.approval_status);
-          bValue = titleCase(b.approval_status);
-          break;
-        case "wo_date":
-          aValue = new Date(a.wo_date || a.created_at || 0).getTime() || 0;
-          bValue = new Date(b.wo_date || b.created_at || 0).getTime() || 0;
-          break;
-        case "wo_number":
-        default:
-          aValue = a.wo_number || "";
-          bValue = b.wo_number || "";
-      }
-
-      return compareValues(aValue, bValue) * direction;
-    });
-  }, [filteredWorkOrders, sortDirection, sortField]);
+  const sortedWorkOrders = workOrders;
 
   useEffect(() => {
     setPageIndex(0);
   }, [
     woSearch,
     contractorSearch,
+    sortField,
+    sortDirection,
     selectedCompanies,
     selectedSites,
     selectedStatuses,
     selectedTypes,
   ]);
 
-  const totalPages = Math.max(1, Math.ceil(sortedWorkOrders.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalWorkOrders / PAGE_SIZE));
   const currentPageIndex = Math.min(pageIndex, totalPages - 1);
   const startIndex = currentPageIndex * PAGE_SIZE;
-  const endIndex = Math.min(startIndex + PAGE_SIZE, sortedWorkOrders.length);
-  const paginatedWorkOrders = sortedWorkOrders.slice(startIndex, endIndex);
-  const rangeStart = sortedWorkOrders.length === 0 ? 0 : startIndex + 1;
+  const endIndex = Math.min(startIndex + sortedWorkOrders.length, totalWorkOrders);
+  const paginatedWorkOrders = sortedWorkOrders;
+  const rangeStart = totalWorkOrders === 0 ? 0 : startIndex + 1;
 
   useEffect(() => {
     if (pageIndex > totalPages - 1) {
@@ -855,7 +766,7 @@ const { data, error: loadError } = await workOrderQuery;
 
           <button
             type="button"
-            onClick={loadWorkOrders}
+            onClick={() => setRefreshNonce((value) => value + 1)}
             className="inline-flex items-center justify-center gap-2 bg-[#00658b] px-6 py-3 text-sm font-bold text-white transition hover:bg-[#005174]"
           >
             <RefreshCw className="h-4 w-4" />
@@ -961,18 +872,19 @@ const { data, error: loadError } = await workOrderQuery;
               </select>
             </label>
             <span className="text-xs text-slate-500">
-              {sortedWorkOrders.length === 0
+              {totalWorkOrders === 0
                 ? "Showing 0 of 0"
-                : `Showing ${rangeStart}–${endIndex} of ${sortedWorkOrders.length}`}
+                : `Showing ${rangeStart}–${endIndex} of ${totalWorkOrders}`}
+              {refreshing ? " · Updating..." : ""}
             </span>
           </div>
         </div>
 
-        {loading ? (
+        {loading && sortedWorkOrders.length === 0 ? (
           <div className="p-10 text-center text-slate-500">Loading work orders...</div>
         ) : error ? (
           <div className="m-4 border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
-        ) : sortedWorkOrders.length === 0 ? (
+        ) : totalWorkOrders === 0 ? (
           <div className="p-10 text-center text-slate-500">No work orders match the selected filters.</div>
         ) : (
           <div className="overflow-x-auto">
@@ -1057,13 +969,21 @@ const { data, error: loadError } = await workOrderQuery;
                       </div>
                     </td>
                     <td className="px-6 py-5 align-top">
-                      {wo.documents && wo.documents.length > 0 ? (
+                      {(() => {
+                        const loadedDocuments = loadedDocumentsByWorkOrder[wo.id];
+                        const isLoadingDocuments = loadingDocumentsByWorkOrder[wo.id] === true;
+                        const documentCount =
+                          Number(wo.document_count ?? loadedDocuments?.length ?? 0) || 0;
+
+                        if (loadedDocuments && loadedDocuments.length > 0) {
+                          return (
                         <div className="space-y-1.5">
                           <div className="inline-flex items-center gap-1 text-sm font-semibold text-slate-700">
                             <FileText className="h-4 w-4 text-slate-400" />
-                            {wo.documents.length} file{wo.documents.length === 1 ? "" : "s"}
+                                  {loadedDocuments.length} file
+                                  {loadedDocuments.length === 1 ? "" : "s"}
                           </div>
-                          {wo.documents.map((document) => (
+                              {loadedDocuments.map((document) => (
                             <div
                               key={document.id}
                               className="flex max-w-[260px] items-center gap-2"
@@ -1082,12 +1002,35 @@ const { data, error: loadError } = await workOrderQuery;
                             </div>
                           ))}
                         </div>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-sm text-slate-400">
-                          <FileText className="h-4 w-4" />
-                          No file
-                        </span>
-                      )}
+                          );
+                        }
+
+                        if (documentCount > 0) {
+                          return (
+                            <div className="space-y-1.5">
+                              <div className="inline-flex items-center gap-1 text-sm font-semibold text-slate-700">
+                                <FileText className="h-4 w-4 text-slate-400" />
+                                {documentCount} document{documentCount === 1 ? "" : "s"}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => loadDocumentsForWorkOrder(wo.id)}
+                                disabled={isLoadingDocuments}
+                                className="text-sm font-semibold text-[#00658b] hover:underline disabled:cursor-wait disabled:text-slate-400"
+                              >
+                                {isLoadingDocuments ? "Loading documents..." : "Load documents"}
+                              </button>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <span className="inline-flex items-center gap-1 text-sm text-slate-400">
+                            <FileText className="h-4 w-4" />
+                            No documents
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="px-6 py-5 align-top">
                       {canEdit ? (
@@ -1186,7 +1129,7 @@ const { data, error: loadError } = await workOrderQuery;
             </table>
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               <div>
-                Showing {rangeStart}–{endIndex} of {sortedWorkOrders.length}
+                Showing {rangeStart}–{endIndex} of {totalWorkOrders}
               </div>
               <div className="flex items-center gap-2">
                 <button

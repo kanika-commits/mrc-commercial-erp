@@ -10,12 +10,8 @@ import {
   Settings,
   UserPlus,
 } from "lucide-react";
-import { useEffect, useState } from "react";
-import {
-  getCurrentUserAccess,
-  can,
-  type UserPermission,
-} from "@/lib/accessControl";
+import { can } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
 
 const moduleCards = [
   {
@@ -112,31 +108,10 @@ const toneClasses = {
 };
 
 export default function ModulesPage() {
-  const [permissions, setPermissions] = useState<UserPermission[]>([]);
-  const [groups, setGroups] = useState<any[]>([]);
-  const [modules, setModules] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function loadAccess() {
-      const [access, navigationResponse] = await Promise.all([
-        getCurrentUserAccess(),
-        fetch("/api/admin/module-navigation"),
-      ]);
-
-      setPermissions(access.permissions || []);
-
-      if (navigationResponse.ok) {
-        const navigation = await navigationResponse.json();
-        setGroups(navigation.groups || []);
-        setModules(navigation.modules || []);
-      }
-
-      setLoading(false);
-    }
-
-    loadAccess();
-  }, []);
+  const { access, moduleNavigation, loading } = useAccessContext();
+  const permissions = access?.permissions || [];
+  const groups = moduleNavigation.groups || [];
+  const modules = moduleNavigation.modules || [];
 
   if (loading) {
     return (

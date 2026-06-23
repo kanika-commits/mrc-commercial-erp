@@ -8,12 +8,11 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  getCurrentUserAccess,
-  can,
-} from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can, type CurrentUserAccess } from "@/lib/accessControl";
 
 export default function Home() {
+  const { access } = useAccessContext();
   const [permissions, setPermissions] = useState<any[]>([]);
 
   const [pendingWOApprovals, setPendingWOApprovals] = useState(0);
@@ -31,14 +30,15 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadDashboard();
-  }, []);
+    if (access) {
+      loadDashboard(access);
+    }
+  }, [access]);
 
-  async function loadDashboard() {
+  async function loadDashboard(currentAccess: CurrentUserAccess) {
     setLoading(true);
 
     try {
-      const access = await getCurrentUserAccess();
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -99,7 +99,7 @@ export default function Home() {
         if (result.error) throw result.error;
       }
 
-      setPermissions(access.permissions || []);
+      setPermissions(currentAccess.permissions || []);
 
       setPendingWOApprovals(notificationCounts.pendingWorkOrders || 0);
       setPendingRA(notificationCounts.pendingRaBills || 0);

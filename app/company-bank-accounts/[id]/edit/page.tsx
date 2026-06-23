@@ -5,10 +5,12 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Building2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 import { sortCompanies } from "@/lib/companyOrdering";
 
 export default function EditCompanyBankAccountPage() {
+  const { access, loading: accessLoading } = useAccessContext();
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const accountId = params.id;
@@ -28,8 +30,10 @@ export default function EditCompanyBankAccountPage() {
   });
 
   useEffect(() => {
-    loadData();
-  }, [accountId]);
+    if (!accessLoading && access) {
+      loadData();
+    }
+  }, [access, accessLoading, accountId]);
 
   async function authToken() {
     const {
@@ -49,9 +53,10 @@ export default function EditCompanyBankAccountPage() {
       setMessage("");
       setAccessDenied(false);
 
-      const access = await getCurrentUserAccess();
+      const currentAccess = access;
+      if (!currentAccess) return;
 
-      if (!can(access.permissions, "company_bank_accounts", "edit")) {
+      if (!can(currentAccess.permissions, "company_bank_accounts", "edit")) {
         setAccessDenied(true);
         setMessage("You do not have permission to edit company bank accounts.");
         return;

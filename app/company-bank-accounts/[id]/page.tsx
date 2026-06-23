@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Building2, Pencil, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 
 function maskAccount(value?: string | null) {
   if (!value) return "-";
@@ -13,6 +14,7 @@ function maskAccount(value?: string | null) {
 }
 
 export default function CompanyBankAccountDetailPage() {
+  const { access, loading: accessLoading } = useAccessContext();
   const params = useParams();
   const accountId = params.id as string;
 
@@ -20,21 +22,20 @@ export default function CompanyBankAccountDetailPage() {
   const [company, setCompany] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
-  const [canEdit, setCanEdit] = useState(false);
-  const [canDelete, setCanDelete] = useState(false);
+  const permissions = access?.permissions || [];
+  const canEdit = can(permissions, "company_bank_accounts", "edit");
+  const canDelete = can(permissions, "company_bank_accounts", "delete");
 
   useEffect(() => {
-    loadAccount();
-  }, [accountId]);
+    if (!accessLoading && access) {
+      loadAccount();
+    }
+  }, [access, accessLoading, accountId]);
 
   async function loadAccount() {
     try {
       setLoading(true);
       setMessage("");
-
-      const access = await getCurrentUserAccess();
-      setCanEdit(can(access.permissions, "company_bank_accounts", "edit"));
-      setCanDelete(can(access.permissions, "company_bank_accounts", "delete"));
 
       const {
         data: { session },

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
   Bell,
@@ -14,11 +14,8 @@ import {
   Settings,
 } from "lucide-react";
 import UserHeader from "@/components/UserHeader";
-import {
-  can,
-  getCurrentUserAccess,
-  type UserPermission,
-} from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 import { supabase } from "@/lib/supabase";
 
 const sidebarItems = [
@@ -57,9 +54,7 @@ type NotificationCounts = Record<(typeof notificationLinks)[number]["key"], numb
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const [visibleGroupCodes, setVisibleGroupCodes] = useState<Set<string>>(new Set());
-  const [permissions, setPermissions] = useState<UserPermission[]>([]);
-  const [roleCodes, setRoleCodes] = useState<string[]>([]);
+  const { access, moduleNavigation, loading: accessLoading, user } = useAccessContext();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationCounts, setNotificationCounts] = useState<NotificationCounts>({
     pendingWorkOrders: 0,
@@ -67,38 +62,32 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     pendingDebitNotes: 0,
     pendingItcReview: 0,
   });
+  const notificationsStartedRef = useRef(false);
+
+  const permissions = access?.permissions || [];
+  const roleCodes = access?.roleCodes || [];
+  const visibleGroupCodes = useMemo(() => {
+    const nextVisibleGroups = new Set<string>();
+
+    (moduleNavigation.modules || []).forEach((module: any) => {
+      if (can(permissions, module.module_code, "view")) {
+        nextVisibleGroups.add(module.module_group);
+      }
+    });
+
+    return nextVisibleGroups;
+  }, [moduleNavigation.modules, permissions]);
 
   useEffect(() => {
-    async function loadNavigationAccess() {
-      const [access, navigationResponse] = await Promise.all([
-        getCurrentUserAccess(),
-        fetch("/api/admin/module-navigation"),
-      ]);
+    if (!user || notificationsStartedRef.current) return;
 
-      setPermissions(access.permissions || []);
-      setRoleCodes(access.roleCodes || []);
+    notificationsStartedRef.current = true;
+    const timer = window.setTimeout(() => {
       loadNotificationCounts();
+    }, 0);
 
-      if (!navigationResponse.ok) {
-        setVisibleGroupCodes(new Set());
-        return;
-      }
-
-      const navigation = await navigationResponse.json();
-      const modules = navigation.modules || [];
-      const nextVisibleGroups = new Set<string>();
-
-      modules.forEach((module: any) => {
-        if (can(access.permissions, module.module_code, "view")) {
-          nextVisibleGroups.add(module.module_group);
-        }
-      });
-
-      setVisibleGroupCodes(nextVisibleGroups);
-    }
-
-    loadNavigationAccess();
-  }, []);
+    return () => window.clearTimeout(timer);
+  }, [user]);
 
   useEffect(() => {
     setNotificationsOpen(false);
@@ -166,7 +155,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </Link>
 
         <nav className="space-y-2">
-          {visibleSidebarItems.map((item) => {
+          {accessLoading && visibleSidebarItems.length === 0
+            ? Array.from({ length: 4 }).map((_, index) => (
+                <div
+                  key={index}
+                  className="h-13 animate-pulse rounded-md bg-white/10"
+                />
+              ))
+            : visibleSidebarItems.map((item) => {
             const Icon = item.icon;
             const active =
               item.href === "/"

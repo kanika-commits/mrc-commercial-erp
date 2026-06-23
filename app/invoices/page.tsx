@@ -4,11 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { FileText, Plus, Search, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import {
-  can,
-  getCurrentUserAccess,
-  hasSiteRestriction,
-} from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can, hasSiteRestriction } from "@/lib/accessControl";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -45,6 +42,7 @@ function statusClass(value?: string | null) {
 const PAGE_SIZE = 50;
 
 export default function InvoicesPage() {
+  const { access, loading: accessLoading } = useAccessContext();
   const [invoices, setInvoices] = useState<any[]>([]);
   const [workOrders, setWorkOrders] = useState<any[]>([]);
   const [vendors, setVendors] = useState<any[]>([]);
@@ -52,7 +50,6 @@ export default function InvoicesPage() {
   const [companies, setCompanies] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
-  const [canDelete, setCanDelete] = useState(false);
   const [deleteInvoice, setDeleteInvoice] = useState<any | null>(null);
   const [deletionReason, setDeletionReason] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -60,21 +57,18 @@ export default function InvoicesPage() {
 
 
   useEffect(() => {
-    loadAccess();
-    loadInvoices();
-  }, []);
+    if (!accessLoading && access) {
+      loadInvoices();
+    }
+  }, [access, accessLoading]);
 
-  async function loadAccess() {
-    const access = await getCurrentUserAccess();
-    setCanDelete(can(access.permissions, "invoices", "delete"));
-  }
+  const canDelete = can(access?.permissions || [], "invoices", "delete");
 
   async function loadInvoices() {
   setLoading(true);
   setMessage("");
 
-  const access = await getCurrentUserAccess();
-  const restrictedSiteIds = hasSiteRestriction(access) ? access.sites : [];
+  const restrictedSiteIds = access && hasSiteRestriction(access) ? access.sites : [];
 
   let workOrderQuery = supabase
     .from("work_orders")

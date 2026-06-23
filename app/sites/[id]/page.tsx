@@ -5,7 +5,8 @@ import Link from "next/link";
 import { ArrowLeft, Building2, Pencil } from "lucide-react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 
 type Site = {
   id: string;
@@ -77,6 +78,7 @@ function statusBadgeClass(status: string | null) {
 }
 
 export default function SiteDetailPage() {
+  const { access, loading: accessLoading } = useAccessContext();
   const params = useParams<{ id: string }>();
   const siteId = params.id;
   const [site, setSite] = useState<Site | null>(null);
@@ -84,15 +86,12 @@ export default function SiteDetailPage() {
   const [companyMap, setCompanyMap] = useState<Map<string, Company>>(new Map());
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
-  const [canEditSite, setCanEditSite] = useState(false);
+  const canEditSite = can(access?.permissions || [], "sites", "edit");
 
   useEffect(() => {
     async function loadSite() {
       setLoading(true);
       setMessage("");
-
-      const access = await getCurrentUserAccess();
-      setCanEditSite(can(access.permissions, "sites", "edit"));
 
       const { data: siteData, error: siteError } = await supabase
         .from("sites")
@@ -142,10 +141,10 @@ export default function SiteDetailPage() {
       setLoading(false);
     }
 
-    if (siteId) {
+    if (siteId && !accessLoading && access) {
       loadSite();
     }
-  }, [siteId]);
+  }, [access, accessLoading, siteId]);
 
   const totalValue = useMemo(
     () =>

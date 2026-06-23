@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 import { formatStatusLabel } from "@/lib/statusLabels";
 
 export default function CompanyDetailPage() {
+  const { access, loading: accessLoading } = useAccessContext();
   const params = useParams<{ id: string }>();
   const id = params.id;
 
@@ -15,31 +17,29 @@ export default function CompanyDetailPage() {
   const [organization, setOrganization] = useState<any>(null);
   const [sites, setSites] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
-  const [canEditCompany, setCanEditCompany] = useState(false);
-  const [canDeleteCompany, setCanDeleteCompany] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const roleCodes = access?.roleCodes || [];
+  const permissions = access?.permissions || [];
+  const canEditCompany =
+    roleCodes.includes("platform_owner") ||
+    roleCodes.includes("super_admin") ||
+    can(permissions, "companies", "edit");
+  const canDeleteCompany =
+    roleCodes.includes("platform_owner") ||
+    roleCodes.includes("super_admin") ||
+    can(permissions, "companies", "delete");
 
   useEffect(() => {
-    loadCompany();
-  }, [id]);
+    if (!accessLoading && access) {
+      loadCompany();
+    }
+  }, [access, accessLoading, id]);
 
   async function loadCompany() {
     try {
       setLoading(true);
       setMessage("");
-
-      const access = await getCurrentUserAccess();
-      setCanEditCompany(
-        access.roleCodes.includes("platform_owner") ||
-          access.roleCodes.includes("super_admin") ||
-          can(access.permissions, "companies", "edit")
-      );
-      setCanDeleteCompany(
-        access.roleCodes.includes("platform_owner") ||
-          access.roleCodes.includes("super_admin") ||
-          can(access.permissions, "companies", "delete")
-      );
 
       const { data: companyData, error: companyError } = await supabase
         .from("companies")

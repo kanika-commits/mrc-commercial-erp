@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 import { sortCompanies } from "@/lib/companyOrdering";
 import { formatStatusLabel } from "@/lib/statusLabels";
 
@@ -19,11 +20,20 @@ type Company = {
 };
 
 export default function CompaniesPage() {
+  const { access } = useAccessContext();
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [canEditCompanies, setCanEditCompanies] = useState(false);
-  const [canDeleteCompanies, setCanDeleteCompanies] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const permissions = access?.permissions || [];
+  const roleCodes = access?.roleCodes || [];
+  const canEditCompanies =
+    roleCodes.includes("platform_owner") ||
+    roleCodes.includes("super_admin") ||
+    can(permissions, "companies", "edit");
+  const canDeleteCompanies =
+    roleCodes.includes("platform_owner") ||
+    roleCodes.includes("super_admin") ||
+    can(permissions, "companies", "delete");
 
   useEffect(() => {
     loadCompanies();
@@ -32,19 +42,6 @@ export default function CompaniesPage() {
   async function loadCompanies() {
     setLoading(true);
     setMessage("");
-
-    const access = await getCurrentUserAccess();
-
-    setCanEditCompanies(
-      access.roleCodes.includes("platform_owner") ||
-        access.roleCodes.includes("super_admin") ||
-        can(access.permissions, "companies", "edit")
-    );
-    setCanDeleteCompanies(
-      access.roleCodes.includes("platform_owner") ||
-        access.roleCodes.includes("super_admin") ||
-        can(access.permissions, "companies", "delete")
-    );
 
     const { data, error } = await supabase
       .from("companies")

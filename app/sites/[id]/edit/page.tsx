@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Save } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 
 type Site = {
   id: string;
@@ -17,6 +18,7 @@ type Site = {
 };
 
 export default function EditSitePage() {
+  const { access, loading: accessLoading } = useAccessContext();
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const siteId = params.id;
@@ -37,9 +39,10 @@ export default function EditSitePage() {
       setMessage("");
       setAccessDenied(false);
 
-      const access = await getCurrentUserAccess();
+      const currentAccess = access;
+      if (!currentAccess) return;
 
-      if (!can(access.permissions, "sites", "edit")) {
+      if (!can(currentAccess.permissions, "sites", "edit")) {
         setAccessDenied(true);
         setMessage("You do not have permission to edit sites.");
         setLoading(false);
@@ -67,10 +70,10 @@ export default function EditSitePage() {
       setLoading(false);
     }
 
-    if (siteId) {
+    if (siteId && !accessLoading && access) {
       loadSite();
     }
-  }, [siteId]);
+  }, [access, accessLoading, siteId]);
 
   async function saveSite() {
     setMessage("");

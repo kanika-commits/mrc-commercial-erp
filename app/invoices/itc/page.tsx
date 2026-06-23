@@ -12,13 +12,15 @@ import {
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
 export default function ITCReviewPage() {
+  const { access } = useAccessContext();
   const [invoices, setInvoices] = useState<any[]>([]);
   const [workOrders, setWorkOrders] = useState<Map<string, any>>(new Map());
   const [vendors, setVendors] = useState<Map<string, any>>(new Map());
@@ -27,19 +29,13 @@ export default function ITCReviewPage() {
   const [savingId, setSavingId] = useState("");
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
-  const [canDelete, setCanDelete] = useState(false);
   const [deleteInvoice, setDeleteInvoice] = useState<any | null>(null);
   const [deletionReason, setDeletionReason] = useState("");
+  const canDelete = can(access?.permissions || [], "invoices", "delete");
 
   useEffect(() => {
-    loadAccess();
     loadInvoices();
   }, []);
-
-  async function loadAccess() {
-    const access = await getCurrentUserAccess();
-    setCanDelete(can(access.permissions, "invoices", "delete"));
-  }
 
   async function loadInvoices() {
     try {

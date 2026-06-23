@@ -5,11 +5,8 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Eye, FileText, Plus, Search, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import {
-  can,
-  getCurrentUserAccess,
-  hasSiteRestriction,
-} from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can, hasSiteRestriction } from "@/lib/accessControl";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -45,6 +42,7 @@ function statusClass(value?: string | null) {
 const PAGE_SIZE = 50;
 
 export default function RABillsPage() {
+  const { access, loading: accessLoading } = useAccessContext();
   const searchParams = useSearchParams();
   const query = String(searchParams.get("q") || "").trim();
   const [bills, setBills] = useState<any[]>([]);
@@ -55,33 +53,29 @@ export default function RABillsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [canDelete, setCanDelete] = useState(false);
   const [deleteBill, setDeleteBill] = useState<any | null>(null);
   const [deletionReason, setDeletionReason] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [page, setPage] = useState(1);
 
   useEffect(() => {
-    loadAccess();
-    loadBills();
-  }, []);
+    if (!accessLoading && access) {
+      loadBills();
+    }
+  }, [access, accessLoading]);
 
   useEffect(() => {
     setPage(1);
   }, [query]);
 
-  async function loadAccess() {
-    const access = await getCurrentUserAccess();
-    setCanDelete(can(access.permissions, "ra_bills", "delete"));
-  }
+  const canDelete = can(access?.permissions || [], "ra_bills", "delete");
 
   async function loadBills() {
   try {
     setLoading(true);
     setError("");
 
-    const access = await getCurrentUserAccess();
-    const restrictedSiteIds = hasSiteRestriction(access) ? access.sites : [];
+    const restrictedSiteIds = access && hasSiteRestriction(access) ? access.sites : [];
 
     let workOrderQuery = supabase
       .from("work_orders")

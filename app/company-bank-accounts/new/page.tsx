@@ -6,9 +6,11 @@ import { ArrowLeft, Building2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { sortCompanies } from "@/lib/companyOrdering";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 
 export default function NewCompanyBankAccountPage() {
+  const { access, loading: accessLoading } = useAccessContext();
   const router = useRouter();
 
   const [companies, setCompanies] = useState<any[]>([]);
@@ -26,13 +28,16 @@ export default function NewCompanyBankAccountPage() {
   });
 
   useEffect(() => {
-    loadCompanies();
-  }, []);
+    if (!accessLoading && access) {
+      loadCompanies();
+    }
+  }, [access, accessLoading]);
 
   async function loadCompanies() {
-    const access = await getCurrentUserAccess();
+    const currentAccess = access;
+    if (!currentAccess) return;
 
-    if (!can(access.permissions, "company_bank_accounts", "add")) {
+    if (!can(currentAccess.permissions, "company_bank_accounts", "add")) {
       setAccessDenied(true);
       setMessage("You do not have permission to add company bank accounts.");
       return;

@@ -11,6 +11,7 @@ import {
   Paperclip,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import AuditTrailCard from "@/components/AuditTrailCard";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -361,6 +362,16 @@ export default function RABillDetailPage() {
           <Summary title="Net Payable" value={money(bill.net_amount)} />
         </div>
       </section>
+
+      <AuditTrailCard
+        createdBy={bill.created_by_name || bill.created_by_email}
+        createdAt={bill.created_at}
+        approvedBy={bill.approved_by_name || bill.approved_by_email}
+        approvedAt={bill.approved_at}
+        rejectedBy={bill.rejected_by_name || bill.rejected_by_email}
+        rejectedAt={bill.rejected_at}
+        rejectReason={bill.rejection_reason}
+      />
 
       <section className="rounded-2xl border bg-white p-6 shadow-sm">
         <h2 className="mb-4 text-xl font-semibold text-slate-950">

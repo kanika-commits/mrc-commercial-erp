@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Filter,
@@ -11,7 +11,8 @@ import {
   Users,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { getCurrentUserAccess, can } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 
 type Vendor = {
   id: string;
@@ -48,75 +49,148 @@ type VendorBankAccount = {
 const PAGE_SIZE = 50;
 
 export default function VendorsPage() {
+  const { access } = useAccessContext();
   const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [canAdd, setCanAdd] = useState(false);
-  const [canEdit, setCanEdit] = useState(false);
-  const [canDelete, setCanDelete] = useState(false);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [totalVendors, setTotalVendors] = useState(0);
   const [totalFilteredVendors, setTotalFilteredVendors] = useState(0);
   const [vendorTypes, setVendorTypes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const hasLoadedRef = useRef(false);
+  const inFlightKeyRef = useRef("");
+  const activeRequestSeqRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  const loadPage = useCallback(async () => {
-    setLoading(true);
-    setErrorMessage("");
+  const permissions = access?.permissions || [];
+  const canAdd = can(permissions, "vendors", "add");
+  const canEdit = can(permissions, "vendors", "edit");
+  const canDelete = can(permissions, "vendors", "delete");
 
-    const access = await getCurrentUserAccess();
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+    }, 450);
 
-    setCanAdd(can(access.permissions, "vendors", "add"));
-    setCanEdit(can(access.permissions, "vendors", "edit"));
-    setCanDelete(can(access.permissions, "vendors", "delete"));
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
+  const requestKey = useMemo(
+    () =>
+      JSON.stringify({
+        page,
+        pageSize: PAGE_SIZE,
+        search: debouncedSearch,
+        typeFilter,
+        refreshNonce,
+      }),
+    [debouncedSearch, page, refreshNonce, typeFilter],
+  );
 
-    if (!session?.access_token) {
-      setErrorMessage("Your session expired. Please log in again.");
-      setLoading(false);
+  useEffect(() => {
+    if (inFlightKeyRef.current === requestKey) {
       return;
     }
 
-    const params = new URLSearchParams({
-      include_children: "summary",
-      page: String(page),
-      page_size: String(PAGE_SIZE),
-    });
+    const abortController = new AbortController();
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = abortController;
+    inFlightKeyRef.current = requestKey;
+    const requestSeq = activeRequestSeqRef.current + 1;
+    activeRequestSeqRef.current = requestSeq;
+    const hasRows = hasLoadedRef.current;
 
-    if (search.trim()) {
-      params.set("search", search.trim());
-    }
-
-    if (typeFilter !== "all") {
-      params.set("type_filter", typeFilter);
-    }
-
-    const response = await fetch(`/api/vendors?${params.toString()}`, {
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-      },
-    });
-    const result = await response.json();
-
-    if (!response.ok) {
-      setErrorMessage(result.error || "Failed to load vendors.");
+    if (hasRows) {
+      setRefreshing(true);
     } else {
-      setVendors(result.vendors || []);
-      setTotalFilteredVendors(result.total || 0);
-      setTotalVendors(result.total_all || result.total || 0);
-      setVendorTypes(result.vendor_types || []);
+      setLoading(true);
+    }
+    setErrorMessage("");
+
+    async function loadPage() {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (abortController.signal.aborted) return;
+
+        if (!session?.access_token) {
+          setErrorMessage("Your session expired. Please log in again.");
+          setLoading(false);
+          setRefreshing(false);
+          return;
+        }
+
+        const params = new URLSearchParams({
+          include_children: "summary",
+          page: String(page),
+          page_size: String(PAGE_SIZE),
+        });
+
+        if (debouncedSearch) {
+          params.set("search", debouncedSearch);
+        }
+
+        if (typeFilter !== "all") {
+          params.set("type_filter", typeFilter);
+        }
+
+        const response = await fetch(`/api/vendors?${params.toString()}`, {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          signal: abortController.signal,
+        });
+        const result = await response.json();
+
+        if (abortController.signal.aborted || activeRequestSeqRef.current !== requestSeq) {
+          return;
+        }
+
+        if (!response.ok) {
+          setErrorMessage(result.error || "Failed to load vendors.");
+        } else {
+          setVendors(result.vendors || []);
+          setTotalFilteredVendors(result.total || 0);
+          setTotalVendors(result.total_all || result.total || 0);
+          setVendorTypes(result.vendor_types || []);
+        }
+
+        setLoading(false);
+        setRefreshing(false);
+        hasLoadedRef.current = true;
+      } catch (error: any) {
+        if (error?.name === "AbortError") {
+          return;
+        }
+
+        if (activeRequestSeqRef.current === requestSeq) {
+          setErrorMessage(error.message || "Failed to load vendors.");
+          setLoading(false);
+          setRefreshing(false);
+        }
+      } finally {
+        if (activeRequestSeqRef.current === requestSeq) {
+          inFlightKeyRef.current = "";
+        }
+      }
     }
 
-    setLoading(false);
-  }, [page, search, typeFilter]);
-
-  useEffect(() => {
     loadPage();
-  }, [loadPage]);
+
+    return () => {
+      abortController.abort();
+      if (activeRequestSeqRef.current === requestSeq) {
+        inFlightKeyRef.current = "";
+      }
+    };
+  }, [debouncedSearch, page, requestKey, typeFilter]);
 
   async function deleteVendor(vendor: Vendor) {
     const ok = window.confirm(
@@ -146,11 +220,12 @@ export default function VendorsPage() {
     }
 
     setVendors((prev) => prev.filter((item) => item.id !== vendor.id));
+    setRefreshNonce((value) => value + 1);
   }
 
   useEffect(() => {
     setPage(1);
-  }, [search, typeFilter]);
+  }, [debouncedSearch, typeFilter]);
 
   const totalPages = Math.max(1, Math.ceil(totalFilteredVendors / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -170,7 +245,7 @@ export default function VendorsPage() {
     setTypeFilter("all");
   }
 
-  if (loading) {
+  if (loading && vendors.length === 0) {
     return (
       <section className="min-h-[60vh] bg-[#f8fafc] p-8 text-sm font-medium text-slate-500">
         Loading vendors...
@@ -178,7 +253,7 @@ export default function VendorsPage() {
     );
   }
 
-  if (errorMessage) {
+  if (errorMessage && vendors.length === 0) {
     return (
       <div className="rounded-lg border bg-red-50 p-4 text-red-700">
         Failed to load vendors: {errorMessage}
@@ -262,6 +337,9 @@ export default function VendorsPage() {
 
         <p className="mt-3 text-xs font-medium text-slate-500">
           Showing {rangeStart}–{endIndex} of {totalFilteredVendors} vendors
+          {refreshing ? (
+            <span className="ml-2 text-[#00658b]">Updating results...</span>
+          ) : null}
         </p>
       </div>
 
