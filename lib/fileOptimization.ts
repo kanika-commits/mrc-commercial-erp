@@ -1,5 +1,3 @@
-import sharp from "sharp";
-
 const MIN_OPTIMIZE_BYTES = 500 * 1024;
 const MAX_IMAGE_WIDTH = 1600;
 
@@ -55,6 +53,7 @@ export async function optimizeUploadFile(
       return original;
     }
 
+    const { default: sharp } = await import("sharp");
     const normalizedMimeType = mimeType.toLowerCase();
     const pipeline = sharp(buffer, { failOn: "none" })
       .rotate()

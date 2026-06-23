@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { createDriveSubfolder, uploadDriveFile } from "@/src/lib/googleDrive";
 
 const ORGANIZATION_ID = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
@@ -237,6 +236,7 @@ async function uploadDocument(
   documentType: string,
   file: File
 ) {
+  const { optimizeUploadFile } = await import("@/lib/fileOptimization");
   const bytes = Buffer.from(await file.arrayBuffer());
   const optimizedFile = await optimizeUploadFile(
     bytes,
