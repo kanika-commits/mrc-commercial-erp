@@ -249,8 +249,10 @@ cross join (
     ('reimbursements', 'edit'),
     ('reimbursements', 'delete'),
     ('reimbursements', 'upload'),
+    ('reimbursements', 'submit'),
     ('reimbursements', 'approve'),
     ('reimbursements', 'reject'),
+    ('reimbursements', 'mark_paid'),
     ('reimbursements', 'export')
 ) as module_actions(module_code, action_code)
 where roles.role_code = 'super_admin'
