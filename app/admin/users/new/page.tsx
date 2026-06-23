@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { sortCompanies } from "@/lib/companyOrdering";
+import { supabase } from "@/lib/supabase";
 
 export default function NewUserPage() {
   const router = useRouter();
@@ -32,7 +33,20 @@ export default function NewUserPage() {
   }, []);
 
   async function loadData() {
-    const response = await fetch("/api/admin/access-options");
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      setMessage("Your session expired. Please log in again.");
+      return;
+    }
+
+    const response = await fetch("/api/admin/access-options", {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    });
     const result = await response.json();
 
     if (!response.ok) {
@@ -145,10 +159,19 @@ export default function NewUserPage() {
       setSaving(true);
       setMessage("");
 
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
       const response = await fetch("/api/admin/create-user", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
           full_name: form.full_name,
