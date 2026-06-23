@@ -1,153 +1,253 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireAnyPermission, type ServerPermission } from "@/lib/serverPermissions";
+import {
+  applyOrganizationScope,
+  isGlobalScope,
+  loadActorOrganizationScope,
+} from "@/lib/serverOrganizationScope";
 
-type Permission = {
-  module_code: string;
-  action_code: string;
-  allowed: boolean;
-};
+const COUNT_PERMISSIONS = [
+  { moduleCode: "dashboard", actionCode: "view" },
+  { moduleCode: "work_orders", actionCode: "view" },
+  { moduleCode: "work_orders", actionCode: "approve" },
+  { moduleCode: "work_orders", actionCode: "reject" },
+  { moduleCode: "ra_bills", actionCode: "view" },
+  { moduleCode: "ra_bills", actionCode: "approve" },
+  { moduleCode: "ra_bills", actionCode: "reject" },
+  { moduleCode: "debit_notes", actionCode: "view" },
+  { moduleCode: "debit_notes", actionCode: "approve" },
+  { moduleCode: "debit_notes", actionCode: "delete" },
+  { moduleCode: "invoices", actionCode: "view" },
+  { moduleCode: "invoices", actionCode: "approve" },
+  { moduleCode: "invoices", actionCode: "reject" },
+  { moduleCode: "vendors", actionCode: "view" },
+];
 
-function hasWildcardPermission(permissions: Permission[]) {
+function adminClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+  if (!serviceRoleKey) {
+    throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY.");
+  }
+
+  return createClient(supabaseUrl, serviceRoleKey);
+}
+
+function canAny(
+  permissions: ServerPermission[],
+  moduleCode: string,
+  actionCodes: string[]
+) {
   return permissions.some(
     (permission) =>
       permission.allowed === true &&
-      permission.module_code === "*" &&
-      permission.action_code === "*"
+      ((permission.module_code === "*" && permission.action_code === "*") ||
+        (permission.module_code === moduleCode &&
+          actionCodes.includes(permission.action_code)))
   );
+}
+
+async function loadActorAccessAssignments(admin: ReturnType<typeof adminClient>, userId: string) {
+  const { data, error } = await admin
+    .from("user_access_assignments")
+    .select("organization_id, company_id, site_id")
+    .eq("user_id", userId);
+
+  if (error) throw error;
+
+  return {
+    companyIds: Array.from(
+      new Set((data || []).map((row) => row.company_id).filter(Boolean))
+    ) as string[],
+    siteIds: Array.from(
+      new Set((data || []).map((row) => row.site_id).filter(Boolean))
+    ) as string[],
+  };
+}
+
+async function loadAllowedWorkOrderIds(
+  admin: ReturnType<typeof adminClient>,
+  organizationScope: string[] | null,
+  companyIds: string[],
+  siteIds: string[]
+) {
+  let query = admin.from("work_orders").select("id");
+
+  const scopedQuery = applyOrganizationScope(query, organizationScope);
+  if (!scopedQuery) return [];
+  query = scopedQuery;
+
+  if (siteIds.length > 0) {
+    query = query.in("site_id", siteIds);
+  } else if (companyIds.length > 0) {
+    query = query.in("company_id", companyIds);
+  }
+
+  const { data, error } = await query;
+
+  if (error) throw error;
+
+  return (data || []).map((workOrder) => workOrder.id).filter(Boolean) as string[];
+}
+
+function applyWorkOrderScope(query: any, workOrderIds: string[] | null, column = "work_order_id") {
+  if (workOrderIds === null) return query;
+  if (workOrderIds.length === 0) return null;
+  return query.in(column, workOrderIds);
+}
+
+async function runCount(query: any) {
+  if (!query) return 0;
+  const result = await query;
+  if (result.error) throw result.error;
+  return result.count || 0;
 }
 
 export async function GET(request: Request) {
   try {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-    const token = request.headers.get("authorization")?.replace("Bearer ", "");
+    const auth = await requireAnyPermission(request, COUNT_PERMISSIONS);
 
-    if (!token) {
-      return NextResponse.json({ error: "Missing auth token." }, { status: 401 });
+    if ("response" in auth) {
+      return auth.response;
     }
 
-    if (!serviceRoleKey) {
-      throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY.");
-    }
-
-    const authClient = createClient(supabaseUrl, anonKey);
-    const admin = createClient(supabaseUrl, serviceRoleKey);
-
-    const {
-      data: { user },
-      error: userError,
-    } = await authClient.auth.getUser(token);
-
-    if (userError) throw userError;
-
-    if (!user) {
-      return NextResponse.json({ error: "User not found." }, { status: 401 });
-    }
-
-    const [userRoles, userPermissions, accessRows] = await Promise.all([
-      admin.from("user_roles").select("role_id").eq("user_id", user.id),
-      admin
-        .from("user_permissions")
-        .select("module_code, action_code, allowed")
-        .eq("user_id", user.id),
-      admin
-        .from("user_access_assignments")
-        .select("site_id")
-        .eq("user_id", user.id),
-    ]);
-
-    for (const result of [userRoles, userPermissions, accessRows]) {
-      if (result.error) throw result.error;
-    }
-
-    const roleIds = (userRoles.data || [])
-      .map((row) => row.role_id)
-      .filter(Boolean);
-
-    let roleCodes: string[] = [];
-    let rolePermissions: Permission[] = [];
-
-    if (roleIds.length > 0) {
-      const [roles, permissions] = await Promise.all([
-        admin.from("roles").select("role_code").in("id", roleIds),
-        admin
-          .from("role_permissions")
-          .select("module_code, action_code, allowed")
-          .in("role_id", roleIds),
-      ]);
-
-      if (roles.error) throw roles.error;
-      if (permissions.error) throw permissions.error;
-
-      roleCodes = (roles.data || [])
-        .map((role) => role.role_code)
-        .filter(Boolean);
-      rolePermissions = permissions.data || [];
-    }
-
-    const permissions = [...rolePermissions, ...((userPermissions.data || []) as Permission[])];
-    const isSuperUser =
-      roleCodes.includes("platform_owner") ||
-      hasWildcardPermission(permissions);
-    const restrictedSiteIds = isSuperUser
-      ? []
-      : Array.from(
-          new Set((accessRows.data || []).map((row) => row.site_id).filter(Boolean))
+    const admin = adminClient();
+    const organizationScope = await loadActorOrganizationScope(admin, auth);
+    const assignments = isGlobalScope(organizationScope)
+      ? { companyIds: [], siteIds: [] }
+      : await loadActorAccessAssignments(admin, auth.user.id);
+    const allowedWorkOrderIds = isGlobalScope(organizationScope)
+      ? null
+      : await loadAllowedWorkOrderIds(
+          admin,
+          organizationScope,
+          assignments.companyIds,
+          assignments.siteIds
         );
-    let allowedWorkOrderIds: string[] | null = null;
 
-    if (restrictedSiteIds.length > 0) {
-      const { data: allowedWorkOrders, error: allowedWorkOrdersError } =
-        await admin
-          .from("work_orders")
-          .select("id")
-          .in("site_id", restrictedSiteIds);
+    const canWorkOrders = canAny(auth.permissions, "work_orders", [
+      "view",
+      "approve",
+      "reject",
+    ]);
+    const canRaBills = canAny(auth.permissions, "ra_bills", [
+      "view",
+      "approve",
+      "reject",
+    ]);
+    const canDebitNotes = canAny(auth.permissions, "debit_notes", [
+      "view",
+      "approve",
+      "delete",
+    ]);
+    const canInvoices = canAny(auth.permissions, "invoices", [
+      "view",
+      "approve",
+      "reject",
+    ]);
+    const canVendors = canAny(auth.permissions, "vendors", ["view"]);
 
-      if (allowedWorkOrdersError) throw allowedWorkOrdersError;
+    const pendingWorkOrdersQuery = canWorkOrders
+      ? applyWorkOrderScope(
+          applyOrganizationScope(
+            admin
+              .from("work_orders")
+              .select("id", { count: "exact", head: true })
+              .ilike("approval_status", "pending"),
+            organizationScope
+          ),
+          allowedWorkOrderIds,
+          "id"
+        )
+      : null;
+    const pendingRaBillsQuery = canRaBills
+      ? applyWorkOrderScope(
+          applyOrganizationScope(
+            admin
+              .from("ra_bills")
+              .select("id", { count: "exact", head: true })
+              .ilike("approval_status", "pending"),
+            organizationScope
+          ),
+          allowedWorkOrderIds
+        )
+      : null;
+    const pendingDebitNotesQuery = canDebitNotes
+      ? applyWorkOrderScope(
+          applyOrganizationScope(
+            admin
+              .from("debit_notes")
+              .select("id", { count: "exact", head: true })
+              .ilike("approval_status", "pending"),
+            organizationScope
+          ),
+          allowedWorkOrderIds
+        )
+      : null;
+    const pendingItcQuery = canInvoices
+      ? applyWorkOrderScope(
+          applyOrganizationScope(
+            admin
+              .from("invoices")
+              .select("id", { count: "exact", head: true })
+              .or("itc_status.is.null,itc_status.ilike.pending"),
+            organizationScope
+          ),
+          allowedWorkOrderIds
+        )
+      : null;
+    const pendingInvoiceApprovalsQuery = canInvoices
+      ? applyWorkOrderScope(
+          applyOrganizationScope(
+            admin
+              .from("invoices")
+              .select("id", { count: "exact", head: true })
+              .ilike("approval_status", "pending"),
+            organizationScope
+          ),
+          allowedWorkOrderIds
+        )
+      : null;
 
-      allowedWorkOrderIds = (allowedWorkOrders || [])
-        .map((workOrder) => workOrder.id)
-        .filter(Boolean);
-    }
-
-    const applyWorkOrderScope = (query: any, column = "work_order_id") => {
-      if (allowedWorkOrderIds === null) return query;
-      if (allowedWorkOrderIds.length === 0) return null;
-      return query.in(column, allowedWorkOrderIds);
-    };
-
-    const pendingWorkOrdersQuery = applyWorkOrderScope(
-      admin
-        .from("work_orders")
-        .select("id", { count: "exact", head: true })
-        .ilike("approval_status", "pending"),
-      "id"
-    );
-    const pendingRaBillsQuery = applyWorkOrderScope(
-      admin
-        .from("ra_bills")
-        .select("id", { count: "exact", head: true })
-        .ilike("approval_status", "pending")
-    );
-    const pendingDebitNotesQuery = applyWorkOrderScope(
-      admin
-        .from("debit_notes")
-        .select("id", { count: "exact", head: true })
-        .ilike("approval_status", "pending")
-    );
-    const pendingItcQuery = applyWorkOrderScope(
-      admin
-        .from("invoices")
-        .select("id", { count: "exact", head: true })
-        .or("itc_status.is.null,itc_status.ilike.pending")
-    );
-    const pendingInvoiceApprovalsQuery = applyWorkOrderScope(
-      admin
-        .from("invoices")
-        .select("id", { count: "exact", head: true })
-        .ilike("approval_status", "pending")
-    );
+    const vendorBaseQuery = canVendors
+      ? applyOrganizationScope(
+          admin
+            .from("vendors")
+            .select("id", { count: "exact", head: true })
+            .neq("status", "deleted"),
+          organizationScope
+        )
+      : null;
+    const panAadhaarQuery = canVendors
+      ? applyOrganizationScope(
+          admin
+            .from("vendors")
+            .select("id", { count: "exact", head: true })
+            .neq("status", "deleted")
+            .neq("pan_aadhaar_link_status", "Yes"),
+          organizationScope
+        )
+      : null;
+    const blockedVendorsQuery = canVendors
+      ? applyOrganizationScope(
+          admin
+            .from("vendors")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "blocked"),
+          organizationScope
+        )
+      : null;
+    const inactiveVendorsQuery = canVendors
+      ? applyOrganizationScope(
+          admin
+            .from("vendors")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "inactive"),
+          organizationScope
+        )
+      : null;
 
     const [
       pendingWorkOrders,
@@ -155,30 +255,32 @@ export async function GET(request: Request) {
       pendingDebitNotes,
       pendingItcReview,
       pendingInvoiceApprovals,
+      totalVendors,
+      panAadhaarPending,
+      blockedVendors,
+      inactiveVendors,
     ] = await Promise.all([
-      pendingWorkOrdersQuery || Promise.resolve({ count: 0, error: null }),
-      pendingRaBillsQuery || Promise.resolve({ count: 0, error: null }),
-      pendingDebitNotesQuery || Promise.resolve({ count: 0, error: null }),
-      pendingItcQuery || Promise.resolve({ count: 0, error: null }),
-      pendingInvoiceApprovalsQuery || Promise.resolve({ count: 0, error: null }),
+      runCount(pendingWorkOrdersQuery),
+      runCount(pendingRaBillsQuery),
+      runCount(pendingDebitNotesQuery),
+      runCount(pendingItcQuery),
+      runCount(pendingInvoiceApprovalsQuery),
+      runCount(vendorBaseQuery),
+      runCount(panAadhaarQuery),
+      runCount(blockedVendorsQuery),
+      runCount(inactiveVendorsQuery),
     ]);
 
-    for (const result of [
+    return NextResponse.json({
       pendingWorkOrders,
       pendingRaBills,
       pendingDebitNotes,
       pendingItcReview,
       pendingInvoiceApprovals,
-    ]) {
-      if (result.error) throw result.error;
-    }
-
-    return NextResponse.json({
-      pendingWorkOrders: pendingWorkOrders.count || 0,
-      pendingRaBills: pendingRaBills.count || 0,
-      pendingDebitNotes: pendingDebitNotes.count || 0,
-      pendingItcReview: pendingItcReview.count || 0,
-      pendingInvoiceApprovals: pendingInvoiceApprovals.count || 0,
+      totalVendors,
+      panAadhaarPending,
+      blockedVendors,
+      inactiveVendors,
     });
   } catch (error: any) {
     return NextResponse.json(

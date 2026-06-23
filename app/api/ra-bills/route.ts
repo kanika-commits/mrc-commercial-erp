@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { requirePermission } from "@/lib/serverPermissions";
+import {
+  isInOrganizationScope,
+  loadActorOrganizationScope,
+} from "@/lib/serverOrganizationScope";
 
 
 const MODULE_CODE = "ra_bills";
@@ -160,6 +164,15 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "Selected Work Order was not found." },
         { status: 404 }
+      );
+    }
+
+    const organizationScope = await loadActorOrganizationScope(admin, auth);
+
+    if (!isInOrganizationScope(organizationScope, workOrder.organization_id)) {
+      return NextResponse.json(
+        { error: "You do not have access to this organization." },
+        { status: 403 }
       );
     }
 

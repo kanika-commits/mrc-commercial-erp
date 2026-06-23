@@ -5,6 +5,11 @@ import {
   requireDeletePermission,
 } from "@/lib/serverDeleteAudit";
 import { requirePermission } from "@/lib/serverPermissions";
+import {
+  isInOrganizationScope,
+  loadActorOrganizationScope,
+  loadOrganizationScopeForUser,
+} from "@/lib/serverOrganizationScope";
 
 const MODULE_CODE = "payments";
 const DOCUMENT_BUCKET = "payment-documents";
@@ -276,6 +281,15 @@ export async function POST(request: Request) {
         );
       }
 
+      const organizationScope = await loadActorOrganizationScope(admin, auth);
+
+      if (!isInOrganizationScope(organizationScope, account.organization_id)) {
+        return NextResponse.json(
+          { error: "You do not have access to this organization." },
+          { status: 403 }
+        );
+      }
+
       const { data: workOrder, error: workOrderError } = workOrderId
         ? await admin
             .from("work_orders")
@@ -293,8 +307,105 @@ export async function POST(request: Request) {
         );
       }
 
+      if (
+        workOrder &&
+        !isInOrganizationScope(organizationScope, workOrder.organization_id)
+      ) {
+        return NextResponse.json(
+          { error: "You do not have access to this organization." },
+          { status: 403 }
+        );
+      }
+
       const organizationId =
-        workOrder?.organization_id || account.organization_id || "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
+        workOrder?.organization_id || account.organization_id;
+
+      if (!organizationId) {
+        return NextResponse.json(
+          { error: "Organization could not be resolved for this payment." },
+          { status: 400 }
+        );
+      }
+
+      if (!isInOrganizationScope(organizationScope, organizationId)) {
+        return NextResponse.json(
+          { error: "You do not have access to this organization." },
+          { status: 403 }
+        );
+      }
+
+      if (account.organization_id !== organizationId) {
+        return NextResponse.json(
+          { error: "Selected account is not available for this organization." },
+          { status: 403 }
+        );
+      }
+
+      if (companyId) {
+        const { data: company, error: companyError } = await admin
+          .from("companies")
+          .select("id, organization_id")
+          .eq("id", companyId)
+          .maybeSingle();
+
+        if (companyError) throw companyError;
+
+        if (!company || company.organization_id !== organizationId) {
+          return NextResponse.json(
+            { error: "Selected company is not available for this organization." },
+            { status: 403 }
+          );
+        }
+      }
+
+      if (toCompanyBankAccountId) {
+        const { data: toAccount, error: toAccountError } = await admin
+          .from("company_bank_accounts")
+          .select("id, organization_id, status")
+          .eq("id", toCompanyBankAccountId)
+          .maybeSingle();
+
+        if (toAccountError) throw toAccountError;
+
+        if (
+          !toAccount ||
+          String(toAccount.status || "").toLowerCase() !== "active" ||
+          toAccount.organization_id !== organizationId
+        ) {
+          return NextResponse.json(
+            { error: "Selected To Account is not available for this organization." },
+            { status: 403 }
+          );
+        }
+      }
+
+      if (vendorId) {
+        const { data: vendor, error: vendorError } = await admin
+          .from("vendors")
+          .select("id, organization_id")
+          .eq("id", vendorId)
+          .maybeSingle();
+
+        if (vendorError) throw vendorError;
+
+        if (!vendor) {
+          return NextResponse.json(
+            { error: "Selected vendor was not found." },
+            { status: 404 }
+          );
+        }
+
+        if (
+          !isInOrganizationScope(organizationScope, vendor.organization_id) ||
+          vendor.organization_id !== organizationId
+        ) {
+          return NextResponse.json(
+            { error: "Selected vendor is not available for this organization." },
+            { status: 403 }
+          );
+        }
+      }
+
       const paymentNumber = String(formData.get("payment_number") || "").trim() || `PAY-${Date.now()}`;
 
       const { data: existingPayments, error: duplicateError } = await admin
@@ -432,6 +543,42 @@ export async function POST(request: Request) {
         { error: "Selected invoice was not found." },
         { status: 404 }
       );
+    }
+
+    const organizationScope = await loadActorOrganizationScope(admin, auth);
+
+    if (!isInOrganizationScope(organizationScope, invoice.organization_id)) {
+      return NextResponse.json(
+        { error: "You do not have access to this organization." },
+        { status: 403 }
+      );
+    }
+
+    if (companyBankAccountId) {
+      const { data: account, error: accountError } = await admin
+        .from("company_bank_accounts")
+        .select("id, organization_id, status")
+        .eq("id", companyBankAccountId)
+        .maybeSingle();
+
+      if (accountError) throw accountError;
+
+      if (!account || String(account.status || "").toLowerCase() !== "active") {
+        return NextResponse.json(
+          { error: "Selected From Account was not found or inactive." },
+          { status: 400 }
+        );
+      }
+
+      if (
+        !isInOrganizationScope(organizationScope, account.organization_id) ||
+        account.organization_id !== invoice.organization_id
+      ) {
+        return NextResponse.json(
+          { error: "Selected account is not available for this organization." },
+          { status: 403 }
+        );
+      }
     }
 
     if (String(invoice.itc_status || "").toLowerCase() !== "claimed") {
@@ -621,6 +768,18 @@ export async function DELETE(request: Request) {
       return NextResponse.json(
         { error: "Payment was not found." },
         { status: 404 }
+      );
+    }
+
+    const organizationScope = await loadOrganizationScopeForUser(
+      admin,
+      auth.user.id
+    );
+
+    if (!isInOrganizationScope(organizationScope, payment.organization_id)) {
+      return NextResponse.json(
+        { error: "You do not have access to this organization." },
+        { status: 403 }
       );
     }
 

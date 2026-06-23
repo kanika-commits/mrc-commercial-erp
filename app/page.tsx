@@ -61,43 +61,9 @@ export default function Home() {
 
       const [
         notificationCounts,
-        vendorCountRes,
-        panCountRes,
-        blockedCountRes,
-        inactiveCountRes,
       ] = await Promise.all([
         notificationCountsPromise,
-
-        supabase
-          .from("vendors")
-          .select("id", { count: "exact", head: true })
-          .neq("status", "deleted"),
-
-        supabase
-          .from("vendors")
-          .select("id", { count: "exact", head: true })
-          .neq("status", "deleted")
-          .neq("pan_aadhaar_link_status", "Yes"),
-
-        supabase
-          .from("vendors")
-          .select("id", { count: "exact", head: true })
-          .eq("status", "blocked"),
-
-        supabase
-          .from("vendors")
-          .select("id", { count: "exact", head: true })
-          .eq("status", "inactive"),
       ]);
-
-      for (const result of [
-        vendorCountRes,
-        panCountRes,
-        blockedCountRes,
-        inactiveCountRes,
-      ]) {
-        if (result.error) throw result.error;
-      }
 
       setPermissions(currentAccess.permissions || []);
 
@@ -107,10 +73,10 @@ export default function Home() {
       setPendingITC(notificationCounts.pendingItcReview || 0);
       setPendingInvoiceApprovals(notificationCounts.pendingInvoiceApprovals || 0);
 
-      setTotalVendors(vendorCountRes.count || 0);
-      setPanAadhaarPending(panCountRes.count || 0);
-      setBlockedVendors(blockedCountRes.count || 0);
-      setInactiveVendors(inactiveCountRes.count || 0);
+      setTotalVendors(notificationCounts.totalVendors || 0);
+      setPanAadhaarPending(notificationCounts.panAadhaarPending || 0);
+      setBlockedVendors(notificationCounts.blockedVendors || 0);
+      setInactiveVendors(notificationCounts.inactiveVendors || 0);
     } catch (error) {
       console.error("Dashboard load failed:", error);
     } finally {

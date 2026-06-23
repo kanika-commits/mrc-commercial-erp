@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { requirePermission } from "@/lib/serverPermissions";
+import {
+  isInOrganizationScope,
+  loadActorOrganizationScope,
+} from "@/lib/serverOrganizationScope";
 
 const DOCUMENT_BUCKET = "invoice-documents";
 
@@ -87,6 +91,33 @@ export async function GET(request: Request) {
     }
 
     const admin = adminClient();
+    const { data: invoices, error: invoicesError } = await admin
+      .from("invoices")
+      .select("id, organization_id")
+      .in("id", invoiceIds);
+
+    if (invoicesError) throw invoicesError;
+
+    if ((invoices || []).length !== invoiceIds.length) {
+      return NextResponse.json(
+        { error: "One or more invoices were not found." },
+        { status: 404 }
+      );
+    }
+
+    const organizationScope = await loadActorOrganizationScope(admin, auth);
+    const outOfScope = (invoices || []).some(
+      (invoice) =>
+        !isInOrganizationScope(organizationScope, invoice.organization_id)
+    );
+
+    if (outOfScope) {
+      return NextResponse.json(
+        { error: "You do not have access to this organization." },
+        { status: 403 }
+      );
+    }
+
     const { data: documents, error } = await admin
       .from("invoice_documents")
       .select("id, invoice_id, file_name, file_url, uploaded_at")

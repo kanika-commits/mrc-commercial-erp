@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { CheckCircle2, ExternalLink, FileText, RefreshCw, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
+import { getAllowedOrganizationIds } from "@/lib/clientOrganizationScope";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -78,6 +81,7 @@ function badgeClass(value?: string | null) {
 }
 
 export default function WorkOrderApprovalPage() {
+  const { access } = useAccessContext();
   const [workOrders, setWorkOrders] = useState<any[]>([]);
   const [companies, setCompanies] = useState<Map<string, string>>(new Map());
   const [sites, setSites] = useState<Map<string, string>>(new Map());
@@ -87,15 +91,34 @@ export default function WorkOrderApprovalPage() {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    loadWorkOrders();
-  }, []);
+    if (access) {
+      loadWorkOrders();
+    }
+  }, [access]);
 
   async function loadWorkOrders() {
     try {
       setLoading(true);
       setMessage("");
 
-      const { data: woData, error: woError } = await supabase
+      const allowedOrganizationIds = getAllowedOrganizationIds(access);
+      const canLoadWorkOrders =
+        can(access?.permissions || [], "work_orders", "approve") ||
+        can(access?.permissions || [], "work_orders", "reject");
+
+      if (
+        !canLoadWorkOrders ||
+        (allowedOrganizationIds !== null && allowedOrganizationIds.length === 0)
+      ) {
+        setWorkOrders([]);
+        setCompanies(new Map());
+        setSites(new Map());
+        setDocuments(new Map());
+        setLoading(false);
+        return;
+      }
+
+      let workOrderQuery = supabase
         .from("work_orders")
         .select(`
           id,
@@ -119,6 +142,12 @@ export default function WorkOrderApprovalPage() {
         `)
         .or("approval_status.is.null,approval_status.ilike.pending,approval_status.ilike.draft")
         .order("created_at", { ascending: false });
+
+      if (allowedOrganizationIds !== null) {
+        workOrderQuery = workOrderQuery.in("organization_id", allowedOrganizationIds);
+      }
+
+      const { data: woData, error: woError } = await workOrderQuery;
 
       if (woError) throw woError;
 

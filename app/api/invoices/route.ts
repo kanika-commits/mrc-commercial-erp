@@ -7,6 +7,11 @@ import {
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { uploadDriveFile } from "@/src/lib/googleDrive";
 import { requirePermission } from "@/lib/serverPermissions";
+import {
+  isInOrganizationScope,
+  loadActorOrganizationScope,
+  loadOrganizationScopeForUser,
+} from "@/lib/serverOrganizationScope";
 
 const DOCUMENT_BUCKET = "invoice-documents";
 const MODULE_CODE = "invoices";
@@ -299,6 +304,15 @@ export async function POST(request: Request) {
       );
     }
 
+    const organizationScope = await loadActorOrganizationScope(admin, auth);
+
+    if (!isInOrganizationScope(organizationScope, workOrder.organization_id)) {
+      return NextResponse.json(
+        { error: "You do not have access to this organization." },
+        { status: 403 }
+      );
+    }
+
     const { data: vendorLink, error: vendorLinkError } = await admin
       .from("work_order_vendors")
       .select("id")
@@ -461,6 +475,26 @@ export async function PATCH(request: Request) {
     }
 
     const admin = adminClient();
+    const { data: invoice, error: invoiceError } = await admin
+      .from("invoices")
+      .select("id, organization_id")
+      .eq("id", invoiceId)
+      .maybeSingle();
+
+    if (invoiceError) {
+      return fail("Failed to load invoice.", 500, invoiceError);
+    }
+
+    if (!invoice) {
+      return fail("Invoice was not found.", 404);
+    }
+
+    const organizationScope = await loadActorOrganizationScope(admin, auth);
+
+    if (!isInOrganizationScope(organizationScope, invoice.organization_id)) {
+      return fail("You do not have access to this organization.", 403);
+    }
+
     const userEmail = auth.user.email || "";
     const userName =
       auth.user.user_metadata?.full_name ||
@@ -516,6 +550,12 @@ export async function PATCH(request: Request) {
 
   if (!invoice) {
     return fail("Invoice was not found.", 404);
+  }
+
+  const organizationScope = await loadActorOrganizationScope(admin, auth);
+
+  if (!isInOrganizationScope(organizationScope, invoice.organization_id)) {
+    return fail("You do not have access to this organization.", 403);
   }
 
   const { data: documents, error: documentsError } = await admin
@@ -762,6 +802,18 @@ export async function DELETE(request: Request) {
       return NextResponse.json(
         { error: "Invoice was not found." },
         { status: 404 }
+      );
+    }
+
+    const organizationScope = await loadOrganizationScopeForUser(
+      admin,
+      auth.user.id
+    );
+
+    if (!isInOrganizationScope(organizationScope, invoice.organization_id)) {
+      return NextResponse.json(
+        { error: "You do not have access to this organization." },
+        { status: 403 }
       );
     }
 

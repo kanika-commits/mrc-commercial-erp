@@ -11,6 +11,11 @@ import {
   uploadDriveFile,
 } from "@/src/lib/googleDrive";
 import { requirePermission } from "@/lib/serverPermissions";
+import {
+  isInOrganizationScope,
+  loadActorOrganizationScope,
+  loadOrganizationScopeForUser,
+} from "@/lib/serverOrganizationScope";
 
 const DOCUMENT_BUCKET = "ra-bill-documents";
 const MODULE_CODE = "ra_bills";
@@ -237,6 +242,12 @@ export async function PATCH(
 
   if (!raBill) {
     return fail("RA Bill was not found.", 404);
+  }
+
+  const organizationScope = await loadActorOrganizationScope(admin, auth);
+
+  if (!isInOrganizationScope(organizationScope, raBill.organization_id)) {
+    return fail("You do not have access to this organization.", 403);
   }
 
   const { data: documents, error: documentsError } = await admin
@@ -514,6 +525,16 @@ export async function DELETE(
 
   if (!raBill) {
     return fail("fetch_ra_bill", { message: "RA Bill was not found." }, 404);
+  }
+
+  const organizationScope = await loadOrganizationScopeForUser(admin, auth.user.id);
+
+  if (!isInOrganizationScope(organizationScope, raBill.organization_id)) {
+    return fail(
+      "fetch_ra_bill",
+      { message: "You do not have access to this organization." },
+      403
+    );
   }
 
   const normalizedApprovalStatus = String(

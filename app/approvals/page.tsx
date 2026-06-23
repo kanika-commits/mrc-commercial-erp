@@ -7,6 +7,7 @@ import AlertMessage from "@/components/AlertMessage";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
+import { getAllowedOrganizationIds } from "@/lib/clientOrganizationScope";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -57,8 +58,10 @@ export default function ApprovalsPage() {
   const canDeleteDebitNotes = can(access?.permissions || [], "debit_notes", "delete");
 
   useEffect(() => {
-    loadApprovals();
-  }, []);
+    if (access) {
+      loadApprovals();
+    }
+  }, [access]);
 
   function showMessage(type: "success" | "error", text: string) {
     setMessageType(type);
@@ -69,7 +72,27 @@ export default function ApprovalsPage() {
     setLoading(true);
     setMessage("");
 
-    const { data: billData, error: billError } = await supabase
+    const allowedOrganizationIds = getAllowedOrganizationIds(access);
+    const canLoadRaBills = canApproveRaBills || canRejectRaBills;
+    const canLoadDebitNotes = canApproveDebitNotes || canDeleteDebitNotes;
+
+    if (
+      allowedOrganizationIds !== null &&
+      allowedOrganizationIds.length === 0
+    ) {
+      setBills([]);
+      setDebitNotes([]);
+      setWorkOrders([]);
+      setVendors([]);
+      setSites([]);
+      setCompanies([]);
+      setRaDocuments([]);
+      setDebitDocuments([]);
+      setLoading(false);
+      return;
+    }
+
+    let billQuery = supabase
       .from("ra_bills")
       .select(`
         id,
@@ -90,13 +113,21 @@ export default function ApprovalsPage() {
       .eq("approval_status", "Pending")
       .order("created_at", { ascending: false });
 
+    if (allowedOrganizationIds !== null) {
+      billQuery = billQuery.in("organization_id", allowedOrganizationIds);
+    }
+
+    const { data: billData, error: billError } = canLoadRaBills
+      ? await billQuery
+      : { data: [], error: null };
+
     if (billError) {
       showMessage("error", billError.message);
       setLoading(false);
       return;
     }
 
-    const { data: debitData, error: debitError } = await supabase
+    let debitQuery = supabase
       .from("debit_notes")
       .select(`
         id,
@@ -117,6 +148,14 @@ export default function ApprovalsPage() {
       `)
       .eq("approval_status", "Pending")
       .order("created_at", { ascending: false });
+
+    if (allowedOrganizationIds !== null) {
+      debitQuery = debitQuery.in("organization_id", allowedOrganizationIds);
+    }
+
+    const { data: debitData, error: debitError } = canLoadDebitNotes
+      ? await debitQuery
+      : { data: [], error: null };
 
     if (debitError) {
       showMessage("error", debitError.message);

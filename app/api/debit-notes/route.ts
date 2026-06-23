@@ -7,6 +7,11 @@ import {
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { uploadDriveFile } from "@/src/lib/googleDrive";
 import { requirePermission } from "@/lib/serverPermissions";
+import {
+  isInOrganizationScope,
+  loadActorOrganizationScope,
+  loadOrganizationScopeForUser,
+} from "@/lib/serverOrganizationScope";
 
 const DOCUMENT_BUCKET = "debit-note-documents";
 const MODULE_CODE = "debit_notes";
@@ -300,6 +305,43 @@ export async function POST(request: Request) {
       );
     }
 
+    const organizationScope = await loadActorOrganizationScope(admin, auth);
+
+    if (!isInOrganizationScope(organizationScope, workOrder.organization_id)) {
+      return NextResponse.json(
+        { error: "You do not have access to this organization." },
+        { status: 403 }
+      );
+    }
+
+    if (raBillId) {
+      const { data: raBill, error: raBillError } = await admin
+        .from("ra_bills")
+        .select("id, organization_id, work_order_id")
+        .eq("id", raBillId)
+        .maybeSingle();
+
+      if (raBillError) throw raBillError;
+
+      if (!raBill) {
+        return NextResponse.json(
+          { error: "Selected RA Bill was not found." },
+          { status: 404 }
+        );
+      }
+
+      if (
+        raBill.organization_id !== workOrder.organization_id ||
+        raBill.work_order_id !== workOrderId ||
+        !isInOrganizationScope(organizationScope, raBill.organization_id)
+      ) {
+        return NextResponse.json(
+          { error: "Selected RA Bill is not available for this Work Order." },
+          { status: 403 }
+        );
+      }
+    }
+
     let vendorLinkQuery = admin
       .from("work_order_vendors")
       .select("id, vendor_id, is_primary")
@@ -508,6 +550,12 @@ export async function PATCH(request: Request) {
 
   if (!debitNote) {
     return fail("Debit Note was not found.", 404);
+  }
+
+  const organizationScope = await loadActorOrganizationScope(admin, auth);
+
+  if (!isInOrganizationScope(organizationScope, debitNote.organization_id)) {
+    return fail("You do not have access to this organization.", 403);
   }
 
   const { data: documents, error: documentsError } = await admin
@@ -776,6 +824,19 @@ export async function DELETE(request: Request) {
 
   if (!debitNote) {
     return fail("fetch_debit_note", { message: "Debit Note was not found." }, 404);
+  }
+
+  const organizationScope = await loadOrganizationScopeForUser(
+    admin,
+    auth.user.id
+  );
+
+  if (!isInOrganizationScope(organizationScope, debitNote.organization_id)) {
+    return fail(
+      "fetch_debit_note",
+      { message: "You do not have access to this organization." },
+      403
+    );
   }
 
   const normalizedApprovalStatus = String(
