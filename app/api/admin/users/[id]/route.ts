@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sortCompanies } from "@/lib/companyOrdering";
 import { requirePermission } from "@/lib/serverPermissions";
+import {
+  canAccessTargetUser,
+  loadActorOrganizationScope,
+  validateSubmittedUserScope,
+} from "@/lib/adminUserScope";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -119,6 +124,33 @@ export async function GET(
 
     const { id } = await params;
     const supabase = adminClient();
+    const actorOrganizationIds = await loadActorOrganizationScope(
+      supabase,
+      permission
+    );
+
+    if (!(await canAccessTargetUser(supabase, actorOrganizationIds, id))) {
+      return NextResponse.json(
+        { error: "You do not have permission to access this user." },
+        { status: 403 }
+      );
+    }
+
+    const organizationsQuery = supabase
+      .from("organizations")
+      .select("id, name, code, status")
+      .eq("status", "active")
+      .order("name");
+    const companiesQuery = supabase
+      .from("companies")
+      .select("id, organization_id, company_name, company_code, status")
+      .eq("status", "active")
+      .order("company_name");
+    const sitesQuery = supabase
+      .from("sites")
+      .select("id, organization_id, company_id, site_name, site_code, status")
+      .eq("status", "active")
+      .order("site_name");
 
     const [
       profile,
@@ -141,21 +173,15 @@ export async function GET(
         .select("id, role_name, role_code, status")
         .eq("status", "active")
         .order("role_name"),
-      supabase
-        .from("organizations")
-        .select("id, name, code, status")
-        .eq("status", "active")
-        .order("name"),
-      supabase
-        .from("companies")
-        .select("id, organization_id, company_name, company_code, status")
-        .eq("status", "active")
-        .order("company_name"),
-      supabase
-        .from("sites")
-        .select("id, company_id, site_name, site_code, status")
-        .eq("status", "active")
-        .order("site_name"),
+      actorOrganizationIds
+        ? organizationsQuery.in("id", actorOrganizationIds)
+        : organizationsQuery,
+      actorOrganizationIds
+        ? companiesQuery.in("organization_id", actorOrganizationIds)
+        : companiesQuery,
+      actorOrganizationIds
+        ? sitesQuery.in("organization_id", actorOrganizationIds)
+        : sitesQuery,
       supabase
         .from("erp_modules")
         .select("id, module_group, module_code, module_name, sort_order")
@@ -263,6 +289,34 @@ export async function PUT(
     }
 
     const supabase = adminClient();
+    const actorOrganizationIds = await loadActorOrganizationScope(
+      supabase,
+      permission
+    );
+
+    if (!(await canAccessTargetUser(supabase, actorOrganizationIds, id))) {
+      return NextResponse.json(
+        { error: "You do not have permission to edit this user." },
+        { status: 403 }
+      );
+    }
+
+    const scopeValidation = await validateSubmittedUserScope(
+      supabase,
+      actorOrganizationIds,
+      {
+        organizationIds: organization_ids || [],
+        companyIds: company_ids || [],
+        siteIds: site_ids || [],
+      }
+    );
+
+    if (!scopeValidation.allowed) {
+      return NextResponse.json(
+        { error: scopeValidation.error },
+        { status: 403 }
+      );
+    }
 
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
@@ -282,7 +336,7 @@ export async function PUT(
     const { data: selectedSites, error: siteError } = site_ids?.length
       ? await supabase
           .from("sites")
-          .select("id, company_id")
+          .select("id, company_id, organization_id")
           .in("id", site_ids)
       : { data: [], error: null };
 
@@ -440,6 +494,14 @@ export async function DELETE(
     }
 
     const supabase = adminClient();
+    const actorOrganizationIds = await loadActorOrganizationScope(supabase, access);
+
+    if (!(await canAccessTargetUser(supabase, actorOrganizationIds, id))) {
+      return NextResponse.json(
+        { error: "You do not have permission to delete this user." },
+        { status: 403 }
+      );
+    }
 
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
