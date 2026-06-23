@@ -5,9 +5,14 @@ import { supabase } from "@/lib/supabase";
 import { getAllowedOrganizationIds } from "@/lib/clientOrganizationScope";
 import { useAccessContext } from "@/components/AccessContext";
 import type { HrDepartment, HrDesignation, HrEmployee, LookupOption } from "@/types/hr";
-import { apiFetch } from "./hrClient";
+import { apiFetchWithToken, getAccessToken } from "./hrClient";
 
-export function useHrLookups() {
+type HrLookupOptions = {
+  includeEmployees?: boolean;
+};
+
+export function useHrLookups(options: HrLookupOptions = {}) {
+  const includeEmployees = options.includeEmployees ?? true;
   const { access, loading: accessLoading } = useAccessContext();
   const [companies, setCompanies] = useState<LookupOption[]>([]);
   const [sites, setSites] = useState<LookupOption[]>([]);
@@ -22,6 +27,7 @@ export function useHrLookups() {
     setLoading(true);
     setError("");
     try {
+      const token = await getAccessToken();
       const allowedOrganizationIds = getAllowedOrganizationIds(access);
       let companyQuery = supabase
         .from("companies")
@@ -43,9 +49,11 @@ export function useHrLookups() {
         await Promise.all([
           companyQuery,
           siteQuery,
-          apiFetch("/api/hr/departments"),
-          apiFetch("/api/hr/designations"),
-          apiFetch("/api/hr/employees"),
+          apiFetchWithToken("/api/hr/departments", token),
+          apiFetchWithToken("/api/hr/designations", token),
+          includeEmployees
+            ? apiFetchWithToken("/api/hr/employees", token)
+            : Promise.resolve({ employees: [] }),
         ]);
 
       if (companyResult.error) throw companyResult.error;
@@ -72,7 +80,7 @@ export function useHrLookups() {
     } finally {
       setLoading(false);
     }
-  }, [access, accessLoading]);
+  }, [access, accessLoading, includeEmployees]);
 
   useEffect(() => {
     load();

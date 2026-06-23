@@ -16,6 +16,14 @@ export async function getAccessToken() {
 
 export async function apiFetch(path: string, init: RequestInit = {}) {
   const token = await getAccessToken();
+  return apiFetchWithToken(path, token, init);
+}
+
+export async function apiFetchWithToken(
+  path: string,
+  token: string,
+  init: RequestInit = {},
+) {
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${token}`);
 

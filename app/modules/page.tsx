@@ -9,6 +9,7 @@ import {
   FileText,
   Settings,
   UserPlus,
+  UsersRound,
 } from "lucide-react";
 import { can } from "@/lib/accessControl";
 import { useAccessContext } from "@/components/AccessContext";
@@ -78,6 +79,16 @@ const groupMeta: Record<string, (typeof moduleCards)[number]> = {
   },
   reports: moduleCards[2],
   administration: moduleCards[3],
+  hr: {
+    title: "HR",
+    href: "/modules/hr",
+    description: "Employee master data and reimbursement workflows.",
+    checkModules: ["hr_employees", "reimbursements"],
+    icon: UsersRound,
+    tone: "blue",
+    status: "Pilot",
+    meta: "HR Access",
+  },
 };
 
 const toneClasses = {

@@ -9,7 +9,18 @@ import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import AlertMessage from "@/components/AlertMessage";
 
-const actions = ["view", "add", "edit", "delete", "approve", "reject", "upload", "export"];
+const actions = [
+  "view",
+  "add",
+  "edit",
+  "delete",
+  "approve",
+  "reject",
+  "upload",
+  "submit",
+  "mark_paid",
+  "export",
+];
 
 function availableActionsForModule(moduleCode: string) {
   return moduleCode === "dashboard" ? ["view"] : actions;

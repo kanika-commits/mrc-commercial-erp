@@ -12,6 +12,8 @@ const actions = [
   "approve",
   "reject",
   "upload",
+  "submit",
+  "mark_paid",
   "export",
 ];
 

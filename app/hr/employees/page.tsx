@@ -17,7 +17,7 @@ export default function EmployeesPage() {
   const canAdd = can(permissions, "hr_employees", "add");
   const canEdit = can(permissions, "hr_employees", "edit");
   const canDelete = can(permissions, "hr_employees", "delete");
-  const lookups = useHrLookups();
+  const lookups = useHrLookups({ includeEmployees: false });
   const [employees, setEmployees] = useState<HrEmployee[]>([]);
   const [search, setSearch] = useState("");
   const [companyFilter, setCompanyFilter] = useState("");
