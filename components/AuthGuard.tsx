@@ -70,12 +70,18 @@ export default function AuthGuard({
   const isLoginPage = pathname === "/login";
   const [authChecked, setAuthChecked] = useState(false);
   const [accessLoading, setAccessLoading] = useState(false);
-  const [accessDenied, setAccessDenied] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [access, setAccess] = useState<CurrentUserAccess | null>(null);
   const [moduleNavigation, setModuleNavigation] =
     useState<ModuleNavigation>(EMPTY_NAVIGATION);
   const [error, setError] = useState<string | null>(null);
+
+  const clearAccessState = useCallback(() => {
+    setUser(null);
+    setAccess(null);
+    setModuleNavigation(EMPTY_NAVIGATION);
+    setError(null);
+  }, []);
 
   const loadAccessAndNavigation = useCallback(async (accessToken?: string) => {
     setAccessLoading(true);
@@ -112,14 +118,14 @@ export default function AuthGuard({
       setAccess(nextAccess);
       setModuleNavigation(nextNavigation);
       setUser(bootstrap.user || nextAccess.user || null);
-      setAccessDenied(!hasRouteAccess(pathname, nextAccess, nextNavigation));
     } catch (loadError: any) {
       setError(loadError.message || "Failed to load user access.");
-      setAccessDenied(true);
+      setAccess(null);
+      setModuleNavigation(EMPTY_NAVIGATION);
     } finally {
       setAccessLoading(false);
     }
-  }, [pathname]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -132,7 +138,6 @@ export default function AuthGuard({
       }
 
       setAuthChecked(false);
-      setAccessDenied(false);
       setError(null);
 
       const {
@@ -143,6 +148,7 @@ export default function AuthGuard({
       if (cancelled) return;
 
       if (!currentUser) {
+        clearAccessState();
         router.replace("/login");
         return;
       }
@@ -157,7 +163,36 @@ export default function AuthGuard({
     return () => {
       cancelled = true;
     };
-  }, [isLoginPage, loadAccessAndNavigation, router]);
+  }, [clearAccessState, isLoginPage, loadAccessAndNavigation, router]);
+
+  useEffect(() => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT") {
+        clearAccessState();
+        setAuthChecked(false);
+        router.replace("/login");
+        return;
+      }
+
+      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+        if (!session?.access_token || isLoginPage) return;
+        setUser(session.user);
+        setAuthChecked(true);
+        loadAccessAndNavigation(session.access_token);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [clearAccessState, isLoginPage, loadAccessAndNavigation, router]);
+
+  const accessDenied = useMemo(() => {
+    if (isLoginPage) return false;
+    if (error && !access) return true;
+    if (!authChecked || accessLoading || !access) return false;
+    return !hasRouteAccess(pathname, access, moduleNavigation);
+  }, [access, accessLoading, authChecked, error, isLoginPage, moduleNavigation, pathname]);
 
   const contextValue = useMemo(
     () => ({
@@ -196,7 +231,7 @@ export default function AuthGuard({
     );
   }
 
-  if (accessLoading && !isUnrestrictedPath(pathname)) {
+  if (accessLoading && !access && !isUnrestrictedPath(pathname)) {
     return (
       <AccessProvider value={contextValue}>
         <AppShell>
