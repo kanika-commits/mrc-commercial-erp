@@ -8,6 +8,7 @@ import AlertMessage from "@/components/AlertMessage";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import type { HrEmployee, ReimbursementClaim } from "@/types/hr";
+import type { HrEmployeeUserOption } from "@/types/hr";
 import StatusBadge from "@/components/hr/StatusBadge";
 import ReimbursementTable from "@/components/hr/ReimbursementTable";
 import { apiFetch, formatDate, labelize } from "@/components/hr/hrClient";
@@ -20,8 +21,10 @@ export default function EmployeeDetailPage() {
   const permissions = access?.permissions || [];
   const canEdit = can(permissions, "hr_employees", "edit");
   const canDelete = can(permissions, "hr_employees", "delete");
+  const canViewUsers = can(permissions, "users", "view");
   const lookups = useHrLookups();
   const [employee, setEmployee] = useState<HrEmployee | null>(null);
+  const [erpUsers, setErpUsers] = useState<HrEmployeeUserOption[]>([]);
   const [claims, setClaims] = useState<ReimbursementClaim[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -36,6 +39,9 @@ export default function EmployeeDetailPage() {
       ]);
       setEmployee(employeeResult.employee);
       setClaims(claimsResult.reimbursements || []);
+
+      const usersResult = await apiFetch(`/api/hr/employees/users?employee_id=${params.id}`);
+      setErpUsers(usersResult.users || []);
     } catch (error: any) {
       setMessage(error.message || "Failed to load employee.");
     } finally {
@@ -56,6 +62,10 @@ export default function EmployeeDetailPage() {
     const manager = lookups.employees.find((item) => item.id === employee?.reporting_manager_id);
     return { company, site, department, designation, manager: manager ? `${manager.employee_name} (${manager.employee_code})` : "-" };
   }, [employee, lookups]);
+
+  const linkedUser = useMemo(() => {
+    return erpUsers.find((user) => user.id === employee?.user_id) || null;
+  }, [employee?.user_id, erpUsers]);
 
   async function deleteEmployee() {
     if (!employee || !window.confirm(`Delete employee "${employee.employee_name}"?`)) return;
@@ -107,6 +117,28 @@ export default function EmployeeDetailPage() {
               <Info label="Designation" value={labels.designation} />
               <Info label="Reporting Manager" value={labels.manager} />
             </div>
+          </section>
+
+          <section className="rounded-2xl border bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-semibold text-slate-950">ERP Access</h2>
+            {linkedUser ? (
+              <div className="mt-5 grid gap-5 md:grid-cols-3">
+                <Info label="Linked User Email" value={linkedUser.email || "-"} />
+                <Info label="Linked Status" value={<StatusBadge status={linkedUser.status || "active"} />} />
+                {canViewUsers && (
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">User</p>
+                    <div className="mt-2">
+                      <Link href={`/admin/users/${linkedUser.id}`} className="inline-flex rounded-xl border bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50">
+                        Open User
+                      </Link>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-slate-500">No ERP user linked.</p>
+            )}
           </section>
 
           <section className="space-y-4">

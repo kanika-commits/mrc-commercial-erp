@@ -27,11 +27,20 @@ export type HrEmployee = {
   department_id?: string | null;
   designation_id?: string | null;
   reporting_manager_id?: string | null;
+  user_id?: string | null;
   date_of_joining?: string | null;
   employment_type?: string | null;
   status?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+};
+
+export type HrEmployeeUserOption = {
+  id: string;
+  email?: string | null;
+  full_name?: string | null;
+  status?: string | null;
+  linked_employee_id?: string | null;
 };
 
 export type ReimbursementClaim = {

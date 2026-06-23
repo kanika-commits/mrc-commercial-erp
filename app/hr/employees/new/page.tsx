@@ -41,11 +41,12 @@ export default function NewEmployeePage() {
     <section className="space-y-6">
       <Header title="New Employee" />
       <AlertMessage type="error" message={message || lookups.error} onClose={() => setMessage("")} />
-      {lookups.loading ? (
-        <div className="rounded-2xl border bg-white p-8 text-sm text-slate-500 shadow-sm">Loading form...</div>
-      ) : (
-        <EmployeeForm companies={lookups.companies} sites={lookups.sites} departments={lookups.departments} designations={lookups.designations} managers={lookups.employees} saving={saving} onSubmit={save} />
+      {lookups.loading && (
+        <div className="rounded-2xl border bg-white p-4 text-sm text-slate-500 shadow-sm">
+          Loading dropdown options...
+        </div>
       )}
+      <EmployeeForm companies={lookups.companies} sites={lookups.sites} departments={lookups.departments} designations={lookups.designations} managers={lookups.employees} saving={saving || lookups.loading} onSubmit={save} />
     </section>
   );
 }

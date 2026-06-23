@@ -8,13 +8,14 @@ import AlertMessage from "@/components/AlertMessage";
 import EmployeeForm from "@/components/hr/EmployeeForm";
 import { apiFetch } from "@/components/hr/hrClient";
 import { useHrLookups } from "@/components/hr/useHrLookups";
-import type { HrEmployee } from "@/types/hr";
+import type { HrEmployee, HrEmployeeUserOption } from "@/types/hr";
 
 export default function EditEmployeePage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const lookups = useHrLookups();
   const [employee, setEmployee] = useState<HrEmployee | null>(null);
+  const [erpUsers, setErpUsers] = useState<HrEmployeeUserOption[]>([]);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -22,8 +23,12 @@ export default function EditEmployeePage() {
   useEffect(() => {
     async function load() {
       try {
-        const result = await apiFetch(`/api/hr/employees/${params.id}`);
+        const [result, usersResult] = await Promise.all([
+          apiFetch(`/api/hr/employees/${params.id}`),
+          apiFetch(`/api/hr/employees/users?employee_id=${params.id}`),
+        ]);
         setEmployee(result.employee);
+        setErpUsers(usersResult.users || []);
       } catch (error: any) {
         setMessage(error.message || "Failed to load employee.");
       } finally {
@@ -45,6 +50,7 @@ export default function EditEmployeePage() {
           department_id: values.department_id || null,
           designation_id: values.designation_id || null,
           reporting_manager_id: values.reporting_manager_id || null,
+          user_id: values.user_id || null,
         }),
       });
       router.push(`/hr/employees/${params.id}`);
@@ -71,10 +77,15 @@ export default function EditEmployeePage() {
         </Link>
       </header>
       <AlertMessage type="error" message={message || lookups.error} onClose={() => setMessage("")} />
-      {loading || lookups.loading ? (
+      {lookups.loading && (
+        <div className="rounded-2xl border bg-white p-4 text-sm text-slate-500 shadow-sm">
+          Loading dropdown options...
+        </div>
+      )}
+      {loading ? (
         <div className="rounded-2xl border bg-white p-8 text-sm text-slate-500 shadow-sm">Loading form...</div>
       ) : (
-        <EmployeeForm initialEmployee={employee} companies={lookups.companies} sites={lookups.sites} departments={lookups.departments} designations={lookups.designations} managers={lookups.employees} saving={saving} onSubmit={save} />
+        <EmployeeForm initialEmployee={employee} companies={lookups.companies} sites={lookups.sites} departments={lookups.departments} designations={lookups.designations} managers={lookups.employees} erpUsers={erpUsers} saving={saving || lookups.loading} onSubmit={save} />
       )}
     </section>
   );

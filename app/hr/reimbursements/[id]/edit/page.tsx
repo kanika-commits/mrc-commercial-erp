@@ -30,27 +30,46 @@ export default function EditReimbursementPage() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
+    let cancelled = false;
+
     async function load() {
       try {
-        const [result, documentsResult] = await Promise.all([
-          apiFetch(`/api/hr/reimbursements/${params.id}`),
-          apiFetch(`/api/hr/reimbursements/${params.id}/documents`),
-        ]);
+        const result = await apiFetch(`/api/hr/reimbursements/${params.id}`);
+        if (cancelled) return;
         if (!isEditable(result.reimbursement.status)) {
           setMessage("Only draft or rejected claims can be edited.");
         }
         setClaim(result.reimbursement);
-        setDocuments(documentsResult.documents || []);
       } catch (error: any) {
+        if (cancelled) return;
         setMessage(error.message || "Failed to load reimbursement.");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
+
+    async function loadDocuments() {
+      setDocumentsLoading(true);
+      try {
+        const documentsResult = await apiFetch(`/api/hr/reimbursements/${params.id}/documents`);
+        if (!cancelled) setDocuments(documentsResult.documents || []);
+      } catch (error: any) {
+        if (!cancelled) setMessage(error.message || "Failed to load documents.");
+      } finally {
+        if (!cancelled) setDocumentsLoading(false);
+      }
+    }
+
     load();
+    loadDocuments();
+
+    return () => {
+      cancelled = true;
+    };
   }, [params.id]);
 
   async function save(values: ReimbursementFormValues) {
@@ -128,12 +147,22 @@ export default function EditReimbursementPage() {
         </Link>
       </header>
       <AlertMessage type="error" message={message || lookups.error} onClose={() => setMessage("")} />
-      {loading || lookups.loading ? (
+      {lookups.loading && (
+        <div className="rounded-2xl border bg-white p-4 text-sm text-slate-500 shadow-sm">
+          Loading employee options...
+        </div>
+      )}
+      {loading ? (
         <div className="rounded-2xl border bg-white p-8 text-sm text-slate-500 shadow-sm">Loading form...</div>
       ) : claim && isEditable(claim.status) ? (
         <>
-          <ReimbursementForm initialClaim={claim} employees={lookups.employees} saving={saving} onSubmit={save} />
+          <ReimbursementForm initialClaim={claim} employees={lookups.employees} saving={saving || lookups.loading} onSubmit={save} />
           {canUpload && <DocumentUploader uploading={uploading} onUpload={upload} />}
+          {documentsLoading && (
+            <div className="rounded-2xl border bg-white p-4 text-sm text-slate-500 shadow-sm">
+              Loading attachments...
+            </div>
+          )}
           <DocumentGallery documents={documents} canDelete={canUpload} onDelete={deleteDocument} />
         </>
       ) : null}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { HrDepartment, HrDesignation, HrEmployee, LookupOption } from "@/types/hr";
+import type { HrDepartment, HrDesignation, HrEmployee, HrEmployeeUserOption, LookupOption } from "@/types/hr";
 
 type EmployeeFormValues = {
   employee_code: string;
@@ -13,6 +13,7 @@ type EmployeeFormValues = {
   department_id: string;
   designation_id: string;
   reporting_manager_id: string;
+  user_id: string;
   employment_type: string;
   date_of_joining: string;
   status: string;
@@ -25,6 +26,7 @@ type Props = {
   departments: HrDepartment[];
   designations: HrDesignation[];
   managers: HrEmployee[];
+  erpUsers?: HrEmployeeUserOption[];
   saving: boolean;
   onSubmit: (values: EmployeeFormValues) => void;
 };
@@ -39,6 +41,7 @@ const emptyValues: EmployeeFormValues = {
   department_id: "",
   designation_id: "",
   reporting_manager_id: "",
+  user_id: "",
   employment_type: "full_time",
   date_of_joining: "",
   status: "active",
@@ -51,6 +54,7 @@ export default function EmployeeForm({
   departments,
   designations,
   managers,
+  erpUsers,
   saving,
   onSubmit,
 }: Props) {
@@ -68,6 +72,7 @@ export default function EmployeeForm({
       department_id: initialEmployee.department_id || "",
       designation_id: initialEmployee.designation_id || "",
       reporting_manager_id: initialEmployee.reporting_manager_id || "",
+      user_id: initialEmployee.user_id || "",
       employment_type: initialEmployee.employment_type || "full_time",
       date_of_joining: initialEmployee.date_of_joining || "",
       status: initialEmployee.status || "active",
@@ -165,6 +170,26 @@ export default function EmployeeForm({
                 ))}
             </select>
           </Field>
+          {erpUsers && (
+            <Field label="Link ERP User">
+              <select name="user_id" value={form.user_id} onChange={handleChange} className="h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-slate-400">
+                <option value="">No ERP user linked</option>
+                {erpUsers.map((user) => {
+                  const isLinkedElsewhere = Boolean(
+                    user.linked_employee_id && user.linked_employee_id !== initialEmployee?.id,
+                  );
+
+                  return (
+                    <option key={user.id} value={user.id} disabled={isLinkedElsewhere}>
+                      {user.email || user.full_name || user.id}
+                      {user.full_name ? ` - ${user.full_name}` : ""}
+                      {isLinkedElsewhere ? " (already linked)" : ""}
+                    </option>
+                  );
+                })}
+              </select>
+            </Field>
+          )}
           <Field label="Status">
             <select name="status" value={form.status} onChange={handleChange} className="h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-slate-400">
               <option value="active">Active</option>

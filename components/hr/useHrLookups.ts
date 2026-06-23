@@ -11,6 +11,17 @@ type HrLookupOptions = {
   includeEmployees?: boolean;
 };
 
+type LookupState = {
+  companies: LookupOption[];
+  sites: LookupOption[];
+  departments: HrDepartment[];
+  designations: HrDesignation[];
+  employees: HrEmployee[];
+};
+
+const LOOKUP_CACHE_TTL_MS = 60 * 1000;
+const lookupCache = new Map<string, { expiresAt: number; value: LookupState }>();
+
 export function useHrLookups(options: HrLookupOptions = {}) {
   const includeEmployees = options.includeEmployees ?? true;
   const { access, loading: accessLoading } = useAccessContext();
@@ -27,6 +38,25 @@ export function useHrLookups(options: HrLookupOptions = {}) {
     setLoading(true);
     setError("");
     try {
+      const cacheKey = [
+        access.user?.id || "anonymous",
+        includeEmployees ? "with-employees" : "without-employees",
+        access.organizations.join(","),
+        access.companies.join(","),
+        access.sites.join(","),
+      ].join("|");
+      const cached = lookupCache.get(cacheKey);
+
+      if (cached && cached.expiresAt > Date.now()) {
+        setCompanies(cached.value.companies);
+        setSites(cached.value.sites);
+        setDepartments(cached.value.departments);
+        setDesignations(cached.value.designations);
+        setEmployees(cached.value.employees);
+        setLoading(false);
+        return;
+      }
+
       const token = await getAccessToken();
       const allowedOrganizationIds = getAllowedOrganizationIds(access);
       let companyQuery = supabase
@@ -52,29 +82,44 @@ export function useHrLookups(options: HrLookupOptions = {}) {
           apiFetchWithToken("/api/hr/departments", token),
           apiFetchWithToken("/api/hr/designations", token),
           includeEmployees
-            ? apiFetchWithToken("/api/hr/employees", token)
+            ? apiFetchWithToken("/api/hr/employees?lookup=1&status=active", token)
             : Promise.resolve({ employees: [] }),
         ]);
 
       if (companyResult.error) throw companyResult.error;
       if (siteResult.error) throw siteResult.error;
 
-      setCompanies(
-        (companyResult.data || []).map((company: any) => ({
+      const nextCompanies = (companyResult.data || []).map((company: any) => ({
           id: company.id,
           label: `${company.company_name}${company.company_code ? ` (${company.company_code})` : ""}`,
-        }))
-      );
-      setSites(
-        (siteResult.data || []).map((site: any) => ({
+        }));
+      const nextSites = (siteResult.data || []).map((site: any) => ({
           id: site.id,
           label: `${site.site_name}${site.site_code ? ` (${site.site_code})` : ""}`,
           meta: site.company_id,
-        }))
-      );
-      setDepartments(departmentResult.departments || []);
-      setDesignations(designationResult.designations || []);
-      setEmployees(employeeResult.employees || []);
+        }));
+      const nextDepartments = departmentResult.departments || [];
+      const nextDesignations = designationResult.designations || [];
+      const nextEmployees = employeeResult.employees || [];
+
+      const nextValue = {
+        companies: nextCompanies,
+        sites: nextSites,
+        departments: nextDepartments,
+        designations: nextDesignations,
+        employees: nextEmployees,
+      };
+
+      lookupCache.set(cacheKey, {
+        expiresAt: Date.now() + LOOKUP_CACHE_TTL_MS,
+        value: nextValue,
+      });
+
+      setCompanies(nextCompanies);
+      setSites(nextSites);
+      setDepartments(nextDepartments);
+      setDesignations(nextDesignations);
+      setEmployees(nextEmployees);
     } catch (err: any) {
       setError(err.message || "Failed to load HR lookup data.");
     } finally {

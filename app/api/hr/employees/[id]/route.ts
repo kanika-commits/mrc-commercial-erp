@@ -215,6 +215,46 @@ async function validateHrParents(
   return null;
 }
 
+async function validateLinkedUser(
+  admin: ReturnType<typeof adminClient>,
+  organizationId: string,
+  currentEmployeeId: string,
+  userId?: string | null,
+) {
+  if (!userId) return null;
+
+  const { data: accessRow, error: accessError } = await admin
+    .from("user_access_assignments")
+    .select("user_id")
+    .eq("user_id", userId)
+    .eq("organization_id", organizationId)
+    .limit(1)
+    .maybeSingle();
+
+  if (accessError) throw accessError;
+
+  if (!accessRow) {
+    return { error: "Selected ERP user is not available for this employee organization.", status: 403 } as const;
+  }
+
+  const { data: duplicate, error: duplicateError } = await admin
+    .from("hr_employees")
+    .select("id")
+    .eq("user_id", userId)
+    .neq("id", currentEmployeeId)
+    .neq("status", "deleted")
+    .limit(1)
+    .maybeSingle();
+
+  if (duplicateError) throw duplicateError;
+
+  if (duplicate) {
+    return { error: "Selected ERP user is already linked to another employee.", status: 409 } as const;
+  }
+
+  return null;
+}
+
 export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> }
@@ -295,6 +335,7 @@ export async function PUT(
     const designationId = String(payload.designation_id || "").trim() || null;
     const reportingManagerId =
       String(payload.reporting_manager_id || "").trim() || null;
+    const userId = String(payload.user_id || "").trim() || null;
 
     if (!employeeCode) {
       return NextResponse.json({ error: "Employee code is required." }, { status: 400 });
@@ -330,6 +371,20 @@ export async function PUT(
       );
     }
 
+    const linkedUserError = await validateLinkedUser(
+      admin,
+      companyResult.organizationId,
+      id,
+      userId,
+    );
+
+    if (linkedUserError) {
+      return NextResponse.json(
+        { error: linkedUserError.error },
+        { status: linkedUserError.status },
+      );
+    }
+
     const { data: duplicate, error: duplicateError } = await admin
       .from("hr_employees")
       .select("id")
@@ -362,6 +417,7 @@ export async function PUT(
         department_id: departmentId,
         designation_id: designationId,
         reporting_manager_id: reportingManagerId,
+        user_id: userId,
         date_of_joining: payload.date_of_joining || null,
         employment_type: payload.employment_type || null,
         status: String(payload.status || "active").trim() || "active",

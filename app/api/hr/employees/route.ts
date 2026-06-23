@@ -190,6 +190,7 @@ export async function GET(request: Request) {
     const status = searchParams.get("status")?.trim();
     const companyId = searchParams.get("company_id")?.trim();
     const siteId = searchParams.get("site_id")?.trim();
+    const lookupOnly = searchParams.get("lookup") === "1";
     const admin = adminClient();
     const organizationScope = await loadActorOrganizationScope(admin, auth);
     const assignments = isGlobalScope(organizationScope)
@@ -198,7 +199,9 @@ export async function GET(request: Request) {
     let query = admin
       .from("hr_employees")
       .select(
-        "id, organization_id, company_id, site_id, employee_code, employee_name, email, phone, department_id, designation_id, reporting_manager_id, date_of_joining, employment_type, status, created_at, updated_at"
+        lookupOnly
+          ? "id, organization_id, company_id, site_id, employee_code, employee_name, status"
+          : "id, organization_id, company_id, site_id, employee_code, employee_name, email, phone, department_id, designation_id, reporting_manager_id, date_of_joining, employment_type, status, created_at, updated_at"
       )
       .neq("status", "deleted")
       .order("employee_name", { ascending: true });

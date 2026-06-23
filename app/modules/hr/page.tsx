@@ -1,14 +1,32 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, ReceiptText, UsersRound } from "lucide-react";
+import { ArrowRight, BadgeCheck, Building2, ReceiptText, UsersRound } from "lucide-react";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 
 const cards = [
   {
-    title: "Employee Master",
-    description: "Maintain employee records, departments, designations and reporting structure.",
+    title: "Departments",
+    description: "Maintain department names, codes and active status.",
+    href: "/hr/departments",
+    moduleCode: "hr_employees",
+    icon: Building2,
+    meta: "Master Data",
+    tone: "bg-sky-50 text-sky-700",
+  },
+  {
+    title: "Designations",
+    description: "Maintain designation titles and department mapping.",
+    href: "/hr/designations",
+    moduleCode: "hr_employees",
+    icon: BadgeCheck,
+    meta: "Master Data",
+    tone: "bg-violet-50 text-violet-700",
+  },
+  {
+    title: "Employees",
+    description: "Maintain employee records and reporting structure.",
     href: "/hr/employees",
     moduleCode: "hr_employees",
     icon: UsersRound,

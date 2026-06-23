@@ -79,11 +79,12 @@ export default function NewReimbursementPage() {
       <Header title="New Reimbursement" />
       <AlertMessage type="error" message={message || lookups.error} onClose={() => setMessage("")} />
       <AlertMessage type="success" message={success} onClose={() => setSuccess("")} />
-      {lookups.loading ? (
-        <div className="rounded-2xl border bg-white p-8 text-sm text-slate-500 shadow-sm">Loading form...</div>
-      ) : (
-        <ReimbursementForm employees={lookups.employees} saving={saving || Boolean(claimId)} onSubmit={save} />
+      {lookups.loading && (
+        <div className="rounded-2xl border bg-white p-4 text-sm text-slate-500 shadow-sm">
+          Loading employee options...
+        </div>
       )}
+      <ReimbursementForm employees={lookups.employees} saving={saving || Boolean(claimId) || lookups.loading} onSubmit={save} />
       {!claimId && (
         <section className="rounded-2xl border bg-white p-5 shadow-sm">
           <h3 className="text-lg font-semibold text-slate-950">Attachments</h3>
