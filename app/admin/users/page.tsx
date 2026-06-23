@@ -30,7 +30,20 @@ export default function AdminUsersPage() {
   async function loadData() {
     setMessage("");
 
-    const response = await fetch("/api/admin/users");
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      setMessage("Your session expired. Please log in again.");
+      return;
+    }
+
+    const response = await fetch("/api/admin/users", {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    });
     const result = await response.json();
 
     if (!response.ok) {

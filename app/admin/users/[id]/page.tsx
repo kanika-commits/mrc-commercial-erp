@@ -55,7 +55,19 @@ export default function UserAccessPage() {
       setLoading(true);
       setMessage("");
 
-      const response = await fetch(`/api/admin/users/${userId}`);
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/admin/users/${userId}`, {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
       const result = await response.json();
 
       if (!response.ok) {
@@ -275,9 +287,18 @@ export default function UserAccessPage() {
         });
       });
 
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
       const response = await fetch(`/api/admin/users/${userId}`, {
         method: "PUT",
         headers: {
+          Authorization: `Bearer ${session.access_token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
