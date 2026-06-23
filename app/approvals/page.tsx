@@ -51,6 +51,9 @@ export default function ApprovalsPage() {
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error">("error");
   const [remarks, setRemarks] = useState<Record<string, string>>({});
+  const canApproveRaBills = can(access?.permissions || [], "ra_bills", "approve");
+  const canRejectRaBills = can(access?.permissions || [], "ra_bills", "reject");
+  const canApproveDebitNotes = can(access?.permissions || [], "debit_notes", "approve");
   const canDeleteDebitNotes = can(access?.permissions || [], "debit_notes", "delete");
 
   useEffect(() => {
@@ -650,6 +653,8 @@ export default function ApprovalsPage() {
                       <ActionButtons
                         saving={savingId === remarkKey}
                         viewHref={`/ra-bills/${bill.id}`}
+                        showApprove={canApproveRaBills}
+                        showReject={canRejectRaBills}
                         onApprove={() => updateRaStatus(bill.id, "Approved")}
                         onReject={() => updateRaStatus(bill.id, "Rejected")}
                       />
@@ -825,6 +830,7 @@ export default function ApprovalsPage() {
                       <ActionButtons
                         saving={savingId === remarkKey}
                         viewHref={`/debit-notes/${note.id}`}
+                        showApprove={canApproveDebitNotes}
                         showReject={canDeleteDebitNotes}
                         onApprove={() =>
                           updateDebitNoteStatus(note.id, "Approved")
@@ -856,12 +862,14 @@ export default function ApprovalsPage() {
 function ActionButtons({
   saving,
   viewHref,
+  showApprove = true,
   showReject = true,
   onApprove,
   onReject,
 }: {
   saving: boolean;
   viewHref: string;
+  showApprove?: boolean;
   showReject?: boolean;
   onApprove: () => void;
   onReject: () => void;
@@ -875,15 +883,17 @@ function ActionButtons({
         View
       </Link>
 
-      <button
-        type="button"
-        disabled={saving}
-        onClick={onApprove}
-        className="inline-flex w-28 items-center justify-center gap-1 rounded-xl bg-green-600 px-3 py-2 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-60"
-      >
-        <CheckCircle2 className="h-3.5 w-3.5" />
-        Approve
-      </button>
+      {showApprove && (
+        <button
+          type="button"
+          disabled={saving}
+          onClick={onApprove}
+          className="inline-flex w-28 items-center justify-center gap-1 rounded-xl bg-green-600 px-3 py-2 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-60"
+        >
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          Approve
+        </button>
+      )}
 
       {showReject && (
         <button

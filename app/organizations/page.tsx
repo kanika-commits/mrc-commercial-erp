@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import RequirePermission from "@/components/RequirePermission";
 
 export default async function OrganizationsPage() {
   const { data: organizations, error } = await supabase
@@ -41,12 +42,14 @@ export default async function OrganizationsPage() {
           </p>
         </div>
 
-        <Link
-          href="/organizations/new"
-          className="rounded-lg bg-blue-600 px-4 py-2 text-white"
-        >
-          + New Organization
-        </Link>
+        <RequirePermission moduleCode="organizations" actionCode="add" fallback={null}>
+          <Link
+            href="/organizations/new"
+            className="rounded-lg bg-blue-600 px-4 py-2 text-white"
+          >
+            + New Organization
+          </Link>
+        </RequirePermission>
       </div>
 
       <div className="overflow-hidden rounded-lg border bg-white">
@@ -83,12 +86,14 @@ export default async function OrganizationsPage() {
       View
     </Link>
 
-    <Link
-      href={`/organizations/${org.id}/edit`}
-      className="rounded border px-3 py-1"
-    >
-      Edit
-    </Link>
+    <RequirePermission moduleCode="organizations" actionCode="edit" fallback={null}>
+      <Link
+        href={`/organizations/${org.id}/edit`}
+        className="rounded border px-3 py-1"
+      >
+        Edit
+      </Link>
+    </RequirePermission>
   </div>
 </td>
               </tr>

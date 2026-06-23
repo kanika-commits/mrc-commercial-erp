@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requirePermission } from "@/lib/serverPermissions";
 
 const MODULE_CODE = "work_orders";
 const ALLOWED_STATUSES = new Set([
@@ -115,6 +116,83 @@ export async function PATCH(
 
     const { id } = await params;
     const payload = await request.json().catch(() => ({}));
+    const action = String(payload.action || "").trim().toLowerCase();
+
+    if (["approved", "approve"].includes(action)) {
+      const permission = await requirePermission(request, MODULE_CODE, "approve");
+
+      if ("response" in permission) {
+        return permission.response;
+      }
+
+      const userEmail = permission.user.email || "";
+      const userName =
+        permission.user.user_metadata?.full_name ||
+        permission.user.user_metadata?.name ||
+        userEmail;
+
+      const admin = adminClient();
+      const { error: updateError } = await admin
+        .from("work_orders")
+        .update({
+          approval_status: "approved",
+          status: "active",
+          approved_by_name: userName,
+          approved_by_email: userEmail,
+          approved_at: new Date().toISOString(),
+        })
+        .eq("id", id);
+
+      if (updateError) throw updateError;
+
+      return NextResponse.json({ work_order_id: id, approved: true });
+    }
+
+    if (["rejected", "reject"].includes(action)) {
+      const permission = await requirePermission(request, MODULE_CODE, "reject");
+
+      if ("response" in permission) {
+        return permission.response;
+      }
+
+      const admin = adminClient();
+      const { data: documents, error: documentLoadError } = await admin
+        .from("work_order_documents")
+        .select("file_path")
+        .eq("work_order_id", id);
+
+      if (documentLoadError) throw documentLoadError;
+
+      const storagePaths = (documents || [])
+        .map((document) => document.file_path)
+        .filter(Boolean);
+
+      if (storagePaths.length > 0) {
+        const { error: storageError } = await admin.storage
+          .from("work-order-documents")
+          .remove(storagePaths);
+
+        if (storageError) throw storageError;
+      }
+
+      const [vendorDelete, documentDelete] = await Promise.all([
+        admin.from("work_order_vendors").delete().eq("work_order_id", id),
+        admin.from("work_order_documents").delete().eq("work_order_id", id),
+      ]);
+
+      if (vendorDelete.error) throw vendorDelete.error;
+      if (documentDelete.error) throw documentDelete.error;
+
+      const { error: orderDeleteError } = await admin
+        .from("work_orders")
+        .delete()
+        .eq("id", id);
+
+      if (orderDeleteError) throw orderDeleteError;
+
+      return NextResponse.json({ work_order_id: id, rejected: true, deleted: true });
+    }
+
     const status = String(payload.status || "").trim().toLowerCase();
 
     if (!ALLOWED_STATUSES.has(status)) {

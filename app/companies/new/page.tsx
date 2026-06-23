@@ -32,14 +32,32 @@ export default function NewCompanyPage() {
 
       const organizationId = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
 
-      const { error } = await supabase.from("companies").insert({
-        organization_id: organizationId,
-        company_name: companyName.trim(),
-        company_code: companyCode.trim(),
-        status,
-      });
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (error) throw error;
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch("/api/companies", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          organization_id: organizationId,
+          company_name: companyName.trim(),
+          company_code: companyCode.trim(),
+          status,
+        }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to save company.");
+      }
 
       router.push("/companies");
     } catch (error: any) {

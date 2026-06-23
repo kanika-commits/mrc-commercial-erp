@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
+import { requirePermission } from "@/lib/serverPermissions";
 
 
+const MODULE_CODE = "ra_bills";
 const DOCUMENT_BUCKET = "ra-bill-documents";
 
 function adminClient() {
@@ -81,13 +83,10 @@ async function cleanupRABill(
 
 export async function POST(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const auth = await requirePermission(request, MODULE_CODE, "add");
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("response" in auth) {
+      return auth.response;
     }
 
     const formData = await request.formData();

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sortCompanies } from "@/lib/companyOrdering";
+import { requirePermission } from "@/lib/serverPermissions";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -106,10 +107,16 @@ async function requireUserPermission(request: Request, actionCode: "delete") {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const permission = await requirePermission(request, "users", "view");
+
+    if ("response" in permission) {
+      return permission.response;
+    }
+
     const { id } = await params;
     const supabase = adminClient();
 
@@ -225,6 +232,12 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const permission = await requirePermission(request, "users", "edit");
+
+    if ("response" in permission) {
+      return permission.response;
+    }
+
     const { id } = await params;
     const body = await request.json();
     const {
@@ -411,10 +424,10 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const access = await requireUserPermission(request, "delete");
+    const access = await requirePermission(request, "users", "delete");
 
-    if ("error" in access) {
-      return NextResponse.json({ error: access.error }, { status: access.status });
+    if ("response" in access) {
+      return access.response;
     }
 
     const { id } = await params;

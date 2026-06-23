@@ -6,6 +6,7 @@ import {
 } from "@/lib/serverDeleteAudit";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { uploadDriveFile } from "@/src/lib/googleDrive";
+import { requirePermission } from "@/lib/serverPermissions";
 
 const DOCUMENT_BUCKET = "invoice-documents";
 const MODULE_CODE = "invoices";
@@ -207,13 +208,10 @@ async function cleanupInvoice(
 
 export async function POST(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const auth = await requirePermission(request, MODULE_CODE, "add");
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("response" in auth) {
+      return auth.response;
     }
 
     const formData = await request.formData();
@@ -445,15 +443,6 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: message, details }, { status });
   };
 
-  const auth = await requireUser(request).catch((error) => ({
-    error,
-    status: 401,
-  }));
-
-  if ("error" in auth) {
-    return fail(auth.error?.message || String(auth.error), auth.status);
-  }
-
   const { searchParams } = new URL(request.url);
   const invoiceId = searchParams.get("invoice_id")?.trim() || "";
 
@@ -464,12 +453,54 @@ export async function PATCH(request: Request) {
   const { action, rejectionReason } = await readApprovalAction(request);
   const normalizedAction = action.toLowerCase();
 
+  if (["claimed", "itc_claimed"].includes(normalizedAction)) {
+    const auth = await requirePermission(request, MODULE_CODE, "approve");
+
+    if ("response" in auth) {
+      return auth.response;
+    }
+
+    const admin = adminClient();
+    const userEmail = auth.user.email || "";
+    const userName =
+      auth.user.user_metadata?.full_name ||
+      auth.user.user_metadata?.name ||
+      userEmail ||
+      "HO User";
+
+    const { error: itcError } = await admin
+      .from("invoices")
+      .update({
+        itc_status: "Claimed",
+        itc_claimed_by_name: userName,
+        itc_claimed_by_email: userEmail,
+        itc_claimed_at: new Date().toISOString(),
+      })
+      .eq("id", invoiceId);
+
+    if (itcError) {
+      return fail("Failed to claim ITC.", 500, itcError);
+    }
+
+    return NextResponse.json({ itc_claimed: true });
+  }
+
   if (!["approved", "rejected"].includes(normalizedAction)) {
     return fail("Approval action must be Approved or Rejected.", 400);
   }
 
   if (normalizedAction === "rejected" && !rejectionReason) {
     return fail("Reason is required for Reject.", 400);
+  }
+
+  const auth = await requirePermission(
+    request,
+    MODULE_CODE,
+    normalizedAction === "approved" ? "approve" : "reject"
+  );
+
+  if ("response" in auth) {
+    return auth.response;
   }
 
   const admin = adminClient();

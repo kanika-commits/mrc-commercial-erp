@@ -6,6 +6,7 @@ import {
 } from "@/lib/serverDeleteAudit";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { uploadDriveFile } from "@/src/lib/googleDrive";
+import { requirePermission } from "@/lib/serverPermissions";
 
 const DOCUMENT_BUCKET = "debit-note-documents";
 const MODULE_CODE = "debit_notes";
@@ -219,13 +220,10 @@ async function cleanupDebitNote(
 
 export async function POST(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const auth = await requirePermission(request, MODULE_CODE, "add");
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("response" in auth) {
+      return auth.response;
     }
 
     const formData = await request.formData();
@@ -469,15 +467,6 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: message, details }, { status });
   };
 
-  const auth = await requireUser(request).catch((error) => ({
-    error,
-    status: 401,
-  }));
-
-  if ("error" in auth) {
-    return fail(auth.error?.message || String(auth.error), auth.status);
-  }
-
   const { searchParams } = new URL(request.url);
   const debitNoteId = searchParams.get("debit_note_id")?.trim() || "";
 
@@ -494,6 +483,16 @@ export async function PATCH(request: Request) {
 
   if (normalizedAction === "rejected" && rejectionReason.length < 10) {
     return fail("Reason must be at least 10 characters for Reject.", 400);
+  }
+
+  const auth = await requirePermission(
+    request,
+    MODULE_CODE,
+    normalizedAction === "approved" ? "approve" : "delete"
+  );
+
+  if ("response" in auth) {
+    return auth.response;
   }
 
   const admin = adminClient();

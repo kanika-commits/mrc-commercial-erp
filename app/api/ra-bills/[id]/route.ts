@@ -10,6 +10,7 @@ import {
   createWorkOrderDriveFolder,
   uploadDriveFile,
 } from "@/src/lib/googleDrive";
+import { requirePermission } from "@/lib/serverPermissions";
 
 const DOCUMENT_BUCKET = "ra-bill-documents";
 const MODULE_CODE = "ra_bills";
@@ -197,15 +198,6 @@ export async function PATCH(
     return fail("RA Bill id is required.", 400);
   }
 
-  const auth = await requireAuthenticatedUser(request).catch((error) => ({
-    error,
-    status: 401,
-  }));
-
-  if ("error" in auth) {
-    return fail(auth.error?.message || String(auth.error), auth.status);
-  }
-
   const { action, rejectionReason } = await readApprovalAction(request);
   const normalizedAction = action.toLowerCase();
 
@@ -215,6 +207,21 @@ export async function PATCH(
 
   if (normalizedAction === "rejected" && !rejectionReason) {
     return fail("Reason is required for Reject.", 400);
+  }
+
+  const auth = await requirePermission(
+    request,
+    MODULE_CODE,
+    normalizedAction === "approved" ? "approve" : "reject"
+  ).catch((error) => ({
+    response: NextResponse.json(
+      { error: error.message || "Permission check failed." },
+      { status: 500 }
+    ),
+  }));
+
+  if ("response" in auth) {
+    return auth.response;
   }
 
   const admin = createServiceRoleClient();

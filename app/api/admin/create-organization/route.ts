@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requirePermission } from "@/lib/serverPermissions";
 
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
@@ -11,6 +12,12 @@ function uniqueRows<T>(rows: T[], keyFor: (row: T) => string) {
 
 export async function POST(request: Request) {
   try {
+    const permission = await requirePermission(request, "organizations", "add");
+
+    if ("response" in permission) {
+      return permission.response;
+    }
+
     const body = await request.json();
 
     const {

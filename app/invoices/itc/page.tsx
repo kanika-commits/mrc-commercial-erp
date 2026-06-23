@@ -164,19 +164,27 @@ export default function ITCReviewPage() {
     try {
       setMessage("");
 
-      const user = await getCurrentUserNameEmail();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      const { error } = await supabase
-        .from("invoices")
-        .update({
-          itc_status: "Claimed",
-          itc_claimed_by_name: user.name,
-          itc_claimed_by_email: user.email,
-          itc_claimed_at: new Date().toISOString(),
-        })
-        .eq("id", invoiceId);
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
 
-      if (error) throw error;
+      const response = await fetch(`/api/invoices?invoice_id=${invoiceId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ action: "itc_claimed" }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to claim ITC.");
+      }
 
       setInvoices((prev) => prev.filter((invoice) => invoice.id !== invoiceId));
       setMessage("ITC claimed successfully.");

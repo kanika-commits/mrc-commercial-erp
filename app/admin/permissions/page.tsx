@@ -209,34 +209,29 @@ export default function PermissionsPage() {
       setSaving(true);
       setMessage("");
 
-      const { error: deleteError } = await supabase
-        .from("role_permissions")
-        .delete()
-        .eq("role_id", selectedRoleId);
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (deleteError) throw deleteError;
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
 
-      const uniqueRows = new Map<string, any>();
+      const response = await fetch("/api/admin/permissions", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          role_id: selectedRoleId,
+          permissions,
+        }),
+      });
+      const result = await response.json();
 
-      permissions
-        .filter((item) => item.allowed === true)
-        .forEach((item) => {
-          uniqueRows.set(permissionKey(item.module_code, item.action_code), {
-            role_id: selectedRoleId,
-            module_code: item.module_code,
-            action_code: item.action_code,
-            allowed: true,
-          });
-        });
-
-      const rows = Array.from(uniqueRows.values());
-
-      if (rows.length > 0) {
-        const { error: insertError } = await supabase
-          .from("role_permissions")
-          .insert(rows);
-
-        if (insertError) throw insertError;
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to save permissions.");
       }
 
       await loadPermissions(selectedRoleId);

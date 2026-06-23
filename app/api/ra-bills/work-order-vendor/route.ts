@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireAnyPermission } from "@/lib/serverPermissions";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -38,13 +39,13 @@ async function requireUser(request: Request) {
 
 export async function GET(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const auth = await requireAnyPermission(request, [
+      { moduleCode: "ra_bills", actionCode: "add" },
+      { moduleCode: "work_orders", actionCode: "view" },
+    ]);
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("response" in auth) {
+      return auth.response;
     }
 
     const { searchParams } = new URL(request.url);

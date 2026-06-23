@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requirePermission } from "@/lib/serverPermissions";
 
 const DOCUMENT_BUCKET = "debit-note-documents";
 
@@ -59,13 +60,10 @@ function normalizeStoragePath(value: string | null) {
 
 export async function GET(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const auth = await requirePermission(request, "debit_notes", "view");
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("response" in auth) {
+      return auth.response;
     }
 
     const { searchParams } = new URL(request.url);

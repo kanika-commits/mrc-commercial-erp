@@ -4,6 +4,7 @@ import {
   insertDeleteAudit,
   requireDeletePermission,
 } from "@/lib/serverDeleteAudit";
+import { requirePermission } from "@/lib/serverPermissions";
 
 const MODULE_CODE = "payments";
 const DOCUMENT_BUCKET = "payment-documents";
@@ -149,13 +150,10 @@ async function loadPaymentDocuments(
 
 export async function POST(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const auth = await requirePermission(request, MODULE_CODE, "add");
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("response" in auth) {
+      return auth.response;
     }
 
     const formData = await request.formData();
@@ -172,6 +170,193 @@ export async function POST(request: Request) {
       formData.get("reference_number") || formData.get("utr_number") || ""
     ).trim();
     const remarks = String(formData.get("remarks") || "").trim();
+
+    if (!invoiceId) {
+      const paymentType = String(formData.get("payment_type") || "").trim();
+      const companyId = String(formData.get("company_id") || "").trim();
+      const workOrderId = String(formData.get("work_order_id") || "").trim();
+      const vendorId = String(formData.get("vendor_id") || "").trim();
+      const toCompanyBankAccountId = String(
+        formData.get("to_company_bank_account_id") || ""
+      ).trim();
+
+      if (!paymentType) {
+        return NextResponse.json(
+          { error: "Payment Against is required." },
+          { status: 400 }
+        );
+      }
+
+      if (!paymentDate) {
+        return NextResponse.json(
+          { error: "Payment Date is required." },
+          { status: 400 }
+        );
+      }
+
+      if (!companyBankAccountId) {
+        return NextResponse.json(
+          { error: "From Account is required." },
+          { status: 400 }
+        );
+      }
+
+      if (totalPayment <= 0) {
+        return NextResponse.json(
+          { error: "Payment amount is required." },
+          { status: 400 }
+        );
+      }
+
+      if (tdsAmount < 0 || tdsAmount > totalPayment) {
+        return NextResponse.json(
+          { error: "TDS cannot exceed Total Payment." },
+          { status: 400 }
+        );
+      }
+
+      if (transferredAmount !== totalPayment - tdsAmount) {
+        return NextResponse.json(
+          { error: "Transferred Amount must equal Total Payment minus TDS." },
+          { status: 400 }
+        );
+      }
+
+      if (paymentType === "Work Order" && !workOrderId) {
+        return NextResponse.json(
+          { error: "Work Order is required." },
+          { status: 400 }
+        );
+      }
+
+      if (paymentType === "Work Order" && !vendorId) {
+        return NextResponse.json(
+          { error: "No vendor linked to selected Work Order." },
+          { status: 400 }
+        );
+      }
+
+      if (paymentType === "Purchase Order" && !vendorId) {
+        return NextResponse.json(
+          { error: "Vendor / Party is required." },
+          { status: 400 }
+        );
+      }
+
+      if (paymentType !== "Work Order" && !referenceNumber) {
+        return NextResponse.json(
+          { error: "Reference is required." },
+          { status: 400 }
+        );
+      }
+
+      if (
+        paymentType === "Internal Transfer" &&
+        toCompanyBankAccountId === companyBankAccountId
+      ) {
+        return NextResponse.json(
+          { error: "From Account and To Account cannot be same." },
+          { status: 400 }
+        );
+      }
+
+      const admin = adminClient();
+      const { data: account, error: accountError } = await admin
+        .from("company_bank_accounts")
+        .select("id, organization_id, company_id, status")
+        .eq("id", companyBankAccountId)
+        .maybeSingle();
+
+      if (accountError) throw accountError;
+
+      if (!account || String(account.status || "").toLowerCase() !== "active") {
+        return NextResponse.json(
+          { error: "Selected From Account was not found or inactive." },
+          { status: 400 }
+        );
+      }
+
+      const { data: workOrder, error: workOrderError } = workOrderId
+        ? await admin
+            .from("work_orders")
+            .select("id, organization_id, company_id")
+            .eq("id", workOrderId)
+            .maybeSingle()
+        : { data: null, error: null };
+
+      if (workOrderError) throw workOrderError;
+
+      if (workOrderId && !workOrder) {
+        return NextResponse.json(
+          { error: "Selected Work Order was not found." },
+          { status: 404 }
+        );
+      }
+
+      const organizationId =
+        workOrder?.organization_id || account.organization_id || "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
+      const paymentNumber = String(formData.get("payment_number") || "").trim() || `PAY-${Date.now()}`;
+
+      const { data: existingPayments, error: duplicateError } = await admin
+        .from("payments")
+        .select("id, payment_number, utr_number")
+        .eq("organization_id", organizationId)
+        .eq("is_deleted", false);
+
+      if (duplicateError) throw duplicateError;
+
+      const paymentNumberDuplicate = (existingPayments || []).find(
+        (payment) =>
+          normalized(String(payment.payment_number || "")) ===
+          normalized(paymentNumber)
+      );
+
+      if (paymentNumberDuplicate) {
+        return NextResponse.json(
+          { error: "Payment number already exists." },
+          { status: 409 }
+        );
+      }
+
+      const userEmail = auth.user.email || "platform.owner@mrc.local";
+      const userName =
+        auth.user.user_metadata?.full_name ||
+        auth.user.user_metadata?.name ||
+        userEmail ||
+        "Platform Owner";
+
+      const { data: payment, error: paymentError } = await admin
+        .from("payments")
+        .insert({
+          organization_id: organizationId,
+          company_id: companyId || workOrder?.company_id || account.company_id || null,
+          work_order_id: workOrderId || null,
+          vendor_id: vendorId || null,
+          invoice_id: null,
+          payment_number: paymentNumber,
+          payment_date: paymentDate,
+          payment_type: paymentType,
+          reference_number: referenceNumber || null,
+          utr_number: referenceNumber || null,
+          company_bank_account_id: companyBankAccountId,
+          total_payment: totalPayment,
+          tds_amount: tdsAmount,
+          transferred_amount: transferredAmount,
+          payment_amount: transferredAmount,
+          payment_mode: paymentMode || "Bank Transfer",
+          status: "Draft",
+          remarks: remarks || null,
+          created_by_name: userName,
+          created_by_email: userEmail,
+          created_at_user: new Date().toISOString(),
+        })
+        .select("id")
+        .single();
+
+      if (paymentError) throw paymentError;
+
+      return NextResponse.json({ id: payment.id });
+    }
 
     if (!invoiceId) {
       return NextResponse.json(

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requirePermission } from "@/lib/serverPermissions";
 
 type RoleRow = {
   user_id: string;
@@ -23,6 +24,12 @@ function uniqueRows<T>(rows: T[], keyFor: (row: T) => string) {
 
 export async function POST(request: Request) {
   try {
+    const permission = await requirePermission(request, "users", "add");
+
+    if ("response" in permission) {
+      return permission.response;
+    }
+
     const body = await request.json();
 
     const {

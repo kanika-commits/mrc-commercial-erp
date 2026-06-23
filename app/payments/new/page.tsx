@@ -519,15 +519,13 @@ export default function NewPaymentPage() {
   try {
     setSaving(true);
 
-    const organizationId = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
     const {
       data: { session },
     } = await supabase.auth.getSession();
-    const userEmail = session?.user?.email || "";
-    const userName =
-      session?.user?.user_metadata?.full_name ||
-      session?.user?.user_metadata?.name ||
-      userEmail;
+
+    if (!session?.access_token) {
+      throw new Error("Your session expired. Please log in again.");
+    }
 
     for (const [index, row] of filledRows.entries()) {
       const rowNo = index + 1;
@@ -590,35 +588,37 @@ export default function NewPaymentPage() {
         row.vendor_name.trim() ||
         row.payment_type;
 
-      const { error } = await supabase.from("payments").insert({
-        organization_id: organizationId,
-        company_id: row.company_id,
+      const formData = new FormData();
+      formData.append("company_id", row.company_id);
+      formData.append("payment_type", row.payment_type);
+      formData.append("reference_number", reference);
+      formData.append("work_order_id", row.work_order_id || "");
+      formData.append("invoice_id", row.invoice_id || "");
+      formData.append("vendor_id", row.vendor_id || "");
+      formData.append("company_bank_account_id", row.company_bank_account_id);
+      formData.append("to_company_bank_account_id", row.to_company_bank_account_id || "");
+      formData.append("payment_number", `PAY-${Date.now()}-${rowNo}`);
+      formData.append(
+        "payment_date",
+        row.payment_date || new Date().toISOString().slice(0, 10)
+      );
+      formData.append("total_payment", String(total));
+      formData.append("tds_amount", String(tds));
+      formData.append("transferred_amount", String(transfer));
+      formData.append("payment_mode", "Bank Transfer");
 
-        payment_type: row.payment_type,
-        reference_number: reference,
-
-        work_order_id: row.work_order_id || null,
-        invoice_id: row.invoice_id || null,
-        vendor_id: row.vendor_id || null,
-        company_bank_account_id: row.company_bank_account_id,
-
-        payment_number: `PAY-${Date.now()}-${rowNo}`,
-        payment_date:
-          row.payment_date || new Date().toISOString().slice(0, 10),
-
-        total_payment: total,
-        tds_amount: tds,
-        transferred_amount: transfer,
-        payment_amount: transfer,
-
-        payment_mode: "Bank Transfer",
-        status: "Draft",
-        remarks: null,
-        created_by_name: userName || null,
-        created_by_email: userEmail || null,
+      const response = await fetch("/api/payments", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: formData,
       });
+      const result = await response.json();
 
-      if (error) throw new Error(friendlyPaymentError(error));
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to save payment.");
+      }
     }
 
     setMessage("Payments saved successfully.");

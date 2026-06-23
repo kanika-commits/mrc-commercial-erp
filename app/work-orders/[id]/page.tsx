@@ -115,6 +115,7 @@ const [workOrderChanges, setWorkOrderChanges] = useState<any[]>([]);
   const permissions = access?.permissions || [];
   const canUpdateStatus = can(permissions, "work_orders", "edit");
   const canRemoveLinkedVendor = can(permissions, "work_orders", "delete");
+  const canExportWorkOrders = can(permissions, "work_orders", "export");
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState("active");
   const [savingStatus, setSavingStatus] = useState(false);
@@ -987,14 +988,16 @@ function downloadWOLedger() {
     </button>
   )}
 
-  <button
-    type="button"
-    onClick={downloadWOLedger}
-    className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-4 py-2 text-white hover:bg-slate-800"
-  >
-    <Download className="h-4 w-4" />
-    Download Ledger
-  </button>
+  {canExportWorkOrders && (
+    <button
+      type="button"
+      onClick={downloadWOLedger}
+      className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-4 py-2 text-white hover:bg-slate-800"
+    >
+      <Download className="h-4 w-4" />
+      Download Ledger
+    </button>
+  )}
 
   {canUpdateStatus && (
     <button

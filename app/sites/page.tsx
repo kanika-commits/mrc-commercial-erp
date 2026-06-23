@@ -71,6 +71,7 @@ export default function SitesPage() {
   const [deleteSite, setDeleteSite] = useState<Site | null>(null);
   const [deleting, setDeleting] = useState(false);
   const permissions = access?.permissions || [];
+  const canAddSites = can(permissions, "sites", "add");
   const canEditSites = can(permissions, "sites", "edit");
   const canDeleteSites = can(permissions, "sites", "delete");
 
@@ -181,13 +182,15 @@ export default function SitesPage() {
             </p>
           </div>
 
-          <Link
-            href="/sites/new"
-            className="inline-flex items-center justify-center gap-2 rounded bg-[#00658b] px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#005174]"
-          >
-            <Plus className="h-4 w-4" />
-            Add Site
-          </Link>
+          {canAddSites && (
+            <Link
+              href="/sites/new"
+              className="inline-flex items-center justify-center gap-2 rounded bg-[#00658b] px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#005174]"
+            >
+              <Plus className="h-4 w-4" />
+              Add Site
+            </Link>
+          )}
         </div>
       </section>
 

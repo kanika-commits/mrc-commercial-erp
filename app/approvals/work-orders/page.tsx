@@ -224,27 +224,26 @@ export default function WorkOrderApprovalPage() {
     setMessage("");
 
     const {
-      data: { user },
-    } = await supabase.auth.getUser();
+      data: { session },
+    } = await supabase.auth.getSession();
 
-    const userEmail = user?.email || "";
-    const userName =
-      user?.user_metadata?.full_name ||
-      user?.user_metadata?.name ||
-      userEmail;
+    if (!session?.access_token) {
+      throw new Error("Your session expired. Please log in again.");
+    }
 
-    const { error } = await supabase
-      .from("work_orders")
-      .update({
-        approval_status: "approved",
-        status: "active",
-        approved_by_name: userName,
-        approved_by_email: userEmail,
-        approved_at: new Date().toISOString(),
-      })
-      .eq("id", wo.id);
+    const response = await fetch(`/api/work-orders/${wo.id}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ action: "approved" }),
+    });
+    const result = await response.json();
 
-    if (error) throw error;
+    if (!response.ok) {
+      throw new Error(result.error || "Failed to approve work order.");
+    }
 
     setMessage("Work order approved successfully.");
     await loadWorkOrders();
@@ -260,39 +259,27 @@ export default function WorkOrderApprovalPage() {
     setSavingId(wo.id);
     setMessage("");
 
-    const currentDocuments = documents.get(wo.id) || [];
-    const storagePaths = currentDocuments
-      .map((doc) => doc.file_path)
-      .filter(Boolean);
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-    if (storagePaths.length > 0) {
-      const { error: storageError } = await supabase.storage
-        .from("work-order-documents")
-        .remove(storagePaths);
-
-      if (storageError) throw storageError;
+    if (!session?.access_token) {
+      throw new Error("Your session expired. Please log in again.");
     }
 
-    const { error: vendorError } = await supabase
-      .from("work_order_vendors")
-      .delete()
-      .eq("work_order_id", wo.id);
+    const response = await fetch(`/api/work-orders/${wo.id}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ action: "rejected" }),
+    });
+    const result = await response.json();
 
-    if (vendorError) throw vendorError;
-
-    const { error: documentError } = await supabase
-      .from("work_order_documents")
-      .delete()
-      .eq("work_order_id", wo.id);
-
-    if (documentError) throw documentError;
-
-    const { error: orderError } = await supabase
-      .from("work_orders")
-      .delete()
-      .eq("id", wo.id);
-
-    if (orderError) throw orderError;
+    if (!response.ok) {
+      throw new Error(result.error || "Failed to reject work order.");
+    }
 
     setMessage("Work order rejected and deleted successfully.");
     await loadWorkOrders();

@@ -30,6 +30,10 @@ export default function CompaniesPage() {
     roleCodes.includes("platform_owner") ||
     roleCodes.includes("super_admin") ||
     can(permissions, "companies", "edit");
+  const canAddCompanies =
+    roleCodes.includes("platform_owner") ||
+    roleCodes.includes("super_admin") ||
+    can(permissions, "companies", "add");
   const canDeleteCompanies =
     roleCodes.includes("platform_owner") ||
     roleCodes.includes("super_admin") ||
@@ -133,9 +137,11 @@ export default function CompaniesPage() {
           <p className="text-gray-500">Manage MRC group companies.</p>
         </div>
 
-        <Link href="/companies/new" className="rounded-lg bg-blue-600 px-4 py-2 text-white">
-          Add Company
-        </Link>
+        {canAddCompanies && (
+          <Link href="/companies/new" className="rounded-lg bg-blue-600 px-4 py-2 text-white">
+            Add Company
+          </Link>
+        )}
       </div>
 
       {message && (

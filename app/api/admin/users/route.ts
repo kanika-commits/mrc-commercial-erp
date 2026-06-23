@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sortCompanies } from "@/lib/companyOrdering";
+import { requirePermission } from "@/lib/serverPermissions";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -13,8 +14,14 @@ function adminClient() {
   return createClient(supabaseUrl, serviceRoleKey);
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const permission = await requirePermission(request, "users", "view");
+
+    if ("response" in permission) {
+      return permission.response;
+    }
+
     const supabase = adminClient();
 
     const [

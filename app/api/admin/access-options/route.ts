@@ -1,9 +1,19 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sortCompanies } from "@/lib/companyOrdering";
+import { requireAnyPermission } from "@/lib/serverPermissions";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const permission = await requireAnyPermission(request, [
+      { moduleCode: "users", actionCode: "add" },
+      { moduleCode: "users", actionCode: "edit" },
+    ]);
+
+    if ("response" in permission) {
+      return permission.response;
+    }
+
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 

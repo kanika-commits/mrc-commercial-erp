@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { requireDeletePermission } from "@/lib/serverDeleteAudit";
+import { requirePermission } from "@/lib/serverPermissions";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -39,13 +40,10 @@ async function requireUser(request: Request) {
 
 export async function GET(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const auth = await requirePermission(request, "work_orders", "view");
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("response" in auth) {
+      return auth.response;
     }
 
     const { searchParams } = new URL(request.url);
@@ -174,13 +172,10 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const auth = await requirePermission(request, "work_orders", "edit");
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("response" in auth) {
+      return auth.response;
     }
 
     const body = await request.json().catch(() => ({}));
@@ -259,13 +254,10 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const auth = await requirePermission(request, "work_orders", "edit");
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("response" in auth) {
+      return auth.response;
     }
 
     const body = await request.json().catch(() => ({}));
