@@ -59,6 +59,8 @@ export type ReimbursementClaim = {
   rejected_at?: string | null;
   rejection_reason?: string | null;
   payment_id?: string | null;
+  drive_sync_status?: string | null;
+  drive_sync_error?: string | null;
   created_by_name?: string | null;
   created_by_email?: string | null;
   created_at?: string | null;

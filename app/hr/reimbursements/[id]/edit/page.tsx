@@ -5,10 +5,14 @@ import { ArrowLeft, ReceiptText } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import AlertMessage from "@/components/AlertMessage";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 import ReimbursementForm, { type ReimbursementFormValues } from "@/components/hr/ReimbursementForm";
-import { apiFetch } from "@/components/hr/hrClient";
+import DocumentGallery from "@/components/hr/DocumentGallery";
+import DocumentUploader from "@/components/hr/DocumentUploader";
+import { apiFetch, getAccessToken } from "@/components/hr/hrClient";
 import { useHrLookups } from "@/components/hr/useHrLookups";
-import type { ReimbursementClaim } from "@/types/hr";
+import type { ReimbursementClaim, ReimbursementDocument } from "@/types/hr";
 
 function isEditable(status: string) {
   const key = String(status || "").toLowerCase();
@@ -18,20 +22,28 @@ function isEditable(status: string) {
 export default function EditReimbursementPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const { access } = useAccessContext();
+  const canUpload = can(access?.permissions || [], "reimbursements", "upload");
   const lookups = useHrLookups();
   const [claim, setClaim] = useState<ReimbursementClaim | null>(null);
+  const [documents, setDocuments] = useState<ReimbursementDocument[]>([]);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
     async function load() {
       try {
-        const result = await apiFetch(`/api/hr/reimbursements/${params.id}`);
+        const [result, documentsResult] = await Promise.all([
+          apiFetch(`/api/hr/reimbursements/${params.id}`),
+          apiFetch(`/api/hr/reimbursements/${params.id}/documents`),
+        ]);
         if (!isEditable(result.reimbursement.status)) {
           setMessage("Only draft or rejected claims can be edited.");
         }
         setClaim(result.reimbursement);
+        setDocuments(documentsResult.documents || []);
       } catch (error: any) {
         setMessage(error.message || "Failed to load reimbursement.");
       } finally {
@@ -65,6 +77,41 @@ export default function EditReimbursementPage() {
     }
   }
 
+  async function upload(files: FileList, documentType: string) {
+    if (!claim || !isEditable(claim.status)) return;
+    setUploading(true);
+    setMessage("");
+    try {
+      const token = await getAccessToken();
+      const form = new FormData();
+      form.set("document_type", documentType);
+      Array.from(files).forEach((file) => form.append("files", file));
+      const response = await fetch(`/api/hr/reimbursements/${params.id}/documents`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Failed to upload documents.");
+      setDocuments(result.documents || []);
+    } catch (error: any) {
+      setMessage(error.message || "Failed to upload documents.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function deleteDocument(document: ReimbursementDocument) {
+    if (!claim || !isEditable(claim.status)) return;
+    if (!window.confirm(`Delete document "${document.file_name || "Document"}"?`)) return;
+    try {
+      await apiFetch(`/api/hr/reimbursements/${params.id}/documents/${document.id}`, { method: "DELETE" });
+      setDocuments((prev) => prev.filter((item) => item.id !== document.id));
+    } catch (error: any) {
+      setMessage(error.message || "Failed to delete document.");
+    }
+  }
+
   return (
     <section className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-4">
@@ -84,7 +131,11 @@ export default function EditReimbursementPage() {
       {loading || lookups.loading ? (
         <div className="rounded-2xl border bg-white p-8 text-sm text-slate-500 shadow-sm">Loading form...</div>
       ) : claim && isEditable(claim.status) ? (
-        <ReimbursementForm initialClaim={claim} employees={lookups.employees} saving={saving} onSubmit={save} />
+        <>
+          <ReimbursementForm initialClaim={claim} employees={lookups.employees} saving={saving} onSubmit={save} />
+          {canUpload && <DocumentUploader uploading={uploading} onUpload={upload} />}
+          <DocumentGallery documents={documents} canDelete={canUpload} onDelete={deleteDocument} />
+        </>
       ) : null}
     </section>
   );

@@ -187,7 +187,11 @@ export default function ReimbursementDetailPage() {
               <Info label="GST" value={formatCurrency(claim.gst_amount)} />
               <Info label="Total" value={formatCurrency(claim.total_amount)} />
               <Info label="Payment" value={claim.payment_id || "-"} />
+              <Info label="Drive Sync" value={<StatusBadge status={claim.drive_sync_status || "pending"} />} />
               <Info label="Description" value={claim.description || "-"} />
+              {claim.drive_sync_status === "failed" && (
+                <Info label="Drive Sync Error" value={claim.drive_sync_error || "-"} />
+              )}
               {claim.rejection_reason && <Info label="Rejection Reason" value={claim.rejection_reason} />}
             </div>
           </section>
