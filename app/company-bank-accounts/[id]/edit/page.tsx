@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { sortCompanies } from "@/lib/companyOrdering";
+import { getAllowedOrganizationIds } from "@/lib/clientOrganizationScope";
 
 export default function EditCompanyBankAccountPage() {
   const { access, loading: accessLoading } = useAccessContext();
@@ -63,15 +64,28 @@ export default function EditCompanyBankAccountPage() {
       }
 
       const token = await authToken();
+      const allowedOrganizationIds = getAllowedOrganizationIds(currentAccess);
+      const companiesQuery =
+        allowedOrganizationIds && allowedOrganizationIds.length === 0
+          ? Promise.resolve({ data: [] as any[], error: null })
+          : (() => {
+              let query = supabase
+                .from("companies")
+                .select("id, company_name, company_code")
+                .eq("status", "active");
+
+              if (allowedOrganizationIds) {
+                query = query.in("organization_id", allowedOrganizationIds);
+              }
+
+              return query.order("company_name");
+            })();
+
       const [accountResponse, companiesResponse] = await Promise.all([
         fetch(`/api/company-bank-accounts/${accountId}`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
-        supabase
-          .from("companies")
-          .select("id, company_name, company_code")
-          .eq("status", "active")
-          .order("company_name"),
+        companiesQuery,
       ]);
 
       const accountResult = await accountResponse.json();

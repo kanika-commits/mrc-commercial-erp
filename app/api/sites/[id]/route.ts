@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  isInOrganizationScope,
+  loadOrganizationScopeForUser,
+} from "@/lib/serverOrganizationScope";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -133,15 +137,20 @@ export async function PUT(
     }
 
     const supabase = adminClient();
+    const organizationScope = await loadOrganizationScopeForUser(supabase, access.user.id);
     const { data: site, error: siteError } = await supabase
       .from("sites")
-      .select("id")
+      .select("id, organization_id")
       .eq("id", id)
       .maybeSingle();
 
     if (siteError) throw siteError;
 
     if (!site) {
+      return NextResponse.json({ error: "Site was not found." }, { status: 404 });
+    }
+
+    if (!isInOrganizationScope(organizationScope, site.organization_id)) {
       return NextResponse.json({ error: "Site was not found." }, { status: 404 });
     }
 
@@ -211,16 +220,21 @@ export async function DELETE(
 
     const { id } = await params;
     const supabase = adminClient();
+    const organizationScope = await loadOrganizationScopeForUser(supabase, access.user.id);
 
     const { data: site, error: siteError } = await supabase
       .from("sites")
-      .select("id, site_name")
+      .select("id, organization_id, site_name")
       .eq("id", id)
       .maybeSingle();
 
     if (siteError) throw siteError;
 
     if (!site) {
+      return NextResponse.json({ error: "Site was not found." }, { status: 404 });
+    }
+
+    if (!isInOrganizationScope(organizationScope, site.organization_id)) {
       return NextResponse.json({ error: "Site was not found." }, { status: 404 });
     }
 

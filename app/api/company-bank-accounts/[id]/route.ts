@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { assertCompanyBankAccountPermission } from "@/lib/serverCompanyBankAccountAccess";
+import {
+  isInOrganizationScope,
+  loadOrganizationScopeForUser,
+} from "@/lib/serverOrganizationScope";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -36,11 +40,19 @@ export async function GET(
 
     const { id } = await params;
     const supabase = adminClient();
+    const organizationScope = await loadOrganizationScopeForUser(supabase, access.user.id);
     const { data: account, error } = await fetchAccount(supabase, id);
 
     if (error) throw error;
 
     if (!account) {
+      return NextResponse.json(
+        { error: "Bank account was not found." },
+        { status: 404 }
+      );
+    }
+
+    if (!isInOrganizationScope(organizationScope, account.organization_id)) {
       return NextResponse.json(
         { error: "Bank account was not found." },
         { status: 404 }
@@ -96,6 +108,7 @@ export async function PUT(
     }
 
     const supabase = adminClient();
+    const organizationScope = await loadOrganizationScopeForUser(supabase, access.user.id);
     const { data: existingAccount, error: existingError } = await fetchAccount(
       supabase,
       id
@@ -104,6 +117,13 @@ export async function PUT(
     if (existingError) throw existingError;
 
     if (!existingAccount) {
+      return NextResponse.json(
+        { error: "Bank account was not found." },
+        { status: 404 }
+      );
+    }
+
+    if (!isInOrganizationScope(organizationScope, existingAccount.organization_id)) {
       return NextResponse.json(
         { error: "Bank account was not found." },
         { status: 404 }
@@ -122,6 +142,13 @@ export async function PUT(
       return NextResponse.json(
         { error: "Selected company was not found." },
         { status: 404 }
+      );
+    }
+
+    if (!isInOrganizationScope(organizationScope, company.organization_id)) {
+      return NextResponse.json(
+        { error: "You cannot move bank accounts outside your organization." },
+        { status: 403 }
       );
     }
 
@@ -172,11 +199,19 @@ export async function DELETE(
 
     const { id } = await params;
     const supabase = adminClient();
+    const organizationScope = await loadOrganizationScopeForUser(supabase, access.user.id);
     const { data: account, error: accountError } = await fetchAccount(supabase, id);
 
     if (accountError) throw accountError;
 
     if (!account) {
+      return NextResponse.json(
+        { error: "Bank account was not found." },
+        { status: 404 }
+      );
+    }
+
+    if (!isInOrganizationScope(organizationScope, account.organization_id)) {
       return NextResponse.json(
         { error: "Bank account was not found." },
         { status: 404 }

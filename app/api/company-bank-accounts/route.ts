@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { assertCompanyBankAccountPermission } from "@/lib/serverCompanyBankAccountAccess";
+import {
+  applyOrganizationScope,
+  isInOrganizationScope,
+  loadOrganizationScopeForUser,
+} from "@/lib/serverOrganizationScope";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -49,6 +54,7 @@ export async function POST(request: Request) {
     }
 
     const admin = adminClient();
+    const organizationScope = await loadOrganizationScopeForUser(admin, access.user.id);
 
     const { data: company, error: companyError } = await admin
       .from("companies")
@@ -62,6 +68,13 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "Selected company was not found." },
         { status: 404 }
+      );
+    }
+
+    if (!isInOrganizationScope(organizationScope, company.organization_id)) {
+      return NextResponse.json(
+        { error: "You cannot create bank accounts outside your organization." },
+        { status: 403 }
       );
     }
 
@@ -112,11 +125,21 @@ export async function GET(request: Request) {
     const includeDeleted = searchParams.get("include_deleted") === "true";
 
     const admin = adminClient();
-    let query = admin
-      .from("company_bank_accounts")
-      .select(
-        "id, organization_id, company_id, bank_name, account_number, ifsc, is_default, status, created_at"
-      )
+    const organizationScope = await loadOrganizationScopeForUser(admin, access.user.id);
+    let query = applyOrganizationScope(
+      admin
+        .from("company_bank_accounts")
+        .select(
+          "id, organization_id, company_id, bank_name, account_number, ifsc, is_default, status, created_at"
+        ),
+      organizationScope,
+    );
+
+    if (!query) {
+      return NextResponse.json({ accounts: [] });
+    }
+
+    query = query
       .order("bank_name");
 
     if (companyId) {

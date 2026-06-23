@@ -192,15 +192,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="mt-auto space-y-2 border-t border-white/10 pt-7">
-          {visibleGroupCodes.has("administration") && (
-            <Link
-              href="/settings/appearance"
-              className="flex h-12 items-center gap-3 rounded-md px-3 text-sm font-bold text-white/55 transition hover:bg-white/10 hover:text-white"
-            >
-              <Settings className="h-5 w-5" />
-              Settings
-            </Link>
-          )}
+          <Link
+            href="/settings"
+            className="flex h-12 items-center gap-3 rounded-md px-3 text-sm font-bold text-white/55 transition hover:bg-white/10 hover:text-white"
+          >
+            <Settings className="h-5 w-5" />
+            Settings
+          </Link>
           <div className="flex h-12 items-center gap-3 rounded-md px-3 text-sm font-bold text-white/55">
             <span className="grid h-5 w-5 place-items-center rounded-full border border-white/55 text-xs">
               ?

@@ -7,9 +7,11 @@ import { ArrowLeft, Save } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
+import { isOrganizationAllowed } from "@/lib/clientOrganizationScope";
 
 type Site = {
   id: string;
+  organization_id: string;
   site_name: string;
   site_code: string;
   location: string | null;
@@ -51,7 +53,7 @@ export default function EditSitePage() {
 
       const { data, error } = await supabase
         .from("sites")
-        .select("id, site_name, site_code, location, state, status")
+        .select("id, organization_id, site_name, site_code, location, state, status")
         .eq("id", siteId)
         .single();
 
@@ -62,6 +64,13 @@ export default function EditSitePage() {
       }
 
       const site = data as Site;
+
+      if (!isOrganizationAllowed(currentAccess, site.organization_id)) {
+        setMessage("Site was not found.");
+        setLoading(false);
+        return;
+      }
+
       setSiteName(site.site_name || "");
       setSiteCode(site.site_code || "");
       setLocation(site.location || "");

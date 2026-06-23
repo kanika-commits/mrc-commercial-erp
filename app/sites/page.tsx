@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import AlertMessage from "@/components/AlertMessage";
+import { getAllowedOrganizationIds } from "@/lib/clientOrganizationScope";
 
 type Site = {
   id: string;
@@ -63,7 +64,7 @@ function formatSiteDisplayName(siteName: string, location: string | null) {
 }
 
 export default function SitesPage() {
-  const { access } = useAccessContext();
+  const { access, loading: accessLoading } = useAccessContext();
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -76,14 +77,24 @@ export default function SitesPage() {
   const canDeleteSites = can(permissions, "sites", "delete");
 
   useEffect(() => {
-    loadSites();
-  }, []);
+    if (!accessLoading && access) {
+      loadSites();
+    }
+  }, [access, accessLoading]);
 
   async function loadSites() {
     setLoading(true);
     setMessage("");
 
-    const { data, error } = await supabase
+    const allowedOrganizationIds = getAllowedOrganizationIds(access);
+
+    if (allowedOrganizationIds && allowedOrganizationIds.length === 0) {
+      setSites([]);
+      setLoading(false);
+      return;
+    }
+
+    let siteQuery = supabase
       .from("sites")
       .select(
         `
@@ -96,8 +107,13 @@ export default function SitesPage() {
         status,
         created_at
       `,
-      )
-      .order("site_name", { ascending: true });
+      );
+
+    if (allowedOrganizationIds) {
+      siteQuery = siteQuery.in("organization_id", allowedOrganizationIds);
+    }
+
+    const { data, error } = await siteQuery.order("site_name", { ascending: true });
 
     if (error) {
       setMessage(error.message);

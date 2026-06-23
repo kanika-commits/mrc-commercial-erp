@@ -8,6 +8,7 @@ import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { formatStatusLabel } from "@/lib/statusLabels";
 import DeleteCompanyButton from "@/components/DeleteCompanyButton";
+import { isOrganizationAllowed } from "@/lib/clientOrganizationScope";
 
 export default function CompanyDetailPage() {
   const { access, loading: accessLoading } = useAccessContext();
@@ -47,6 +48,10 @@ export default function CompanyDetailPage() {
         .single();
 
       if (companyError) throw companyError;
+
+      if (!isOrganizationAllowed(access, companyData.organization_id)) {
+        throw new Error("Company not found.");
+      }
 
       setCompany(companyData);
 

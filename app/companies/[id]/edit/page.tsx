@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
+import { isOrganizationAllowed } from "@/lib/clientOrganizationScope";
 
 export default function EditCompanyPage() {
   const { access, loading: accessLoading } = useAccessContext();
@@ -64,6 +65,12 @@ export default function EditCompanyPage() {
     }
 
     if (!company) {
+      setMessage("Company was not found.");
+      setLoading(false);
+      return;
+    }
+
+    if (!isOrganizationAllowed(currentAccess, company.organization_id)) {
       setMessage("Company was not found.");
       setLoading(false);
       return;

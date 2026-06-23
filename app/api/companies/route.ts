@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { requirePermission } from "@/lib/serverPermissions";
+import {
+  loadActorOrganizationScope,
+  resolveWriteOrganizationId,
+} from "@/lib/serverOrganizationScope";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -22,17 +26,20 @@ export async function POST(request: Request) {
     }
 
     const payload = await request.json().catch(() => ({}));
-    const organizationId = String(
-      payload.organization_id || "3b65abde-9f9f-4f1b-bd40-fa261a76920b"
-    ).trim();
+    const admin = adminClient();
+    const organizationScope = await loadActorOrganizationScope(admin, permission);
+    const organizationId = resolveWriteOrganizationId(
+      organizationScope,
+      payload.organization_id
+    );
     const companyName = String(payload.company_name || "").trim();
     const companyCode = String(payload.company_code || "").trim();
     const status = String(payload.status || "active").trim() || "active";
 
     if (!organizationId) {
       return NextResponse.json(
-        { error: "Organization is required." },
-        { status: 400 }
+        { error: "You cannot create companies outside your organization." },
+        { status: 403 }
       );
     }
 
@@ -50,7 +57,6 @@ export async function POST(request: Request) {
       );
     }
 
-    const admin = adminClient();
     const { data, error } = await admin
       .from("companies")
       .insert({

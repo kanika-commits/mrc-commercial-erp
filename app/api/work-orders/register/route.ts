@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { requirePermission } from "@/lib/serverPermissions";
+import {
+  applyOrganizationScope,
+  loadActorOrganizationScope,
+  type OrganizationScope,
+} from "@/lib/serverOrganizationScope";
 
 const DOCUMENT_BUCKET = "work-order-documents";
 const PAGE_SIZE_DEFAULT = 50;
@@ -220,8 +225,15 @@ function mapIdsByLabel(rows: any[], labelForRow: (row: any) => string) {
   return map;
 }
 
-function applyWorkOrderScope(query: any, restrictedSiteIds: string[]) {
+function applyWorkOrderScope(
+  query: any,
+  restrictedSiteIds: string[],
+  organizationScope: OrganizationScope,
+) {
   let next = query.ilike("approval_status", "approved");
+  next = applyOrganizationScope(next, organizationScope);
+
+  if (!next) return null;
 
   if (restrictedSiteIds.length > 0) {
     next = next.in("site_id", restrictedSiteIds);
@@ -430,20 +442,45 @@ async function loadVendorsForWorkOrders(
   return vendorResult;
 }
 
-function filterMetadataCacheKey(restrictedSiteIds: string[]) {
-  return restrictedSiteIds.length
+function filterMetadataCacheKey(
+  restrictedSiteIds: string[],
+  organizationScope: OrganizationScope,
+) {
+  const orgKey =
+    organizationScope === null ? "orgs:all" : `orgs:${[...organizationScope].sort().join(",")}`;
+  const siteKey = restrictedSiteIds.length
     ? `sites:${[...restrictedSiteIds].sort().join(",")}`
     : "sites:all";
+
+  return `${orgKey}|${siteKey}`;
 }
 
 async function loadFilterMetadataUncached(
   admin: ReturnType<typeof adminClient>,
   restrictedSiteIds: string[],
+  organizationScope: OrganizationScope,
 ) {
-  const { data: workOrders, error } = await applyWorkOrderScope(
+  const scopedQuery = applyWorkOrderScope(
     admin.from("work_orders").select("company_id, site_id, status, wo_type"),
     restrictedSiteIds,
+    organizationScope,
   );
+
+  if (!scopedQuery) {
+    return {
+      filters: {
+        companies: [],
+        sites: [],
+        statuses: ["Yet to Start", "Active", "Completed", "Suspended", "Terminated"],
+        wo_types: [],
+      },
+      companyLabelMap: new Map<string, string[]>(),
+      siteLabelMap: new Map<string, string[]>(),
+      typeMap: new Map<string, string[]>(),
+    };
+  }
+
+  const { data: workOrders, error } = await scopedQuery;
 
   if (error) throw error;
 
@@ -506,15 +543,20 @@ async function loadFilterMetadataUncached(
 async function loadFilterMetadata(
   admin: ReturnType<typeof adminClient>,
   restrictedSiteIds: string[],
+  organizationScope: OrganizationScope,
 ) {
-  const cacheKey = filterMetadataCacheKey(restrictedSiteIds);
+  const cacheKey = filterMetadataCacheKey(restrictedSiteIds, organizationScope);
   const cached = filterMetadataCache.get(cacheKey);
 
   if (cached && cached.expiresAt > Date.now()) {
     return cached.value;
   }
 
-  const value = await loadFilterMetadataUncached(admin, restrictedSiteIds);
+  const value = await loadFilterMetadataUncached(
+    admin,
+    restrictedSiteIds,
+    organizationScope,
+  );
   filterMetadataCache.set(cacheKey, {
     expiresAt: Date.now() + FILTER_METADATA_TTL_MS,
     value,
@@ -662,6 +704,7 @@ const WORK_ORDER_COLUMNS = `
 async function loadPageRows({
   admin,
   restrictedSiteIds,
+  organizationScope,
   commonFilters,
   sortField,
   sortDirection,
@@ -670,6 +713,7 @@ async function loadPageRows({
 }: {
   admin: ReturnType<typeof adminClient>;
   restrictedSiteIds: string[];
+  organizationScope: OrganizationScope;
   commonFilters: any;
   sortField: string;
   sortDirection: "asc" | "desc";
@@ -688,6 +732,7 @@ async function loadPageRows({
       applyWorkOrderScope(
         admin.from("work_orders").select(WORK_ORDER_COLUMNS),
         restrictedSiteIds,
+        organizationScope,
       ),
       commonFilters,
     );
@@ -712,6 +757,7 @@ async function loadPageRows({
           count: "exact",
         }),
         restrictedSiteIds,
+        organizationScope,
       ),
       commonFilters,
     );
@@ -751,6 +797,7 @@ export async function GET(request: Request) {
       String(searchParams.get("sort_direction") || "asc").toLowerCase() === "desc"
         ? "desc"
         : "asc";
+    const organizationScope = await loadActorOrganizationScope(admin, auth);
     const restrictedSiteIds = await getRestrictedSiteIds(admin, auth.user.id);
 
     const selectedCompanyLabels = parseList(searchParams, "company", "companies");
@@ -764,7 +811,11 @@ export async function GET(request: Request) {
     );
     const woSearch = String(searchParams.get("wo_search") || "").trim();
     const contractorSearch = String(searchParams.get("contractor_search") || "").trim();
-    const metadataPromise = loadFilterMetadata(admin, restrictedSiteIds);
+    const metadataPromise = loadFilterMetadata(
+      admin,
+      restrictedSiteIds,
+      organizationScope,
+    );
     const needsMetadataForFilters =
       (selectedCompanyLabels.length > 0 && explicitCompanyIds.length === 0) ||
       (selectedSiteLabels.length > 0 && explicitSiteIds.length === 0) ||
@@ -772,14 +823,22 @@ export async function GET(request: Request) {
     let contractorWorkOrderIds: string[] | null = null;
 
     if (contractorSearch) {
-      const { data: matchingVendors, error: vendorSearchError } = await admin
-        .from("vendors")
-        .select("id")
-        .ilike("vendor_name", `%${contractorSearch}%`);
+      const vendorSearchQuery = applyOrganizationScope(
+        admin
+          .from("vendors")
+          .select("id")
+          .ilike("vendor_name", `%${contractorSearch}%`),
+        organizationScope,
+      );
+      const { data: matchingVendors, error: vendorSearchError } = vendorSearchQuery
+        ? await vendorSearchQuery
+        : { data: [], error: null };
 
       if (vendorSearchError) throw vendorSearchError;
 
-      const vendorIds = (matchingVendors || []).map((vendor) => vendor.id).filter(Boolean);
+      const vendorIds = (matchingVendors || [])
+        .map((vendor: any) => vendor.id)
+        .filter(Boolean);
 
       if (vendorIds.length === 0) {
         contractorWorkOrderIds = [];
@@ -792,7 +851,7 @@ export async function GET(request: Request) {
         if (matchingLinksError) throw matchingLinksError;
 
         contractorWorkOrderIds = Array.from(
-          new Set((matchingLinks || []).map((link) => link.work_order_id).filter(Boolean)),
+          new Set((matchingLinks || []).map((link: any) => link.work_order_id).filter(Boolean)),
         );
       }
     }
@@ -828,6 +887,7 @@ export async function GET(request: Request) {
       const pageRows = await loadPageRows({
         admin,
         restrictedSiteIds,
+        organizationScope,
         commonFilters,
         sortField,
         sortDirection,
@@ -848,6 +908,7 @@ export async function GET(request: Request) {
       const pageRowsPromise = loadPageRows({
         admin,
         restrictedSiteIds,
+        organizationScope,
         commonFilters,
         sortField,
         sortDirection,

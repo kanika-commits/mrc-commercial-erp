@@ -473,6 +473,85 @@ export async function PUT(
   }
 }
 
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const permission = await requirePermission(request, "users", "edit");
+
+    if ("response" in permission) {
+      return permission.response;
+    }
+
+    const { id } = await params;
+    const body = await request.json().catch(() => ({}));
+    const action = String(body.action || "").trim();
+
+    if (action !== "reset_password") {
+      return NextResponse.json({ error: "Unsupported action." }, { status: 400 });
+    }
+
+    const newPassword = String(body.new_password || "");
+    const confirmationText = String(body.confirmation_text || "").trim();
+
+    if (confirmationText !== "RESET") {
+      return NextResponse.json(
+        { error: "Type RESET to confirm password reset." },
+        { status: 400 }
+      );
+    }
+
+    if (newPassword.length < 8) {
+      return NextResponse.json(
+        { error: "New password must be at least 8 characters." },
+        { status: 400 }
+      );
+    }
+
+    const supabase = adminClient();
+    const actorOrganizationIds = await loadActorOrganizationScope(
+      supabase,
+      permission
+    );
+
+    if (!(await canAccessTargetUser(supabase, actorOrganizationIds, id))) {
+      return NextResponse.json(
+        { error: "You do not have permission to reset this user's password." },
+        { status: 403 }
+      );
+    }
+
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (profileError) throw profileError;
+
+    if (!profile) {
+      return NextResponse.json(
+        { error: "User profile was not found." },
+        { status: 404 }
+      );
+    }
+
+    const { error: resetError } = await supabase.auth.admin.updateUserById(id, {
+      password: newPassword,
+    });
+
+    if (resetError) throw resetError;
+
+    return NextResponse.json({ user_id: id, password_reset: true });
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: error.message || "Failed to reset password." },
+      { status: 500 }
+    );
+  }
+}
+
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }

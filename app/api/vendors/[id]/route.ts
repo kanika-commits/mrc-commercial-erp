@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { createDriveSubfolder, uploadDriveFile } from "@/src/lib/googleDrive";
+import {
+  isInOrganizationScope,
+  loadOrganizationScopeForUser,
+} from "@/lib/serverOrganizationScope";
 
 const ORGANIZATION_ID = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
 const DOCUMENT_BUCKET = "Vendor-Documents";
@@ -349,6 +353,7 @@ export async function GET(
 
     const { id } = await params;
     const supabase = adminClient();
+    const organizationScope = await loadOrganizationScopeForUser(supabase, access.user.id);
 
     const [vendor, contacts, bankAccounts, documents, gstins] = await Promise.all([
       supabase
@@ -448,6 +453,10 @@ export async function GET(
       return NextResponse.json({ error: "Vendor was not found." }, { status: 404 });
     }
 
+    if (!isInOrganizationScope(organizationScope, vendor.data.organization_id)) {
+      return NextResponse.json({ error: "Vendor was not found." }, { status: 404 });
+    }
+
     const { data: vendorWorkOrderLinks, error: vendorWorkOrderLinksError } =
       await supabase
         .from("work_order_vendors")
@@ -496,6 +505,7 @@ export async function GET(
           .from("work_orders")
           .select("id, company_id, site_id, wo_number, wo_date, wo_value, gst_percent")
           .in("id", linkedWorkOrderIds)
+          .eq("organization_id", vendor.data.organization_id)
           .order("wo_number", { ascending: true })
       : { data: [], error: null };
 
@@ -603,6 +613,7 @@ export async function PUT(
 
     const { id } = await params;
     const supabase = adminClient();
+    const organizationScope = await loadOrganizationScopeForUser(supabase, access.user.id);
     const formData = await request.formData();
     const vendor = parseJson<VendorPayload>(formData, "vendor", {} as VendorPayload);
     const contacts = parseJson<ContactPayload[]>(formData, "contacts", []);
@@ -618,6 +629,10 @@ export async function PUT(
     if (existingError) throw existingError;
 
     if (!existingVendor) {
+      return NextResponse.json({ error: "Vendor was not found." }, { status: 404 });
+    }
+
+    if (!isInOrganizationScope(organizationScope, existingVendor.organization_id)) {
       return NextResponse.json({ error: "Vendor was not found." }, { status: 404 });
     }
 
@@ -823,6 +838,7 @@ export async function POST(
     }
 
     const supabase = adminClient();
+    const organizationScope = await loadOrganizationScopeForUser(supabase, access.user.id);
     const { data: document, error: documentError } = await supabase
       .from("vendor_documents")
       .select("id, organization_id, vendor_id, file_name, file_url")
@@ -833,6 +849,10 @@ export async function POST(
     if (documentError) throw documentError;
 
     if (!document) {
+      return NextResponse.json({ error: "Document was not found." }, { status: 404 });
+    }
+
+    if (!isInOrganizationScope(organizationScope, document.organization_id)) {
       return NextResponse.json({ error: "Document was not found." }, { status: 404 });
     }
 
@@ -862,15 +882,20 @@ export async function DELETE(
 
     const { id } = await params;
     const supabase = adminClient();
+    const organizationScope = await loadOrganizationScopeForUser(supabase, access.user.id);
     const { data: vendor, error: vendorError } = await supabase
       .from("vendors")
-      .select("id, status")
+      .select("id, organization_id, status")
       .eq("id", id)
       .maybeSingle();
 
     if (vendorError) throw vendorError;
 
     if (!vendor) {
+      return NextResponse.json({ error: "Vendor was not found." }, { status: 404 });
+    }
+
+    if (!isInOrganizationScope(organizationScope, vendor.organization_id)) {
       return NextResponse.json({ error: "Vendor was not found." }, { status: 404 });
     }
 

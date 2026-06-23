@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createDriveSubfolder, uploadDriveFile } from "@/src/lib/googleDrive";
+import {
+  applyOrganizationScope,
+  loadOrganizationScopeForUser,
+  resolveWriteOrganizationId,
+} from "@/lib/serverOrganizationScope";
 
 const ORGANIZATION_ID = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
 const VENDOR_MASTER_DRIVE_ROOT_FOLDER_ID =
@@ -159,7 +164,8 @@ function vendorDriveFolderName(vendorName: string, vendorId: string) {
 
 async function findDuplicateVendor(
   supabase: ReturnType<typeof adminClient>,
-  vendor: VendorPayload
+  vendor: VendorPayload,
+  organizationId: string
 ) {
   const checks = [
     { field: "pan", label: "PAN", value: vendor.pan },
@@ -171,7 +177,7 @@ async function findDuplicateVendor(
     const { data, error } = await supabase
       .from("vendors")
       .select("id, vendor_name")
-      .eq("organization_id", ORGANIZATION_ID)
+      .eq("organization_id", organizationId)
       .neq("status", "deleted")
       .eq(check.field, String(check.value).trim())
       .limit(1)
@@ -231,6 +237,7 @@ async function ensureVendorDriveFolder(
 }
 
 async function uploadDocument(
+  organizationId: string,
   vendorId: string,
   driveFolderId: string,
   documentType: string,
@@ -252,7 +259,7 @@ async function uploadDocument(
   });
 
   return {
-    organization_id: ORGANIZATION_ID,
+    organization_id: organizationId,
     vendor_id: vendorId,
     document_type: documentType,
     file_name: file.name,
@@ -269,6 +276,7 @@ export async function GET(request: Request) {
     }
 
     const supabase = adminClient();
+    const organizationScope = await loadOrganizationScopeForUser(supabase, access.user.id);
     const { searchParams } = new URL(request.url);
     const includeChildren = searchParams.get("include_children");
     const search = String(searchParams.get("search") || "").trim();
@@ -287,7 +295,7 @@ export async function GET(request: Request) {
 
       if (search) {
         const pattern = `%${search.replace(/[%_]/g, "\\$&")}%`;
-        const [vendorMatches, contactMatches] = await Promise.all([
+        const vendorSearchQuery = applyOrganizationScope(
           supabase
             .from("vendors")
             .select("id")
@@ -300,6 +308,10 @@ export async function GET(request: Request) {
                 `aadhaar_cin.ilike.${pattern}`,
               ].join(",")
             ),
+          organizationScope,
+        );
+        const [vendorMatches, contactMatches] = await Promise.all([
+          vendorSearchQuery || Promise.resolve({ data: [], error: null }),
           supabase
             .from("vendor_contacts")
             .select("vendor_id")
@@ -318,21 +330,36 @@ export async function GET(request: Request) {
         matchedVendorIds = Array.from(
           new Set(
             [
-              ...(vendorMatches.data || []).map((vendor) => vendor.id),
-              ...(contactMatches.data || []).map((contact) => contact.vendor_id),
+              ...(vendorMatches.data || []).map((vendor: any) => vendor.id),
+              ...(contactMatches.data || []).map((contact: any) => contact.vendor_id),
             ].filter(Boolean)
           )
         );
       }
 
-      let vendorQuery = supabase
-        .from("vendors")
-        .select(
-          "id, vendor_name, vendor_type, gstin, pan, aadhaar_cin, created_at",
-          { count: "exact" }
-        )
-        .neq("status", "deleted")
-        .order("created_at", { ascending: false });
+      let vendorQuery = applyOrganizationScope(
+        supabase
+          .from("vendors")
+          .select(
+            "id, organization_id, vendor_name, vendor_type, gstin, pan, aadhaar_cin, created_at",
+            { count: "exact" }
+          )
+          .neq("status", "deleted"),
+        organizationScope,
+      );
+
+      if (!vendorQuery) {
+        return NextResponse.json({
+          vendors: [],
+          total: 0,
+          total_all: 0,
+          page,
+          page_size: pageSize,
+          vendor_types: [],
+        });
+      }
+
+      vendorQuery = vendorQuery.order("created_at", { ascending: false });
 
       if (normalizedType && normalizedType !== "all") {
         vendorQuery = vendorQuery.ilike("vendor_type", normalizedType);
@@ -340,10 +367,17 @@ export async function GET(request: Request) {
 
       if (matchedVendorIds) {
         if (matchedVendorIds.length === 0) {
-          const { data: vendorTypeRows, error: vendorTypeError, count: totalAll } = await supabase
-            .from("vendors")
-            .select("vendor_type", { count: "exact" })
-            .neq("status", "deleted");
+          const vendorTypeQuery = applyOrganizationScope(
+            supabase
+              .from("vendors")
+              .select("vendor_type", { count: "exact" })
+              .neq("status", "deleted"),
+            organizationScope,
+          );
+          const { data: vendorTypeRows, error: vendorTypeError, count: totalAll } =
+            vendorTypeQuery
+              ? await vendorTypeQuery
+              : { data: [], error: null, count: 0 };
 
           if (vendorTypeError) throw vendorTypeError;
 
@@ -354,7 +388,7 @@ export async function GET(request: Request) {
             page,
             page_size: pageSize,
             vendor_types: Array.from(
-              new Set((vendorTypeRows || []).map((row) => row.vendor_type).filter(Boolean))
+              new Set((vendorTypeRows || []).map((row: any) => row.vendor_type).filter(Boolean))
             ).sort(),
           });
         }
@@ -367,7 +401,7 @@ export async function GET(request: Request) {
       if (vendorsResult.error) throw vendorsResult.error;
 
       const vendors = vendorsResult.data || [];
-      const vendorIds = vendors.map((vendor) => vendor.id).filter(Boolean);
+      const vendorIds = vendors.map((vendor: any) => vendor.id).filter(Boolean);
 
       const contactsPromise = vendorIds.length
         ? supabase
@@ -376,10 +410,15 @@ export async function GET(request: Request) {
             .in("vendor_id", vendorIds)
             .order("is_primary", { ascending: false })
         : Promise.resolve({ data: [], error: null });
-      const vendorTypesPromise = supabase
-        .from("vendors")
-        .select("vendor_type", { count: "exact" })
-        .neq("status", "deleted");
+      const vendorTypesQuery = applyOrganizationScope(
+        supabase
+          .from("vendors")
+          .select("vendor_type", { count: "exact" })
+          .neq("status", "deleted"),
+        organizationScope,
+      );
+      const vendorTypesPromise =
+        vendorTypesQuery || Promise.resolve({ data: [], error: null, count: 0 });
 
       const [contactsResult, vendorTypeRows] = await Promise.all([
         contactsPromise,
@@ -390,7 +429,7 @@ export async function GET(request: Request) {
       if (vendorTypeRows.error) throw vendorTypeRows.error;
 
       const contactsByVendor = new Map<string, any[]>();
-      (contactsResult.data || []).forEach((contact) => {
+      (contactsResult.data || []).forEach((contact: any) => {
         if (!contact.vendor_id) return;
         const rows = contactsByVendor.get(contact.vendor_id) || [];
         rows.push(contact);
@@ -398,7 +437,7 @@ export async function GET(request: Request) {
       });
 
       const responseBody = {
-        vendors: vendors.map((vendor) => ({
+        vendors: vendors.map((vendor: any) => ({
           ...vendor,
           contacts: contactsByVendor.get(vendor.id) || [],
           bank_accounts: [],
@@ -408,20 +447,28 @@ export async function GET(request: Request) {
         page,
         page_size: pageSize,
         vendor_types: Array.from(
-          new Set((vendorTypeRows.data || []).map((row) => row.vendor_type).filter(Boolean))
+          new Set((vendorTypeRows.data || []).map((row: any) => row.vendor_type).filter(Boolean))
         ).sort(),
       };
       return NextResponse.json(responseBody);
     }
 
-    const [vendorsResult, contactsResult, bankAccountsResult] = await Promise.all([
+    const vendorsQuery = applyOrganizationScope(
       supabase
         .from("vendors")
         .select(
-          "id, vendor_name, vendor_type, gstin, pan, aadhaar_cin, created_at"
+          "id, organization_id, vendor_name, vendor_type, gstin, pan, aadhaar_cin, created_at"
         )
-        .neq("status", "deleted")
-        .order("created_at", { ascending: false }),
+        .neq("status", "deleted"),
+      organizationScope,
+    );
+
+    if (!vendorsQuery) {
+      return NextResponse.json({ vendors: [] });
+    }
+
+    const [vendorsResult, contactsResult, bankAccountsResult] = await Promise.all([
+      vendorsQuery.order("created_at", { ascending: false }),
       supabase
         .from("vendor_contacts")
         .select("id, vendor_id, contact_name, contact_number, email, designation, is_primary")
@@ -437,7 +484,7 @@ export async function GET(request: Request) {
     }
 
     const contactsByVendor = new Map<string, any[]>();
-    (contactsResult.data || []).forEach((contact) => {
+    (contactsResult.data || []).forEach((contact: any) => {
       if (!contact.vendor_id) return;
       contactsByVendor.set(contact.vendor_id, [
         ...(contactsByVendor.get(contact.vendor_id) || []),
@@ -446,7 +493,7 @@ export async function GET(request: Request) {
     });
 
     const bankAccountsByVendor = new Map<string, any[]>();
-    (bankAccountsResult.data || []).forEach((account) => {
+    (bankAccountsResult.data || []).forEach((account: any) => {
       if (!account.vendor_id) return;
       bankAccountsByVendor.set(account.vendor_id, [
         ...(bankAccountsByVendor.get(account.vendor_id) || []),
@@ -454,7 +501,7 @@ export async function GET(request: Request) {
       ]);
     });
 
-    const vendors = (vendorsResult.data || []).map((vendor) => ({
+    const vendors = (vendorsResult.data || []).map((vendor: any) => ({
       ...vendor,
       contacts: contactsByVendor.get(vendor.id) || [],
       bank_accounts: bankAccountsByVendor.get(vendor.id) || [],
@@ -478,6 +525,7 @@ export async function POST(request: Request) {
     }
 
     const supabase = adminClient();
+    const organizationScope = await loadOrganizationScopeForUser(supabase, access.user.id);
     const formData = await request.formData();
     const vendor = parseJson<VendorPayload>(formData, "vendor", {} as VendorPayload);
     const contacts = parseJson<ContactPayload[]>(formData, "contacts", []);
@@ -659,7 +707,19 @@ export async function POST(request: Request) {
       }
     }
 
-    const duplicateVendor = await findDuplicateVendor(supabase, vendor);
+    const organizationId = resolveWriteOrganizationId(
+      organizationScope,
+      (vendor as any).organization_id
+    );
+
+    if (!organizationId) {
+      return NextResponse.json(
+        { error: "You cannot create vendors outside your organization." },
+        { status: 403 }
+      );
+    }
+
+    const duplicateVendor = await findDuplicateVendor(supabase, vendor, organizationId);
 
     if (duplicateVendor) {
       return NextResponse.json(
@@ -676,7 +736,7 @@ export async function POST(request: Request) {
     const { data: createdVendor, error: vendorError } = await supabase
       .from("vendors")
       .insert({
-        organization_id: ORGANIZATION_ID,
+        organization_id: organizationId,
         vendor_name: vendor.vendor_name.trim(),
         vendor_type: vendor.vendor_type,
         contractor_type: vendor.contractor_type,
@@ -708,7 +768,7 @@ export async function POST(request: Request) {
         .from("vendor_contacts")
         .insert(
           contacts.map((contact) => ({
-            organization_id: ORGANIZATION_ID,
+            organization_id: organizationId,
             vendor_id: vendorId,
             contact_name: contact.contact_name.trim(),
             contact_number: contact.contact_number.trim(),
@@ -726,7 +786,7 @@ export async function POST(request: Request) {
         .from("vendor_bank_accounts")
         .insert(
           bankAccounts.map((bank, index) => ({
-            organization_id: ORGANIZATION_ID,
+            organization_id: organizationId,
             vendor_id: vendorId,
             account_holder_name: bank.account_holder_name.trim(),
             account_number: bank.account_number.trim(),
@@ -742,7 +802,7 @@ export async function POST(request: Request) {
 
     if (vendor.gstin) {
       const { error: gstinError } = await supabase.from("vendor_gstins").insert({
-        organization_id: ORGANIZATION_ID,
+        organization_id: organizationId,
         vendor_id: vendorId,
         gstin: vendor.gstin,
         state_code: vendor.gstin.slice(0, 2),
@@ -759,6 +819,7 @@ export async function POST(request: Request) {
       if (key.startsWith("document:") && value instanceof File && value.size > 0) {
         documentRows.push(
           await uploadDocument(
+            organizationId,
             vendorId,
             vendorFolder.folderId,
             key.replace("document:", ""),

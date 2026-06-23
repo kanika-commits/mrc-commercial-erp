@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase";
 import { sortCompanies } from "@/lib/companyOrdering";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
+import { getAllowedOrganizationIds } from "@/lib/clientOrganizationScope";
 
 export default function NewCompanyBankAccountPage() {
   const { access, loading: accessLoading } = useAccessContext();
@@ -43,11 +44,23 @@ export default function NewCompanyBankAccountPage() {
       return;
     }
 
-    const { data, error } = await supabase
+    const allowedOrganizationIds = getAllowedOrganizationIds(currentAccess);
+
+    if (allowedOrganizationIds && allowedOrganizationIds.length === 0) {
+      setCompanies([]);
+      return;
+    }
+
+    let companyQuery = supabase
       .from("companies")
       .select("id, company_name, company_code")
-      .eq("status", "active")
-      .order("company_name");
+      .eq("status", "active");
+
+    if (allowedOrganizationIds) {
+      companyQuery = companyQuery.in("organization_id", allowedOrganizationIds);
+    }
+
+    const { data, error } = await companyQuery.order("company_name");
 
     if (error) {
       setMessage(error.message);

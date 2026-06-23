@@ -7,9 +7,11 @@ import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
+import { isOrganizationAllowed } from "@/lib/clientOrganizationScope";
 
 type Site = {
   id: string;
+  organization_id: string;
   site_name: string;
   site_code: string;
   location: string | null;
@@ -95,12 +97,18 @@ export default function SiteDetailPage() {
 
       const { data: siteData, error: siteError } = await supabase
         .from("sites")
-        .select("id, site_name, site_code, location, state, status, created_at")
+        .select("id, organization_id, site_name, site_code, location, state, status, created_at")
         .eq("id", siteId)
         .single();
 
       if (siteError) {
         setMessage(siteError.message);
+        setLoading(false);
+        return;
+      }
+
+      if (!isOrganizationAllowed(access, siteData.organization_id)) {
+        setMessage("Site not found.");
         setLoading(false);
         return;
       }

@@ -8,6 +8,7 @@ import { can } from "@/lib/accessControl";
 import { sortCompanies } from "@/lib/companyOrdering";
 import { formatStatusLabel } from "@/lib/statusLabels";
 import DeleteCompanyButton from "@/components/DeleteCompanyButton";
+import { getAllowedOrganizationIds } from "@/lib/clientOrganizationScope";
 
 type Company = {
   id: string;
@@ -21,7 +22,7 @@ type Company = {
 };
 
 export default function CompaniesPage() {
-  const { access } = useAccessContext();
+  const { access, loading: accessLoading } = useAccessContext();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -38,18 +39,34 @@ export default function CompaniesPage() {
     can(permissions, "companies", "delete");
 
   useEffect(() => {
-    loadCompanies();
-  }, []);
+    if (!accessLoading && access) {
+      loadCompanies();
+    }
+  }, [access, accessLoading]);
 
   async function loadCompanies() {
     setLoading(true);
     setMessage("");
 
-    const { data, error } = await supabase
+    const allowedOrganizationIds = getAllowedOrganizationIds(access);
+
+    if (allowedOrganizationIds && allowedOrganizationIds.length === 0) {
+      setCompanies([]);
+      setLoading(false);
+      return;
+    }
+
+    let companyQuery = supabase
       .from("companies")
       .select("id, organization_id, company_name, company_code, status, created_at")
       .neq("status", "deleted")
       .order("created_at", { ascending: false });
+
+    if (allowedOrganizationIds) {
+      companyQuery = companyQuery.in("organization_id", allowedOrganizationIds);
+    }
+
+    const { data, error } = await companyQuery;
 
     if (error) {
       setMessage(error.message);

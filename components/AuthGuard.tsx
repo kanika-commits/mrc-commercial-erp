@@ -40,6 +40,8 @@ function hasRouteAccess(
 ) {
   if (isUnrestrictedPath(pathname)) return true;
 
+  if (pathname === "/settings" || pathname === "/settings/password") return true;
+
   if (pathname.startsWith("/settings")) {
     return (
       access.roleCodes.includes("platform_owner") ||

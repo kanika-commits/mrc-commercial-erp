@@ -39,8 +39,22 @@ export default function UserAccessPage() {
   const [loading, setLoading] = useState(true);
   const [permissionsSaved, setPermissionsSaved] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showResetPasswordModal, setShowResetPasswordModal] = useState(false);
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetConfirmPassword, setResetConfirmPassword] = useState("");
+  const [resetConfirmationText, setResetConfirmationText] = useState("");
+  const [resettingPassword, setResettingPassword] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const canDeleteUser = can(access?.permissions || [], "users", "delete");
+  const permissions = access?.permissions || [];
+  const roleCodes = access?.roleCodes || [];
+  const canEditUser =
+    roleCodes.includes("platform_owner") ||
+    can(permissions, "*", "*") ||
+    can(permissions, "users", "edit");
+  const canDeleteUser =
+    roleCodes.includes("platform_owner") ||
+    can(permissions, "*", "*") ||
+    can(permissions, "users", "delete");
 
   useEffect(() => {
     loadData();
@@ -359,6 +373,64 @@ export default function UserAccessPage() {
     }
   }
 
+  async function resetUserPassword() {
+    try {
+      setResettingPassword(true);
+      setMessage("");
+
+      if (!resetPassword || !resetConfirmPassword) {
+        setMessage("Enter and confirm the new password.");
+        return;
+      }
+
+      if (resetPassword.length < 8) {
+        setMessage("New password must be at least 8 characters.");
+        return;
+      }
+
+      if (resetPassword !== resetConfirmPassword) {
+        setMessage("New password and confirmation do not match.");
+        return;
+      }
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/admin/users/${userId}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "reset_password",
+          new_password: resetPassword,
+          confirmation_text: resetConfirmationText,
+        }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to reset password.");
+      }
+
+      setResetPassword("");
+      setResetConfirmPassword("");
+      setResetConfirmationText("");
+      setShowResetPasswordModal(false);
+      setMessage("Password reset successfully. Share the new password manually.");
+    } catch (error: any) {
+      setMessage(error.message || "Failed to reset password.");
+    } finally {
+      setResettingPassword(false);
+    }
+  }
+
   if (loading) return <p className="text-gray-500">Loading user access...</p>;
 
   if (!profile) {
@@ -403,15 +475,27 @@ export default function UserAccessPage() {
           <Info label="Status" value={profile.status || "active"} />
         </div>
 
-        {canDeleteUser && (
+        {(canEditUser || canDeleteUser) && (
           <div className="mt-4 flex gap-3">
-            <button
-              type="button"
-              onClick={() => setShowDeleteModal(true)}
-              className="rounded border border-red-200 px-3 py-1 text-red-700 hover:bg-red-50"
-            >
-              Delete User
-            </button>
+            {canEditUser && (
+              <button
+                type="button"
+                onClick={() => setShowResetPasswordModal(true)}
+                className="rounded border border-blue-200 px-3 py-1 text-blue-700 hover:bg-blue-50"
+              >
+                Reset Password
+              </button>
+            )}
+
+            {canDeleteUser && (
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(true)}
+                className="rounded border border-red-200 px-3 py-1 text-red-700 hover:bg-red-50"
+              >
+                Delete User
+              </button>
+            )}
           </div>
         )}
       </section>
@@ -669,6 +753,80 @@ export default function UserAccessPage() {
                 className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
               >
                 {deleting ? "Deleting..." : "Delete User"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showResetPasswordModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h2 className="text-xl font-bold text-slate-950">Reset Password</h2>
+            <p className="mt-3 text-sm leading-6 text-slate-600">
+              Set a new password for{" "}
+              <span className="font-semibold text-slate-950">
+                {profile.full_name || profile.email || "-"}
+              </span>
+              . The password will not be emailed automatically.
+            </p>
+
+            <div className="mt-5 space-y-4">
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">
+                  New Password
+                </span>
+                <input
+                  type="password"
+                  value={resetPassword}
+                  onChange={(event) => setResetPassword(event.target.value)}
+                  className="mt-1 w-full rounded-lg border px-3 py-2"
+                  autoComplete="new-password"
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">
+                  Confirm Password
+                </span>
+                <input
+                  type="password"
+                  value={resetConfirmPassword}
+                  onChange={(event) => setResetConfirmPassword(event.target.value)}
+                  className="mt-1 w-full rounded-lg border px-3 py-2"
+                  autoComplete="new-password"
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">
+                  Type RESET to confirm
+                </span>
+                <input
+                  type="text"
+                  value={resetConfirmationText}
+                  onChange={(event) => setResetConfirmationText(event.target.value)}
+                  className="mt-1 w-full rounded-lg border px-3 py-2"
+                />
+              </label>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowResetPasswordModal(false)}
+                disabled={resettingPassword}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={resetUserPassword}
+                disabled={resettingPassword}
+                className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+              >
+                {resettingPassword ? "Resetting..." : "Reset Password"}
               </button>
             </div>
           </div>
