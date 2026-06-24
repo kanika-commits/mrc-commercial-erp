@@ -27,7 +27,6 @@ export default function NewInvoicePage() {
   const [selectedWO, setSelectedWO] = useState<any>(null);
   const [linkedVendor, setLinkedVendor] = useState<any>(null);
   const [linkedVendors, setLinkedVendors] = useState<any[]>([]);
-  const [previousRABills, setPreviousRABills] = useState<any[]>([]);
   const [previousInvoices, setPreviousInvoices] = useState<any[]>([]);
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
 
@@ -105,7 +104,6 @@ export default function NewInvoicePage() {
     setSelectedWO(null);
     setLinkedVendor(null);
     setLinkedVendors([]);
-    setPreviousRABills([]);
     setPreviousInvoices([]);
 
     setForm((prev) => ({
@@ -123,7 +121,6 @@ export default function NewInvoicePage() {
     setSelectedWO(null);
     setLinkedVendor(null);
     setLinkedVendors([]);
-    setPreviousRABills([]);
     setPreviousInvoices([]);
 
     if (!workOrderId) return;
@@ -178,27 +175,6 @@ export default function NewInvoicePage() {
     setLinkedVendors(linkedVendors);
     setLinkedVendor(linkedVendors.length === 1 ? linkedVendor : null);
 
-    const { data: raData, error: raError } = await supabase
-      .from("ra_bills")
-      .select(`
-        id,
-        ra_number,
-        ra_date,
-        gross_amount,
-        gst_amount,
-        net_amount,
-        approval_status,
-        created_at
-      `)
-      .eq("work_order_id", workOrderId)
-      .ilike("approval_status", "approved")
-      .order("created_at", { ascending: true });
-
-    if (raError) {
-      setMessage(raError.message);
-      return;
-    }
-
     const { data: invoiceData, error: invoiceError } = await supabase
       .from("invoices")
       .select(`
@@ -219,7 +195,6 @@ export default function NewInvoicePage() {
       return;
     }
 
-    setPreviousRABills(raData || []);
     setPreviousInvoices(invoiceData || []);
 
     setForm((prev) => ({
@@ -269,23 +244,12 @@ export default function NewInvoicePage() {
     return Math.round(taxable + gstAmount);
   }, [form.taxable_amount, gstAmount]);
 
-  const totalRABills = useMemo(() => {
-    return previousRABills.reduce(
-      (sum, bill) => sum + Number(bill.net_amount || 0),
-      0
-    );
-  }, [previousRABills]);
-
   const totalInvoices = useMemo(() => {
     return previousInvoices.reduce(
       (sum, invoice) => sum + Number(invoice.invoice_amount || 0),
       0
     );
   }, [previousInvoices]);
-
-  const totalAfterThisInvoice = totalInvoices + invoiceAmount;
-  const raVsInvoiceBalance = totalRABills - totalAfterThisInvoice;
-  const invoiceExceedsRA = totalAfterThisInvoice > totalRABills;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -551,64 +515,6 @@ export default function NewInvoicePage() {
 
           {selectedWO && (
             <>
-              <section className="grid gap-4 md:grid-cols-4">
-                <Summary
-                  title="Site"
-                  value={selectedWO.sites?.site_name || "-"}
-                />
-                <Summary
-                  title="Company"
-                  value={selectedWO.companies?.company_name || "-"}
-                />
-                <Summary title="WO Number" value={selectedWO.wo_number || "-"} />
-                <Summary
-                  title="Vendor"
-                  value={linkedVendor?.vendor_name || "-"}
-                />
-              </section>
-
-              <section className="grid gap-4 md:grid-cols-4">
-                <Summary title="WO Value" value={money(selectedWO.wo_value)} />
-                <Summary title="Approved RA Total" value={money(totalRABills)} />
-                <Summary
-                  title="Previous Invoice Total"
-                  value={money(totalInvoices)}
-                />
-                <Summary
-                  title="RA - Invoice Balance"
-                  value={money(raVsInvoiceBalance)}
-                  warning={invoiceExceedsRA}
-                />
-              </section>
-
-              {invoiceExceedsRA && (
-                <AlertMessage
-                  type="warning"
-                  message={`Warning: Total invoices after this entry exceed approved RA bills by ${money(
-                    Math.abs(raVsInvoiceBalance)
-                  )}. You can still submit, but please verify before saving.`}
-                  scrollIntoView={false}
-                />
-              )}
-
-              <section className="rounded-2xl border bg-white p-6 shadow-sm">
-                <h2 className="mb-4 text-xl font-semibold text-slate-950">
-                  Approved RA Bills
-                </h2>
-
-                <HistoryTable
-                  emptyText="No approved RA bills found for this Work Order."
-                  columns={["RA No", "Date", "Gross", "GST", "Net"]}
-                  rows={previousRABills.map((bill) => [
-                    bill.ra_number || "-",
-                    bill.ra_date || "-",
-                    money(bill.gross_amount),
-                    money(bill.gst_amount),
-                    money(bill.net_amount),
-                  ])}
-                />
-              </section>
-
               <section className="rounded-2xl border bg-white p-6 shadow-sm">
                 <h2 className="mb-4 text-xl font-semibold text-slate-950">
                   Previous Invoices
@@ -651,6 +557,12 @@ export default function NewInvoicePage() {
                       Enter the tax values exactly as shown on the uploaded PDF.
                     </p>
                   </div>
+                </div>
+
+                <div className="mt-5 grid gap-3 rounded-xl border bg-slate-50 p-4 text-sm md:grid-cols-3">
+                  <CompactInfo label="Work Order" value={selectedWO.wo_number || "-"} />
+                  <CompactInfo label="Vendor" value={linkedVendor?.vendor_name || "-"} />
+                  <CompactInfo label="Previous Invoice Total" value={money(totalInvoices)} />
                 </div>
 
                 <div className="mt-5 grid gap-4 md:grid-cols-2">
@@ -835,6 +747,17 @@ function Summary({
         {title}
       </p>
       <p className="mt-2 text-lg font-bold text-slate-950">{value}</p>
+    </div>
+  );
+}
+
+function CompactInfo({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+        {label}
+      </p>
+      <p className="mt-1 truncate font-semibold text-slate-900">{value}</p>
     </div>
   );
 }
