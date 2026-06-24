@@ -296,14 +296,14 @@ async function enrichRows(admin: ReturnType<typeof adminClient>, invoices: any[]
   });
 }
 
-async function countInvoices(admin: ReturnType<typeof adminClient>, query: any) {
-  const { count, error } = await query.select("id", { count: "exact", head: true });
+async function countInvoices(query: any) {
+  const { count, error } = await query;
   if (error) throw error;
   return count || 0;
 }
 
-async function sumPendingItcValue(admin: ReturnType<typeof adminClient>, query: any) {
-  const { data, error } = await query.select("gst_amount");
+async function sumPendingItcValue(query: any) {
+  const { data, error } = await query;
   if (error) throw error;
   return (data || []).reduce((sum: number, row: any) => sum + Number(row.gst_amount || 0), 0);
 }
@@ -343,8 +343,13 @@ function selectInvoiceRows(admin: ReturnType<typeof adminClient>, organizationSc
   );
 }
 
-function baseInvoiceQuery(admin: ReturnType<typeof adminClient>, organizationScope: OrganizationScope) {
-  let query: any = admin.from("invoices");
+function baseInvoiceQuery(
+  admin: ReturnType<typeof adminClient>,
+  organizationScope: OrganizationScope,
+  columns = "id",
+  options?: { count?: "exact" | "planned" | "estimated"; head?: boolean },
+) {
+  const query: any = admin.from("invoices").select(columns, options);
 
   if (organizationScope === null) return query;
   if (organizationScope.length === 0) return null;
@@ -459,39 +464,46 @@ export async function GET(request: Request) {
     ] = await Promise.all([
       enrichRows(admin, data || []),
       countInvoices(
-        admin,
         applyActiveApprovalFilter(
-          applyBaseInvoiceFilters(baseInvoiceQuery(admin, organizationScope), commonFilters),
-        ),
-      ),
-      countInvoices(
-        admin,
-        applyPendingItcFilter(
-          applyActiveApprovalFilter(
-            applyBaseInvoiceFilters(baseInvoiceQuery(admin, organizationScope), commonFilters),
+          applyBaseInvoiceFilters(
+            baseInvoiceQuery(admin, organizationScope, "id", { count: "exact", head: true }),
+            commonFilters,
           ),
         ),
       ),
       countInvoices(
-        admin,
+        applyPendingItcFilter(
+          applyActiveApprovalFilter(
+            applyBaseInvoiceFilters(
+              baseInvoiceQuery(admin, organizationScope, "id", { count: "exact", head: true }),
+              commonFilters,
+            ),
+          ),
+        ),
+      ),
+      countInvoices(
         applyActiveApprovalFilter(
-          applyBaseInvoiceFilters(baseInvoiceQuery(admin, organizationScope), commonFilters),
+          applyBaseInvoiceFilters(
+            baseInvoiceQuery(admin, organizationScope, "id", { count: "exact", head: true }),
+            commonFilters,
+          ),
         ).ilike("itc_status", "claimed"),
       ),
       sumPendingItcValue(
-        admin,
         applyPendingItcFilter(
           applyActiveApprovalFilter(
-            applyBaseInvoiceFilters(baseInvoiceQuery(admin, organizationScope), commonFilters),
+            applyBaseInvoiceFilters(
+              baseInvoiceQuery(admin, organizationScope, "gst_amount"),
+              commonFilters,
+            ),
           ),
         ),
       ),
       countInvoices(
-        admin,
-        applyBaseInvoiceFilters(baseInvoiceQuery(admin, organizationScope), commonFilters).ilike(
-          "approval_status",
-          "rejected",
-        ),
+        applyBaseInvoiceFilters(
+          baseInvoiceQuery(admin, organizationScope, "id", { count: "exact", head: true }),
+          commonFilters,
+        ).ilike("approval_status", "rejected"),
       ),
       applyBaseInvoiceFilters(selectInvoiceRows(admin, organizationScope), commonFilters)
         .ilike("approval_status", "rejected")
