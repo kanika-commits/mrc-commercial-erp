@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { requirePermission } from "@/lib/serverPermissions";
+import {
+  isInOrganizationScope,
+  loadOrganizationScopeForUser,
+} from "@/lib/serverOrganizationScope";
 
 const MODULE_CODE = "work_orders";
 const ALLOWED_STATUSES = new Set([
@@ -20,6 +24,73 @@ function adminClient() {
   }
 
   return createClient(supabaseUrl, serviceRoleKey);
+}
+
+async function loadActorAssignments(admin: ReturnType<typeof adminClient>, userId: string) {
+  const { data, error } = await admin
+    .from("user_access_assignments")
+    .select("company_id, site_id")
+    .eq("user_id", userId);
+
+  if (error) throw error;
+
+  return {
+    companyIds: Array.from(
+      new Set((data || []).map((row) => row.company_id).filter(Boolean)),
+    ) as string[],
+    siteIds: Array.from(
+      new Set((data || []).map((row) => row.site_id).filter(Boolean)),
+    ) as string[],
+  };
+}
+
+function isWorkOrderInActorScope(
+  workOrder: any,
+  organizationScope: string[] | null,
+  assignments: { companyIds: string[]; siteIds: string[] },
+) {
+  if (!isInOrganizationScope(organizationScope, workOrder?.organization_id)) {
+    return false;
+  }
+
+  if (assignments.siteIds.length > 0) {
+    return assignments.siteIds.includes(workOrder.site_id);
+  }
+
+  if (assignments.companyIds.length > 0) {
+    return assignments.companyIds.includes(workOrder.company_id);
+  }
+
+  return true;
+}
+
+async function loadScopedWorkOrder(
+  admin: ReturnType<typeof adminClient>,
+  userId: string,
+  workOrderId: string,
+) {
+  const { data: workOrder, error } = await admin
+    .from("work_orders")
+    .select("id, organization_id, company_id, site_id")
+    .eq("id", workOrderId)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  if (!workOrder) {
+    return { error: "Work Order was not found.", status: 404 } as const;
+  }
+
+  const [organizationScope, assignments] = await Promise.all([
+    loadOrganizationScopeForUser(admin, userId),
+    loadActorAssignments(admin, userId),
+  ]);
+
+  if (!isWorkOrderInActorScope(workOrder, organizationScope, assignments)) {
+    return { error: "You do not have access to this Work Order.", status: 403 } as const;
+  }
+
+  return { workOrder } as const;
 }
 
 async function requireEditPermission(request: Request) {
@@ -125,13 +196,22 @@ export async function PATCH(
         return permission.response;
       }
 
+      const admin = adminClient();
+      const scopedWorkOrder = await loadScopedWorkOrder(admin, permission.user.id, id);
+
+      if ("error" in scopedWorkOrder) {
+        return NextResponse.json(
+          { error: scopedWorkOrder.error },
+          { status: scopedWorkOrder.status },
+        );
+      }
+
       const userEmail = permission.user.email || "";
       const userName =
         permission.user.user_metadata?.full_name ||
         permission.user.user_metadata?.name ||
         userEmail;
 
-      const admin = adminClient();
       const { error: updateError } = await admin
         .from("work_orders")
         .update({
@@ -156,6 +236,15 @@ export async function PATCH(
       }
 
       const admin = adminClient();
+      const scopedWorkOrder = await loadScopedWorkOrder(admin, permission.user.id, id);
+
+      if ("error" in scopedWorkOrder) {
+        return NextResponse.json(
+          { error: scopedWorkOrder.error },
+          { status: scopedWorkOrder.status },
+        );
+      }
+
       const { data: documents, error: documentLoadError } = await admin
         .from("work_order_documents")
         .select("file_path")
@@ -203,18 +292,12 @@ export async function PATCH(
     }
 
     const admin = adminClient();
-    const { data: workOrder, error: workOrderError } = await admin
-      .from("work_orders")
-      .select("id")
-      .eq("id", id)
-      .maybeSingle();
+    const scopedWorkOrder = await loadScopedWorkOrder(admin, access.user.id, id);
 
-    if (workOrderError) throw workOrderError;
-
-    if (!workOrder) {
+    if ("error" in scopedWorkOrder) {
       return NextResponse.json(
-        { error: "Work Order was not found." },
-        { status: 404 }
+        { error: scopedWorkOrder.error },
+        { status: scopedWorkOrder.status },
       );
     }
 
