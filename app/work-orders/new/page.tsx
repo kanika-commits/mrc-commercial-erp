@@ -43,8 +43,8 @@ type FormState = {
   wo_value: string;
   gst_percent: string;
   description: string;
-  primary_vendor_id: string;
-  primary_vendor_role: string;
+  vendor_id: string;
+  vendor_role: string;
 };
 
 const steps = [
@@ -96,8 +96,8 @@ export default function NewWorkOrderPage() {
     wo_value: "",
     gst_percent: "18",
     description: "",
-    primary_vendor_id: "",
-    primary_vendor_role: "Main Contractor",
+    vendor_id: "",
+    vendor_role: "Main Contractor",
   });
 
   useEffect(() => {
@@ -115,8 +115,8 @@ export default function NewWorkOrderPage() {
   );
 
   const selectedVendor = useMemo(
-    () => vendors.find((item) => item.id === form.primary_vendor_id),
-    [vendors, form.primary_vendor_id]
+    () => vendors.find((item) => item.id === form.vendor_id),
+    [vendors, form.vendor_id]
   );
 
   const commercialTotals = useMemo(() => {
@@ -279,8 +279,8 @@ export default function NewWorkOrderPage() {
     }
 
     if (step === 3) {
-  if (!form.primary_vendor_id) {
-    errors.primary_vendor_id = "Primary vendor is required.";
+  if (!form.vendor_id) {
+    errors.vendor_id = "Primary vendor is required.";
   }
 }
 
@@ -372,8 +372,8 @@ setFieldErrors(errors);
       payload.append("wo_value", String(commercialTotals.basicValue));
       payload.append("gst_percent", String(commercialTotals.gstPercent));
       payload.append("description", form.description);
-      payload.append("primary_vendor_id", form.primary_vendor_id);
-      payload.append("primary_vendor_role", form.primary_vendor_role);
+      payload.append("vendor_id", form.vendor_id);
+      payload.append("vendor_role", form.vendor_role);
       payload.append("work_order_file", workOrderFile);
 
       const response = await fetch("/api/work-orders", {
@@ -700,11 +700,11 @@ setFieldErrors(errors);
                   <FieldShell
                     label="Vendor"
                     required
-                    error={fieldErrors.primary_vendor_id}
+                    error={fieldErrors.vendor_id}
                   >
                     <select
-                      name="primary_vendor_id"
-                      value={form.primary_vendor_id}
+                      name="vendor_id"
+                      value={form.vendor_id}
                       onChange={handleChange}
                       className={inputClass}
                     >

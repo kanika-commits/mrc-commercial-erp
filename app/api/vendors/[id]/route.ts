@@ -482,23 +482,6 @@ export async function GET(
       if (bill.work_order_id) workOrderIds.add(bill.work_order_id);
     });
 
-    const { data: primaryVendorWorkOrders, error: primaryVendorWorkOrdersError } =
-      await supabase
-        .from("work_orders")
-        .select("id")
-        .eq("primary_vendor_id", id);
-
-    if (primaryVendorWorkOrdersError) {
-      const message = String(primaryVendorWorkOrdersError.message || "").toLowerCase();
-      if (!message.includes("primary_vendor_id")) {
-        throw primaryVendorWorkOrdersError;
-      }
-    } else {
-      (primaryVendorWorkOrders || []).forEach((workOrder) => {
-        if (workOrder.id) workOrderIds.add(workOrder.id);
-      });
-    }
-
     const linkedWorkOrderIds = Array.from(workOrderIds);
     const { data: workOrders, error: workOrdersError } = linkedWorkOrderIds.length
       ? await supabase

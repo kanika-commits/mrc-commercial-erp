@@ -221,8 +221,8 @@ export async function POST(request: Request) {
     const woValue = Number(formData.get("wo_value") || 0);
     const gstPercent = Number(formData.get("gst_percent") || 0);
     const description = String(formData.get("description") || "").trim();
-    const vendorId = String(formData.get("primary_vendor_id") || "").trim();
-    const vendorRole = String(formData.get("primary_vendor_role") || "").trim();
+    const vendorId = String(formData.get("vendor_id") || "").trim();
+    const vendorRole = String(formData.get("vendor_role") || "").trim();
     const file = formData.get("work_order_file");
 
     if (!companyId) {
