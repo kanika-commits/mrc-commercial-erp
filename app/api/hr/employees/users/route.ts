@@ -1,23 +1,12 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import { requirePermission } from "@/lib/serverPermissions";
 import {
-  isInOrganizationScope,
-  loadActorOrganizationScope,
-} from "@/lib/serverOrganizationScope";
+  canAccessHrEmployee,
+  HR_EMPLOYEES_MODULE_CODE,
+  hrAdminClient,
+} from "@/app/api/hr/employees/_shared";
 
-const MODULE_CODE = "hr_employees";
-
-function adminClient() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-  if (!serviceRoleKey) {
-    throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY.");
-  }
-
-  return createClient(supabaseUrl, serviceRoleKey);
-}
+const MODULE_CODE = HR_EMPLOYEES_MODULE_CODE;
 
 export async function GET(request: Request) {
   try {
@@ -32,11 +21,10 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Employee id is required." }, { status: 400 });
     }
 
-    const admin = adminClient();
-    const organizationScope = await loadActorOrganizationScope(admin, auth);
+    const admin = hrAdminClient();
     const { data: employee, error: employeeError } = await admin
       .from("hr_employees")
-      .select("id, organization_id, user_id")
+      .select("id, organization_id, company_id, site_id, user_id")
       .eq("id", employeeId)
       .neq("status", "deleted")
       .maybeSingle();
@@ -47,7 +35,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Employee was not found." }, { status: 404 });
     }
 
-    if (!isInOrganizationScope(organizationScope, employee.organization_id)) {
+    if (!(await canAccessHrEmployee(admin, auth, employee))) {
       return NextResponse.json(
         { error: "You do not have access to this employee." },
         { status: 403 },
