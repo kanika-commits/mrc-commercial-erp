@@ -26,6 +26,7 @@ export default function NewInvoicePage() {
   const [selectedSiteId, setSelectedSiteId] = useState("");
   const [selectedWO, setSelectedWO] = useState<any>(null);
   const [linkedVendor, setLinkedVendor] = useState<any>(null);
+  const [linkedVendors, setLinkedVendors] = useState<any[]>([]);
   const [previousRABills, setPreviousRABills] = useState<any[]>([]);
   const [previousInvoices, setPreviousInvoices] = useState<any[]>([]);
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
@@ -103,6 +104,7 @@ export default function NewInvoicePage() {
     setSelectedSiteId(siteId);
     setSelectedWO(null);
     setLinkedVendor(null);
+    setLinkedVendors([]);
     setPreviousRABills([]);
     setPreviousInvoices([]);
 
@@ -120,6 +122,7 @@ export default function NewInvoicePage() {
     setMessage("");
     setSelectedWO(null);
     setLinkedVendor(null);
+    setLinkedVendors([]);
     setPreviousRABills([]);
     setPreviousInvoices([]);
 
@@ -155,14 +158,25 @@ export default function NewInvoicePage() {
       return;
     }
 
-    const linkedVendor = vendorResult.vendors?.[workOrderId];
+    const linkedVendors = (vendorResult.all_vendors?.[workOrderId] || [])
+      .map((row: any) => ({
+        vendor_id: row.vendor_id,
+        vendor_name: row.vendor?.vendor_name || "",
+        vendor_role: row.vendor_role || "-",
+      }))
+      .filter((row: any) => row.vendor_id);
+    const linkedVendor =
+      linkedVendors.length === 1
+        ? linkedVendors[0]
+        : vendorResult.vendors?.[workOrderId];
 
-    if (!linkedVendor?.vendor_id) {
+    if (linkedVendors.length === 0 && !linkedVendor?.vendor_id) {
       setMessage("No vendor is linked to this Work Order.");
       return;
     }
 
-    setLinkedVendor(linkedVendor);
+    setLinkedVendors(linkedVendors);
+    setLinkedVendor(linkedVendors.length === 1 ? linkedVendor : null);
 
     const { data: raData, error: raError } = await supabase
       .from("ra_bills")
@@ -211,7 +225,7 @@ export default function NewInvoicePage() {
     setForm((prev) => ({
       ...prev,
       work_order_id: workOrderId,
-      vendor_id: linkedVendor.vendor_id,
+      vendor_id: linkedVendors.length === 1 ? linkedVendor.vendor_id : "",
     }));
   }
 
@@ -231,6 +245,11 @@ export default function NewInvoicePage() {
 
       loadWorkOrderDetails(value);
       return;
+    }
+
+    if (name === "vendor_id") {
+      const vendor = linkedVendors.find((item) => item.vendor_id === value) || null;
+      setLinkedVendor(vendor);
     }
 
     setForm((prev) => ({
@@ -283,7 +302,7 @@ export default function NewInvoicePage() {
     }
 
     if (!form.vendor_id) {
-      setMessage("Vendor could not be found for this Work Order.");
+      setMessage("Select a vendor linked to this Work Order.");
       return;
     }
 
@@ -469,7 +488,7 @@ export default function NewInvoicePage() {
               </div>
             </div>
 
-            <div className="mt-5 grid gap-4 md:grid-cols-2">
+            <div className="mt-5 grid gap-4 md:grid-cols-3">
               <Field label="Site *">
                 <select
                   value={selectedSiteId}
@@ -500,6 +519,29 @@ export default function NewInvoicePage() {
                   {filteredWorkOrders.map((wo) => (
                     <option key={wo.id} value={wo.id}>
                       {wo.wo_number}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Vendor *">
+                <select
+                  name="vendor_id"
+                  value={form.vendor_id}
+                  onChange={handleChange}
+                  disabled={!form.work_order_id || linkedVendors.length === 0}
+                  className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-slate-100"
+                >
+                  <option value="">
+                    {!form.work_order_id
+                      ? "Select Work Order First"
+                      : linkedVendors.length === 0
+                      ? "No linked vendors"
+                      : "Select Vendor"}
+                  </option>
+                  {linkedVendors.map((vendor) => (
+                    <option key={vendor.vendor_id} value={vendor.vendor_id}>
+                      {vendor.vendor_name} — {vendor.vendor_role}
                     </option>
                   ))}
                 </select>

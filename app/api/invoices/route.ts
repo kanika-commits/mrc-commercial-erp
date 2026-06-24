@@ -661,9 +661,6 @@ export async function PATCH(request: Request) {
       .update({
         approval_status: "Approved",
         status: "Approved",
-        approved_by_name: userName,
-        approved_by_email: userEmail,
-        approved_at: now,
       })
       .eq("id", invoiceId);
 
@@ -686,10 +683,10 @@ export async function PATCH(request: Request) {
     .update({
       approval_status: "Rejected",
       status: "Rejected",
-      rejected_by_name: userName,
-      rejected_by_email: userEmail,
-      rejected_at: now,
-      rejection_reason: rejectionReason,
+      itc_rejected_by_name: userName,
+      itc_rejected_by_email: userEmail,
+      itc_rejected_at: now,
+      itc_rejection_reason: rejectionReason,
     })
     .eq("id", invoiceId);
 

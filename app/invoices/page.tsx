@@ -115,12 +115,13 @@ export default function InvoicesPage() {
       itc_status,
       created_by_name,
       created_by_email,
-      approved_by_name,
-      approved_by_email,
-      approved_at,
       itc_claimed_by_name,
       itc_claimed_by_email,
       itc_claimed_at,
+      itc_rejected_by_name,
+      itc_rejected_by_email,
+      itc_rejected_at,
+      itc_rejection_reason,
       created_at
     `)
     .order("created_at", { ascending: false });
@@ -363,7 +364,7 @@ export default function InvoicesPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1660px] text-sm">
+          <table className="w-full min-w-[1420px] text-sm">
             <thead className="bg-slate-50 text-xs uppercase text-slate-500">
               <tr>
                 <th className="p-3 text-left">Invoice Number</th>
@@ -376,8 +377,6 @@ export default function InvoicesPage() {
                 <th className="p-3 text-left">ITC Status</th>
                 <th className="p-3 text-left">Created By</th>
                 <th className="p-3 text-left">Created At</th>
-                <th className="p-3 text-left">Approved By</th>
-                <th className="p-3 text-left">Approved At</th>
                 <th className="p-3 text-left">ITC Claimed By</th>
                 <th className="p-3 text-left">ITC Claimed At</th>
                 <th className="p-3 text-right">Action</th>
@@ -455,26 +454,6 @@ export default function InvoicesPage() {
 
                     <td className="p-3 text-slate-700">
                       {formatDateTime(invoice.created_at)}
-                    </td>
-
-                    <td className="p-3">
-                      <div className="max-w-[180px] truncate font-medium">
-                        {auditName(
-                          invoice.approved_by_name,
-                          invoice.approved_by_email
-                        )}
-                      </div>
-                      {invoice.approved_by_name &&
-                        invoice.approved_by_email &&
-                        invoice.approved_by_name !== invoice.approved_by_email && (
-                          <div className="max-w-[180px] truncate text-xs text-slate-500">
-                            {invoice.approved_by_email}
-                          </div>
-                        )}
-                    </td>
-
-                    <td className="p-3 text-slate-700">
-                      {formatDateTime(invoice.approved_at)}
                     </td>
 
                     <td className="p-3">
@@ -607,7 +586,7 @@ export default function InvoicesPage() {
                       </td>
                       <td className="p-3">
                         <div className="max-w-[360px] rounded-lg bg-red-50 px-3 py-2 text-red-700">
-                          {invoice.rejection_reason || "-"}
+                          {invoice.itc_rejection_reason || "-"}
                         </div>
                       </td>
                       <td className="p-3 text-right">
