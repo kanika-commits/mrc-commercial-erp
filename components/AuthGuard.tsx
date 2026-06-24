@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
@@ -75,6 +75,15 @@ export default function AuthGuard({
   const [moduleNavigation, setModuleNavigation] =
     useState<ModuleNavigation>(EMPTY_NAVIGATION);
   const [error, setError] = useState<string | null>(null);
+  const userRef = useRef<User | null>(null);
+  const accessRef = useRef<CurrentUserAccess | null>(null);
+  const moduleNavigationRef = useRef<ModuleNavigation>(EMPTY_NAVIGATION);
+
+  useEffect(() => {
+    userRef.current = user;
+    accessRef.current = access;
+    moduleNavigationRef.current = moduleNavigation;
+  }, [access, moduleNavigation, user]);
 
   const clearAccessState = useCallback(() => {
     setUser(null);
@@ -176,11 +185,25 @@ export default function AuthGuard({
         return;
       }
 
-      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+      if (event === "SIGNED_IN") {
         if (!session?.access_token || isLoginPage) return;
         setUser(session.user);
         setAuthChecked(true);
-        loadAccessAndNavigation(session.access_token);
+
+        const bootstrapMissing =
+          !accessRef.current ||
+          (moduleNavigationRef.current.modules || []).length === 0 ||
+          userRef.current?.id !== session.user.id;
+
+        if (bootstrapMissing) {
+          loadAccessAndNavigation(session.access_token);
+        }
+        return;
+      }
+
+      if (event === "TOKEN_REFRESHED") {
+        if (!session?.user || isLoginPage) return;
+        setUser(session.user);
       }
     });
 
