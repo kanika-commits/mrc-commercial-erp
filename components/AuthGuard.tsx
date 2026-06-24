@@ -24,7 +24,7 @@ const EMPTY_NAVIGATION: ModuleNavigation = {
 };
 
 function isUnrestrictedPath(pathname: string) {
-  return pathname === "/" || pathname === "/modules";
+  return pathname === "/modules";
 }
 
 function actionForPath(pathname: string) {
@@ -39,6 +39,10 @@ function hasRouteAccess(
   navigation: ModuleNavigation,
 ) {
   if (isUnrestrictedPath(pathname)) return true;
+
+  if (pathname === "/") {
+    return can(access.permissions, "dashboard", "view");
+  }
 
   if (pathname === "/settings" || pathname === "/settings/password") return true;
 
@@ -216,6 +220,12 @@ export default function AuthGuard({
     if (!authChecked || accessLoading || !access) return false;
     return !hasRouteAccess(pathname, access, moduleNavigation);
   }, [access, accessLoading, authChecked, error, isLoginPage, moduleNavigation, pathname]);
+
+  useEffect(() => {
+    if (pathname === "/" && accessDenied && access) {
+      router.replace("/modules");
+    }
+  }, [access, accessDenied, pathname, router]);
 
   const contextValue = useMemo(
     () => ({

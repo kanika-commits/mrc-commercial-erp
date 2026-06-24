@@ -74,6 +74,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const permissions = access?.permissions || [];
   const roleCodes = access?.roleCodes || [];
+  const dashboardHref = can(permissions, "dashboard", "view") ? "/" : "/modules";
   const visibleGroupCodes = useMemo(() => {
     const nextVisibleGroups = new Set<string>();
 
@@ -170,7 +171,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-[#f3f6f8]">
       <aside className="fixed left-0 top-0 z-40 flex h-screen w-[224px] flex-col bg-black px-4 py-8 text-white">
-        <Link href="/" className="mb-8 block px-2">
+        <Link href={dashboardHref} className="mb-8 block px-2">
           <h1 className="text-2xl font-bold tracking-tight">ConstructIQ</h1>
           <p className="mt-2 text-sm font-medium text-white/50">
             Enterprise ERP
