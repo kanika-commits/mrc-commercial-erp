@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
   Bell,
@@ -16,6 +16,11 @@ import {
 } from "lucide-react";
 import UserHeader from "@/components/UserHeader";
 import { useAccessContext } from "@/components/AccessContext";
+import {
+  EMPTY_NOTIFICATION_COUNTS,
+  NotificationCountsProvider,
+  type NotificationCounts,
+} from "@/components/NotificationCountsContext";
 import { can } from "@/lib/accessControl";
 import { supabase } from "@/lib/supabase";
 
@@ -58,18 +63,15 @@ const notificationLinks = [
   },
 ] as const;
 
-type NotificationCounts = Record<(typeof notificationLinks)[number]["key"], number>;
-
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { access, moduleNavigation, loading: accessLoading, user } = useAccessContext();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [notificationCounts, setNotificationCounts] = useState<NotificationCounts>({
-    pendingWorkOrders: 0,
-    pendingRaBills: 0,
-    pendingDebitNotes: 0,
-    pendingItcReview: 0,
-  });
+  const [notificationCounts, setNotificationCounts] = useState<NotificationCounts>(
+    EMPTY_NOTIFICATION_COUNTS,
+  );
+  const [notificationCountsLoading, setNotificationCountsLoading] = useState(false);
+  const [notificationCountsLoaded, setNotificationCountsLoaded] = useState(false);
   const notificationsStartedRef = useRef(false);
 
   const permissions = access?.permissions || [];
@@ -116,23 +118,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return items;
   }, [moduleNavigation.groups, permissions, roleCodes, visibleGroupCodes]);
 
-  useEffect(() => {
-    if (!user || notificationsStartedRef.current) return;
-
-    notificationsStartedRef.current = true;
-    const timer = window.setTimeout(() => {
-      loadNotificationCounts();
-    }, 0);
-
-    return () => window.clearTimeout(timer);
-  }, [user]);
-
-  useEffect(() => {
-    setNotificationsOpen(false);
-  }, [pathname]);
-
-  async function loadNotificationCounts() {
+  const loadNotificationCounts = useCallback(async () => {
     try {
+      setNotificationCountsLoading(true);
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -157,18 +145,52 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         pendingRaBills: counts.pendingRaBills || 0,
         pendingDebitNotes: counts.pendingDebitNotes || 0,
         pendingItcReview: counts.pendingItcReview || 0,
+        pendingInvoiceApprovals: counts.pendingInvoiceApprovals || 0,
+        totalVendors: counts.totalVendors || 0,
+        panAadhaarPending: counts.panAadhaarPending || 0,
+        blockedVendors: counts.blockedVendors || 0,
+        inactiveVendors: counts.inactiveVendors || 0,
       });
+      setNotificationCountsLoaded(true);
     } catch (error) {
       console.error("Notification count load failed:", error);
+    } finally {
+      setNotificationCountsLoading(false);
     }
-  }
+  }, []);
 
-  const totalNotifications = Object.values(notificationCounts).reduce(
-    (sum, value) => sum + value,
+  useEffect(() => {
+    if (!user || notificationsStartedRef.current) return;
+
+    notificationsStartedRef.current = true;
+    const timer = window.setTimeout(() => {
+      loadNotificationCounts();
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [loadNotificationCounts, user]);
+
+  useEffect(() => {
+    setNotificationsOpen(false);
+  }, [pathname]);
+
+  const totalNotifications = notificationLinks.reduce(
+    (sum, item) => sum + (notificationCounts[item.key] || 0),
     0,
   );
 
+  const notificationCountsContextValue = useMemo(
+    () => ({
+      counts: notificationCounts,
+      loading: notificationCountsLoading,
+      loaded: notificationCountsLoaded,
+      refresh: loadNotificationCounts,
+    }),
+    [loadNotificationCounts, notificationCounts, notificationCountsLoaded, notificationCountsLoading],
+  );
+
   return (
+    <NotificationCountsProvider value={notificationCountsContextValue}>
     <div className="min-h-screen bg-[#f3f6f8]">
       <aside className="fixed left-0 top-0 z-40 flex h-screen w-[224px] flex-col bg-black px-4 py-8 text-white">
         <Link href={dashboardHref} className="mb-8 block px-2">
@@ -308,5 +330,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <div>{children}</div>
       </main>
     </div>
+    </NotificationCountsProvider>
   );
 }

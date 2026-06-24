@@ -4,91 +4,28 @@ import Link from "next/link";
 import {
   Plus,
 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAccessContext } from "@/components/AccessContext";
-import { can, type CurrentUserAccess } from "@/lib/accessControl";
+import { useNotificationCounts } from "@/components/NotificationCountsContext";
+import { can } from "@/lib/accessControl";
 
 export default function Home() {
   const { access } = useAccessContext();
-  const [permissions, setPermissions] = useState<any[]>([]);
-
-  const [pendingWOApprovals, setPendingWOApprovals] = useState(0);
-  const [pendingRA, setPendingRA] = useState(0);
-  const [pendingDebitNotes, setPendingDebitNotes] = useState(0);
-  const [pendingITC, setPendingITC] = useState(0);
-  const [pendingInvoiceApprovals, setPendingInvoiceApprovals] = useState(0);
-  const [pendingPayments] = useState(0);
-
-  const [totalVendors, setTotalVendors] = useState(0);
-  const [panAadhaarPending, setPanAadhaarPending] = useState(0);
-  const [blockedVendors, setBlockedVendors] = useState(0);
-  const [inactiveVendors, setInactiveVendors] = useState(0);
-
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (access) {
-      loadDashboard(access);
-    }
-  }, [access]);
-
-  async function loadDashboard(currentAccess: CurrentUserAccess) {
-    setLoading(true);
-
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session?.access_token) {
-        throw new Error("Your session expired. Please log in again.");
-      }
-
-      const notificationCountsPromise = fetch("/api/notifications/counts", {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      }).then(async (response) => {
-        const result = await response.json();
-        if (!response.ok) {
-          throw new Error(result.error || "Failed to load notification counts.");
-        }
-        return result;
-      });
-
-      const [
-        notificationCounts,
-      ] = await Promise.all([
-        notificationCountsPromise,
-      ]);
-
-      setPermissions(currentAccess.permissions || []);
-
-      setPendingWOApprovals(notificationCounts.pendingWorkOrders || 0);
-      setPendingRA(notificationCounts.pendingRaBills || 0);
-      setPendingDebitNotes(notificationCounts.pendingDebitNotes || 0);
-      setPendingITC(notificationCounts.pendingItcReview || 0);
-      setPendingInvoiceApprovals(notificationCounts.pendingInvoiceApprovals || 0);
-
-      setTotalVendors(notificationCounts.totalVendors || 0);
-      setPanAadhaarPending(notificationCounts.panAadhaarPending || 0);
-      setBlockedVendors(notificationCounts.blockedVendors || 0);
-      setInactiveVendors(notificationCounts.inactiveVendors || 0);
-    } catch (error) {
-      console.error("Dashboard load failed:", error);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const { counts, loading: countsLoading } = useNotificationCounts();
+  const permissions = access?.permissions || [];
+  const pendingWOApprovals = counts.pendingWorkOrders || 0;
+  const pendingRA = counts.pendingRaBills || 0;
+  const pendingDebitNotes = counts.pendingDebitNotes || 0;
+  const pendingITC = counts.pendingItcReview || 0;
+  const pendingInvoiceApprovals = counts.pendingInvoiceApprovals || 0;
+  const pendingPayments = 0;
 
   const managementCards: [string, string, string][] = [
-  ["Total Vendors", String(totalVendors || 0), "/vendors"],
-  ["PAN-Aadhaar Pending", String(panAadhaarPending || 0), "/vendors"],
-  ["Blocked Vendors", String(blockedVendors || 0), "/vendors"],
-  ["Inactive Vendors", String(inactiveVendors || 0), "/vendors"],
+  ["Total Vendors", String(counts.totalVendors || 0), "/vendors"],
+  ["PAN-Aadhaar Pending", String(counts.panAadhaarPending || 0), "/vendors"],
+  ["Blocked Vendors", String(counts.blockedVendors || 0), "/vendors"],
+  ["Inactive Vendors", String(counts.inactiveVendors || 0), "/vendors"],
 ];
 
   const metricCards: MetricCardData[] = [
@@ -184,14 +121,6 @@ export default function Home() {
         : "Active",
   }));
 
-  if (loading) {
-    return (
-      <div className="min-h-[60vh] bg-[#f3f6f8] p-8 text-sm font-medium text-slate-500">
-        Loading dashboard...
-      </div>
-    );
-  }
-
   return (
     <section className="min-h-screen bg-[#f3f6f8] text-[#111316]">
       <main className="mx-auto max-w-[1180px] px-5 py-9 md:px-10">
@@ -201,7 +130,9 @@ export default function Home() {
                   Dashboard Overview
                 </h1>
                 <p className="mt-2 text-lg font-medium text-slate-600">
-                  Real-time enterprise metrics for MRC Commercial ERP
+                  {countsLoading
+                    ? "Loading enterprise metrics for MRC Commercial ERP"
+                    : "Real-time enterprise metrics for MRC Commercial ERP"}
                 </p>
               </div>
 
@@ -278,7 +209,7 @@ export default function Home() {
 
               <Panel
                 title="Vendor Control"
-                badge={`${totalVendors} records`}
+                badge={`${counts.totalVendors || 0} records`}
               >
                 <div className="-mx-6 -mb-6 mt-1 overflow-hidden">
                   <table className="w-full text-left text-sm">
