@@ -47,8 +47,10 @@ export default function UserAccessPage() {
 
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [savingName, setSavingName] = useState(false);
   const [loading, setLoading] = useState(true);
   const [permissionsSaved, setPermissionsSaved] = useState(false);
+  const [editFullName, setEditFullName] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showResetPasswordModal, setShowResetPasswordModal] = useState(false);
   const [resetPassword, setResetPassword] = useState("");
@@ -115,6 +117,7 @@ export default function UserAccessPage() {
       });
 
       setProfile(result.profile);
+      setEditFullName(result.profile.full_name || "");
       setRoles(result.roles || []);
       setOrganizations(result.organizations || []);
       setCompanies(sortCompanies(result.companies || []));
@@ -353,6 +356,56 @@ export default function UserAccessPage() {
     }
   }
 
+  async function saveUserName() {
+    try {
+      setSavingName(true);
+      setMessage("");
+
+      const fullName = editFullName.trim();
+
+      if (!fullName) {
+        setMessage("User name is required.");
+        return;
+      }
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/admin/users/${userId}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          full_name: fullName,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to update user name.");
+      }
+
+      setProfile((current: any) => ({
+        ...(current || {}),
+        full_name: result.full_name || fullName,
+      }));
+      setEditFullName(result.full_name || fullName);
+      setMessage("User name updated successfully.");
+    } catch (error: any) {
+      setMessage(error.message || "Failed to update user name.");
+    } finally {
+      setSavingName(false);
+    }
+  }
+
   async function deleteUser() {
     try {
       setDeleting(true);
@@ -510,6 +563,37 @@ export default function UserAccessPage() {
           </div>
         )}
       </section>
+
+      {canEditUser && (
+        <section className="rounded-lg border bg-white p-6">
+          <h2 className="mb-4 text-xl font-semibold">Edit Display Name</h2>
+          <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium text-gray-700">
+                Full Name
+              </span>
+              <input
+                value={editFullName}
+                onChange={(event) => setEditFullName(event.target.value)}
+                className="w-full rounded border px-3 py-2"
+                placeholder="Enter user's display name"
+              />
+            </label>
+
+            <button
+              type="button"
+              onClick={saveUserName}
+              disabled={savingName}
+              className="rounded bg-slate-900 px-4 py-2 text-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {savingName ? "Saving..." : "Save Name"}
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-gray-500">
+            This updates the ERP display name only. Email and password are unchanged.
+          </p>
+        </section>
+      )}
 
       <section className="rounded-lg border bg-white p-6">
         <h2 className="mb-4 text-xl font-semibold">Roles</h2>

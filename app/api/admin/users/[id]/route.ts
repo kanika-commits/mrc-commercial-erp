@@ -267,21 +267,48 @@ export async function PUT(
     const { id } = await params;
     const body = await request.json();
     const {
+      full_name,
       role_ids,
       organization_ids,
       company_ids,
       site_ids,
       user_permissions,
     } = body;
+    const hasNameUpdate = Object.prototype.hasOwnProperty.call(body, "full_name");
+    const hasAccessUpdate =
+      Object.prototype.hasOwnProperty.call(body, "role_ids") ||
+      Object.prototype.hasOwnProperty.call(body, "organization_ids") ||
+      Object.prototype.hasOwnProperty.call(body, "company_ids") ||
+      Object.prototype.hasOwnProperty.call(body, "site_ids") ||
+      Object.prototype.hasOwnProperty.call(body, "user_permissions");
 
-    if (!Array.isArray(role_ids) || role_ids.length === 0) {
+    const trimmedFullName = hasNameUpdate ? String(full_name || "").trim() : null;
+
+    if (hasNameUpdate && !trimmedFullName) {
+      return NextResponse.json(
+        { error: "User name is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!hasNameUpdate && !hasAccessUpdate) {
+      return NextResponse.json(
+        { error: "No user changes were provided." },
+        { status: 400 }
+      );
+    }
+
+    if (hasAccessUpdate && (!Array.isArray(role_ids) || role_ids.length === 0)) {
       return NextResponse.json(
         { error: "Select at least one role." },
         { status: 400 }
       );
     }
 
-    if (!Array.isArray(organization_ids) || organization_ids.length === 0) {
+    if (
+      hasAccessUpdate &&
+      (!Array.isArray(organization_ids) || organization_ids.length === 0)
+    ) {
       return NextResponse.json(
         { error: "Select at least one organization." },
         { status: 400 }
@@ -301,21 +328,23 @@ export async function PUT(
       );
     }
 
-    const scopeValidation = await validateSubmittedUserScope(
-      supabase,
-      actorOrganizationIds,
-      {
-        organizationIds: organization_ids || [],
-        companyIds: company_ids || [],
-        siteIds: site_ids || [],
-      }
-    );
-
-    if (!scopeValidation.allowed) {
-      return NextResponse.json(
-        { error: scopeValidation.error },
-        { status: 403 }
+    if (hasAccessUpdate) {
+      const scopeValidation = await validateSubmittedUserScope(
+        supabase,
+        actorOrganizationIds,
+        {
+          organizationIds: organization_ids || [],
+          companyIds: company_ids || [],
+          siteIds: site_ids || [],
+        }
       );
+
+      if (!scopeValidation.allowed) {
+        return NextResponse.json(
+          { error: scopeValidation.error },
+          { status: 403 }
+        );
+      }
     }
 
     const { data: profile, error: profileError } = await supabase
@@ -331,6 +360,23 @@ export async function PUT(
         { error: "User profile was not found." },
         { status: 404 }
       );
+    }
+
+    if (hasNameUpdate) {
+      const { error: updateProfileError } = await supabase
+        .from("profiles")
+        .update({ full_name: trimmedFullName })
+        .eq("id", id);
+
+      if (updateProfileError) throw updateProfileError;
+
+      if (!hasAccessUpdate) {
+        return NextResponse.json({
+          user_id: id,
+          full_name: trimmedFullName,
+          profile_updated: true,
+        });
+      }
     }
 
     const { data: selectedSites, error: siteError } = site_ids?.length
