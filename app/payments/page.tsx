@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { CreditCard, Plus, Search, Trash2, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
@@ -12,13 +12,6 @@ const PAGE_SIZE = 50;
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
-}
-
-function accountLabel(account: any) {
-  if (!account) return "-";
-  const accountNumber = account.account_number ? String(account.account_number) : "";
-  const last4 = accountNumber ? accountNumber.slice(-4) : "----";
-  return `${account.bank_name || "Bank"} • ****${last4}`;
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -39,15 +32,10 @@ export default function PaymentsPage() {
   const { access } = useAccessContext();
   const searchParams = useSearchParams();
   const search = String(searchParams.get("q") || "").trim();
-  const normalizedSearch = search.toLowerCase();
 
   const [payments, setPayments] = useState<any[]>([]);
-  const [workOrders, setWorkOrders] = useState<any[]>([]);
-  const [invoices, setInvoices] = useState<any[]>([]);
-  const [vendors, setVendors] = useState<any[]>([]);
-  const [accounts, setAccounts] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
-  const [hasNextPage, setHasNextPage] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -67,122 +55,37 @@ export default function PaymentsPage() {
       setError("");
       setMessage("");
 
-      const from = page * PAGE_SIZE;
-      const to = from + PAGE_SIZE;
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      const { data: paymentData, error: paymentError } = await supabase
-        .from("payments")
-        .select(`
-          id,
-          organization_id,
-          company_id,
-          work_order_id,
-          invoice_id,
-          vendor_id,
-          company_bank_account_id,
-          payment_number,
-          payment_date,
-          payment_type,
-          reference_number,
-          total_payment,
-          tds_amount,
-          transferred_amount,
-          payment_amount,
-          payment_mode,
-          utr_number,
-          status,
-          remarks,
-          created_by_name,
-          created_by_email,
-          created_at_user,
-          created_at
-        `)
-        .order("payment_date", { ascending: false })
-        .range(from, to);
-
-      if (paymentError) throw paymentError;
-
-      const loadedPayments = paymentData || [];
-      setHasNextPage(loadedPayments.length > PAGE_SIZE);
-      const currentPagePayments = loadedPayments.slice(0, PAGE_SIZE);
-      setPayments(currentPagePayments);
-
-      const workOrderIds = Array.from(
-        new Set(currentPagePayments.map((p: any) => p.work_order_id).filter(Boolean))
-      );
-      const vendorIds = Array.from(
-        new Set(currentPagePayments.map((p: any) => p.vendor_id).filter(Boolean))
-      );
-      const invoiceIds = Array.from(
-        new Set(currentPagePayments.map((p: any) => p.invoice_id).filter(Boolean))
-      );
-      const accountIds = Array.from(
-        new Set(
-          currentPagePayments
-            .map((p: any) => p.company_bank_account_id)
-            .filter(Boolean)
-        )
-      );
-
-      const [
-        { data: workOrderData },
-        { data: invoiceData },
-        { data: vendorData },
-      ] = await Promise.all([
-        workOrderIds.length
-          ? supabase
-              .from("work_orders")
-              .select("id, wo_number, company_id, site_id")
-              .in("id", workOrderIds)
-          : Promise.resolve({ data: [] }),
-        invoiceIds.length
-          ? supabase.from("invoices").select("id, invoice_number").in("id", invoiceIds)
-          : Promise.resolve({ data: [] }),
-        vendorIds.length
-          ? supabase.from("vendors").select("id, vendor_name").in("id", vendorIds)
-          : Promise.resolve({ data: [] }),
-      ]);
-
-      let accountData: any[] = [];
-
-      if (accountIds.length) {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-
-        if (session?.access_token) {
-          const response = await fetch(
-            "/api/company-bank-accounts?include_deleted=true",
-            {
-              headers: {
-                Authorization: `Bearer ${session.access_token}`,
-              },
-            }
-          );
-
-          if (response.ok) {
-            const result = await response.json();
-            const accountIdSet = new Set(accountIds);
-            accountData = (result.accounts || []).filter((account: any) =>
-              accountIdSet.has(account.id)
-            );
-          }
-        }
-
-        if (!accountData.length) {
-          const { data: browserAccountData } = await supabase
-            .from("company_bank_accounts")
-            .select("id, bank_name, account_number")
-            .in("id", accountIds);
-
-          accountData = browserAccountData || [];
-        }
+      if (!session?.access_token) {
+        throw new Error("Please sign in again to view payments.");
       }
 
-      setWorkOrders(workOrderData || []);
-      setInvoices(invoiceData || []);
-      setVendors(vendorData || []);
-      setAccounts(accountData || []);
+      const params = new URLSearchParams({
+        page: String(page + 1),
+        page_size: String(PAGE_SIZE),
+      });
+
+      if (search) {
+        params.set("search", search);
+      }
+
+      const response = await fetch(`/api/payments/register?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to load payments.");
+      }
+
+      setPayments(result.rows || []);
+      setTotal(Number(result.total || 0));
     } catch (loadError: any) {
       setError(loadError.message || "Failed to load payments.");
     } finally {
@@ -230,9 +133,7 @@ export default function PaymentsPage() {
         throw new Error(result.error || "Failed to delete payment.");
       }
 
-      setPayments((prev) =>
-        prev.filter((payment) => payment.id !== deletePayment.id)
-      );
+      await loadPayments();
       setDeletePayment(null);
       setDeletionReason("");
       setMessage("Payment deleted successfully.");
@@ -243,62 +144,9 @@ export default function PaymentsPage() {
     }
   }
 
-  const enrichedPayments = useMemo(() => {
-    const woMap = new Map((workOrders || []).map((wo: any) => [wo.id, wo]));
-    const invoiceMap = new Map(
-      (invoices || []).map((invoice: any) => [invoice.id, invoice])
-    );
-    const vendorMap = new Map(
-      (vendors || []).map((vendor: any) => [vendor.id, vendor.vendor_name])
-    );
-    const accountMap = new Map(
-      (accounts || []).map((account: any) => [account.id, account])
-    );
-
-    return payments.map((payment: any) => {
-      const wo = payment.work_order_id ? woMap.get(payment.work_order_id) : null;
-      const invoice = payment.invoice_id ? invoiceMap.get(payment.invoice_id) : null;
-      const vendorName = payment.vendor_id ? vendorMap.get(payment.vendor_id) : "-";
-      const account = payment.company_bank_account_id
-        ? accountMap.get(payment.company_bank_account_id)
-        : null;
-
-      const reference =
-        payment.payment_type === "Work Order"
-          ? wo?.wo_number || payment.reference_number || "-"
-          : payment.payment_type === "Invoice"
-          ? invoice?.invoice_number || payment.reference_number || "-"
-          : payment.reference_number || "-";
-
-      const party =
-        payment.payment_type === "Bank Transfer" || payment.payment_type === "Internal Transfer"
-          ? "Bank Transfer"
-          : vendorName || "-";
-
-      const accountName = accountLabel(account);
-
-      const searchText = [
-        party,
-        reference,
-        payment.reference_number,
-        payment.payment_number,
-        accountName,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-
-      return {
-        payment,
-        reference,
-        party,
-        accountName,
-        visible: !normalizedSearch || searchText.includes(normalizedSearch),
-      };
-    });
-  }, [accounts, invoices, normalizedSearch, payments, vendors, workOrders]);
-
-  const visiblePayments = enrichedPayments.filter((row) => row.visible);
+  const hasNextPage = (page + 1) * PAGE_SIZE < total;
+  const rangeStart = total === 0 ? 0 : page * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(page * PAGE_SIZE + payments.length, total);
 
   if (loading) {
     return <p className="text-sm text-slate-500">Loading payments...</p>;
@@ -352,7 +200,7 @@ export default function PaymentsPage() {
                 Payment Register
               </h2>
               <p className="mt-1 text-sm text-slate-500">
-                Showing {page * PAGE_SIZE + 1}–{page * PAGE_SIZE + visiblePayments.length}
+                Showing {rangeStart}–{rangeEnd} of {total}
               </p>
             </div>
 
@@ -362,7 +210,7 @@ export default function PaymentsPage() {
                 name="q"
                 defaultValue={search}
                 className="h-10 w-80 rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none transition focus:border-slate-400 focus:bg-white"
-                placeholder="Search current page..."
+                placeholder="Search payments..."
               />
             </form>
           </div>
@@ -388,7 +236,7 @@ export default function PaymentsPage() {
             </thead>
 
             <tbody className="divide-y divide-slate-100">
-              {visiblePayments.map(({ payment, reference, party, accountName }, index) => {
+              {payments.map((payment, index) => {
                 const createdBy =
                   payment.created_by_email || payment.created_by_name || "-";
 
@@ -403,9 +251,9 @@ export default function PaymentsPage() {
                     <td className="px-4 py-4 text-slate-700">
                       {payment.payment_type || "-"}
                     </td>
-                    <td className="px-4 py-4 text-slate-700">{reference}</td>
-                    <td className="px-4 py-4 text-slate-700">{party}</td>
-                    <td className="px-4 py-4 text-slate-700">{accountName}</td>
+                    <td className="px-4 py-4 text-slate-700">{payment.reference || "-"}</td>
+                    <td className="px-4 py-4 text-slate-700">{payment.party || "-"}</td>
+                    <td className="px-4 py-4 text-slate-700">{payment.account_name || "-"}</td>
                     <td className="px-4 py-4 text-right font-semibold text-slate-950">
                       {money(payment.total_payment)}
                     </td>
@@ -448,7 +296,7 @@ export default function PaymentsPage() {
                 );
               })}
 
-              {visiblePayments.length === 0 && (
+              {payments.length === 0 && (
                 <tr>
                   <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
                     No payments found.
