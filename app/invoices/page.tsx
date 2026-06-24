@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { FileText, Plus, Search, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
-import { can, hasSiteRestriction } from "@/lib/accessControl";
+import { can } from "@/lib/accessControl";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -43,153 +44,92 @@ const PAGE_SIZE = 50;
 
 export default function InvoicesPage() {
   const { access, loading: accessLoading } = useAccessContext();
+  const searchParams = useSearchParams();
+  const query = String(searchParams.get("q") || "").trim();
   const [invoices, setInvoices] = useState<any[]>([]);
-  const [workOrders, setWorkOrders] = useState<any[]>([]);
-  const [vendors, setVendors] = useState<any[]>([]);
-  const [sites, setSites] = useState<any[]>([]);
-  const [companies, setCompanies] = useState<any[]>([]);
+  const [rejectedInvoices, setRejectedInvoices] = useState<any[]>([]);
+  const [totalInvoices, setTotalInvoices] = useState(0);
+  const [rejectedTotal, setRejectedTotal] = useState(0);
+  const [summary, setSummary] = useState({
+    active_invoice_count: 0,
+    pending_itc_count: 0,
+    claimed_itc_count: 0,
+    pending_itc_value: 0,
+    rejected_invoice_count: 0,
+  });
   const [loading, setLoading] = useState(true);
+  const [updating, setUpdating] = useState(false);
   const [message, setMessage] = useState("");
   const [deleteInvoice, setDeleteInvoice] = useState<any | null>(null);
   const [deletionReason, setDeletionReason] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [activePage, setActivePage] = useState(1);
 
+  useEffect(() => {
+    setActivePage(1);
+  }, [query]);
 
   useEffect(() => {
     if (!accessLoading && access) {
       loadInvoices();
     }
-  }, [access, accessLoading]);
+  }, [access, accessLoading, activePage, query]);
 
   const canDelete = can(access?.permissions || [], "invoices", "delete");
 
   async function loadInvoices() {
-  setLoading(true);
-  setMessage("");
+    try {
+      if (invoices.length === 0) {
+        setLoading(true);
+      } else {
+        setUpdating(true);
+      }
+      setMessage("");
 
-  const restrictedSiteIds = access && hasSiteRestriction(access) ? access.sites : [];
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-  let workOrderQuery = supabase
-    .from("work_orders")
-    .select("id, wo_number, company_id, site_id");
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
 
-  if (restrictedSiteIds.length > 0) {
-    workOrderQuery = workOrderQuery.in("site_id", restrictedSiteIds);
+      const params = new URLSearchParams({
+        page: String(activePage),
+        page_size: String(PAGE_SIZE),
+      });
+
+      if (query) params.set("search", query);
+
+      const response = await fetch(`/api/invoices/register?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to load invoices.");
+      }
+
+      setInvoices(result.rows || []);
+      setRejectedInvoices(result.rejected_rows || []);
+      setTotalInvoices(Number(result.total || 0));
+      setRejectedTotal(Number(result.rejected_total || 0));
+      setSummary({
+        active_invoice_count: Number(result.summary?.active_invoice_count || 0),
+        pending_itc_count: Number(result.summary?.pending_itc_count || 0),
+        claimed_itc_count: Number(result.summary?.claimed_itc_count || 0),
+        pending_itc_value: Number(result.summary?.pending_itc_value || 0),
+        rejected_invoice_count: Number(result.summary?.rejected_invoice_count || 0),
+      });
+    } catch (error: any) {
+      setMessage(error.message || "Failed to load invoices.");
+    } finally {
+      setLoading(false);
+      setUpdating(false);
+    }
   }
-
-  const { data: allowedWorkOrders, error: woLoadError } = await workOrderQuery;
-
-  if (woLoadError) {
-    setMessage(woLoadError.message);
-    setLoading(false);
-    return;
-  }
-
-  const allowedWorkOrderIds = (allowedWorkOrders || []).map((wo: any) => wo.id);
-
-  if (restrictedSiteIds.length > 0 && allowedWorkOrderIds.length === 0) {
-    setInvoices([]);
-    setWorkOrders([]);
-    setVendors([]);
-    setSites([]);
-    setCompanies([]);
-    setLoading(false);
-    return;
-  }
-
-  let invoiceQuery = supabase
-    .from("invoices")
-    .select(`
-      id,
-      work_order_id,
-      vendor_id,
-      invoice_number,
-      invoice_date,
-      taxable_amount,
-      gst_rate,
-      gst_amount,
-      invoice_amount,
-      status,
-      approval_status,
-      itc_status,
-      created_by_name,
-      created_by_email,
-      itc_claimed_by_name,
-      itc_claimed_by_email,
-      itc_claimed_at,
-      itc_rejected_by_name,
-      itc_rejected_by_email,
-      itc_rejected_at,
-      itc_rejection_reason,
-      created_at
-    `)
-    .order("created_at", { ascending: false });
-
-  if (restrictedSiteIds.length > 0) {
-    invoiceQuery = invoiceQuery.in("work_order_id", allowedWorkOrderIds);
-  }
-
-  const { data: invoiceData, error } = await invoiceQuery;
-
-  if (error) {
-    setMessage(error.message);
-    setLoading(false);
-    return;
-  }
-
-  const items = invoiceData || [];
-  setInvoices(items);
-
-  const workOrderIds = Array.from(
-    new Set(items.map((i: any) => i.work_order_id).filter(Boolean))
-  );
-
-  const vendorIds = Array.from(
-    new Set(items.map((i: any) => i.vendor_id).filter(Boolean))
-  );
-
-  const visibleWorkOrders =
-    restrictedSiteIds.length > 0
-      ? (allowedWorkOrders || []).filter((wo: any) => workOrderIds.includes(wo.id))
-      : workOrderIds.length
-      ? (
-          await supabase
-            .from("work_orders")
-            .select("id, wo_number, company_id, site_id")
-            .in("id", workOrderIds)
-        ).data || []
-      : [];
-
-  const siteIds = Array.from(
-    new Set(visibleWorkOrders.map((wo: any) => wo.site_id).filter(Boolean))
-  );
-
-  const companyIds = Array.from(
-    new Set(visibleWorkOrders.map((wo: any) => wo.company_id).filter(Boolean))
-  );
-
-  const { data: vendorData } = vendorIds.length
-    ? await supabase.from("vendors").select("id, vendor_name").in("id", vendorIds)
-    : { data: [] };
-
-  const { data: siteData } = siteIds.length
-    ? await supabase.from("sites").select("id, site_name, site_code").in("id", siteIds)
-    : { data: [] };
-
-  const { data: companyData } = companyIds.length
-    ? await supabase
-        .from("companies")
-        .select("id, company_name, company_code")
-        .in("id", companyIds)
-    : { data: [] };
-
-  setWorkOrders(visibleWorkOrders || []);
-  setVendors(vendorData || []);
-  setSites(siteData || []);
-  setCompanies(companyData || []);
-  setLoading(false);
-}
 
   async function confirmDelete() {
     if (!deleteInvoice) return;
@@ -237,6 +177,7 @@ export default function InvoicesPage() {
       setDeleteInvoice(null);
       setDeletionReason("");
       setMessage("Invoice deleted successfully.");
+      await loadInvoices();
     } catch (error: any) {
       setMessage(error.message || "Failed to delete invoice.");
     } finally {
@@ -244,61 +185,21 @@ export default function InvoicesPage() {
     }
   }
 
-  const maps = useMemo(() => {
-    return {
-      woMap: new Map(workOrders.map((item) => [item.id, item])),
-      vendorMap: new Map(vendors.map((item) => [item.id, item])),
-      siteMap: new Map(sites.map((item) => [item.id, item])),
-      companyMap: new Map(companies.map((item) => [item.id, item])),
-    };
-  }, [workOrders, vendors, sites, companies]);
-
-  const activeInvoices = invoices.filter(
-    (invoice) =>
-      String(invoice.approval_status || "").toLowerCase() !== "rejected"
-  );
-
-  const rejectedInvoices = invoices.filter(
-    (invoice) =>
-      String(invoice.approval_status || "").toLowerCase() === "rejected"
-  );
-
-  const activeTotalPages = Math.max(1, Math.ceil(activeInvoices.length / PAGE_SIZE));
+  const activeTotalPages = Math.max(1, Math.ceil(totalInvoices / PAGE_SIZE));
   const currentActivePage = Math.min(activePage, activeTotalPages);
   const activeStartIndex = (currentActivePage - 1) * PAGE_SIZE;
   const activeEndIndex = Math.min(
     activeStartIndex + PAGE_SIZE,
-    activeInvoices.length
+    totalInvoices
   );
-  const paginatedActiveInvoices = activeInvoices.slice(
-    activeStartIndex,
-    activeEndIndex
-  );
-  const activeRangeStart = activeInvoices.length === 0 ? 0 : activeStartIndex + 1;
+  const paginatedActiveInvoices = invoices;
+  const activeRangeStart = totalInvoices === 0 ? 0 : activeStartIndex + 1;
 
   useEffect(() => {
     if (activePage > activeTotalPages) {
       setActivePage(activeTotalPages);
     }
   }, [activePage, activeTotalPages]);
-
-  const totalInvoices = activeInvoices.length;
-
-  const pendingITC = activeInvoices.filter(
-    (invoice) =>
-      String(invoice.itc_status || "Pending").toLowerCase() === "pending"
-  ).length;
-
-  const claimedITC = activeInvoices.filter(
-    (invoice) => String(invoice.itc_status || "").toLowerCase() === "claimed"
-  ).length;
-
-  const pendingITCValue = activeInvoices
-    .filter(
-      (invoice) =>
-        String(invoice.itc_status || "Pending").toLowerCase() === "pending"
-    )
-    .reduce((sum, invoice) => sum + Number(invoice.gst_amount || 0), 0);
 
   if (loading) {
     return <p className="text-sm text-slate-500">Loading invoices...</p>;
@@ -335,11 +236,17 @@ export default function InvoicesPage() {
       )}
 
       <div className="grid gap-4 md:grid-cols-4">
-        <Summary title="Active Invoices" value={String(totalInvoices)} />
-        <Summary title="Pending ITC" value={String(pendingITC)} />
-        <Summary title="ITC Claimed" value={String(claimedITC)} />
-        <Summary title="Pending ITC Value" value={money(pendingITCValue)} />
+        <Summary title="Active Invoices" value={String(summary.active_invoice_count)} />
+        <Summary title="Pending ITC" value={String(summary.pending_itc_count)} />
+        <Summary title="ITC Claimed" value={String(summary.claimed_itc_count)} />
+        <Summary title="Pending ITC Value" value={money(summary.pending_itc_value)} />
       </div>
+
+      {updating && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm font-medium text-blue-800">
+          Updating invoices...
+        </div>
+      )}
 
       <div className="rounded-2xl border bg-white shadow-sm">
         <div className="border-b p-4">
@@ -353,13 +260,32 @@ export default function InvoicesPage() {
               </p>
             </div>
 
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-              <input
-                className="h-10 w-72 rounded-xl border bg-white pl-9 pr-3 text-sm outline-none focus:border-slate-400"
-                placeholder="Search invoice no, WO, vendor..."
-              />
-            </div>
+            <form className="flex flex-wrap items-center gap-2">
+              <label className="relative block">
+                <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                <input
+                  name="q"
+                  defaultValue={query}
+                  className="h-10 w-72 rounded-xl border bg-white pl-9 pr-3 text-sm outline-none focus:border-slate-400"
+                  placeholder="Search invoice no, WO, vendor..."
+                />
+              </label>
+              <button
+                type="submit"
+                className="h-10 rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-slate-800"
+              >
+                Apply
+              </button>
+              {query && (
+                <Link
+                  href="/invoices"
+                  className="inline-flex h-10 items-center gap-2 rounded-xl border px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  <X className="h-4 w-4" />
+                  Clear
+                </Link>
+              )}
+            </form>
           </div>
         </div>
 
@@ -385,8 +311,6 @@ export default function InvoicesPage() {
 
             <tbody>
               {paginatedActiveInvoices.map((invoice: any) => {
-                const wo = maps.woMap.get(invoice.work_order_id);
-                const vendor = maps.vendorMap.get(invoice.vendor_id);
                 const itcStatus = invoice.itc_status || "Pending";
 
                 return (
@@ -404,14 +328,14 @@ export default function InvoicesPage() {
                           href={`/work-orders/${invoice.work_order_id}`}
                           className="text-blue-600 hover:underline"
                         >
-                          {wo?.wo_number || "-"}
+                          {invoice.wo_number || "-"}
                         </Link>
                       ) : (
                         "-"
                       )}
                     </td>
 
-                    <td className="p-3">{vendor?.vendor_name || "-"}</td>
+                    <td className="p-3">{invoice.vendor_name || "-"}</td>
                     <td className="p-3">{invoice.invoice_date || "-"}</td>
 
                     <td className="p-3 text-right font-semibold">
@@ -506,9 +430,9 @@ export default function InvoicesPage() {
                 );
               })}
 
-              {activeInvoices.length === 0 && (
+              {paginatedActiveInvoices.length === 0 && (
                 <tr>
-                  <td colSpan={15} className="p-8 text-center text-slate-500">
+                  <td colSpan={13} className="p-8 text-center text-slate-500">
                     No active invoices found.
                   </td>
                 </tr>
@@ -519,7 +443,7 @@ export default function InvoicesPage() {
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t bg-slate-50 px-4 py-3 text-sm text-slate-600">
           <div>
-            Showing {activeRangeStart}–{activeEndIndex} of {activeInvoices.length}
+            Showing {activeRangeStart}–{activeEndIndex} of {totalInvoices}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -547,10 +471,15 @@ export default function InvoicesPage() {
       {rejectedInvoices.length > 0 && (
         <div className="rounded-2xl border border-red-200 bg-white shadow-sm">
           <div className="border-b border-red-100 p-4">
-            <h2 className="font-semibold text-red-700">Rejected Invoices</h2>
+            <h2 className="font-semibold text-red-700">
+              Rejected Invoices ({rejectedTotal})
+            </h2>
             <p className="text-xs text-slate-500">
               Rejected invoices are shown separately and are not included in
               invoice totals.
+              {rejectedTotal > rejectedInvoices.length
+                ? ` Showing latest ${rejectedInvoices.length}.`
+                : ""}
             </p>
           </div>
 
@@ -570,16 +499,13 @@ export default function InvoicesPage() {
 
               <tbody>
                 {rejectedInvoices.map((invoice: any) => {
-                  const wo = maps.woMap.get(invoice.work_order_id);
-                  const vendor = maps.vendorMap.get(invoice.vendor_id);
-
                   return (
                     <tr key={invoice.id} className="border-t border-red-100">
                       <td className="p-3 font-semibold">
                         {invoice.invoice_number}
                       </td>
-                      <td className="p-3">{wo?.wo_number || "-"}</td>
-                      <td className="p-3">{vendor?.vendor_name || "-"}</td>
+                      <td className="p-3">{invoice.wo_number || "-"}</td>
+                      <td className="p-3">{invoice.vendor_name || "-"}</td>
                       <td className="p-3">{invoice.invoice_date || "-"}</td>
                       <td className="p-3 text-right font-semibold">
                         {money(invoice.invoice_amount)}
