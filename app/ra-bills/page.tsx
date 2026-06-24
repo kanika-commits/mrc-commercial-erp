@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Eye, FileText, Plus, Search, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
-import { can, hasSiteRestriction } from "@/lib/accessControl";
+import { can } from "@/lib/accessControl";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -46,217 +46,94 @@ export default function RABillsPage() {
   const searchParams = useSearchParams();
   const query = String(searchParams.get("q") || "").trim();
   const [bills, setBills] = useState<any[]>([]);
-  const [workOrders, setWorkOrders] = useState<any[]>([]);
-  const [vendors, setVendors] = useState<any[]>([]);
-  const [sites, setSites] = useState<any[]>([]);
-  const [companies, setCompanies] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [updating, setUpdating] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [deleteBill, setDeleteBill] = useState<any | null>(null);
   const [deletionReason, setDeletionReason] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [page, setPage] = useState(1);
-
-  useEffect(() => {
-    if (!accessLoading && access) {
-      loadBills();
-    }
-  }, [access, accessLoading]);
+  const [totalRows, setTotalRows] = useState(0);
+  const previousQueryRef = useRef(query);
 
   useEffect(() => {
     setPage(1);
   }, [query]);
 
+  useEffect(() => {
+    if (previousQueryRef.current !== query) {
+      previousQueryRef.current = query;
+      if (page !== 1) return;
+    }
+
+    if (!accessLoading && access) {
+      loadBills();
+    }
+  }, [access, accessLoading, page, query]);
+
   const canDelete = can(access?.permissions || [], "ra_bills", "delete");
 
   async function loadBills() {
   try {
-    setLoading(true);
+    if (bills.length === 0) {
+      setLoading(true);
+    } else {
+      setUpdating(true);
+    }
     setError("");
 
-    const restrictedSiteIds = access && hasSiteRestriction(access) ? access.sites : [];
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-    let workOrderQuery = supabase
-      .from("work_orders")
-      .select("id, wo_number, site_id, company_id");
-
-    if (restrictedSiteIds.length > 0) {
-      workOrderQuery = workOrderQuery.in("site_id", restrictedSiteIds);
+    if (!session?.access_token) {
+      throw new Error("Your session expired. Please log in again.");
     }
 
-    const { data: allowedWorkOrders, error: workOrderError } =
-      await workOrderQuery;
+    const params = new URLSearchParams({
+      page: String(page),
+      page_size: String(PAGE_SIZE),
+    });
 
-    if (workOrderError) throw workOrderError;
+    if (query) params.set("search", query);
 
-    const allowedWorkOrderIds = (allowedWorkOrders || []).map(
-      (wo: any) => wo.id
-    );
+    const response = await fetch(`/api/ra-bills/register?${params.toString()}`, {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    });
+    const result = await response.json();
 
-    if (restrictedSiteIds.length > 0 && allowedWorkOrderIds.length === 0) {
-      setBills([]);
-      setWorkOrders([]);
-      setVendors([]);
-      setSites([]);
-      setCompanies([]);
-      return;
+    if (!response.ok) {
+      throw new Error(result.error || "Failed to load RA Bills.");
     }
 
-    let billQuery = supabase
-      .from("ra_bills")
-      .select(`
-        id,
-        work_order_id,
-        vendor_id,
-        ra_number,
-        ra_date,
-        gross_amount,
-        recovery_amount,
-        retention_amount,
-        gst_amount,
-        net_amount,
-        status,
-        approval_status,
-        created_by_name,
-        created_by_email,
-        approved_by_name,
-        approved_by_email,
-        approved_at,
-        created_at
-      `)
-      .ilike("approval_status", "approved")
-      .order("created_at", { ascending: false });
-
-    if (restrictedSiteIds.length > 0) {
-      billQuery = billQuery.in("work_order_id", allowedWorkOrderIds);
-    }
-
-    const { data: billData, error: billError } = await billQuery;
-
-    if (billError) throw billError;
-
-    const loadedBills = billData || [];
-    setBills(loadedBills);
-
-    const workOrderIds = Array.from(
-      new Set(loadedBills.map((b: any) => b.work_order_id).filter(Boolean))
-    );
-
-    const vendorIds = Array.from(
-      new Set(loadedBills.map((b: any) => b.vendor_id).filter(Boolean))
-    );
-
-    const visibleWorkOrders =
-      restrictedSiteIds.length > 0
-        ? (allowedWorkOrders || []).filter((wo: any) =>
-            workOrderIds.includes(wo.id)
-          )
-        : workOrderIds.length
-        ? (
-            await supabase
-              .from("work_orders")
-              .select("id, wo_number, site_id, company_id")
-              .in("id", workOrderIds)
-          ).data || []
-        : [];
-
-    setWorkOrders(visibleWorkOrders || []);
-
-    const siteIds = Array.from(
-      new Set(
-        (visibleWorkOrders || [])
-          .map((wo: any) => wo.site_id)
-          .filter(Boolean)
-      )
-    );
-
-    const companyIds = Array.from(
-      new Set(
-        (visibleWorkOrders || [])
-          .map((wo: any) => wo.company_id)
-          .filter(Boolean)
-      )
-    );
-
-    const [{ data: vendorData }, { data: siteData }, { data: companyData }] =
-      await Promise.all([
-        vendorIds.length
-          ? supabase.from("vendors").select("id, vendor_name").in("id", vendorIds)
-          : Promise.resolve({ data: [] }),
-        siteIds.length
-          ? supabase.from("sites").select("id, site_name, site_code").in("id", siteIds)
-          : Promise.resolve({ data: [] }),
-        companyIds.length
-          ? supabase
-              .from("companies")
-              .select("id, company_name, company_code")
-              .in("id", companyIds)
-          : Promise.resolve({ data: [] }),
-      ]);
-
-    setVendors(vendorData || []);
-    setSites(siteData || []);
-    setCompanies(companyData || []);
+    setBills(result.rows || []);
+    setTotalRows(result.total || 0);
   } catch (loadError: any) {
     setError(loadError.message || "Failed to load RA Bills.");
   } finally {
     setLoading(false);
+    setUpdating(false);
   }
 }
 
-  const rows = useMemo(() => {
-    const woMap = new Map((workOrders || []).map((wo: any) => [wo.id, wo]));
-    const vendorMap = new Map((vendors || []).map((vendor: any) => [vendor.id, vendor]));
-    const siteMap = new Map((sites || []).map((site: any) => [site.id, site]));
-    const companyMap = new Map((companies || []).map((company: any) => [company.id, company]));
-
-    return bills.map((bill: any) => {
-      const wo: any = woMap.get(bill.work_order_id);
-      const vendor: any = vendorMap.get(bill.vendor_id);
-      const site: any = wo?.site_id ? siteMap.get(wo.site_id) : null;
-      const company: any = wo?.company_id ? companyMap.get(wo.company_id) : null;
-
-      return {
-        bill,
-        wo,
-        vendor,
-        site,
-        company,
-        searchText: [
-          bill.ra_number,
-          wo?.wo_number,
-          vendor?.vendor_name,
-          site?.site_name,
-          site?.site_code,
-          company?.company_name,
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase(),
-      };
-    });
-  }, [bills, companies, sites, vendors, workOrders]);
-
-  const filteredRows = rows.filter((row) => {
-    const matchesSearch = query ? row.searchText.includes(query.toLowerCase()) : true;
-    return matchesSearch;
-  });
-
-  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
-  const paginatedRows = filteredRows.slice(
-    (currentPage - 1) * PAGE_SIZE,
-    currentPage * PAGE_SIZE
-  );
+  const paginatedRows = bills.map((bill) => ({
+    bill,
+    wo: { id: bill.work_order_id, wo_number: bill.wo_number },
+    vendor: { id: bill.vendor_id, vendor_name: bill.vendor_name },
+    site: { id: bill.site_id, site_name: bill.site_name, site_code: bill.site_code },
+    company: { id: bill.company_id, company_name: bill.company_name, company_code: bill.company_code },
+  }));
 
   useEffect(() => {
     if (page > totalPages) {
       setPage(totalPages);
     }
   }, [page, totalPages]);
-
-  const totalBills = bills.length;
 
   async function confirmDelete() {
     if (!deleteBill) return;
@@ -295,6 +172,7 @@ export default function RABillsPage() {
       }
 
       setBills((prev) => prev.filter((bill) => bill.id !== deleteBill.id));
+      await loadBills();
       setDeleteBill(null);
       setDeletionReason("");
       setMessage("RA Bill deleted successfully.");
@@ -344,6 +222,12 @@ export default function RABillsPage() {
       {message && (
         <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm font-medium text-sky-800">
           {message}
+        </div>
+      )}
+
+      {updating && (
+        <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm font-medium text-sky-800">
+          Updating RA Bills...
         </div>
       )}
 
@@ -489,7 +373,7 @@ export default function RABillsPage() {
                 </tr>
               ))}
 
-              {filteredRows.length === 0 && (
+              {bills.length === 0 && (
                 <tr>
                   <td colSpan={14} className="px-5 py-16 text-center">
                     <FileText className="mx-auto h-10 w-10 text-slate-300" />
@@ -507,14 +391,13 @@ export default function RABillsPage() {
         <div className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-5 py-3 text-xs font-medium text-slate-500 sm:flex-row sm:items-center sm:justify-between">
           <span>
             Showing{" "}
-            {filteredRows.length === 0
+            {totalRows === 0
               ? "0"
               : `${(currentPage - 1) * PAGE_SIZE + 1}-${Math.min(
                   currentPage * PAGE_SIZE,
-                  filteredRows.length
+                  totalRows
                 )}`}{" "}
-            of {filteredRows.length} filtered RA bills
-            {filteredRows.length !== totalBills ? ` (${totalBills} total)` : ""}
+            of {totalRows} filtered RA bills
           </span>
 
           <div className="flex items-center gap-2">
