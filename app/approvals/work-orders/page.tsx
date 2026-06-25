@@ -77,6 +77,7 @@ export default function WorkOrderApprovalPage() {
   const [documents, setDocuments] = useState<Map<string, any[]>>(new Map());
   const [editRows, setEditRows] = useState<Record<string, any>>({});
   const [replacementFiles, setReplacementFiles] = useState<Record<string, File | null>>({});
+  const [editingWorkOrderId, setEditingWorkOrderId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState("");
   const [message, setMessage] = useState("");
@@ -145,6 +146,7 @@ export default function WorkOrderApprovalPage() {
         ),
       );
       setReplacementFiles({});
+      setEditingWorkOrderId(null);
 
       const workOrderIds = Array.from(
         new Set((woData || []).map((wo: any) => wo.id).filter(Boolean))
@@ -234,6 +236,25 @@ export default function WorkOrderApprovalPage() {
     }));
   }
 
+  function openEditPanel(wo: any) {
+    setEditRows((prev) => ({
+      ...prev,
+      [wo.id]: {
+        wo_date: wo.wo_date || "",
+        wo_type: wo.wo_type || "",
+        description: wo.description || "",
+        wo_value: String(wo.wo_value ?? ""),
+        gst_percent: String(wo.gst_percent ?? 18),
+      },
+    }));
+    setReplacementFiles((prev) => ({ ...prev, [wo.id]: null }));
+    setEditingWorkOrderId(wo.id);
+  }
+
+  function closeEditPanel() {
+    setEditingWorkOrderId(null);
+  }
+
   async function saveWorkOrderCorrections(wo: any) {
     try {
       setSavingId(wo.id);
@@ -276,6 +297,7 @@ export default function WorkOrderApprovalPage() {
 
       setMessage("Work Order corrections saved successfully.");
       await loadWorkOrders();
+      setEditingWorkOrderId(null);
     } catch (error: any) {
       setMessage(error.message || "Failed to save Work Order corrections.");
     } finally {
@@ -364,6 +386,10 @@ export default function WorkOrderApprovalPage() {
       approvalStatus
     );
   });
+  const editingWorkOrder = editingWorkOrderId
+    ? pendingWorkOrders.find((wo) => wo.id === editingWorkOrderId) || null
+    : null;
+  const editingRow = editingWorkOrder ? editRows[editingWorkOrder.id] || {} : {};
 
   return (
     <div className="space-y-6">
@@ -432,7 +458,6 @@ export default function WorkOrderApprovalPage() {
                   const currentDocuments = documents.get(wo.id) || [];
                   const isSaving = savingId === wo.id;
                   const commercials = workOrderCommercials(wo);
-                  const editRow = editRows[wo.id] || {};
 
                   return (
                     <tr key={wo.id} className="align-top transition-colors hover:bg-slate-50">
@@ -452,99 +477,32 @@ export default function WorkOrderApprovalPage() {
                       </td>
 
                       <td className="px-4 py-5">
-                        {canManageWorkOrderApprovals ? (
-                          <div className="space-y-2">
-                            <label className="block text-xs font-semibold text-slate-500">
-                              WO Date
-                              <input
-                                type="date"
-                                value={editRow.wo_date || ""}
-                                onChange={(event) =>
-                                  updateEditRow(wo.id, "wo_date", event.target.value)
-                                }
-                                className="mt-1 w-full rounded border border-slate-200 px-2 py-1 text-sm font-medium text-slate-800"
-                              />
-                            </label>
-                            <label className="block text-xs font-semibold text-slate-500">
-                              Type
-                              <input
-                                value={editRow.wo_type || ""}
-                                onChange={(event) =>
-                                  updateEditRow(wo.id, "wo_type", event.target.value)
-                                }
-                                className="mt-1 w-full rounded border border-slate-200 px-2 py-1 text-sm font-medium text-slate-800"
-                              />
-                            </label>
-                            <div className="grid grid-cols-2 gap-2">
-                              <label className="block text-xs font-semibold text-slate-500">
-                                Basic
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={editRow.wo_value || ""}
-                                  onChange={(event) =>
-                                    updateEditRow(wo.id, "wo_value", event.target.value)
-                                  }
-                                  className="mt-1 w-full rounded border border-slate-200 px-2 py-1 text-sm font-medium text-slate-800"
-                                />
-                              </label>
-                              <label className="block text-xs font-semibold text-slate-500">
-                                GST %
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={editRow.gst_percent || ""}
-                                  onChange={(event) =>
-                                    updateEditRow(wo.id, "gst_percent", event.target.value)
-                                  }
-                                  className="mt-1 w-full rounded border border-slate-200 px-2 py-1 text-sm font-medium text-slate-800"
-                                />
-                              </label>
-                            </div>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="text-sm text-slate-700">
-                              <span className="text-slate-400">Date:</span>{" "}
-                              {wo.wo_date || "-"}
-                            </div>
-                            <div className="mt-1 text-sm text-slate-700">
-                              <span className="text-slate-400">Type:</span>{" "}
-                              {wo.wo_type || "-"}
-                            </div>
-                            <div className="mt-1 text-sm text-slate-700">
-                              <span className="text-slate-400">Basic:</span>{" "}
-                              {money(commercials.basicValue)}
-                            </div>
-                            <div className="mt-1 text-sm text-slate-700">
-                              <span className="text-slate-400">GST:</span>{" "}
-                              {money(commercials.gstAmount)} ({commercials.gstPercent}%)
-                            </div>
-                            <div className="mt-1 text-sm font-semibold text-slate-950">
-                              <span className="text-slate-400">Total:</span>{" "}
-                              {money(commercials.totalValue)}
-                            </div>
-                          </>
-                        )}
+                        <div className="text-sm text-slate-700">
+                          <span className="text-slate-400">Date:</span>{" "}
+                          {wo.wo_date || "-"}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-700">
+                          <span className="text-slate-400">Type:</span>{" "}
+                          {wo.wo_type || "-"}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-700">
+                          <span className="text-slate-400">Basic:</span>{" "}
+                          {money(commercials.basicValue)}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-700">
+                          <span className="text-slate-400">GST:</span>{" "}
+                          {money(commercials.gstAmount)} ({commercials.gstPercent}%)
+                        </div>
+                        <div className="mt-1 text-sm font-semibold text-slate-950">
+                          <span className="text-slate-400">Total:</span>{" "}
+                          {money(commercials.totalValue)}
+                        </div>
                       </td>
 
                       <td className="w-[18%] max-w-[240px] px-4 py-5">
-                        {canManageWorkOrderApprovals ? (
-                          <textarea
-                            value={editRow.description || ""}
-                            onChange={(event) =>
-                              updateEditRow(wo.id, "description", event.target.value)
-                            }
-                            rows={5}
-                            className="w-full rounded border border-slate-200 px-2 py-1 text-sm leading-5 text-slate-700"
-                          />
-                        ) : (
-                          <p className="line-clamp-2 text-sm leading-5 text-slate-600">
-                            {wo.description || "-"}
-                          </p>
-                        )}
+                        <p className="line-clamp-2 text-sm leading-5 text-slate-600">
+                          {wo.description || "-"}
+                        </p>
                       </td>
 
                       <td className="px-4 py-5">
@@ -592,22 +550,6 @@ export default function WorkOrderApprovalPage() {
                             ))}
                           </div>
                         )}
-                        {canManageWorkOrderApprovals && (
-                          <label className="mt-3 block text-center text-xs font-semibold text-slate-500">
-                            Replace Work Order PDF
-                            <input
-                              type="file"
-                              accept="application/pdf,image/*"
-                              onChange={(event) =>
-                                setReplacementFiles((prev) => ({
-                                  ...prev,
-                                  [wo.id]: event.target.files?.[0] || null,
-                                }))
-                              }
-                              className="mt-1 block w-full text-xs text-slate-600 file:mr-2 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-semibold file:text-slate-700"
-                            />
-                          </label>
-                        )}
                       </td>
 
                       <td className="px-4 py-5 text-center">
@@ -641,10 +583,10 @@ export default function WorkOrderApprovalPage() {
                               <button
                                 type="button"
                                 disabled={isSaving}
-                                onClick={() => saveWorkOrderCorrections(wo)}
+                                onClick={() => openEditPanel(wo)}
                                 className="rounded border border-sky-200 px-3 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-60"
                               >
-                                Save Corrections
+                                Edit
                               </button>
 
                               <button
@@ -686,6 +628,133 @@ export default function WorkOrderApprovalPage() {
           pending Work Orders
         </div>
       </div>
+
+      {editingWorkOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4 py-6">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-2xl">
+            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-4">
+              <div>
+                <h2 className="text-xl font-bold text-slate-950">
+                  Edit Pending Work Order
+                </h2>
+                <p className="mt-1 font-mono text-sm font-semibold text-sky-800">
+                  {editingWorkOrder.wo_number}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeEditPanel}
+                disabled={savingId === editingWorkOrder.id}
+                className="rounded border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <label className="block text-sm font-semibold text-slate-700">
+                WO Date
+                <input
+                  type="date"
+                  value={editingRow.wo_date || ""}
+                  onChange={(event) =>
+                    updateEditRow(editingWorkOrder.id, "wo_date", event.target.value)
+                  }
+                  className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                />
+              </label>
+
+              <label className="block text-sm font-semibold text-slate-700">
+                Work Order Type
+                <input
+                  value={editingRow.wo_type || ""}
+                  onChange={(event) =>
+                    updateEditRow(editingWorkOrder.id, "wo_type", event.target.value)
+                  }
+                  className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                />
+              </label>
+
+              <label className="block text-sm font-semibold text-slate-700">
+                Basic Value
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={editingRow.wo_value || ""}
+                  onChange={(event) =>
+                    updateEditRow(editingWorkOrder.id, "wo_value", event.target.value)
+                  }
+                  className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                />
+              </label>
+
+              <label className="block text-sm font-semibold text-slate-700">
+                GST %
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={editingRow.gst_percent || ""}
+                  onChange={(event) =>
+                    updateEditRow(editingWorkOrder.id, "gst_percent", event.target.value)
+                  }
+                  className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+
+            <label className="mt-4 block text-sm font-semibold text-slate-700">
+              Description
+              <textarea
+                value={editingRow.description || ""}
+                onChange={(event) =>
+                  updateEditRow(editingWorkOrder.id, "description", event.target.value)
+                }
+                rows={5}
+                className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              />
+            </label>
+
+            <label className="mt-4 block text-sm font-semibold text-slate-700">
+              Replace Work Order PDF
+              <input
+                type="file"
+                accept="application/pdf,image/*"
+                onChange={(event) =>
+                  setReplacementFiles((prev) => ({
+                    ...prev,
+                    [editingWorkOrder.id]: event.target.files?.[0] || null,
+                  }))
+                }
+                className="mt-1 block w-full rounded border border-slate-300 px-3 py-2 text-sm text-slate-600 file:mr-3 file:rounded file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-slate-700"
+              />
+              <span className="mt-1 block text-xs font-normal text-slate-500">
+                Leave blank to keep the current PDF.
+              </span>
+            </label>
+
+            <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
+              <button
+                type="button"
+                onClick={closeEditPanel}
+                disabled={savingId === editingWorkOrder.id}
+                className="rounded border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => saveWorkOrderCorrections(editingWorkOrder)}
+                disabled={savingId === editingWorkOrder.id}
+                className="rounded bg-sky-700 px-4 py-2 text-sm font-bold text-white hover:bg-sky-800 disabled:opacity-60"
+              >
+                {savingId === editingWorkOrder.id ? "Saving..." : "Save Corrections"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
