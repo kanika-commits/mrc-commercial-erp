@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
-import { can } from "@/lib/accessControl";
+import { can, hasGlobalAccess } from "@/lib/accessControl";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -31,16 +31,33 @@ export default function ITCReviewPage() {
   const [message, setMessage] = useState("");
   const [deleteInvoice, setDeleteInvoice] = useState<any | null>(null);
   const [deletionReason, setDeletionReason] = useState("");
+  const canViewItcReview =
+    hasGlobalAccess(access) ||
+    can(access?.permissions || [], "itc_claims", "view") ||
+    can(access?.permissions || [], "itc_claims", "approve");
+  const canManageItcReview =
+    hasGlobalAccess(access) || can(access?.permissions || [], "itc_claims", "approve");
   const canDelete = can(access?.permissions || [], "invoices", "delete");
 
   useEffect(() => {
-    loadInvoices();
-  }, []);
+    if (access) {
+      loadInvoices();
+    }
+  }, [access]);
 
   async function loadInvoices() {
     try {
       setLoading(true);
       setMessage("");
+
+      if (!canViewItcReview) {
+        setInvoices([]);
+        setWorkOrders(new Map());
+        setVendors(new Map());
+        setDocuments(new Map());
+        setMessage("You do not have permission to view ITC review.");
+        return;
+      }
 
       const { data: invoiceData, error: invoiceError } = await supabase
         .from("invoices")
@@ -442,15 +459,17 @@ export default function ITCReviewPage() {
                           View
                         </Link>
 
-                        <button
-                          type="button"
-                          disabled={savingId === invoice.id}
-                          onClick={() => claimITC(invoice.id)}
-                          className="inline-flex items-center justify-center gap-1 rounded-lg bg-blue-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-800 disabled:opacity-60"
-                        >
-                          <CheckCircle className="h-3.5 w-3.5" />
-                          ITC Claimed
-                        </button>
+                        {canManageItcReview && (
+                          <button
+                            type="button"
+                            disabled={savingId === invoice.id}
+                            onClick={() => claimITC(invoice.id)}
+                            className="inline-flex items-center justify-center gap-1 rounded-lg bg-blue-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-800 disabled:opacity-60"
+                          >
+                            <CheckCircle className="h-3.5 w-3.5" />
+                            ITC Claimed
+                          </button>
+                        )}
 
                         {canDelete && (
                           <button

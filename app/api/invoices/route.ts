@@ -481,7 +481,7 @@ export async function PATCH(request: Request) {
   const normalizedAction = action.toLowerCase();
 
   if (["claimed", "itc_claimed"].includes(normalizedAction)) {
-    const auth = await requirePermission(request, MODULE_CODE, "approve");
+    const auth = await requirePermission(request, "itc_claims", "approve");
 
     if ("response" in auth) {
       return auth.response;
