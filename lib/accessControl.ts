@@ -14,6 +14,7 @@ export type CurrentUserAccess = {
   organizations: string[];
   companies: string[];
   sites: string[];
+  isGlobalAccess?: boolean;
 };
 
 export async function getCurrentUserAccess(): Promise<CurrentUserAccess> {
@@ -95,6 +96,7 @@ export async function getCurrentUserAccess(): Promise<CurrentUserAccess> {
       organizations: [],
       companies: [],
       sites: [],
+      isGlobalAccess: true,
     };
   }
 
@@ -122,6 +124,7 @@ export async function getCurrentUserAccess(): Promise<CurrentUserAccess> {
     sites: Array.from(
       new Set((accessRows || []).map((row) => row.site_id).filter(Boolean))
     ),
+    isGlobalAccess: false,
   };
 }
 
@@ -139,11 +142,14 @@ export function can(
   );
 }
 export function isSuperUser(access: CurrentUserAccess) {
-  return isPlatformOwner(access);
+  return hasGlobalAccess(access);
 }
 
-export function isPlatformOwner(access: CurrentUserAccess) {
+export function hasGlobalAccess(access: CurrentUserAccess | null | undefined) {
+  if (!access) return false;
+
   return (
+    access.isGlobalAccess === true ||
     access.roleCodes.includes("platform_owner") ||
     access.permissions.some(
       (permission) =>
@@ -154,10 +160,14 @@ export function isPlatformOwner(access: CurrentUserAccess) {
   );
 }
 
+export function isPlatformOwner(access: CurrentUserAccess) {
+  return hasGlobalAccess(access);
+}
+
 export function isOrganizationAdmin(access: CurrentUserAccess) {
   return access.roleCodes.includes("super_admin");
 }
 
 export function hasSiteRestriction(access: CurrentUserAccess) {
-  return !isPlatformOwner(access) && access.sites.length > 0;
+  return !hasGlobalAccess(access) && access.sites.length > 0;
 }

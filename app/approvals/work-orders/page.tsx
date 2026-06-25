@@ -6,7 +6,6 @@ import { CheckCircle2, ExternalLink, FileText, RefreshCw, Trash2 } from "lucide-
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
-import { getAllowedOrganizationIds } from "@/lib/clientOrganizationScope";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -101,15 +100,11 @@ export default function WorkOrderApprovalPage() {
       setLoading(true);
       setMessage("");
 
-      const allowedOrganizationIds = getAllowedOrganizationIds(access);
       const canLoadWorkOrders =
         can(access?.permissions || [], "work_orders", "approve") ||
         can(access?.permissions || [], "work_orders", "reject");
 
-      if (
-        !canLoadWorkOrders ||
-        (allowedOrganizationIds !== null && allowedOrganizationIds.length === 0)
-      ) {
+      if (!canLoadWorkOrders) {
         setWorkOrders([]);
         setCompanies(new Map());
         setSites(new Map());
@@ -118,79 +113,51 @@ export default function WorkOrderApprovalPage() {
         return;
       }
 
-      let workOrderQuery = supabase
-        .from("work_orders")
-        .select(`
-          id,
-          organization_id,
-          company_id,
-          site_id,
-          wo_number,
-          wo_date,
-          wo_type,
-          description,
-          status,
-          wo_value,
-          gst_percent,
-          approval_status,
-          department,
-          cost_code,
-          created_by_name,
-          created_by_email,
-          created_at,
-          approved_at
-        `)
-        .or("approval_status.is.null,approval_status.ilike.pending,approval_status.ilike.draft")
-        .order("created_at", { ascending: false });
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (allowedOrganizationIds !== null) {
-        workOrderQuery = workOrderQuery.in("organization_id", allowedOrganizationIds);
+      if (!session?.access_token) {
+        throw new Error("Unable to load Work Order approvals: missing auth session.");
       }
 
-      const { data: woData, error: woError } = await workOrderQuery;
+      const approvalResponse = await fetch("/api/approvals/work-orders", {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+      const approvalResult = await approvalResponse.json().catch(() => ({}));
 
-      if (woError) throw woError;
+      if (!approvalResponse.ok) {
+        throw new Error(
+          approvalResult.error || "Failed to load Work Order approvals.",
+        );
+      }
+
+      const woData = approvalResult.workOrders || [];
 
       const workOrderIds = Array.from(
         new Set((woData || []).map((wo: any) => wo.id).filter(Boolean))
       );
 
-      const companyIds = Array.from(
-        new Set((woData || []).map((wo: any) => wo.company_id).filter(Boolean))
+      setCompanies(
+        new Map(
+          (approvalResult.companies || []).map((item: any) => [
+            item.id,
+            item.company_name,
+          ]),
+        ),
       );
-
-      const siteIds = Array.from(
-        new Set((woData || []).map((wo: any) => wo.site_id).filter(Boolean))
+      setSites(
+        new Map(
+          (approvalResult.sites || []).map((item: any) => [
+            item.id,
+            item.site_name,
+          ]),
+        ),
       );
-
-      if (companyIds.length > 0) {
-        const { data: companyData } = await supabase
-          .from("companies")
-          .select("id, company_name")
-          .in("id", companyIds);
-
-        setCompanies(
-          new Map((companyData || []).map((item: any) => [item.id, item.company_name]))
-        );
-      } else {
-        setCompanies(new Map());
-      }
-
-      if (siteIds.length > 0) {
-        const { data: siteData } = await supabase
-          .from("sites")
-          .select("id, site_name")
-          .in("id", siteIds);
-
-        setSites(new Map((siteData || []).map((item: any) => [item.id, item.site_name])));
-      } else {
-        setSites(new Map());
-      }
 
       if (workOrderIds.length > 0) {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
         const token = session?.access_token;
 
         if (!token) {

@@ -71,10 +71,13 @@ export async function GET(request: Request) {
               groups: groups.data || [],
               modules: modules.data || [],
             };
-            moduleNavigationCache = {
-              expiresAt: Date.now() + MODULE_NAVIGATION_TTL_MS,
-              value,
-            };
+
+            if (value.groups.length > 0 || value.modules.length > 0) {
+              moduleNavigationCache = {
+                expiresAt: Date.now() + MODULE_NAVIGATION_TTL_MS,
+                value,
+              };
+            }
 
             return value;
           });
@@ -168,6 +171,7 @@ export async function GET(request: Request) {
         organizations,
         companies,
         sites,
+        isGlobalAccess: isWildcard,
       },
       moduleNavigation,
     });

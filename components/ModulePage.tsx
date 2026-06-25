@@ -17,7 +17,8 @@ import {
 } from "lucide-react";
 import { useMemo } from "react";
 import { useAccessContext } from "@/components/AccessContext";
-import { can } from "@/lib/accessControl";
+import { can, hasGlobalAccess } from "@/lib/accessControl";
+import { DEFAULT_MODULE_NAVIGATION } from "@/lib/defaultModuleNavigation";
 
 type ModuleRow = {
   id: string;
@@ -132,10 +133,19 @@ export default function ModulePage({
   const { access, moduleNavigation, loading } = useAccessContext();
   const pages = useMemo(() => {
     const permissions = access?.permissions || [];
-    return ((moduleNavigation.modules || []) as ModuleRow[])
+    const globalAccess = hasGlobalAccess(access);
+    const effectiveNavigation =
+      globalAccess && (moduleNavigation.modules || []).length === 0
+        ? DEFAULT_MODULE_NAVIGATION
+        : moduleNavigation;
+
+    return ((effectiveNavigation.modules || []) as ModuleRow[])
       .filter((module: ModuleRow) => module.module_group === groupCode)
-      .filter((page: ModuleRow) => can(permissions, page.module_code, "view"));
-  }, [access?.permissions, groupCode, moduleNavigation.modules]);
+      .filter(
+        (page: ModuleRow) =>
+          globalAccess || can(permissions, page.module_code, "view"),
+      );
+  }, [access, groupCode, moduleNavigation]);
 
   if (loading) {
     return <p className="text-sm text-gray-500">Loading module...</p>;

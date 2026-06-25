@@ -21,7 +21,8 @@ import {
   NotificationCountsProvider,
   type NotificationCounts,
 } from "@/components/NotificationCountsContext";
-import { can } from "@/lib/accessControl";
+import { can, hasGlobalAccess } from "@/lib/accessControl";
+import { DEFAULT_MODULE_NAVIGATION } from "@/lib/defaultModuleNavigation";
 import { supabase } from "@/lib/supabase";
 
 const sidebarGroupMeta = {
@@ -75,34 +76,38 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const notificationsStartedRef = useRef(false);
 
   const permissions = access?.permissions || [];
-  const roleCodes = access?.roleCodes || [];
-  const dashboardHref = can(permissions, "dashboard", "view") ? "/" : "/modules";
+  const globalAccess = hasGlobalAccess(access);
+  const effectiveNavigation =
+    globalAccess && (moduleNavigation.groups || []).length === 0
+      ? DEFAULT_MODULE_NAVIGATION
+      : moduleNavigation;
+  const dashboardHref = globalAccess || can(permissions, "dashboard", "view") ? "/" : "/modules";
   const visibleGroupCodes = useMemo(() => {
     const nextVisibleGroups = new Set<string>();
 
-    (moduleNavigation.modules || []).forEach((module: any) => {
-      if (can(permissions, module.module_code, "view")) {
+    (effectiveNavigation.modules || []).forEach((module: any) => {
+      if (globalAccess || can(permissions, module.module_code, "view")) {
         nextVisibleGroups.add(module.module_group);
       }
     });
 
     return nextVisibleGroups;
-  }, [moduleNavigation.modules, permissions]);
+  }, [effectiveNavigation.modules, globalAccess, permissions]);
 
   const visibleSidebarItems = useMemo<SidebarItem[]>(() => {
     const items: SidebarItem[] = [];
 
-    if (can(permissions, "dashboard", "view")) {
+    if (globalAccess || can(permissions, "dashboard", "view")) {
       items.push({ label: "Dashboard", href: "/", icon: Home, groupCode: "dashboard" });
     }
 
-    if (roleCodes.includes("platform_owner") || can(permissions, "*", "*")) {
+    if (globalAccess) {
       items.push({ label: "Modules", href: "/modules", icon: LayoutGrid, superOnly: true });
     }
 
-    (moduleNavigation.groups || [])
+    (effectiveNavigation.groups || [])
       .filter((group: any) => group.module_code !== "dashboard")
-      .filter((group: any) => visibleGroupCodes.has(group.module_code))
+      .filter((group: any) => globalAccess || visibleGroupCodes.has(group.module_code))
       .forEach((group: any) => {
         const meta = sidebarGroupMeta[group.module_code as keyof typeof sidebarGroupMeta];
         const fallbackHref = `/modules/${String(group.module_code || "").replace(/_/g, "-")}`;
@@ -116,7 +121,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       });
 
     return items;
-  }, [moduleNavigation.groups, permissions, roleCodes, visibleGroupCodes]);
+  }, [effectiveNavigation.groups, globalAccess, permissions, visibleGroupCodes]);
 
   const loadNotificationCounts = useCallback(async () => {
     try {

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useAccessContext } from "@/components/AccessContext";
-import { can } from "@/lib/accessControl";
+import { can, hasGlobalAccess } from "@/lib/accessControl";
 
 export default function RequirePermission({
   moduleCode,
@@ -16,7 +16,10 @@ export default function RequirePermission({
   fallback?: React.ReactNode;
 }) {
   const { access, loading } = useAccessContext();
-  const allowed = can(access?.permissions || [], moduleCode, actionCode);
+  const permissions = access?.permissions || [];
+  const allowed =
+    hasGlobalAccess(access) ||
+    can(permissions, moduleCode, actionCode);
 
   if (loading) {
     return <div className="p-8 text-gray-500">Checking access...</div>;

@@ -7,7 +7,6 @@ import AlertMessage from "@/components/AlertMessage";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
-import { getAllowedOrganizationIds } from "@/lib/clientOrganizationScope";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -76,214 +75,50 @@ export default function ApprovalsPage() {
     setLoading(true);
     setMessage("");
 
-    const allowedOrganizationIds = getAllowedOrganizationIds(access);
     const canLoadRaBills = canApproveRaBills || canRejectRaBills;
     const canLoadDebitNotes = canApproveDebitNotes || canDeleteDebitNotes;
     const canLoadReimbursements = canApproveReimbursements || canRejectReimbursements;
-
-    if (
-      allowedOrganizationIds !== null &&
-      allowedOrganizationIds.length === 0
-    ) {
-      setBills([]);
-      setDebitNotes([]);
-      setReimbursements([]);
-      setWorkOrders([]);
-      setVendors([]);
-      setSites([]);
-      setCompanies([]);
-      setHrEmployees([]);
-      setRaDocuments([]);
-      setDebitDocuments([]);
-      setLoading(false);
-      return;
-    }
 
     const {
       data: { session },
     } = await supabase.auth.getSession();
     const token = session?.access_token;
 
-    let billQuery = supabase
-      .from("ra_bills")
-      .select(`
-        id,
-        organization_id,
-        work_order_id,
-        vendor_id,
-        ra_number,
-        ra_date,
-        gross_amount,
-        net_amount,
-        status,
-        approval_status,
-        created_at,
-        created_by_name,
-        created_by_email,
-        gst_amount
-      `)
-      .eq("approval_status", "Pending")
-      .order("created_at", { ascending: false });
-
-    if (allowedOrganizationIds !== null) {
-      billQuery = billQuery.in("organization_id", allowedOrganizationIds);
-    }
-
-    const { data: billData, error: billError } = canLoadRaBills
-      ? await billQuery
-      : { data: [], error: null };
-
-    if (billError) {
-      showMessage("error", billError.message);
+    if (!token && (canLoadRaBills || canLoadDebitNotes || canLoadReimbursements)) {
+      showMessage("error", "Unable to load approvals: missing auth session.");
       setLoading(false);
       return;
     }
 
-    let debitQuery = supabase
-      .from("debit_notes")
-      .select(`
-        id,
-        organization_id,
-        work_order_id,
-        vendor_id,
-        debit_note_number,
-        debit_note_date,
-        debit_note_type,
-        reason,
-        gross_amount,
-        total_amount,
-        status,
-        approval_status,
-        created_at,
-        created_by_name,
-        created_by_email
-      `)
-      .eq("approval_status", "Pending")
-      .order("created_at", { ascending: false });
-
-    if (allowedOrganizationIds !== null) {
-      debitQuery = debitQuery.in("organization_id", allowedOrganizationIds);
-    }
-
-    const { data: debitData, error: debitError } = canLoadDebitNotes
-      ? await debitQuery
-      : { data: [], error: null };
-
-    if (debitError) {
-      showMessage("error", debitError.message);
-      setLoading(false);
-      return;
-    }
-
-    const raBills = billData || [];
-    const notes = debitData || [];
-    let reimbursementData: any[] = [];
-
-    if (canLoadReimbursements) {
-      if (!token) {
-        showMessage("error", "Unable to load reimbursement approvals: missing auth session.");
-        setLoading(false);
-        return;
-      }
-
-      const reimbursementResponse = await fetch("/api/hr/reimbursements?status=pending", {
+    const approvalResponse =
+      canLoadRaBills || canLoadDebitNotes || canLoadReimbursements
+        ? await fetch("/api/approvals", {
         headers: {
           Authorization: `Bearer ${token}`,
         },
-      });
-      const reimbursementResult = await reimbursementResponse.json().catch(() => ({}));
+          })
+        : null;
 
-      if (!reimbursementResponse.ok) {
-        showMessage("error", reimbursementResult.error || "Failed to load reimbursement approvals.");
-        setLoading(false);
-        return;
-      }
+    const approvalResult = approvalResponse
+      ? await approvalResponse.json().catch(() => ({}))
+      : {};
 
-      reimbursementData = reimbursementResult.reimbursements || [];
+    if (approvalResponse && !approvalResponse.ok) {
+      showMessage("error", approvalResult.error || "Failed to load approvals.");
+      setLoading(false);
+      return;
     }
+
+    const raBills: any[] = approvalResult.bills || [];
+    const notes: any[] = approvalResult.debitNotes || [];
+    const reimbursementData: any[] = approvalResult.reimbursements || [];
 
     setBills(raBills);
     setDebitNotes(notes);
     setReimbursements(reimbursementData);
 
-    const workOrderIds = Array.from(
-      new Set(
-        [
-          ...raBills.map((b) => b.work_order_id),
-          ...notes.map((n) => n.work_order_id),
-        ].filter(Boolean)
-      )
-    );
-
-    const vendorIds = Array.from(
-      new Set(
-        [
-          ...raBills.map((b) => b.vendor_id),
-          ...notes.map((n) => n.vendor_id),
-        ].filter(Boolean)
-      )
-    );
-
     const raBillIds = raBills.map((b) => b.id);
     const debitNoteIds = notes.map((n) => n.id);
-    const employeeIds = Array.from(
-      new Set(reimbursementData.map((claim) => claim.employee_id).filter(Boolean))
-    );
-    const reimbursementCompanyIds = reimbursementData
-      .map((claim) => claim.company_id)
-      .filter(Boolean);
-    const reimbursementSiteIds = reimbursementData
-      .map((claim) => claim.site_id)
-      .filter(Boolean);
-
-    const { data: woData } = workOrderIds.length
-      ? await supabase
-          .from("work_orders")
-          .select("id, wo_number, company_id, site_id")
-          .in("id", workOrderIds)
-      : { data: [] };
-
-    const siteIds = Array.from(
-      new Set((woData || []).map((wo: any) => wo.site_id).filter(Boolean))
-    );
-    reimbursementSiteIds.forEach((id) => {
-      if (!siteIds.includes(id)) siteIds.push(id);
-    });
-
-    const companyIds = Array.from(
-      new Set((woData || []).map((wo: any) => wo.company_id).filter(Boolean))
-    );
-    reimbursementCompanyIds.forEach((id) => {
-      if (!companyIds.includes(id)) companyIds.push(id);
-    });
-
-    const { data: vendorData } = vendorIds.length
-      ? await supabase
-          .from("vendors")
-          .select("id, vendor_name")
-          .in("id", vendorIds)
-      : { data: [] };
-
-    const { data: siteData } = siteIds.length
-      ? await supabase
-          .from("sites")
-          .select("id, site_name, site_code")
-          .in("id", siteIds)
-      : { data: [] };
-
-    const { data: companyData } = companyIds.length
-      ? await supabase
-          .from("companies")
-          .select("id, company_name, company_code")
-          .in("id", companyIds)
-      : { data: [] };
-
-    const { data: employeeData } = employeeIds.length
-      ? await supabase
-          .from("hr_employees")
-          .select("id, employee_name, employee_code")
-          .in("id", employeeIds)
-      : { data: [] };
 
     let raDocumentData: any[] = [];
 
@@ -345,11 +180,11 @@ export default function ApprovalsPage() {
       debitDocumentData = documentResult.documents || [];
     }
 
-    setWorkOrders(woData || []);
-    setVendors(vendorData || []);
-    setSites(siteData || []);
-    setCompanies(companyData || []);
-    setHrEmployees(employeeData || []);
+    setWorkOrders(approvalResult.workOrders || []);
+    setVendors(approvalResult.vendors || []);
+    setSites(approvalResult.sites || []);
+    setCompanies(approvalResult.companies || []);
+    setHrEmployees(approvalResult.hrEmployees || []);
     setRaDocuments(raDocumentData || []);
     setDebitDocuments(debitDocumentData || []);
 

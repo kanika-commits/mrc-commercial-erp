@@ -6,7 +6,7 @@ import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import AppShell from "@/components/AppShell";
 import { AccessProvider } from "@/components/AccessContext";
-import { can, type CurrentUserAccess } from "@/lib/accessControl";
+import { can, hasGlobalAccess, type CurrentUserAccess } from "@/lib/accessControl";
 
 type ModuleNavigation = {
   groups: any[];
@@ -40,6 +40,10 @@ function hasRouteAccess(
 ) {
   if (isUnrestrictedPath(pathname)) return true;
 
+  const globalAccess = hasGlobalAccess(access);
+
+  if (globalAccess) return true;
+
   if (pathname === "/") {
     return can(access.permissions, "dashboard", "view");
   }
@@ -47,10 +51,7 @@ function hasRouteAccess(
   if (pathname === "/settings" || pathname === "/settings/password") return true;
 
   if (pathname.startsWith("/settings")) {
-    return (
-      access.roleCodes.includes("platform_owner") ||
-      can(access.permissions, "*", "*")
-    );
+    return globalAccess;
   }
 
   const matchedModule = (navigation.modules || [])
@@ -216,8 +217,10 @@ export default function AuthGuard({
 
   const accessDenied = useMemo(() => {
     if (isLoginPage) return false;
+    if (!authChecked) return false;
+    if (isUnrestrictedPath(pathname)) return false;
     if (error && !access) return true;
-    if (!authChecked || accessLoading || !access) return false;
+    if (accessLoading || !access) return false;
     return !hasRouteAccess(pathname, access, moduleNavigation);
   }, [access, accessLoading, authChecked, error, isLoginPage, moduleNavigation, pathname]);
 

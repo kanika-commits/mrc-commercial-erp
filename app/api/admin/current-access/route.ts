@@ -77,6 +77,7 @@ export async function GET(request: Request) {
         organizations: [],
         companies: [],
         sites: [],
+        isGlobalAccess: true,
       });
     }
 
@@ -102,6 +103,7 @@ export async function GET(request: Request) {
       sites: Array.from(
         new Set((accessRows.data || []).map((row) => row.site_id).filter(Boolean))
       ),
+      isGlobalAccess: false,
     });
   } catch (error: any) {
     return NextResponse.json(

@@ -11,7 +11,8 @@ import {
   UserPlus,
   UsersRound,
 } from "lucide-react";
-import { can } from "@/lib/accessControl";
+import { can, hasGlobalAccess } from "@/lib/accessControl";
+import { DEFAULT_MODULE_NAVIGATION } from "@/lib/defaultModuleNavigation";
 import { useAccessContext } from "@/components/AccessContext";
 
 const moduleCards = [
@@ -121,8 +122,13 @@ const toneClasses = {
 export default function ModulesPage() {
   const { access, moduleNavigation, loading } = useAccessContext();
   const permissions = access?.permissions || [];
-  const groups = moduleNavigation.groups || [];
-  const modules = moduleNavigation.modules || [];
+  const globalAccess = hasGlobalAccess(access);
+  const effectiveNavigation =
+    globalAccess && (moduleNavigation.groups || []).length === 0
+      ? DEFAULT_MODULE_NAVIGATION
+      : moduleNavigation;
+  const groups = effectiveNavigation.groups || [];
+  const modules = effectiveNavigation.modules || [];
 
   if (loading) {
     return (
@@ -134,6 +140,7 @@ export default function ModulesPage() {
 
   const visibleCards = groups
     .filter((group) =>
+      globalAccess ||
       modules.some(
         (module) =>
           module.module_group === group.module_code &&
@@ -155,13 +162,13 @@ export default function ModulesPage() {
       label: "New User",
       href: "/admin/users/new",
       icon: UserPlus,
-      show: can(permissions, "users", "add"),
+      show: globalAccess || can(permissions, "users", "add"),
     },
     {
       label: "Create Work Order",
       href: "/work-orders/new",
       icon: FilePlus2,
-      show: can(permissions, "work_orders", "add"),
+      show: globalAccess || can(permissions, "work_orders", "add"),
     },
   ].filter((action) => action.show);
 
