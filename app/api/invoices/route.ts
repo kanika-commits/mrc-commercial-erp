@@ -100,14 +100,13 @@ function isGoogleDriveUrl(value: string | null | undefined) {
 }
 
 function documentStoragePath(document: any) {
-  const filePath = String(document?.file_path || "").trim();
   const fileUrl = String(document?.file_url || "").trim();
 
-  if (isGoogleDriveUrl(fileUrl) || isGoogleDriveUrl(filePath)) {
+  if (isGoogleDriveUrl(fileUrl)) {
     return "";
   }
 
-  return normalizeStoragePath(filePath || fileUrl);
+  return normalizeStoragePath(fileUrl);
 }
 
 function mimeTypeFromFileName(fileName: string) {
@@ -424,7 +423,6 @@ export async function POST(request: Request) {
           invoice_id: invoice.id,
           file_name: file.name,
           file_url: filePath,
-          file_path: filePath,
         });
 
       if (documentError) throw documentError;
@@ -631,7 +629,6 @@ export async function PATCH(request: Request) {
         .update({
           file_name: driveFile.file_name || fileName,
           file_url: driveFile.file_url,
-          file_path: driveFile.file_id,
         })
         .eq("id", document.id);
 
@@ -712,7 +709,6 @@ export async function PATCH(request: Request) {
         drive_files: driveDocuments.map((document) => ({
           id: document.id,
           file_name: document.file_name,
-          file_path: document.file_path,
           file_url: document.file_url,
         })),
       }

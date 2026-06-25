@@ -28,13 +28,11 @@ export default function ApprovalsPage() {
   const { access } = useAccessContext();
   const [bills, setBills] = useState<any[]>([]);
   const [debitNotes, setDebitNotes] = useState<any[]>([]);
-  const [reimbursements, setReimbursements] = useState<any[]>([]);
 
   const [workOrders, setWorkOrders] = useState<any[]>([]);
   const [vendors, setVendors] = useState<any[]>([]);
   const [sites, setSites] = useState<any[]>([]);
   const [companies, setCompanies] = useState<any[]>([]);
-  const [hrEmployees, setHrEmployees] = useState<any[]>([]);
 
   const [raDocuments, setRaDocuments] = useState<any[]>([]);
   const [debitDocuments, setDebitDocuments] = useState<any[]>([]);
@@ -48,8 +46,6 @@ export default function ApprovalsPage() {
   const canRejectRaBills = can(access?.permissions || [], "ra_bills", "reject");
   const canApproveDebitNotes = can(access?.permissions || [], "debit_notes", "approve");
   const canDeleteDebitNotes = can(access?.permissions || [], "debit_notes", "delete");
-  const canApproveReimbursements = can(access?.permissions || [], "reimbursements", "approve");
-  const canRejectReimbursements = can(access?.permissions || [], "reimbursements", "reject");
 
   useEffect(() => {
     if (access) {
@@ -68,21 +64,20 @@ export default function ApprovalsPage() {
 
     const canLoadRaBills = canApproveRaBills || canRejectRaBills;
     const canLoadDebitNotes = canApproveDebitNotes || canDeleteDebitNotes;
-    const canLoadReimbursements = canApproveReimbursements || canRejectReimbursements;
 
     const {
       data: { session },
     } = await supabase.auth.getSession();
     const token = session?.access_token;
 
-    if (!token && (canLoadRaBills || canLoadDebitNotes || canLoadReimbursements)) {
+    if (!token && (canLoadRaBills || canLoadDebitNotes)) {
       showMessage("error", "Unable to load approvals: missing auth session.");
       setLoading(false);
       return;
     }
 
     const approvalResponse =
-      canLoadRaBills || canLoadDebitNotes || canLoadReimbursements
+      canLoadRaBills || canLoadDebitNotes
         ? await fetch("/api/approvals", {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -102,11 +97,9 @@ export default function ApprovalsPage() {
 
     const raBills: any[] = approvalResult.bills || [];
     const notes: any[] = approvalResult.debitNotes || [];
-    const reimbursementData: any[] = approvalResult.reimbursements || [];
 
     setBills(raBills);
     setDebitNotes(notes);
-    setReimbursements(reimbursementData);
 
     const raBillIds = raBills.map((b) => b.id);
     const debitNoteIds = notes.map((n) => n.id);
@@ -175,7 +168,6 @@ export default function ApprovalsPage() {
     setVendors(approvalResult.vendors || []);
     setSites(approvalResult.sites || []);
     setCompanies(approvalResult.companies || []);
-    setHrEmployees(approvalResult.hrEmployees || []);
     setRaDocuments(raDocumentData || []);
     setDebitDocuments(debitDocumentData || []);
 
@@ -188,9 +180,8 @@ export default function ApprovalsPage() {
       vendorMap: new Map(vendors.map((item) => [item.id, item])),
       siteMap: new Map(sites.map((item) => [item.id, item])),
       companyMap: new Map(companies.map((item) => [item.id, item])),
-      employeeMap: new Map(hrEmployees.map((item) => [item.id, item])),
     };
-  }, [workOrders, vendors, sites, companies, hrEmployees]);
+  }, [workOrders, vendors, sites, companies]);
 
   function raDocumentCount(billId: string) {
     return raDocuments.filter((doc) => doc.ra_bill_id === billId).length;
@@ -353,68 +344,6 @@ async function updateDebitNoteStatus(
   setSavingId("");
 }
 
-  async function updateReimbursementStatus(
-    claimId: string,
-    action: "approve" | "reject"
-  ) {
-    setMessage("");
-    setSavingId(`reim-${claimId}`);
-
-    const remark = remarks[`reim-${claimId}`]?.trim() || "";
-
-    if (action === "reject" && remark.length < 10) {
-      showMessage("error", "Reason must be at least 10 characters for Reject.");
-      setSavingId("");
-      return;
-    }
-
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-
-    if (!session?.access_token) {
-      showMessage("error", "Your session has expired. Please sign in again.");
-      setSavingId("");
-      return;
-    }
-
-    const response = await fetch(`/api/hr/reimbursements/${claimId}/${action}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-        "Content-Type": "application/json",
-      },
-      body:
-        action === "reject"
-          ? JSON.stringify({ rejection_reason: remark })
-          : undefined,
-    });
-
-    const result = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      showMessage(
-        "error",
-        result.error ||
-          `Failed to ${action === "approve" ? "approve" : "reject"} reimbursement.`
-      );
-      setSavingId("");
-      return;
-    }
-
-    setReimbursements((prev) => prev.filter((claim) => claim.id !== claimId));
-    showMessage(
-      "success",
-      action === "approve"
-        ? "Reimbursement approved successfully."
-        : "Reimbursement rejected successfully."
-    );
-    setSavingId("");
-  }
-
-
-   
-
   if (loading) {
     
     return <p className="text-sm text-slate-500">Loading approvals...</p>;
@@ -431,7 +360,7 @@ async function updateDebitNoteStatus(
 
           <h1 className="text-3xl font-bold text-slate-950">HO Approvals</h1>
           <p className="text-sm text-slate-500">
-            Review pending RA Bills, Debit Notes and reimbursements.
+            Review pending RA Bills and Debit Notes.
           </p>
         </div>
 
@@ -450,10 +379,9 @@ async function updateDebitNoteStatus(
         onClose={() => setMessage("")}
       />
 
-      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Summary title="Pending RA Bills" value={String(bills.length)} />
         <Summary title="Pending Debit Notes" value={String(debitNotes.length)} />
-        <Summary title="Pending Reimbursements" value={String(reimbursements.length)} />
         <Summary
           title="Pending RA Value"
           value={money(
@@ -466,15 +394,6 @@ async function updateDebitNoteStatus(
             debitNotes.reduce(
               (sum, note) =>
                 sum + Number(note.total_amount || note.gross_amount || 0),
-              0
-            )
-          )}
-        />
-        <Summary
-          title="Pending Reimbursement Value"
-          value={money(
-            reimbursements.reduce(
-              (sum, claim) => sum + Number(claim.total_amount || 0),
               0
             )
           )}
@@ -840,118 +759,6 @@ async function updateDebitNoteStatus(
         </div>
       </div>
 
-      <div className="rounded-2xl border bg-white shadow-sm">
-        <div className="border-b p-4">
-          <h2 className="font-semibold text-slate-950">Pending Reimbursements</h2>
-          <p className="text-xs text-slate-500">
-            Approve or reject employee reimbursement claims. Approved claims sync their attachments to Google Drive.
-          </p>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1420px] text-sm">
-            <thead className="bg-slate-50 text-xs uppercase text-slate-500">
-              <tr>
-                <th className="p-3 text-left">Claim Number</th>
-                <th className="p-3 text-left">Employee</th>
-                <th className="p-3 text-left">Company</th>
-                <th className="p-3 text-left">Site</th>
-                <th className="p-3 text-right">Amount</th>
-                <th className="p-3 text-left">Claim Date</th>
-                <th className="p-3 text-left">Claim Type</th>
-                <th className="p-3 text-left">Submitted By</th>
-                <th className="p-3 text-left">Remark / Reason</th>
-                <th className="p-3 text-right">Action</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {reimbursements.map((claim) => {
-                const employee = maps.employeeMap.get(claim.employee_id);
-                const company = claim.company_id
-                  ? maps.companyMap.get(claim.company_id)
-                  : null;
-                const site = claim.site_id ? maps.siteMap.get(claim.site_id) : null;
-                const remarkKey = `reim-${claim.id}`;
-
-                return (
-                  <tr key={claim.id} className="border-t align-top">
-                    <td className="p-3">
-                      <Link
-                        href={`/hr/reimbursements/${claim.id}`}
-                        className="font-semibold text-blue-600 hover:underline"
-                      >
-                        {claim.claim_number}
-                      </Link>
-                      <div className="mt-1">
-                        <span className="rounded-full border border-yellow-200 bg-yellow-50 px-2 py-0.5 text-xs text-yellow-700">
-                          {claim.status || "pending"}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="p-3">
-                      <div className="font-medium">
-                        {employee?.employee_name || "-"}
-                      </div>
-                      <div className="text-xs text-slate-500">
-                        {employee?.employee_code || ""}
-                      </div>
-                    </td>
-                    <td className="p-3">{company?.company_name || "-"}</td>
-                    <td className="p-3">{site?.site_name || "-"}</td>
-                    <td className="p-3 text-right font-semibold">
-                      {money(claim.total_amount)}
-                    </td>
-                    <td className="p-3">{claim.claim_date || "-"}</td>
-                    <td className="p-3">{claim.claim_type || "-"}</td>
-                    <td className="p-3">
-                      <div className="max-w-[180px] truncate font-medium text-slate-800">
-                        {auditName(claim.created_by_name, claim.created_by_email)}
-                      </div>
-                      {claim.created_by_name && claim.created_by_email && claim.created_by_name !== claim.created_by_email && (
-                        <div className="max-w-[180px] truncate text-xs text-slate-500">
-                          {claim.created_by_email}
-                        </div>
-                      )}
-                    </td>
-                    <td className="p-3">
-                      <textarea
-                        value={remarks[remarkKey] || ""}
-                        onChange={(e) =>
-                          setRemarks((prev) => ({
-                            ...prev,
-                            [remarkKey]: e.target.value,
-                          }))
-                        }
-                        className="min-h-24 w-64 rounded-xl border px-3 py-2 text-sm outline-none focus:border-slate-400"
-                        placeholder="Required for reject"
-                      />
-                    </td>
-                    <td className="p-3 text-right">
-                      <ActionButtons
-                        saving={savingId === remarkKey}
-                        viewHref={`/hr/reimbursements/${claim.id}`}
-                        showApprove={canApproveReimbursements}
-                        showReject={canRejectReimbursements}
-                        onApprove={() => updateReimbursementStatus(claim.id, "approve")}
-                        onReject={() => updateReimbursementStatus(claim.id, "reject")}
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
-
-              {reimbursements.length === 0 && (
-                <tr>
-                  <td colSpan={10} className="p-8 text-center text-slate-500">
-                    No pending Reimbursements found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
     </section>
   );
 }

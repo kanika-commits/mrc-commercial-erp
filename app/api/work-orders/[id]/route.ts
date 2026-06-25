@@ -1,12 +1,18 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { requirePermission } from "@/lib/serverPermissions";
 import {
   isInOrganizationScope,
   loadOrganizationScopeForUser,
 } from "@/lib/serverOrganizationScope";
+import {
+  createWorkOrderDriveFolder,
+  uploadDriveFile,
+} from "@/src/lib/googleDrive";
 
 const MODULE_CODE = "work_orders";
+const DOCUMENT_BUCKET = "work-order-documents";
 const ALLOWED_STATUSES = new Set([
   "yet_to_start",
   "active",
@@ -64,6 +70,247 @@ function isWorkOrderInActorScope(
   return true;
 }
 
+function isGoogleDriveUrl(value: string | null | undefined) {
+  const url = String(value || "").trim();
+  return (
+    url.startsWith("https://drive.google.com/") ||
+    url.startsWith("https://docs.google.com/")
+  );
+}
+
+function normalizeStoragePath(document: any) {
+  const explicitPath = String(document?.file_path || "").trim();
+  if (explicitPath && !isGoogleDriveUrl(explicitPath)) {
+    return explicitPath.replace(/^\/+/, "");
+  }
+
+  const raw = String(document?.file_url || "").trim();
+  if (!raw || isGoogleDriveUrl(raw)) return "";
+  if (!raw.startsWith("http")) return raw.replace(/^\/+/, "");
+
+  const markers = [
+    `/storage/v1/object/public/${DOCUMENT_BUCKET}/`,
+    `/storage/v1/object/sign/${DOCUMENT_BUCKET}/`,
+  ];
+
+  for (const marker of markers) {
+    const markerIndex = raw.indexOf(marker);
+    if (markerIndex >= 0) {
+      return decodeURIComponent(raw.slice(markerIndex + marker.length));
+    }
+  }
+
+  return raw;
+}
+
+function requireDriveFolderValue(value: unknown, label: string) {
+  const text = String(value || "").trim();
+
+  if (!text) {
+    throw new Error(`Google Drive Work Order folder response missing ${label}.`);
+  }
+
+  return text;
+}
+
+function validateWorkOrderDriveFolder(driveFolder: any) {
+  return {
+    drive_folder_id: requireDriveFolderValue(driveFolder?.folder_id, "folder_id"),
+    drive_folder_name: requireDriveFolderValue(
+      driveFolder?.folder_name,
+      "folder_name"
+    ),
+    ra_bills_folder_id: requireDriveFolderValue(
+      driveFolder?.ra_bills_folder_id,
+      "ra_bills_folder_id"
+    ),
+    invoices_folder_id: requireDriveFolderValue(
+      driveFolder?.invoices_folder_id,
+      "invoices_folder_id"
+    ),
+    debit_notes_folder_id: requireDriveFolderValue(
+      driveFolder?.debit_notes_folder_id,
+      "debit_notes_folder_id"
+    ),
+    contractor_docs_folder_id: requireDriveFolderValue(
+      driveFolder?.contractor_docs_folder_id,
+      "contractor_docs_folder_id"
+    ),
+    work_order_file_id: requireDriveFolderValue(
+      driveFolder?.work_order_file_id,
+      "work_order_file_id"
+    ),
+    work_order_file_url: requireDriveFolderValue(
+      driveFolder?.work_order_file_url,
+      "work_order_file_url"
+    ),
+    work_order_file_name:
+      String(driveFolder?.work_order_file_name || "").trim() || null,
+  };
+}
+
+async function fileToOptimizedDrivePayload(
+  buffer: Buffer,
+  mimeType: string,
+  fileName: string
+) {
+  const optimized = await optimizeUploadFile(buffer, mimeType, fileName);
+  return {
+    fileName: optimized.fileName,
+    mimeType: optimized.mimeType,
+    base64: optimized.buffer.toString("base64"),
+  };
+}
+
+async function promoteWorkOrderFileToDrive(
+  admin: ReturnType<typeof adminClient>,
+  workOrder: any
+) {
+  const { data: existingFolder, error: existingFolderError } = await admin
+    .from("work_order_drive_folders")
+    .select(
+      "drive_folder_id, drive_folder_name, ra_bills_folder_id, invoices_folder_id, debit_notes_folder_id, contractor_docs_folder_id"
+    )
+    .eq("work_order_id", workOrder.id)
+    .maybeSingle();
+
+  if (existingFolderError) throw existingFolderError;
+
+  const { data: document, error: documentError } = await admin
+    .from("work_order_documents")
+    .select("id, file_name, file_url, file_path")
+    .eq("work_order_id", workOrder.id)
+    .order("uploaded_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (documentError) throw documentError;
+
+  if (!document) {
+    throw new Error("Pending Work Order file was not found.");
+  }
+
+  if (isGoogleDriveUrl(document.file_url)) {
+    if (!existingFolder?.drive_folder_id) {
+      throw new Error(
+        "Work Order file is already on Google Drive, but Drive folder metadata is missing."
+      );
+    }
+
+    return;
+  }
+
+  const storagePath = normalizeStoragePath(document);
+  if (!storagePath) {
+    throw new Error("Pending Work Order file storage path was not found.");
+  }
+
+  const { data: downloadedFile, error: downloadError } = await admin.storage
+    .from(DOCUMENT_BUCKET)
+    .download(storagePath);
+
+  if (downloadError) throw downloadError;
+  if (!downloadedFile) {
+    throw new Error("Pending Work Order file could not be downloaded.");
+  }
+
+  const fileBuffer = Buffer.from(await downloadedFile.arrayBuffer());
+  const mimeType =
+    downloadedFile.type || "application/octet-stream";
+  const fileName = document.file_name || "Work Order File";
+  const optimizedFile = await fileToOptimizedDrivePayload(
+    fileBuffer,
+    mimeType,
+    fileName
+  );
+
+  let driveFile: {
+    file_id: string;
+    file_url: string;
+    file_name: string;
+  };
+  let driveFolderValues:
+    | ReturnType<typeof validateWorkOrderDriveFolder>
+    | null = null;
+
+  if (existingFolder?.drive_folder_id) {
+    driveFile = await uploadDriveFile({
+      targetFolderId: existingFolder.drive_folder_id,
+      fileName: optimizedFile.fileName,
+      mimeType: optimizedFile.mimeType,
+      base64: optimizedFile.base64,
+    });
+
+    if (!driveFile.file_id || !driveFile.file_url) {
+      throw new Error("Google Drive Work Order file was not uploaded.");
+    }
+  } else {
+    const driveFolder = await createWorkOrderDriveFolder(
+      workOrder.wo_number,
+      optimizedFile
+    );
+    driveFolderValues = validateWorkOrderDriveFolder(driveFolder);
+    driveFile = {
+      file_id: driveFolderValues.work_order_file_id,
+      file_url: driveFolderValues.work_order_file_url,
+      file_name: driveFolderValues.work_order_file_name || fileName,
+    };
+  }
+
+  if (driveFolderValues) {
+    const { error: driveFolderError } = await admin
+      .from("work_order_drive_folders")
+      .upsert(
+        {
+          organization_id: workOrder.organization_id,
+          work_order_id: workOrder.id,
+          drive_folder_id: driveFolderValues.drive_folder_id,
+          drive_folder_name: driveFolderValues.drive_folder_name,
+          ra_bills_folder_id: driveFolderValues.ra_bills_folder_id,
+          invoices_folder_id: driveFolderValues.invoices_folder_id,
+          debit_notes_folder_id: driveFolderValues.debit_notes_folder_id,
+          contractor_docs_folder_id:
+            driveFolderValues.contractor_docs_folder_id,
+        },
+        { onConflict: "work_order_id" }
+      );
+
+    if (driveFolderError) {
+      throw new Error(
+        `Google Drive folder was created but ERP folder metadata could not be saved: ${driveFolderError.message}`
+      );
+    }
+  }
+
+  const { error: documentUpdateError } = await admin
+    .from("work_order_documents")
+    .update({
+      file_name: driveFile.file_name || fileName,
+      file_url: driveFile.file_url,
+      file_path: driveFile.file_id,
+      uploaded_at: new Date().toISOString(),
+    })
+    .eq("id", document.id);
+
+  if (documentUpdateError) {
+    throw new Error(
+      `Google Drive file was uploaded but ERP file metadata could not be saved: ${documentUpdateError.message}`
+    );
+  }
+
+  const { error: removeError } = await admin.storage
+    .from(DOCUMENT_BUCKET)
+    .remove([storagePath]);
+
+  if (removeError) {
+    console.error("Failed to remove pending Work Order temp file", {
+      workOrderId: workOrder.id,
+      storagePath,
+      error: removeError.message,
+    });
+  }
+}
+
 async function loadScopedWorkOrder(
   admin: ReturnType<typeof adminClient>,
   userId: string,
@@ -71,7 +318,7 @@ async function loadScopedWorkOrder(
 ) {
   const { data: workOrder, error } = await admin
     .from("work_orders")
-    .select("id, organization_id, company_id, site_id")
+    .select("id, organization_id, company_id, site_id, wo_number, approval_status")
     .eq("id", workOrderId)
     .maybeSingle();
 
@@ -212,6 +459,8 @@ export async function PATCH(
         permission.user.user_metadata?.name ||
         userEmail;
 
+      await promoteWorkOrderFileToDrive(admin, scopedWorkOrder.workOrder);
+
       const { error: updateError } = await admin
         .from("work_orders")
         .update({
@@ -264,13 +513,15 @@ export async function PATCH(
         if (storageError) throw storageError;
       }
 
-      const [vendorDelete, documentDelete] = await Promise.all([
+      const [vendorDelete, documentDelete, driveFolderDelete] = await Promise.all([
         admin.from("work_order_vendors").delete().eq("work_order_id", id),
         admin.from("work_order_documents").delete().eq("work_order_id", id),
+        admin.from("work_order_drive_folders").delete().eq("work_order_id", id),
       ]);
 
       if (vendorDelete.error) throw vendorDelete.error;
       if (documentDelete.error) throw documentDelete.error;
+      if (driveFolderDelete.error) throw driveFolderDelete.error;
 
       const { error: orderDeleteError } = await admin
         .from("work_orders")

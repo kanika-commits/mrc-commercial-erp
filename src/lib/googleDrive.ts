@@ -247,7 +247,30 @@ export async function uploadDriveFile(input: DriveFileUploadInput) {
     throw new Error(result?.error || "Failed to upload Google Drive file.");
   }
 
-  return result as DriveFileUploadResponse;
+  return {
+    ...result,
+    file_id: firstString(
+      result?.file_id,
+      result?.fileId,
+      result?.uploaded_file_id,
+      result?.uploadedFileId,
+      result?.id
+    ),
+    file_url: firstString(
+      result?.file_url,
+      result?.fileUrl,
+      result?.uploaded_file_url,
+      result?.uploadedFileUrl,
+      result?.url
+    ),
+    file_name: firstString(
+      result?.file_name,
+      result?.fileName,
+      result?.uploaded_file_name,
+      result?.uploadedFileName,
+      input.fileName
+    ),
+  } as DriveFileUploadResponse;
 }
 
 export async function createDriveSubfolder(input: DriveSubfolderInput) {
