@@ -329,6 +329,55 @@ export async function PUT(
     }
 
     if (hasAccessUpdate) {
+      const { data: existingUserRoles, error: existingUserRolesError } = await supabase
+        .from("user_roles")
+        .select("role_id")
+        .eq("user_id", id);
+
+      if (existingUserRolesError) throw existingUserRolesError;
+
+      const currentRoleIds = (existingUserRoles || [])
+        .map((role) => role.role_id)
+        .filter(Boolean);
+      const submittedRoleIds = (role_ids || []).filter(Boolean);
+      const roleIdsToCheck = Array.from(
+        new Set([...currentRoleIds, ...submittedRoleIds])
+      );
+
+      const { data: roleRowsForValidation, error: roleValidationError } =
+        roleIdsToCheck.length > 0
+          ? await supabase
+              .from("roles")
+              .select("id, role_code")
+              .in("id", roleIdsToCheck)
+          : { data: [], error: null };
+
+      if (roleValidationError) throw roleValidationError;
+
+      const platformOwnerRoleIds = new Set(
+        (roleRowsForValidation || [])
+          .filter((role) => role.role_code === "platform_owner")
+          .map((role) => role.id)
+      );
+      const targetIsPlatformOwner = currentRoleIds.some((roleId) =>
+        platformOwnerRoleIds.has(roleId)
+      );
+      const payloadAssignsPlatformOwner = submittedRoleIds.some((roleId: string) =>
+        platformOwnerRoleIds.has(roleId)
+      );
+
+      if (targetIsPlatformOwner || payloadAssignsPlatformOwner) {
+        return NextResponse.json(
+          {
+            error:
+              "Platform Owner is a system identity and cannot be changed through user management.",
+          },
+          { status: 403 }
+        );
+      }
+    }
+
+    if (hasAccessUpdate) {
       const scopeValidation = await validateSubmittedUserScope(
         supabase,
         actorOrganizationIds,

@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { requirePermission } from "@/lib/serverPermissions";
+import { requireAnyPermission } from "@/lib/serverPermissions";
 import {
   isInOrganizationScope,
   loadActorOrganizationScope,
 } from "@/lib/serverOrganizationScope";
+import {
+  loadAllowedWorkOrderIds,
+  loadApprovalScope,
+} from "@/app/api/approvals/_shared";
 
 const DOCUMENT_BUCKET = "debit-note-documents";
 
@@ -64,7 +68,12 @@ function normalizeStoragePath(value: string | null) {
 
 export async function GET(request: Request) {
   try {
-    const auth = await requirePermission(request, "debit_notes", "view");
+    const auth = await requireAnyPermission(request, [
+      { moduleCode: "debit_notes", actionCode: "view" },
+      { moduleCode: "ra_approval", actionCode: "view" },
+      { moduleCode: "ra_approval", actionCode: "approve" },
+      { moduleCode: "ra_approval", actionCode: "reject" },
+    ]);
 
     if ("response" in auth) {
       return auth.response;
@@ -88,7 +97,7 @@ export async function GET(request: Request) {
     const admin = adminClient();
     const { data: debitNotes, error: debitNotesError } = await admin
       .from("debit_notes")
-      .select("id, organization_id")
+      .select("id, organization_id, work_order_id")
       .in("id", debitNoteIds);
 
     if (debitNotesError) throw debitNotesError;
@@ -109,6 +118,28 @@ export async function GET(request: Request) {
     if (outOfScope) {
       return NextResponse.json(
         { error: "You do not have access to this organization." },
+        { status: 403 }
+      );
+    }
+
+    const { organizationScope: approvalOrganizationScope, assignments } =
+      await loadApprovalScope(admin, auth);
+    const allowedWorkOrderIds = await loadAllowedWorkOrderIds(
+      admin,
+      approvalOrganizationScope,
+      assignments
+    );
+
+    if (
+      allowedWorkOrderIds !== null &&
+      (debitNotes || []).some(
+        (debitNote) =>
+          debitNote.work_order_id &&
+          !allowedWorkOrderIds.includes(debitNote.work_order_id)
+      )
+    ) {
+      return NextResponse.json(
+        { error: "You do not have access to one or more Debit Note Work Orders." },
         { status: 403 }
       );
     }

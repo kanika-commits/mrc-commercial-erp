@@ -10,17 +10,16 @@ import {
 const COUNT_PERMISSIONS = [
   { moduleCode: "dashboard", actionCode: "view" },
   { moduleCode: "work_orders", actionCode: "view" },
-  { moduleCode: "work_orders", actionCode: "approve" },
-  { moduleCode: "work_orders", actionCode: "reject" },
+  { moduleCode: "wo_approval", actionCode: "view" },
+  { moduleCode: "wo_approval", actionCode: "approve" },
   { moduleCode: "ra_bills", actionCode: "view" },
-  { moduleCode: "ra_bills", actionCode: "approve" },
-  { moduleCode: "ra_bills", actionCode: "reject" },
+  { moduleCode: "ra_approval", actionCode: "view" },
+  { moduleCode: "ra_approval", actionCode: "approve" },
+  { moduleCode: "ra_approval", actionCode: "reject" },
   { moduleCode: "debit_notes", actionCode: "view" },
-  { moduleCode: "debit_notes", actionCode: "approve" },
-  { moduleCode: "debit_notes", actionCode: "delete" },
   { moduleCode: "invoices", actionCode: "view" },
-  { moduleCode: "invoices", actionCode: "approve" },
-  { moduleCode: "invoices", actionCode: "reject" },
+  { moduleCode: "itc_claims", actionCode: "view" },
+  { moduleCode: "itc_claims", actionCode: "approve" },
   { moduleCode: "vendors", actionCode: "view" },
 ];
 
@@ -127,26 +126,21 @@ export async function GET(request: Request) {
           assignments.siteIds
         );
 
-    const canWorkOrders = canAny(auth.permissions, "work_orders", [
+    const canWorkOrders =
+      canAny(auth.permissions, "work_orders", ["view"]) ||
+      canAny(auth.permissions, "wo_approval", ["view", "approve"]);
+    const canCommercialApprovals = canAny(auth.permissions, "ra_approval", [
       "view",
       "approve",
       "reject",
     ]);
-    const canRaBills = canAny(auth.permissions, "ra_bills", [
-      "view",
-      "approve",
-      "reject",
-    ]);
-    const canDebitNotes = canAny(auth.permissions, "debit_notes", [
-      "view",
-      "approve",
-      "delete",
-    ]);
-    const canInvoices = canAny(auth.permissions, "invoices", [
-      "view",
-      "approve",
-      "reject",
-    ]);
+    const canRaBills =
+      canAny(auth.permissions, "ra_bills", ["view"]) || canCommercialApprovals;
+    const canDebitNotes =
+      canAny(auth.permissions, "debit_notes", ["view"]) || canCommercialApprovals;
+    const canInvoices =
+      canAny(auth.permissions, "invoices", ["view"]) ||
+      canAny(auth.permissions, "itc_claims", ["view", "approve"]);
     const canVendors = canAny(auth.permissions, "vendors", ["view"]);
 
     const pendingWorkOrdersQuery = canWorkOrders

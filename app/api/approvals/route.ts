@@ -11,12 +11,9 @@ import {
 } from "@/app/api/approvals/_shared";
 
 const APPROVAL_PERMISSIONS = [
-  { moduleCode: "ra_bills", actionCode: "view" },
-  { moduleCode: "ra_bills", actionCode: "approve" },
-  { moduleCode: "ra_bills", actionCode: "reject" },
-  { moduleCode: "debit_notes", actionCode: "view" },
-  { moduleCode: "debit_notes", actionCode: "approve" },
-  { moduleCode: "debit_notes", actionCode: "delete" },
+  { moduleCode: "ra_approval", actionCode: "view" },
+  { moduleCode: "ra_approval", actionCode: "approve" },
+  { moduleCode: "ra_approval", actionCode: "reject" },
 ];
 
 export async function GET(request: Request) {
@@ -32,17 +29,12 @@ export async function GET(request: Request) {
       assignments,
     );
 
-    const canLoadRaBills = canAny(auth.permissions, "ra_bills", [
+    const canLoadApprovals = canAny(auth.permissions, "ra_approval", [
       "view",
       "approve",
       "reject",
     ]);
-    const canLoadDebitNotes = canAny(auth.permissions, "debit_notes", [
-      "view",
-      "approve",
-      "delete",
-    ]);
-    const raQuery = canLoadRaBills
+    const raQuery = canLoadApprovals
       ? applyWorkOrderScope(
           applyOrganizationScope(
             admin
@@ -73,7 +65,7 @@ export async function GET(request: Request) {
         )
       : null;
 
-    const debitQuery = canLoadDebitNotes
+    const debitQuery = canLoadApprovals
       ? applyWorkOrderScope(
           applyOrganizationScope(
             admin

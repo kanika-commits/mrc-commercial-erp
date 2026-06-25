@@ -6,7 +6,7 @@ import { CheckCircle2, FileMinus, FileText, Trash2 } from "lucide-react";
 import AlertMessage from "@/components/AlertMessage";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
-import { can } from "@/lib/accessControl";
+import { can, hasGlobalAccess } from "@/lib/accessControl";
 import { formatIstTimestamp } from "@/lib/dateTime";
 
 function money(value: any) {
@@ -42,10 +42,15 @@ export default function ApprovalsPage() {
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error">("error");
   const [remarks, setRemarks] = useState<Record<string, string>>({});
-  const canApproveRaBills = can(access?.permissions || [], "ra_bills", "approve");
-  const canRejectRaBills = can(access?.permissions || [], "ra_bills", "reject");
-  const canApproveDebitNotes = can(access?.permissions || [], "debit_notes", "approve");
-  const canDeleteDebitNotes = can(access?.permissions || [], "debit_notes", "delete");
+  const canViewCommercialApprovals =
+    hasGlobalAccess(access) ||
+    can(access?.permissions || [], "ra_approval", "view") ||
+    can(access?.permissions || [], "ra_approval", "approve") ||
+    can(access?.permissions || [], "ra_approval", "reject");
+  const canApproveCommercialApprovals =
+    hasGlobalAccess(access) || can(access?.permissions || [], "ra_approval", "approve");
+  const canRejectCommercialApprovals =
+    hasGlobalAccess(access) || can(access?.permissions || [], "ra_approval", "reject");
 
   useEffect(() => {
     if (access) {
@@ -62,34 +67,39 @@ export default function ApprovalsPage() {
     setLoading(true);
     setMessage("");
 
-    const canLoadRaBills = canApproveRaBills || canRejectRaBills;
-    const canLoadDebitNotes = canApproveDebitNotes || canDeleteDebitNotes;
-
     const {
       data: { session },
     } = await supabase.auth.getSession();
     const token = session?.access_token;
 
-    if (!token && (canLoadRaBills || canLoadDebitNotes)) {
+    if (!canViewCommercialApprovals) {
+      setBills([]);
+      setDebitNotes([]);
+      setWorkOrders([]);
+      setVendors([]);
+      setSites([]);
+      setCompanies([]);
+      setRaDocuments([]);
+      setDebitDocuments([]);
+      setLoading(false);
+      return;
+    }
+
+    if (!token) {
       showMessage("error", "Unable to load approvals: missing auth session.");
       setLoading(false);
       return;
     }
 
-    const approvalResponse =
-      canLoadRaBills || canLoadDebitNotes
-        ? await fetch("/api/approvals", {
+    const approvalResponse = await fetch("/api/approvals", {
         headers: {
           Authorization: `Bearer ${token}`,
         },
-          })
-        : null;
+    });
 
-    const approvalResult = approvalResponse
-      ? await approvalResponse.json().catch(() => ({}))
-      : {};
+    const approvalResult = await approvalResponse.json().catch(() => ({}));
 
-    if (approvalResponse && !approvalResponse.ok) {
+    if (!approvalResponse.ok) {
       showMessage("error", approvalResult.error || "Failed to load approvals.");
       setLoading(false);
       return;
@@ -230,6 +240,15 @@ export default function ApprovalsPage() {
     setMessage("");
     setSavingId(`ra-${billId}`);
 
+    if (
+      (action === "Approved" && !canApproveCommercialApprovals) ||
+      (action === "Rejected" && !canRejectCommercialApprovals)
+    ) {
+      showMessage("error", "You do not have permission to perform this approval action.");
+      setSavingId("");
+      return;
+    }
+
     const remark = remarks[`ra-${billId}`]?.trim() || "";
 
     if (action === "Rejected" && !remark) {
@@ -288,6 +307,15 @@ async function updateDebitNoteStatus(
 ) {
   setMessage("");
   setSavingId(`dn-${debitNoteId}`);
+
+  if (
+    (action === "Approved" && !canApproveCommercialApprovals) ||
+    (action === "Rejected" && !canRejectCommercialApprovals)
+  ) {
+    showMessage("error", "You do not have permission to perform this approval action.");
+    setSavingId("");
+    return;
+  }
 
   const remark = remarks[`dn-${debitNoteId}`]?.trim() || "";
 
@@ -556,8 +584,8 @@ async function updateDebitNoteStatus(
                       <ActionButtons
                         saving={savingId === remarkKey}
                         viewHref={`/ra-bills/${bill.id}`}
-                        showApprove={canApproveRaBills}
-                        showReject={canRejectRaBills}
+                        showApprove={canApproveCommercialApprovals}
+                        showReject={canRejectCommercialApprovals}
                         onApprove={() => updateRaStatus(bill.id, "Approved")}
                         onReject={() => updateRaStatus(bill.id, "Rejected")}
                       />
@@ -733,8 +761,8 @@ async function updateDebitNoteStatus(
                       <ActionButtons
                         saving={savingId === remarkKey}
                         viewHref={`/debit-notes/${note.id}`}
-                        showApprove={canApproveDebitNotes}
-                        showReject={canDeleteDebitNotes}
+                        showApprove={canApproveCommercialApprovals}
+                        showReject={canRejectCommercialApprovals}
                         onApprove={() =>
                           updateDebitNoteStatus(note.id, "Approved")
                         }

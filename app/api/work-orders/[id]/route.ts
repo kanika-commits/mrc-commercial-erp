@@ -79,6 +79,26 @@ function isGoogleDriveUrl(value: string | null | undefined) {
   );
 }
 
+function isPendingApproval(value: string | null | undefined) {
+  const status = String(value || "").trim().toLowerCase();
+  return !status || status === "pending" || status === "draft";
+}
+
+function isApprovedApproval(value: string | null | undefined) {
+  return String(value || "").trim().toLowerCase() === "approved";
+}
+
+function readFormString(formData: FormData, key: string) {
+  const value = formData.get(key);
+  if (typeof value !== "string") return undefined;
+  return value.trim();
+}
+
+function readJsonString(payload: any, key: string) {
+  if (!Object.prototype.hasOwnProperty.call(payload, key)) return undefined;
+  return String(payload[key] ?? "").trim();
+}
+
 function normalizeStoragePath(document: any) {
   const explicitPath = String(document?.file_path || "").trim();
   if (explicitPath && !isGoogleDriveUrl(explicitPath)) {
@@ -312,6 +332,109 @@ async function promoteWorkOrderFileToDrive(
   }
 }
 
+async function replacePendingWorkOrderPdf(
+  admin: ReturnType<typeof adminClient>,
+  workOrder: any,
+  file: File,
+  user: any
+) {
+  const { data: existingFolder, error: existingFolderError } = await admin
+    .from("work_order_drive_folders")
+    .select("drive_folder_id, drive_folder_name")
+    .eq("work_order_id", workOrder.id)
+    .maybeSingle();
+
+  if (existingFolderError) throw existingFolderError;
+
+  if (!existingFolder?.drive_folder_id) {
+    throw new Error("Work Order Drive folder was not found for PDF replacement.");
+  }
+
+  const { data: currentDocument, error: documentError } = await admin
+    .from("work_order_documents")
+    .select("id, file_name, file_url, file_path, uploaded_at")
+    .eq("work_order_id", workOrder.id)
+    .order("uploaded_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (documentError) throw documentError;
+
+  const fileBuffer = Buffer.from(await file.arrayBuffer());
+  const optimizedFile = await fileToOptimizedDrivePayload(
+    fileBuffer,
+    file.type || "application/octet-stream",
+    file.name || "Work Order File"
+  );
+
+  const driveFile = await uploadDriveFile({
+    targetFolderId: existingFolder.drive_folder_id,
+    fileName: optimizedFile.fileName,
+    mimeType: optimizedFile.mimeType,
+    base64: optimizedFile.base64,
+  });
+
+  if (!driveFile.file_id || !driveFile.file_url) {
+    throw new Error("Replacement Work Order PDF was not uploaded to Google Drive.");
+  }
+
+  const nextDocument = {
+    organization_id: workOrder.organization_id,
+    work_order_id: workOrder.id,
+    file_name: driveFile.file_name || optimizedFile.fileName,
+    file_url: driveFile.file_url,
+    file_path: driveFile.file_id,
+    uploaded_at: new Date().toISOString(),
+  };
+
+  if (currentDocument?.id) {
+    const { error: updateError } = await admin
+      .from("work_order_documents")
+      .update({
+        file_name: nextDocument.file_name,
+        file_url: nextDocument.file_url,
+        file_path: nextDocument.file_path,
+        uploaded_at: nextDocument.uploaded_at,
+      })
+      .eq("id", currentDocument.id);
+
+    if (updateError) {
+      throw new Error(
+        `Replacement PDF was uploaded but ERP file metadata could not be updated: ${updateError.message}`
+      );
+    }
+  } else {
+    const { error: insertError } = await admin
+      .from("work_order_documents")
+      .insert(nextDocument);
+
+    if (insertError) {
+      throw new Error(
+        `Replacement PDF was uploaded but ERP file metadata could not be saved: ${insertError.message}`
+      );
+    }
+  }
+
+  await insertDeleteAudit(admin, user, {
+    organizationId: workOrder.organization_id,
+    moduleCode: MODULE_CODE,
+    documentType: "Work Order PDF Replacement",
+    documentId: workOrder.id,
+    documentNumber: workOrder.wo_number,
+    deletionReason: "Pending Work Order original PDF replaced before approval.",
+    recordSnapshot: {
+      action: "pending_pdf_replaced",
+      previous_file: currentDocument || null,
+      replacement_file: {
+        file_name: nextDocument.file_name,
+        file_url: nextDocument.file_url,
+        file_path: nextDocument.file_path,
+        uploaded_at: nextDocument.uploaded_at,
+      },
+    },
+  });
+}
+
 async function loadScopedWorkOrder(
   admin: ReturnType<typeof adminClient>,
   userId: string,
@@ -502,14 +625,18 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const access = await requireEditPermission(request);
+    const { id } = await params;
+    const contentType = request.headers.get("content-type") || "";
+    let payload: any = {};
+    let formData: FormData | null = null;
 
-    if ("error" in access) {
-      return NextResponse.json({ error: access.error }, { status: access.status });
+    if (contentType.includes("multipart/form-data")) {
+      formData = await request.formData();
+      payload = Object.fromEntries(formData.entries());
+    } else {
+      payload = await request.json().catch(() => ({}));
     }
 
-    const { id } = await params;
-    const payload = await request.json().catch(() => ({}));
     const action = String(payload.action || "").trim().toLowerCase();
 
     if (["undo_suspension", "undo_suspend", "reactivate", "reactivated"].includes(action)) {
@@ -626,6 +753,188 @@ export async function PATCH(
       });
     }
 
+    if (["update_details", "update", "save_corrections"].includes(action)) {
+      const admin = adminClient();
+      const { data: workOrder, error: workOrderError } = await admin
+        .from("work_orders")
+        .select(
+          "id, organization_id, company_id, site_id, wo_number, wo_type, description, wo_date, wo_value, gst_percent, status, approval_status, approved_at"
+        )
+        .eq("id", id)
+        .maybeSingle();
+
+      if (workOrderError) throw workOrderError;
+
+      if (!workOrder) {
+        return NextResponse.json(
+          { error: "Work Order was not found." },
+          { status: 404 },
+        );
+      }
+
+      const approvalStatus = String(workOrder.approval_status || "")
+        .trim()
+        .toLowerCase();
+      const lifecycleStatus = String(workOrder.status || "").trim().toLowerCase();
+      const pending = isPendingApproval(approvalStatus);
+      const approved = isApprovedApproval(approvalStatus);
+
+      if (lifecycleStatus === "suspended" || ["suspended", "rejected"].includes(approvalStatus)) {
+        return NextResponse.json(
+          { error: "Suspended Work Orders are read-only. Undo suspension before editing." },
+          { status: 409 },
+        );
+      }
+
+      if (!pending && !approved) {
+        return NextResponse.json(
+          { error: "This Work Order cannot be edited in its current approval state." },
+          { status: 409 },
+        );
+      }
+
+      const permission = pending
+        ? await requirePermission(request, "wo_approval", "approve")
+        : await requirePermission(request, MODULE_CODE, "edit");
+
+      if ("response" in permission) {
+        return permission.response;
+      }
+
+      const scopedWorkOrder = await loadScopedWorkOrder(admin, permission.user.id, id);
+
+      if ("error" in scopedWorkOrder) {
+        return NextResponse.json(
+          { error: scopedWorkOrder.error },
+          { status: scopedWorkOrder.status },
+        );
+      }
+
+      const updatePayload: Record<string, any> = {};
+      const textValue = (key: string) =>
+        formData ? readFormString(formData, key) : readJsonString(payload, key);
+      const neverEditableFields = ["wo_number", "approval_status"];
+      for (const forbiddenField of neverEditableFields) {
+        if (textValue(forbiddenField) !== undefined) {
+          return NextResponse.json(
+            { error: "Work Order number and approval status cannot be edited here." },
+            { status: 403 },
+          );
+        }
+      }
+
+      const allowedTextFields = pending
+        ? ["description", "wo_type", "wo_date", "wo_value", "gst_percent"]
+        : ["description", "wo_type", "status"];
+
+      for (const field of allowedTextFields) {
+        const value = textValue(field);
+        if (value === undefined) continue;
+
+        if (field === "wo_value" || field === "gst_percent") {
+          const numericValue = Number(value);
+          if (!Number.isFinite(numericValue) || numericValue < 0) {
+            return NextResponse.json(
+              { error: `${field === "wo_value" ? "Work Order value" : "GST percent"} must be a valid number.` },
+              { status: 400 },
+            );
+          }
+          updatePayload[field] = numericValue;
+        } else if (field === "status") {
+          const statusValue = value.toLowerCase();
+          if (!ALLOWED_STATUSES.has(statusValue)) {
+            return NextResponse.json(
+              { error: "Invalid Work Order status." },
+              { status: 400 },
+            );
+          }
+          updatePayload.status = statusValue;
+        } else if (field === "wo_date") {
+          updatePayload.wo_date = value || null;
+        } else {
+          updatePayload[field] = value || null;
+        }
+      }
+
+      if (!pending) {
+        for (const forbiddenField of [
+          "company_id",
+          "site_id",
+          "vendor_id",
+          "primary_vendor_id",
+          "wo_date",
+          "wo_value",
+          "gst_percent",
+          "retention",
+          "retention_percent",
+          "security_deposit",
+          "security_amount",
+        ]) {
+          if (textValue(forbiddenField) !== undefined) {
+            return NextResponse.json(
+              { error: "Approved Work Orders allow only description, type and status updates." },
+              { status: 403 },
+            );
+          }
+        }
+      }
+
+      const replacementFile =
+        formData?.get("work_order_file") instanceof File
+          ? (formData.get("work_order_file") as File)
+          : null;
+
+      if (replacementFile && replacementFile.size > 0) {
+        if (!pending) {
+          return NextResponse.json(
+            { error: "Original Work Order PDF cannot be replaced after approval." },
+            { status: 403 },
+          );
+        }
+
+        await replacePendingWorkOrderPdf(admin, workOrder, replacementFile, permission.user);
+      }
+
+      if (Object.keys(updatePayload).length > 0) {
+        const { error: updateError } = await admin
+          .from("work_orders")
+          .update(updatePayload)
+          .eq("id", id);
+
+        if (updateError) throw updateError;
+
+        await insertDeleteAudit(admin, permission.user, {
+          organizationId: workOrder.organization_id,
+          moduleCode: MODULE_CODE,
+          documentType: "Work Order Correction",
+          documentId: workOrder.id,
+          documentNumber: workOrder.wo_number,
+          deletionReason: pending
+            ? "Pending Work Order details corrected before approval."
+            : "Approved Work Order allowed fields updated.",
+          recordSnapshot: {
+            action: pending ? "pending_correction" : "approved_allowed_edit",
+            previous: {
+              description: workOrder.description,
+              wo_type: workOrder.wo_type,
+              wo_date: workOrder.wo_date,
+              wo_value: workOrder.wo_value,
+              gst_percent: workOrder.gst_percent,
+              status: workOrder.status,
+              approval_status: workOrder.approval_status,
+            },
+            updated: updatePayload,
+          },
+        });
+      }
+
+      return NextResponse.json({
+        work_order_id: id,
+        updated: true,
+        pdf_replaced: Boolean(replacementFile && replacementFile.size > 0),
+      });
+    }
+
     if (["approved", "approve"].includes(action)) {
       const permission = await requirePermission(request, "wo_approval", "approve");
 
@@ -713,6 +1022,12 @@ export async function PATCH(
     }
 
     const status = String(payload.status || "").trim().toLowerCase();
+
+    const access = await requireEditPermission(request);
+
+    if ("error" in access) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
 
     if (!ALLOWED_STATUSES.has(status)) {
       return NextResponse.json(

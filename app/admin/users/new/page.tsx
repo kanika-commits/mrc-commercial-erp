@@ -152,6 +152,24 @@ export default function NewUserPage() {
     );
   }
 
+  const visibleSiteIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [...filteredSites, ...unassignedSites].map((site) => site.id).filter(Boolean)
+        )
+      ),
+    [filteredSites, unassignedSites]
+  );
+
+  function selectVisibleSites() {
+    setSelectedSiteIds((prev) => Array.from(new Set([...prev, ...visibleSiteIds])));
+  }
+
+  function clearVisibleSites() {
+    setSelectedSiteIds((prev) => prev.filter((siteId) => !visibleSiteIds.includes(siteId)));
+  }
+
   async function createUser(e: React.FormEvent) {
     e.preventDefault();
 
@@ -324,7 +342,29 @@ export default function NewUserPage() {
       </section>
 
       <section className="rounded-lg border bg-white p-6">
-        <h2 className="mb-4 text-xl font-semibold">Site Access</h2>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-xl font-semibold">Site Access</h2>
+          {selectedCompanyIds.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={selectVisibleSites}
+                disabled={visibleSiteIds.length === 0}
+                className="rounded bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                Select All Sites
+              </button>
+              <button
+                type="button"
+                onClick={clearVisibleSites}
+                disabled={visibleSiteIds.length === 0}
+                className="rounded border px-3 py-1.5 text-sm font-semibold disabled:opacity-50"
+              >
+                Clear All Sites
+              </button>
+            </div>
+          )}
+        </div>
 
         {selectedCompanyIds.length === 0 ? (
           <p className="text-gray-500">Select companies first.</p>

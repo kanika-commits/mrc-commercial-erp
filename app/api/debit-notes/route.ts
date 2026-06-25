@@ -544,8 +544,8 @@ export async function PATCH(request: Request) {
 
   const auth = await requirePermission(
     request,
-    MODULE_CODE,
-    normalizedAction === "approved" ? "approve" : "delete"
+    "ra_approval",
+    normalizedAction === "approved" ? "approve" : "reject"
   );
 
   if ("response" in auth) {

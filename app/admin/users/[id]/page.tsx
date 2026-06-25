@@ -42,6 +42,7 @@ export default function UserAccessPage() {
   const [selectedOrganizationIds, setSelectedOrganizationIds] = useState<string[]>([]);
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
   const [selectedSiteIds, setSelectedSiteIds] = useState<string[]>([]);
+  const [targetIsPlatformOwner, setTargetIsPlatformOwner] = useState(false);
 
   const [permissionMap, setPermissionMap] = useState<Record<string, boolean>>({});
 
@@ -105,7 +106,14 @@ export default function UserAccessPage() {
         throw new Error("User profile was not found.");
       }
 
+      const allRoles = result.roles || [];
+      const platformOwnerRole = allRoles.find(
+        (role: any) => role.role_code === "platform_owner"
+      );
       const roleIds = (result.userRoles || []).map((item: any) => item.role_id);
+      const platformOwnerRoleId = platformOwnerRole?.id;
+      const hasPlatformOwnerRole =
+        Boolean(platformOwnerRoleId) && roleIds.includes(platformOwnerRoleId);
       const userPermissionData = result.userPermissions || [];
 
       setPermissionsSaved(userPermissionData.length > 0);
@@ -118,7 +126,8 @@ export default function UserAccessPage() {
 
       setProfile(result.profile);
       setEditFullName(result.profile.full_name || "");
-      setRoles(result.roles || []);
+      setRoles(allRoles.filter((role: any) => role.role_code !== "platform_owner"));
+      setTargetIsPlatformOwner(hasPlatformOwnerRole);
       setOrganizations(result.organizations || []);
       setCompanies(sortCompanies(result.companies || []));
       setSites(result.sites || []);
@@ -131,7 +140,11 @@ export default function UserAccessPage() {
         })
       );
 
-      setSelectedRoleIds(roleIds);
+      setSelectedRoleIds(
+        platformOwnerRoleId
+          ? roleIds.filter((roleId: string) => roleId !== platformOwnerRoleId)
+          : roleIds
+      );
 
       setSelectedOrganizationIds(
         Array.from(new Set((result.accessRows || []).map((x: any) => x.organization_id).filter(Boolean)))
@@ -232,6 +245,24 @@ export default function UserAccessPage() {
     setSelectedSiteIds((prev) =>
       prev.includes(siteId) ? prev.filter((id) => id !== siteId) : [...prev, siteId]
     );
+  }
+
+  const visibleSiteIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [...filteredSites, ...unassignedSites].map((site) => site.id).filter(Boolean)
+        )
+      ),
+    [filteredSites, unassignedSites]
+  );
+
+  function selectVisibleSites() {
+    setSelectedSiteIds((prev) => Array.from(new Set([...prev, ...visibleSiteIds])));
+  }
+
+  function clearVisibleSites() {
+    setSelectedSiteIds((prev) => prev.filter((siteId) => !visibleSiteIds.includes(siteId)));
   }
 
   function isAllowed(moduleCode: string, actionCode: string) {
@@ -598,6 +629,12 @@ export default function UserAccessPage() {
       <section className="rounded-lg border bg-white p-6">
         <h2 className="mb-4 text-xl font-semibold">Roles</h2>
 
+        {targetIsPlatformOwner && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
+            Platform Owner
+          </div>
+        )}
+
         <div className="grid gap-3 md:grid-cols-2">
           {roles.map((role) => (
             <label key={role.id} className="flex items-center gap-2 rounded border p-3">
@@ -655,7 +692,29 @@ export default function UserAccessPage() {
       </section>
 
       <section className="rounded-lg border bg-white p-6">
-        <h2 className="mb-4 text-xl font-semibold">Site Access</h2>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-xl font-semibold">Site Access</h2>
+          {selectedCompanyIds.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={selectVisibleSites}
+                disabled={visibleSiteIds.length === 0}
+                className="rounded bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                Select All Sites
+              </button>
+              <button
+                type="button"
+                onClick={clearVisibleSites}
+                disabled={visibleSiteIds.length === 0}
+                className="rounded border px-3 py-1.5 text-sm font-semibold disabled:opacity-50"
+              >
+                Clear All Sites
+              </button>
+            </div>
+          )}
+        </div>
 
         {selectedCompanyIds.length === 0 ? (
           <p className="text-gray-500">Select companies first.</p>

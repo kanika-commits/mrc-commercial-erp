@@ -216,7 +216,7 @@ export async function PATCH(
 
   const auth = await requirePermission(
     request,
-    MODULE_CODE,
+    "ra_approval",
     normalizedAction === "approved" ? "approve" : "reject"
   ).catch((error) => ({
     response: NextResponse.json(

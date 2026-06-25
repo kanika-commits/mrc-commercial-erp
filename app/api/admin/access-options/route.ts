@@ -51,7 +51,7 @@ export async function GET(request: Request) {
     }
 
     return NextResponse.json({
-      roles: roles.data || [],
+      roles: (roles.data || []).filter((role) => role.role_code !== "platform_owner"),
       organizations: organizations.data || [],
       companies: sortCompanies(companies.data || []),
       sites: sites.data || [],

@@ -79,6 +79,24 @@ export async function POST(request: Request) {
     }
 
     const adminSupabase = createClient(supabaseUrl, serviceRoleKey);
+
+    const { data: selectedRoles, error: selectedRolesError } = await adminSupabase
+      .from("roles")
+      .select("id, role_code")
+      .in("id", role_ids);
+
+    if (selectedRolesError) throw selectedRolesError;
+
+    if ((selectedRoles || []).some((role) => role.role_code === "platform_owner")) {
+      return NextResponse.json(
+        {
+          error:
+            "Platform Owner is a system identity and cannot be assigned through user management.",
+        },
+        { status: 403 }
+      );
+    }
+
     const actorOrganizationIds = await loadActorOrganizationScope(
       adminSupabase,
       permission

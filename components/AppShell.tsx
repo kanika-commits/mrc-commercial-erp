@@ -66,7 +66,12 @@ const notificationLinks = [
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { access, moduleNavigation, loading: accessLoading, user } = useAccessContext();
+  const {
+    access,
+    moduleNavigation,
+    loading: accessLoading,
+    user,
+  } = useAccessContext();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationCounts, setNotificationCounts] = useState<NotificationCounts>(
     EMPTY_NOTIFICATION_COUNTS,
