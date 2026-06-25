@@ -5,6 +5,7 @@ import { useState } from "react";
 import AlertMessage from "@/components/AlertMessage";
 import RequirePermission from "@/components/RequirePermission";
 import DeleteOrganizationButton from "@/components/DeleteOrganizationButton";
+import { formatIstTimestamp } from "@/lib/dateTime";
 
 type OrganizationRow = {
   id: string;
@@ -57,9 +58,7 @@ export default function OrganizationsTable({
                 <td className="p-3">{org.company_count || 0}</td>
                 <td className="p-3">{org.status || "active"}</td>
                 <td className="p-3">
-                  {org.created_at
-                    ? new Date(org.created_at).toLocaleString("en-IN")
-                    : "-"}
+                  {formatIstTimestamp(org.created_at)}
                 </td>
                 <td className="p-3">
                   <div className="flex flex-wrap gap-2">

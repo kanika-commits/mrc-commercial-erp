@@ -12,23 +12,10 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import AuditTrailCard from "@/components/AuditTrailCard";
+import { formatIstTimestamp } from "@/lib/dateTime";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
-}
-
-function formatDateTime(value: string | null | undefined) {
-  if (!value) return "-";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "-";
-
-  return parsed.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function statusClass(value?: string | null) {
@@ -328,12 +315,12 @@ export default function RABillDetailPage() {
             label="Created By"
             value={bill.created_by_name || bill.created_by_email || "-"}
           />
-          <Info label="Created At" value={formatDateTime(bill.created_at)} />
+          <Info label="Created At" value={formatIstTimestamp(bill.created_at)} />
           <Info
             label="Approved By"
             value={bill.approved_by_name || bill.approved_by_email || "-"}
           />
-          <Info label="Approved At" value={formatDateTime(bill.approved_at)} />
+          <Info label="Approved At" value={formatIstTimestamp(bill.approved_at)} />
         </div>
 
         {bill.work_order_id && (
@@ -476,7 +463,7 @@ export default function RABillDetailPage() {
                     {item.ra_bill_rejections?.[0]?.rejection_reason || "-"}
                   </td>
                   <td className="p-3">
-                    {formatDateTime(item.ra_bill_rejections?.[0]?.rejected_at)}
+                    {formatIstTimestamp(item.ra_bill_rejections?.[0]?.rejected_at)}
                   </td>
                   <td className="p-3 text-right">
                     <Link
@@ -522,9 +509,7 @@ export default function RABillDetailPage() {
                   <p className="font-medium text-slate-950">{doc.file_name}</p>
                   <p className="text-xs text-slate-500">
                     Uploaded:{" "}
-                    {doc.uploaded_at
-                      ? new Date(doc.uploaded_at).toLocaleString()
-                      : "-"}
+                    {formatIstTimestamp(doc.uploaded_at)}
                   </p>
                 </div>
 

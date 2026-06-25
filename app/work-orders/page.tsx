@@ -15,6 +15,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
+import { formatIstTimestamp } from "@/lib/dateTime";
 
 type WorkOrder = {
   id: string;
@@ -207,18 +208,7 @@ function formatDate(date: string | null) {
 }
 
 function formatDateTime(date: string | null) {
-  if (!date) return "-";
-
-  const parsed = new Date(date);
-  if (Number.isNaN(parsed.getTime())) return "-";
-
-  return parsed.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatIstTimestamp(date);
 }
 
 function getApprovedBy(wo: WorkOrder) {
@@ -753,13 +743,7 @@ export default function WorkOrdersPage() {
             <p className="mt-1 text-xs text-slate-500">
               Updated{" "}
               {lastUpdated
-                ? lastUpdated.toLocaleString("en-IN", {
-                    day: "2-digit",
-                    month: "short",
-                    year: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })
+                ? formatIstTimestamp(lastUpdated)
                 : "-"}
             </p>
           </div>

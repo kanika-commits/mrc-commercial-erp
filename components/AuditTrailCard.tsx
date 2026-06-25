@@ -1,5 +1,7 @@
 "use client";
 
+import { formatIstTimestamp } from "@/lib/dateTime";
+
 type AuditTrailCardProps = {
   title?: string;
   createdBy?: string | null;
@@ -16,21 +18,6 @@ type AuditTrailCardProps = {
 function clean(value: string | null | undefined) {
   const text = String(value || "").trim();
   return text || "-";
-}
-
-function formatDateTime(value: string | null | undefined) {
-  if (!value) return "-";
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "-";
-
-  return parsed.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function Field({ label, value }: { label: string; value: string }) {
@@ -61,13 +48,13 @@ export default function AuditTrailCard({
       <h2 className="mb-4 text-xl font-semibold text-slate-950">{title}</h2>
       <div className="grid gap-4 md:grid-cols-3">
         <Field label="Created By" value={clean(createdBy)} />
-        <Field label="Created At" value={formatDateTime(createdAt)} />
+        <Field label="Created At" value={formatIstTimestamp(createdAt)} />
         <Field label="Last Updated By" value={clean(updatedBy)} />
-        <Field label="Last Updated At" value={formatDateTime(updatedAt)} />
+        <Field label="Last Updated At" value={formatIstTimestamp(updatedAt)} />
         <Field label="Approved By" value={clean(approvedBy)} />
-        <Field label="Approved At" value={formatDateTime(approvedAt)} />
+        <Field label="Approved At" value={formatIstTimestamp(approvedAt)} />
         <Field label="Rejected By" value={clean(rejectedBy)} />
-        <Field label="Rejected At" value={formatDateTime(rejectedAt)} />
+        <Field label="Rejected At" value={formatIstTimestamp(rejectedAt)} />
         <Field label="Reject Reason" value={clean(rejectReason)} />
       </div>
     </section>

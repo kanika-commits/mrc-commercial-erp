@@ -7,6 +7,7 @@ import { ArrowLeft, Building2, Pencil, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
+import { formatIstTimestamp } from "@/lib/dateTime";
 
 function maskAccount(value?: string | null) {
   if (!value) return "-";
@@ -188,11 +189,7 @@ export default function CompanyBankAccountDetailPage() {
           <Info label="Status" value={account.status || "active"} />
           <Info
             label="Created At"
-            value={
-              account.created_at
-                ? new Date(account.created_at).toLocaleString()
-                : "-"
-            }
+            value={formatIstTimestamp(account.created_at)}
           />
         </div>
       </section>

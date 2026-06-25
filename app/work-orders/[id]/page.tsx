@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import AuditTrailCard from "@/components/AuditTrailCard";
+import { formatIstTimestamp } from "@/lib/dateTime";
 
 const STATUS_OPTIONS = [
   { value: "yet_to_start", label: "Yet to Start" },
@@ -67,20 +68,6 @@ function auditName(row: any, prefix = "") {
     row?.[`${prefix}by`] ||
     "-"
   );
-}
-
-function formatDateTime(value: string | null | undefined) {
-  if (!value) return "-";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "-";
-  return parsed.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  });
 }
 
 function isMissingWorkOrderChangesTable(error: any) {
@@ -937,9 +924,9 @@ function downloadWOLedger() {
     row.amount || 0,
     row.status || "-",
     row.created_by || "-",
-    formatDateTime(row.created_at),
+    formatIstTimestamp(row.created_at),
     row.approved_by || "-",
-    formatDateTime(row.approved_at),
+    formatIstTimestamp(row.approved_at),
   ]);
 
   const csv = [headers, ...rows]
@@ -1117,11 +1104,11 @@ function downloadWOLedger() {
           <Info label="Department" value={workOrder.department || "-"} />
           <Info label="Cost Code" value={workOrder.cost_code || "-"} />
           <Info label="Created By" value={workOrder.created_by_name || workOrder.created_by_email || "-"} />
-          <Info label="Created At" value={formatDateTime(workOrder.created_at_user || workOrder.created_at)} />
+          <Info label="Created At" value={formatIstTimestamp(workOrder.created_at_user || workOrder.created_at)} />
           <Info label="Approved By" value={workOrder.approved_by_name || workOrder.approved_by_email || "-"} />
-          <Info label="Approved At" value={formatDateTime(workOrder.approved_at)} />
+          <Info label="Approved At" value={formatIstTimestamp(workOrder.approved_at)} />
           <Info label="Updated By" value={workOrder.updated_by_name || workOrder.updated_by_email || workOrder.updated_by || "-"} />
-          <Info label="Updated At" value={formatDateTime(workOrder.updated_at_user || workOrder.updated_at)} />
+          <Info label="Updated At" value={formatIstTimestamp(workOrder.updated_at_user || workOrder.updated_at)} />
         </div>
 <div className="mt-6 border-t pt-4">
   <h3 className="mb-3 font-semibold">
@@ -1348,7 +1335,7 @@ function downloadWOLedger() {
                         )}
                       </td>
                       <td className="p-3">{change.created_by || "-"}</td>
-                      <td className="p-3">{formatDateTime(change.created_at)}</td>
+                      <td className="p-3">{formatIstTimestamp(change.created_at)}</td>
                     </tr>
                   ))
                 )}
@@ -1773,9 +1760,9 @@ function downloadWOLedger() {
         item.status || "Draft",
         item.approval_status || "Pending",
         item.created_by_name || item.created_by_email || "-",
-        formatDateTime(item.created_at),
+        formatIstTimestamp(item.created_at),
         item.approved_by_name || item.approved_by_email || "-",
-        formatDateTime(item.approved_at),
+        formatIstTimestamp(item.approved_at),
         <Link
           key={item.id}
           href={`/ra-bills/${item.id}`}
@@ -1808,13 +1795,13 @@ function downloadWOLedger() {
         money(item.invoice_amount),
         item.itc_status || "-",
         item.created_by_name || item.created_by_email || "-",
-        formatDateTime(item.created_at),
+        formatIstTimestamp(item.created_at),
         item.itc_claimed_by_name ||
           item.itc_claimed_by_email ||
           item.itc_rejected_by_name ||
           item.itc_rejected_by_email ||
           "-",
-        formatDateTime(item.itc_claimed_at || item.itc_rejected_at),
+        formatIstTimestamp(item.itc_claimed_at || item.itc_rejected_at),
         <Link
           key={item.id}
           href={`/invoices/${item.id}`}
@@ -1846,9 +1833,9 @@ function downloadWOLedger() {
         money(item.transferred_amount || item.payment_amount || item.total_payment),
         item.utr_number || item.reference_number || "-",
         item.created_by_name || item.created_by_email || "-",
-        formatDateTime(item.created_at_user || item.created_at),
+        formatIstTimestamp(item.created_at_user || item.created_at),
         item.updated_by_name || item.updated_by_email || "-",
-        formatDateTime(item.updated_at_user || item.updated_at),
+        formatIstTimestamp(item.updated_at_user || item.updated_at),
       ])}
     />
 
@@ -1875,9 +1862,9 @@ function downloadWOLedger() {
     money(item.amount),
     item.status || "-",
     item.created_by || "-",
-    formatDateTime(item.created_at),
+    formatIstTimestamp(item.created_at),
     item.approved_by || "-",
-    formatDateTime(item.approved_at),
+    formatIstTimestamp(item.approved_at),
   ])}
 />
 

@@ -6,6 +6,7 @@ import { CheckCircle2, ExternalLink, FileText, RefreshCw, Trash2 } from "lucide-
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
+import { formatIstTimestamp } from "@/lib/dateTime";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -40,18 +41,7 @@ function formatDate(date: string | null | undefined) {
 }
 
 function formatDateTime(date: string | null | undefined) {
-  if (!date) return "-";
-
-  const parsed = new Date(date);
-  if (Number.isNaN(parsed.getTime())) return "-";
-
-  return parsed.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatIstTimestamp(date);
 }
 
 function auditName(name: string | null | undefined, email: string | null | undefined) {

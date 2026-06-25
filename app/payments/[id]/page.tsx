@@ -7,22 +7,14 @@ import { useParams } from "next/navigation";
 import { ArrowLeft, Building2, CreditCard, ReceiptText } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import AuditTrailCard from "@/components/AuditTrailCard";
+import { formatIstTimestamp } from "@/lib/dateTime";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
 function formatDateTime(value: string | null | undefined) {
-  if (!value) return "-";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "-";
-  return parsed.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatIstTimestamp(value);
 }
 
 function accountLabel(account: any) {

@@ -7,22 +7,10 @@ import { Eye, FileText, Plus, Search, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
+import { formatIstTimestamp } from "@/lib/dateTime";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
-}
-
-function formatDateTime(value: string | null | undefined) {
-  if (!value) return "-";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "-";
-  return parsed.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function statusClass(value?: string | null) {
@@ -332,7 +320,7 @@ export default function RABillsPage() {
                       </div>
                     )}
                   </td>
-                  <td className="px-5 py-4 text-slate-700">{formatDateTime(bill.created_at)}</td>
+                  <td className="px-5 py-4 text-slate-700">{formatIstTimestamp(bill.created_at)}</td>
                   <td className="px-5 py-4 text-slate-700">
                     <div className="max-w-[180px] truncate font-medium">
                       {bill.approved_by_name || bill.approved_by_email || "-"}
@@ -343,7 +331,7 @@ export default function RABillsPage() {
                       </div>
                     )}
                   </td>
-                  <td className="px-5 py-4 text-slate-700">{formatDateTime(bill.approved_at)}</td>
+                  <td className="px-5 py-4 text-slate-700">{formatIstTimestamp(bill.approved_at)}</td>
                   <td className="px-5 py-4 text-right">
                     <div className="flex justify-end gap-2">
                       <Link
