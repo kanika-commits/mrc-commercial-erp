@@ -5,7 +5,7 @@ import Link from "next/link";
 import { CheckCircle2, ExternalLink, FileText, PauseCircle, RefreshCw } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
-import { can } from "@/lib/accessControl";
+import { can, hasGlobalAccess } from "@/lib/accessControl";
 import { formatIstTimestamp } from "@/lib/dateTime";
 
 function money(value: any) {
@@ -78,6 +78,13 @@ export default function WorkOrderApprovalPage() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState("");
   const [message, setMessage] = useState("");
+  // Approval module permissions govern approval queues/actions; base work_orders permissions govern normal WO CRUD.
+  const canViewWorkOrderApprovals =
+    hasGlobalAccess(access) ||
+    can(access?.permissions || [], "wo_approval", "view") ||
+    can(access?.permissions || [], "wo_approval", "approve");
+  const canManageWorkOrderApprovals =
+    hasGlobalAccess(access) || can(access?.permissions || [], "wo_approval", "approve");
 
   useEffect(() => {
     if (access) {
@@ -90,11 +97,7 @@ export default function WorkOrderApprovalPage() {
       setLoading(true);
       setMessage("");
 
-      const canLoadWorkOrders =
-        can(access?.permissions || [], "work_orders", "approve") ||
-        can(access?.permissions || [], "work_orders", "reject");
-
-      if (!canLoadWorkOrders) {
+      if (!canViewWorkOrderApprovals) {
         setWorkOrders([]);
         setCompanies(new Map());
         setSites(new Map());
@@ -473,25 +476,29 @@ export default function WorkOrderApprovalPage() {
                             View
                           </Link>
 
-                          <button
-                            type="button"
-                            disabled={isSaving}
-                            onClick={() => approveWorkOrder(wo)}
-                            className="inline-flex items-center gap-1 rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
-                          >
-                            <CheckCircle2 className="h-3.5 w-3.5" />
-                            Approve
-                          </button>
+                          {canManageWorkOrderApprovals && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={isSaving}
+                                onClick={() => approveWorkOrder(wo)}
+                                className="inline-flex items-center gap-1 rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                              >
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                Approve
+                              </button>
 
-                          <button
-                            type="button"
-                            disabled={isSaving}
-                            onClick={() => suspendWorkOrder(wo)}
-                            className="inline-flex items-center gap-1 rounded bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
-                          >
-                            <PauseCircle className="h-3.5 w-3.5" />
-                            Suspend
-                          </button>
+                              <button
+                                type="button"
+                                disabled={isSaving}
+                                onClick={() => suspendWorkOrder(wo)}
+                                className="inline-flex items-center gap-1 rounded bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
+                              >
+                                <PauseCircle className="h-3.5 w-3.5" />
+                                Suspend
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>

@@ -627,7 +627,7 @@ export async function PATCH(
     }
 
     if (["approved", "approve"].includes(action)) {
-      const permission = await requirePermission(request, MODULE_CODE, "approve");
+      const permission = await requirePermission(request, "wo_approval", "approve");
 
       if ("response" in permission) {
         return permission.response;
@@ -666,7 +666,7 @@ export async function PATCH(
     }
 
     if (["suspended", "suspend", "cancelled", "cancel", "rejected", "reject"].includes(action)) {
-      const permission = await requirePermission(request, MODULE_CODE, "reject");
+      const permission = await requirePermission(request, "wo_approval", "approve");
 
       if ("response" in permission) {
         return permission.response;
