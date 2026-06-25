@@ -242,7 +242,7 @@ function statusBadgeClass(status: string | null) {
     return "bg-amber-100 text-amber-800 border-amber-200";
   }
 
-  if (normalized === "terminated" || normalized === "rejected") {
+  if (normalized === "terminated" || normalized === "rejected" || normalized === "cancelled") {
     return "bg-red-100 text-red-800 border-red-200";
   }
 

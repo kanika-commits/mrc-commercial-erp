@@ -5,6 +5,8 @@ import {
   requireDeletePermission,
 } from "@/lib/serverDeleteAudit";
 import { requirePermission } from "@/lib/serverPermissions";
+import { optimizeUploadFile } from "@/lib/fileOptimization";
+import { createWorkOrderDriveFolder } from "@/src/lib/googleDrive";
 
 const MODULE_CODE = "work_orders";
 const DOCUMENT_BUCKET = "work-order-documents";
@@ -46,6 +48,67 @@ async function requireUser(request: Request) {
 
 function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function requireDriveFolderValue(value: unknown, label: string) {
+  const text = String(value || "").trim();
+
+  if (!text) {
+    throw new Error(`Google Drive Work Order folder response missing ${label}.`);
+  }
+
+  return text;
+}
+
+function validateWorkOrderDriveFolder(driveFolder: any) {
+  return {
+    drive_folder_id: requireDriveFolderValue(driveFolder?.folder_id, "folder_id"),
+    drive_folder_name: requireDriveFolderValue(
+      driveFolder?.folder_name,
+      "folder_name"
+    ),
+    ra_bills_folder_id: requireDriveFolderValue(
+      driveFolder?.ra_bills_folder_id,
+      "ra_bills_folder_id"
+    ),
+    invoices_folder_id: requireDriveFolderValue(
+      driveFolder?.invoices_folder_id,
+      "invoices_folder_id"
+    ),
+    debit_notes_folder_id: requireDriveFolderValue(
+      driveFolder?.debit_notes_folder_id,
+      "debit_notes_folder_id"
+    ),
+    contractor_docs_folder_id: requireDriveFolderValue(
+      driveFolder?.contractor_docs_folder_id,
+      "contractor_docs_folder_id"
+    ),
+    work_order_file_id: requireDriveFolderValue(
+      driveFolder?.work_order_file_id,
+      "work_order_file_id"
+    ),
+    work_order_file_url: requireDriveFolderValue(
+      driveFolder?.work_order_file_url,
+      "work_order_file_url"
+    ),
+    work_order_file_name:
+      String(driveFolder?.work_order_file_name || "").trim() || null,
+  };
+}
+
+async function fileToOptimizedDrivePayload(file: File) {
+  const fileBuffer = Buffer.from(await file.arrayBuffer());
+  const optimized = await optimizeUploadFile(
+    fileBuffer,
+    file.type || "application/octet-stream",
+    file.name
+  );
+
+  return {
+    fileName: optimized.fileName,
+    mimeType: optimized.mimeType,
+    base64: optimized.buffer.toString("base64"),
+  };
 }
 
 async function readDeletionReason(request: Request) {
@@ -371,7 +434,6 @@ export async function POST(request: Request) {
       "Platform Owner";
 
     let createdWorkOrderId = "";
-    let pendingStoragePath = "";
     try {
       const { data: workOrder, error: woError } = await admin
         .from("work_orders")
@@ -431,28 +493,42 @@ export async function POST(request: Request) {
         throw new Error("Work Order vendor link could not be verified.");
       }
 
-      const pendingFilePath = `pending-work-orders/${workOrder.id}/${safeFileName(
-        file.name
-      )}`;
-      pendingStoragePath = pendingFilePath;
-      const fileBuffer = Buffer.from(await file.arrayBuffer());
-      const { error: storageError } = await admin.storage
-        .from(DOCUMENT_BUCKET)
-        .upload(pendingFilePath, fileBuffer, {
-          contentType: file.type || "application/octet-stream",
-          upsert: true,
-        });
+      const driveFilePayload = await fileToOptimizedDrivePayload(file);
+      const driveFolder = validateWorkOrderDriveFolder(
+        await createWorkOrderDriveFolder(woNumber, driveFilePayload)
+      );
 
-      if (storageError) throw storageError;
+      const { error: driveFolderError } = await admin
+        .from("work_order_drive_folders")
+        .upsert(
+          {
+            organization_id: organizationId,
+            work_order_id: workOrder.id,
+            drive_folder_id: driveFolder.drive_folder_id,
+            drive_folder_name: driveFolder.drive_folder_name,
+            ra_bills_folder_id: driveFolder.ra_bills_folder_id,
+            invoices_folder_id: driveFolder.invoices_folder_id,
+            debit_notes_folder_id: driveFolder.debit_notes_folder_id,
+            contractor_docs_folder_id: driveFolder.contractor_docs_folder_id,
+            created_at: new Date().toISOString(),
+          },
+          { onConflict: "work_order_id" }
+        );
+
+      if (driveFolderError) {
+        throw new Error(
+          `Google Drive folder was created but ERP folder metadata could not be saved: ${driveFolderError.message}`
+        );
+      }
 
       const { data: document, error: documentError } = await admin
         .from("work_order_documents")
         .insert({
           organization_id: organizationId,
           work_order_id: workOrder.id,
-          file_name: file.name,
-          file_url: pendingFilePath,
-          file_path: pendingFilePath,
+          file_name: driveFolder.work_order_file_name || driveFilePayload.fileName,
+          file_url: driveFolder.work_order_file_url,
+          file_path: driveFolder.work_order_file_id,
           uploaded_at: new Date().toISOString(),
         })
         .select("id, file_name, file_path")
@@ -466,7 +542,7 @@ export async function POST(request: Request) {
 
       return NextResponse.json({ workOrder });
     } catch (error) {
-      await cleanupWorkOrder(admin, createdWorkOrderId, pendingStoragePath);
+      await cleanupWorkOrder(admin, createdWorkOrderId);
       throw error;
     }
   } catch (error: any) {

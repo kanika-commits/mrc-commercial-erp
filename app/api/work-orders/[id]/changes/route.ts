@@ -250,7 +250,7 @@ export async function POST(
     const admin = adminClient();
     const { data: workOrder, error: workOrderError } = await admin
       .from("work_orders")
-      .select("id, organization_id, wo_number, approval_status, wo_value, gst_percent")
+      .select("id, organization_id, wo_number, status, approval_status, wo_value, gst_percent")
       .eq("id", id)
       .maybeSingle();
 
@@ -260,6 +260,21 @@ export async function POST(
       return NextResponse.json(
         { error: "Work Order was not found." },
         { status: 404 }
+      );
+    }
+
+    const workOrderStatus = String(workOrder.status || "").trim().toLowerCase();
+    const workOrderApprovalStatus = String(workOrder.approval_status || "")
+      .trim()
+      .toLowerCase();
+
+    if (
+      ["suspended", "cancelled"].includes(workOrderStatus) ||
+      ["suspended", "cancelled", "rejected"].includes(workOrderApprovalStatus)
+    ) {
+      return NextResponse.json(
+        { error: "This Work Order is suspended and cannot accept new transactions." },
+        { status: 400 }
       );
     }
 

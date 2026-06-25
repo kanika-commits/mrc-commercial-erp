@@ -293,7 +293,7 @@ export async function POST(request: Request) {
       const { data: workOrder, error: workOrderError } = workOrderId
         ? await admin
             .from("work_orders")
-            .select("id, organization_id, company_id")
+            .select("id, organization_id, company_id, status, approval_status")
             .eq("id", workOrderId)
             .maybeSingle()
         : { data: null, error: null };
@@ -305,6 +305,25 @@ export async function POST(request: Request) {
           { error: "Selected Work Order was not found." },
           { status: 404 }
         );
+      }
+
+      if (workOrder) {
+        const workOrderStatus = String(workOrder.status || "")
+          .trim()
+          .toLowerCase();
+        const workOrderApprovalStatus = String(workOrder.approval_status || "")
+          .trim()
+          .toLowerCase();
+
+        if (
+          workOrderStatus !== "active" ||
+          !["pending", "approved"].includes(workOrderApprovalStatus)
+        ) {
+          return NextResponse.json(
+            { error: "This Work Order is suspended and cannot accept new transactions." },
+            { status: 400 }
+          );
+        }
       }
 
       if (
@@ -591,12 +610,31 @@ export async function POST(request: Request) {
     const { data: workOrder, error: workOrderError } = invoice.work_order_id
       ? await admin
           .from("work_orders")
-          .select("id, company_id")
+          .select("id, company_id, status, approval_status")
           .eq("id", invoice.work_order_id)
           .maybeSingle()
       : { data: null, error: null };
 
     if (workOrderError) throw workOrderError;
+
+    if (workOrder) {
+      const workOrderStatus = String(workOrder.status || "")
+        .trim()
+        .toLowerCase();
+      const workOrderApprovalStatus = String(workOrder.approval_status || "")
+        .trim()
+        .toLowerCase();
+
+      if (
+        workOrderStatus !== "active" ||
+        !["pending", "approved"].includes(workOrderApprovalStatus)
+      ) {
+        return NextResponse.json(
+          { error: "This Work Order is suspended and cannot accept new transactions." },
+          { status: 400 }
+        );
+      }
+    }
 
     const { data: previousPayments, error: paymentsError } = await admin
       .from("payments")

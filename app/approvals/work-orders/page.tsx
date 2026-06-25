@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, ExternalLink, FileText, RefreshCw, Trash2 } from "lucide-react";
+import { CheckCircle2, ExternalLink, FileText, PauseCircle, RefreshCw } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
@@ -62,7 +62,7 @@ function badgeClass(value?: string | null) {
     return "border-amber-200 bg-amber-50 text-amber-700";
   }
 
-  if (status === "rejected") {
+  if (status === "rejected" || status === "suspended" || status === "cancelled") {
     return "border-rose-200 bg-rose-50 text-rose-700";
   }
 
@@ -240,7 +240,7 @@ export default function WorkOrderApprovalPage() {
   }
 }
 
-  async function rejectWorkOrder(wo: any) {
+  async function suspendWorkOrder(wo: any) {
   try {
     setSavingId(wo.id);
     setMessage("");
@@ -259,18 +259,18 @@ export default function WorkOrderApprovalPage() {
         "Content-Type": "application/json",
         Authorization: `Bearer ${session.access_token}`,
       },
-      body: JSON.stringify({ action: "rejected" }),
+      body: JSON.stringify({ action: "suspended" }),
     });
     const result = await response.json();
 
     if (!response.ok) {
-      throw new Error(result.error || "Failed to reject work order.");
+      throw new Error(result.error || "Failed to suspend work order.");
     }
 
-    setMessage("Work order rejected and deleted successfully.");
+    setMessage("Work order suspended successfully.");
     await loadWorkOrders();
   } catch (error: any) {
-    setMessage(error.message || "Failed to reject work order.");
+    setMessage(error.message || "Failed to suspend work order.");
   } finally {
     setSavingId("");
   }
@@ -281,7 +281,9 @@ export default function WorkOrderApprovalPage() {
       .trim()
       .toLowerCase();
 
-    return approvalStatus !== "approved" && approvalStatus !== "rejected";
+    return !["approved", "rejected", "suspended", "cancelled"].includes(
+      approvalStatus
+    );
   });
 
   return (
@@ -295,7 +297,7 @@ export default function WorkOrderApprovalPage() {
           </nav>
           <h1 className="text-3xl font-bold text-slate-950">Work Order Approval</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Review pending work orders and approve or reject them based on documentation.
+            Review pending work orders and approve or suspend them based on documentation.
           </p>
         </div>
 
@@ -484,11 +486,11 @@ export default function WorkOrderApprovalPage() {
                           <button
                             type="button"
                             disabled={isSaving}
-                            onClick={() => rejectWorkOrder(wo)}
+                            onClick={() => suspendWorkOrder(wo)}
                             className="inline-flex items-center gap-1 rounded bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            Reject
+                            <PauseCircle className="h-3.5 w-3.5" />
+                            Suspend
                           </button>
                         </div>
                       </td>

@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
+import AlertMessage from "@/components/AlertMessage";
 
 type VendorForm = {
   vendor_name: string;
@@ -718,11 +719,11 @@ export default function EditVendorPage() {
         </Link>
       </div>
 
-      {message && (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {message}
-        </div>
-      )}
+      <AlertMessage
+        type="error"
+        message={message}
+        onClose={() => setMessage("")}
+      />
 
       <div className="grid grid-cols-12 gap-6">
         <section className={`${cardClass} col-span-12 border-t-4 border-t-sky-700 lg:col-span-8`}>

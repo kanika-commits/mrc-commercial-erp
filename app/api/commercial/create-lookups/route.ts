@@ -89,7 +89,7 @@ async function loadScopedWorkOrders(
         )
       `,
     )
-    .in("approval_status", ["Approved", "approved"])
+    .in("approval_status", ["Pending", "pending", "Approved", "approved"])
     .eq("status", "active")
     .order("wo_number");
 

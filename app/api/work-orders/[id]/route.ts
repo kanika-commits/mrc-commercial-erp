@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { requirePermission } from "@/lib/serverPermissions";
+import { insertDeleteAudit } from "@/lib/serverDeleteAudit";
 import {
   isInOrganizationScope,
   loadOrganizationScopeForUser,
@@ -318,7 +319,7 @@ async function loadScopedWorkOrder(
 ) {
   const { data: workOrder, error } = await admin
     .from("work_orders")
-    .select("id, organization_id, company_id, site_id, wo_number, approval_status")
+    .select("id, organization_id, company_id, site_id, wo_number, status, approval_status")
     .eq("id", workOrderId)
     .maybeSingle();
 
@@ -421,6 +422,81 @@ async function requireEditPermission(request: Request) {
   return { user } as const;
 }
 
+async function requirePlatformOwner(request: Request) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  const token = request.headers.get("authorization")?.replace("Bearer ", "");
+
+  if (!token) {
+    return { error: "Missing auth token.", status: 401 } as const;
+  }
+
+  const authClient = createClient(supabaseUrl, anonKey);
+  const {
+    data: { user },
+    error: userError,
+  } = await authClient.auth.getUser(token);
+
+  if (userError) throw userError;
+
+  if (!user) {
+    return { error: "User not found.", status: 401 } as const;
+  }
+
+  const admin = adminClient();
+  const [
+    { data: userRoles, error: userRolesError },
+    { data: userPermissions, error: userPermissionsError },
+  ] = await Promise.all([
+    admin.from("user_roles").select("role_id").eq("user_id", user.id),
+    admin
+      .from("user_permissions")
+      .select("module_code, action_code, allowed")
+      .eq("user_id", user.id),
+  ]);
+
+  if (userRolesError) throw userRolesError;
+  if (userPermissionsError) throw userPermissionsError;
+
+  const roleIds = (userRoles || []).map((row) => row.role_id).filter(Boolean);
+  let roleCodes: string[] = [];
+  let rolePermissions: any[] = [];
+
+  if (roleIds.length > 0) {
+    const [
+      { data: roles, error: rolesError },
+      { data: permissions, error: permissionsError },
+    ] = await Promise.all([
+      admin.from("roles").select("role_code").in("id", roleIds),
+      admin
+        .from("role_permissions")
+        .select("module_code, action_code, allowed")
+        .in("role_id", roleIds),
+    ]);
+
+    if (rolesError) throw rolesError;
+    if (permissionsError) throw permissionsError;
+    roleCodes = (roles || []).map((role) => role.role_code).filter(Boolean);
+    rolePermissions = permissions || [];
+  }
+
+  const hasWildcard = [...rolePermissions, ...(userPermissions || [])].some(
+    (permission) =>
+      permission.allowed === true &&
+      permission.module_code === "*" &&
+      permission.action_code === "*"
+  );
+
+  if (!roleCodes.includes("platform_owner") && !hasWildcard) {
+    return {
+      error: "Only Platform Owner can undo Work Order suspension.",
+      status: 403,
+    } as const;
+  }
+
+  return { user } as const;
+}
+
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -435,6 +511,120 @@ export async function PATCH(
     const { id } = await params;
     const payload = await request.json().catch(() => ({}));
     const action = String(payload.action || "").trim().toLowerCase();
+
+    if (["undo_suspension", "undo_suspend", "reactivate", "reactivated"].includes(action)) {
+      const platformOwner = await requirePlatformOwner(request);
+
+      if ("error" in platformOwner) {
+        return NextResponse.json(
+          { error: platformOwner.error },
+          { status: platformOwner.status },
+        );
+      }
+
+      const reason = String(payload.reactivation_reason || payload.reason || "").trim();
+
+      if (reason.length < 10) {
+        return NextResponse.json(
+          { error: "Reason must be at least 10 characters." },
+          { status: 400 },
+        );
+      }
+
+      const admin = adminClient();
+      const { data: workOrder, error: workOrderError } = await admin
+        .from("work_orders")
+        .select(
+          "id, organization_id, wo_number, status, approval_status, approved_at"
+        )
+        .eq("id", id)
+        .maybeSingle();
+
+      if (workOrderError) throw workOrderError;
+
+      if (!workOrder) {
+        return NextResponse.json(
+          { error: "Work Order was not found." },
+          { status: 404 },
+        );
+      }
+
+      const currentStatus = String(workOrder.status || "").trim().toLowerCase();
+      const currentApprovalStatus = String(workOrder.approval_status || "")
+        .trim()
+        .toLowerCase();
+
+      if (
+        !["suspended", "cancelled"].includes(currentStatus) &&
+        !["suspended", "cancelled", "rejected"].includes(currentApprovalStatus)
+      ) {
+        return NextResponse.json(
+          { error: "Only suspended Work Orders can have suspension undone." },
+          { status: 400 },
+        );
+      }
+
+      const { data: suspensionAudit, error: suspensionAuditError } = await admin
+        .from("deleted_records_audit")
+        .select("record_snapshot")
+        .eq("module_code", MODULE_CODE)
+        .eq("document_id", id)
+        .eq("document_type", "Work Order Suspension")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (suspensionAuditError) throw suspensionAuditError;
+
+      const previousApprovalStatus = String(
+        suspensionAudit?.record_snapshot?.previous_approval_status || ""
+      )
+        .trim()
+        .toLowerCase();
+      const restoredApprovalStatus =
+        previousApprovalStatus === "approved"
+          ? "approved"
+          : previousApprovalStatus === "pending"
+            ? "pending"
+            : workOrder.approved_at
+              ? "approved"
+              : "pending";
+
+      const { error: updateError } = await admin
+        .from("work_orders")
+        .update({
+          status: "active",
+          approval_status: restoredApprovalStatus,
+        })
+        .eq("id", id);
+
+      if (updateError) throw updateError;
+
+      await insertDeleteAudit(admin, platformOwner.user, {
+        organizationId: workOrder.organization_id,
+        moduleCode: MODULE_CODE,
+        documentType: "Work Order Suspension Undo",
+        documentId: workOrder.id,
+        documentNumber: workOrder.wo_number,
+        deletionReason: reason,
+        recordSnapshot: {
+          action: "suspension_undone",
+          suspended_status: workOrder.status,
+          suspended_approval_status: workOrder.approval_status,
+          restored_status: "active",
+          restored_approval_status: restoredApprovalStatus,
+          undone_at: new Date().toISOString(),
+          reason,
+        },
+      });
+
+      return NextResponse.json({
+        work_order_id: id,
+        suspension_undone: true,
+        status: "active",
+        approval_status: restoredApprovalStatus,
+      });
+    }
 
     if (["approved", "approve"].includes(action)) {
       const permission = await requirePermission(request, MODULE_CODE, "approve");
@@ -459,8 +649,6 @@ export async function PATCH(
         permission.user.user_metadata?.name ||
         userEmail;
 
-      await promoteWorkOrderFileToDrive(admin, scopedWorkOrder.workOrder);
-
       const { error: updateError } = await admin
         .from("work_orders")
         .update({
@@ -477,7 +665,7 @@ export async function PATCH(
       return NextResponse.json({ work_order_id: id, approved: true });
     }
 
-    if (["rejected", "reject"].includes(action)) {
+    if (["suspended", "suspend", "cancelled", "cancel", "rejected", "reject"].includes(action)) {
       const permission = await requirePermission(request, MODULE_CODE, "reject");
 
       if ("response" in permission) {
@@ -494,43 +682,34 @@ export async function PATCH(
         );
       }
 
-      const { data: documents, error: documentLoadError } = await admin
-        .from("work_order_documents")
-        .select("file_path")
-        .eq("work_order_id", id);
-
-      if (documentLoadError) throw documentLoadError;
-
-      const storagePaths = (documents || [])
-        .map((document) => document.file_path)
-        .filter(Boolean);
-
-      if (storagePaths.length > 0) {
-        const { error: storageError } = await admin.storage
-          .from("work-order-documents")
-          .remove(storagePaths);
-
-        if (storageError) throw storageError;
-      }
-
-      const [vendorDelete, documentDelete, driveFolderDelete] = await Promise.all([
-        admin.from("work_order_vendors").delete().eq("work_order_id", id),
-        admin.from("work_order_documents").delete().eq("work_order_id", id),
-        admin.from("work_order_drive_folders").delete().eq("work_order_id", id),
-      ]);
-
-      if (vendorDelete.error) throw vendorDelete.error;
-      if (documentDelete.error) throw documentDelete.error;
-      if (driveFolderDelete.error) throw driveFolderDelete.error;
-
-      const { error: orderDeleteError } = await admin
+      const { error: updateError } = await admin
         .from("work_orders")
-        .delete()
+        .update({
+          approval_status: "suspended",
+          status: "suspended",
+        })
         .eq("id", id);
 
-      if (orderDeleteError) throw orderDeleteError;
+      if (updateError) throw updateError;
 
-      return NextResponse.json({ work_order_id: id, rejected: true, deleted: true });
+      await insertDeleteAudit(admin, permission.user, {
+        organizationId: scopedWorkOrder.workOrder.organization_id,
+        moduleCode: MODULE_CODE,
+        documentType: "Work Order Suspension",
+        documentId: scopedWorkOrder.workOrder.id,
+        documentNumber: scopedWorkOrder.workOrder.wo_number,
+        deletionReason: "Work Order suspended from approval workflow.",
+        recordSnapshot: {
+          action: "suspended",
+          previous_status: scopedWorkOrder.workOrder.status,
+          previous_approval_status: scopedWorkOrder.workOrder.approval_status,
+          suspended_status: "suspended",
+          suspended_approval_status: "suspended",
+          suspended_at: new Date().toISOString(),
+        },
+      });
+
+      return NextResponse.json({ work_order_id: id, suspended: true });
     }
 
     const status = String(payload.status || "").trim().toLowerCase();

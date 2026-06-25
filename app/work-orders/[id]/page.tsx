@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { Download } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
-import { can } from "@/lib/accessControl";
+import { can, hasGlobalAccess } from "@/lib/accessControl";
 import AuditTrailCard from "@/components/AuditTrailCard";
 import { formatIstTimestamp } from "@/lib/dateTime";
 
@@ -40,6 +40,41 @@ function money(value: any) {
 function statusLabel(value: string | null | undefined) {
   const normalized = String(value || "").trim().toLowerCase();
   return STATUS_OPTIONS.find((option) => option.value === normalized)?.label || value || "-";
+}
+
+function workOrderStatusBanner(status: string | null | undefined, approvalStatus: string | null | undefined) {
+  const statusKey = String(status || "").trim().toLowerCase();
+  const approvalKey = String(approvalStatus || "").trim().toLowerCase();
+
+  if (
+    statusKey === "suspended" ||
+    approvalKey === "rejected" ||
+    approvalKey === "suspended"
+  ) {
+    return {
+      className: "border-red-200 bg-red-50 text-red-800",
+      text:
+        "This Work Order is suspended. Existing records remain available for audit. New commercial transactions are not permitted.",
+    };
+  }
+
+  if (statusKey === "active" && approvalKey === "pending") {
+    return {
+      className: "border-amber-200 bg-amber-50 text-amber-800",
+      text:
+        "This Work Order is pending approval. Commercial transactions are permitted. Core details may still be edited until approval.",
+    };
+  }
+
+  if (statusKey === "active" && approvalKey === "approved") {
+    return {
+      className: "border-emerald-200 bg-emerald-50 text-emerald-800",
+      text:
+        "This Work Order is approved. Core details are locked. Future commercial changes must be made using Revised PO or Additional Work.",
+    };
+  }
+
+  return null;
 }
 
 function normalizeLinkedVendorRows(rows: any[]) {
@@ -125,6 +160,9 @@ const [documents, setDocuments] = useState<any[]>([]);
   const [changeDescription, setChangeDescription] = useState("");
   const [changeFile, setChangeFile] = useState<File | null>(null);
   const [savingChange, setSavingChange] = useState(false);
+  const [showReactivateModal, setShowReactivateModal] = useState(false);
+  const [reactivationReason, setReactivationReason] = useState("");
+  const [reactivating, setReactivating] = useState(false);
 
   useEffect(() => {
     if (!accessLoading && access) {
@@ -646,6 +684,62 @@ const [documents, setDocuments] = useState<any[]>([]);
     }
   }
 
+  async function reactivateWorkOrder() {
+    const reason = reactivationReason.trim();
+    setStatusMessage("");
+
+    if (reason.length < 10) {
+      setStatusMessage("Reason must be at least 10 characters.");
+      return;
+    }
+
+    try {
+      setReactivating(true);
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/work-orders/${workOrderId}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "undo_suspension",
+          reactivation_reason: reason,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to undo Work Order suspension.");
+      }
+
+      setShowReactivateModal(false);
+      setReactivationReason("");
+      setWorkOrder((previous: any) =>
+        previous
+          ? {
+              ...previous,
+              status: result.status || "active",
+              approval_status: result.approval_status || previous.approval_status,
+            }
+          : previous
+      );
+      setStatusMessage("Work Order suspension undone successfully.");
+    } catch (error: any) {
+      setStatusMessage(error.message || "Failed to undo Work Order suspension.");
+    } finally {
+      setReactivating(false);
+    }
+  }
+
   function nextChangeNumber(type: ChangeType) {
     const count = workOrderChanges.filter((change) => change.change_type === type).length;
     return `${CHANGE_TYPES[type].numberPrefix}${count + 1}`;
@@ -963,6 +1057,17 @@ function downloadWOLedger() {
 
   const isApprovedWorkOrder =
     String(workOrder.approval_status || "").toLowerCase() === "approved";
+  const workOrderStatusKey = String(workOrder.status || "").toLowerCase();
+  const workOrderApprovalStatusKey = String(workOrder.approval_status || "").toLowerCase();
+  const isSuspendedWorkOrder =
+    ["suspended", "cancelled"].includes(workOrderStatusKey) ||
+    ["suspended", "cancelled"].includes(workOrderApprovalStatusKey);
+  const canMutateWorkOrder = !isSuspendedWorkOrder;
+  const canUndoSuspension = hasGlobalAccess(access) && isSuspendedWorkOrder;
+  const statusBanner = workOrderStatusBanner(
+    workOrder.status,
+    workOrder.approval_status
+  );
   const workOrderTitle = mainVendorName
     ? `${workOrder.wo_number} - ${mainVendorName}`
     : workOrder.wo_number;
@@ -997,6 +1102,12 @@ function downloadWOLedger() {
         </div>
       )}
 
+      {statusBanner && (
+        <div className={`rounded-lg border p-4 text-sm font-semibold ${statusBanner.className}`}>
+          {statusBanner.text}
+        </div>
+      )}
+
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold">{workOrderTitle}</h1>
@@ -1006,7 +1117,21 @@ function downloadWOLedger() {
         </div>
 
        <div className="flex gap-3">
-  {isApprovedWorkOrder && (
+  {canUndoSuspension && (
+    <button
+      type="button"
+      onClick={() => {
+        setReactivationReason("");
+        setStatusMessage("");
+        setShowReactivateModal(true);
+      }}
+      className="rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700"
+    >
+      Undo Suspension
+    </button>
+  )}
+
+  {isApprovedWorkOrder && canMutateWorkOrder && (
     <button
       type="button"
       onClick={openSubcontractorModal}
@@ -1027,7 +1152,7 @@ function downloadWOLedger() {
     </button>
   )}
 
-  {canUpdateStatus && (
+  {canUpdateStatus && canMutateWorkOrder && (
     <button
       type="button"
       onClick={() => {
@@ -1231,7 +1356,7 @@ function downloadWOLedger() {
         )}
       </section>
 
-      {isApprovedWorkOrder && (
+      {isApprovedWorkOrder && canMutateWorkOrder && (
         <section className="rounded-lg border bg-white p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
@@ -1343,6 +1468,58 @@ function downloadWOLedger() {
             </table>
           </div>
         </section>
+      )}
+
+      {showReactivateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+            <div>
+              <h2 className="text-xl font-bold text-slate-950">
+                Undo Work Order Suspension
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Undo suspension for {workOrder.wo_number || "this Work Order"} only if it was
+                suspended by mistake. Existing Drive folders and documents will not be changed.
+              </p>
+            </div>
+
+            <label className="mt-5 block">
+              <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                Reason
+              </span>
+              <textarea
+                value={reactivationReason}
+                onChange={(event) => setReactivationReason(event.target.value)}
+                rows={4}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+                placeholder="Enter reason for undoing suspension"
+                disabled={reactivating}
+              />
+              <span className="mt-1 block text-xs text-slate-500">
+                Minimum 10 characters required.
+              </span>
+            </label>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowReactivateModal(false)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                disabled={reactivating}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={reactivateWorkOrder}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                disabled={reactivating}
+              >
+                {reactivating ? "Undoing..." : "Undo Suspension"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {showStatusModal && (

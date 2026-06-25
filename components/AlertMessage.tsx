@@ -27,6 +27,7 @@ export default function AlertMessage({
   useEffect(() => {
     if (message && scrollIntoView) {
       ref.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      ref.current?.focus({ preventScroll: true });
     }
   }, [message, scrollIntoView]);
 
@@ -35,8 +36,10 @@ export default function AlertMessage({
   return (
     <div
       ref={ref}
+      tabIndex={-1}
       className={`flex items-start justify-between gap-4 rounded-xl border p-4 text-sm font-medium ${styles[type]}`}
       role="alert"
+      aria-live={type === "error" || type === "warning" ? "assertive" : "polite"}
     >
       <p className="leading-6">{message}</p>
       {onClose && (

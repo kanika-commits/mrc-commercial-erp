@@ -230,7 +230,9 @@ function applyWorkOrderScope(
   restrictedSiteIds: string[],
   organizationScope: OrganizationScope,
 ) {
-  let next = query.ilike("approval_status", "approved");
+  let next = query.or(
+    "and(approval_status.ilike.approved,status.eq.active),status.ilike.suspended,status.ilike.cancelled,approval_status.ilike.suspended,approval_status.ilike.cancelled"
+  );
   next = applyOrganizationScope(next, organizationScope);
 
   if (!next) return null;
