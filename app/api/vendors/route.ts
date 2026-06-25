@@ -14,7 +14,6 @@ const VENDOR_MASTER_DRIVE_ROOT_FOLDER_ID =
 
 type VendorPayload = {
   vendor_name: string;
-  vendor_type: string;
   contractor_type: string;
   status: string;
   pan: string;
@@ -303,6 +302,7 @@ export async function GET(request: Request) {
             .or(
               [
                 `vendor_name.ilike.${pattern}`,
+                `contractor_type.ilike.${pattern}`,
                 `pan.ilike.${pattern}`,
                 `gstin.ilike.${pattern}`,
                 `aadhaar_cin.ilike.${pattern}`,
@@ -341,7 +341,7 @@ export async function GET(request: Request) {
         supabase
           .from("vendors")
           .select(
-            "id, organization_id, vendor_name, vendor_type, gstin, pan, aadhaar_cin, created_at",
+            "id, organization_id, vendor_name, contractor_type, gstin, pan, aadhaar_cin, created_at",
             { count: "exact" }
           )
           .neq("status", "deleted"),
@@ -355,31 +355,31 @@ export async function GET(request: Request) {
           total_all: 0,
           page,
           page_size: pageSize,
-          vendor_types: [],
+          contractor_types: [],
         });
       }
 
       vendorQuery = vendorQuery.order("created_at", { ascending: false });
 
       if (normalizedType && normalizedType !== "all") {
-        vendorQuery = vendorQuery.ilike("vendor_type", normalizedType);
+        vendorQuery = vendorQuery.ilike("contractor_type", normalizedType);
       }
 
       if (matchedVendorIds) {
         if (matchedVendorIds.length === 0) {
-          const vendorTypeQuery = applyOrganizationScope(
+          const contractorTypeQuery = applyOrganizationScope(
             supabase
               .from("vendors")
-              .select("vendor_type", { count: "exact" })
+              .select("contractor_type", { count: "exact" })
               .neq("status", "deleted"),
             organizationScope,
           );
-          const { data: vendorTypeRows, error: vendorTypeError, count: totalAll } =
-            vendorTypeQuery
-              ? await vendorTypeQuery
+          const { data: contractorTypeRows, error: contractorTypeError, count: totalAll } =
+            contractorTypeQuery
+              ? await contractorTypeQuery
               : { data: [], error: null, count: 0 };
 
-          if (vendorTypeError) throw vendorTypeError;
+          if (contractorTypeError) throw contractorTypeError;
 
           return NextResponse.json({
             vendors: [],
@@ -387,8 +387,8 @@ export async function GET(request: Request) {
             total_all: totalAll || 0,
             page,
             page_size: pageSize,
-            vendor_types: Array.from(
-              new Set((vendorTypeRows || []).map((row: any) => row.vendor_type).filter(Boolean))
+            contractor_types: Array.from(
+              new Set((contractorTypeRows || []).map((row: any) => row.contractor_type).filter(Boolean))
             ).sort(),
           });
         }
@@ -410,23 +410,23 @@ export async function GET(request: Request) {
             .in("vendor_id", vendorIds)
             .order("is_primary", { ascending: false })
         : Promise.resolve({ data: [], error: null });
-      const vendorTypesQuery = applyOrganizationScope(
+      const contractorTypesQuery = applyOrganizationScope(
         supabase
           .from("vendors")
-          .select("vendor_type", { count: "exact" })
+          .select("contractor_type", { count: "exact" })
           .neq("status", "deleted"),
         organizationScope,
       );
-      const vendorTypesPromise =
-        vendorTypesQuery || Promise.resolve({ data: [], error: null, count: 0 });
+      const contractorTypesPromise =
+        contractorTypesQuery || Promise.resolve({ data: [], error: null, count: 0 });
 
-      const [contactsResult, vendorTypeRows] = await Promise.all([
+      const [contactsResult, contractorTypeRows] = await Promise.all([
         contactsPromise,
-        vendorTypesPromise,
+        contractorTypesPromise,
       ]);
 
       if (contactsResult.error) throw contactsResult.error;
-      if (vendorTypeRows.error) throw vendorTypeRows.error;
+      if (contractorTypeRows.error) throw contractorTypeRows.error;
 
       const contactsByVendor = new Map<string, any[]>();
       (contactsResult.data || []).forEach((contact: any) => {
@@ -443,11 +443,11 @@ export async function GET(request: Request) {
           bank_accounts: [],
         })),
         total: vendorsResult.count || 0,
-        total_all: vendorTypeRows.count || 0,
+        total_all: contractorTypeRows.count || 0,
         page,
         page_size: pageSize,
-        vendor_types: Array.from(
-          new Set((vendorTypeRows.data || []).map((row: any) => row.vendor_type).filter(Boolean))
+        contractor_types: Array.from(
+          new Set((contractorTypeRows.data || []).map((row: any) => row.contractor_type).filter(Boolean))
         ).sort(),
       };
       return NextResponse.json(responseBody);
@@ -457,7 +457,7 @@ export async function GET(request: Request) {
       supabase
         .from("vendors")
         .select(
-          "id, organization_id, vendor_name, vendor_type, gstin, pan, aadhaar_cin, created_at"
+          "id, organization_id, vendor_name, contractor_type, gstin, pan, aadhaar_cin, created_at"
         )
         .neq("status", "deleted"),
       organizationScope,
@@ -562,7 +562,7 @@ export async function POST(request: Request) {
     }
 
     if (
-      vendor.contractor_type === "Proprietor" &&
+      isProprietorship(vendor.contractor_type) &&
       !aadhaarRegex.test(vendor.aadhaar_cin)
     ) {
       return NextResponse.json(
@@ -738,7 +738,6 @@ export async function POST(request: Request) {
       .insert({
         organization_id: organizationId,
         vendor_name: vendor.vendor_name.trim(),
-        vendor_type: vendor.vendor_type,
         contractor_type: vendor.contractor_type,
         status: vendor.status,
         pan: vendor.pan,

@@ -531,7 +531,7 @@ const [documents, setDocuments] = useState<any[]>([]);
     const contacts = vendor.contacts || [];
     return [
       vendor.vendor_name,
-      vendor.vendor_type,
+      vendor.contractor_type,
       vendor.pan,
       vendor.gstin,
       vendor.aadhaar_cin,
@@ -1503,7 +1503,7 @@ function downloadWOLedger() {
                           {selectedVendor.vendor_name || "-"}
                         </p>
                         <p className="mt-1 text-sm text-slate-500">
-                          {selectedVendor.vendor_type || "Vendor Master"}
+                          {selectedVendor.contractor_type || "Vendor Master"}
                         </p>
                       </div>
                       <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">
@@ -1514,7 +1514,7 @@ function downloadWOLedger() {
                     <div className="mt-4 grid gap-3 sm:grid-cols-2">
                       <Info label="PAN" value={selectedVendor.pan || "-"} />
                       <Info label="GSTIN" value={selectedVendor.gstin || "-"} />
-                      <Info label="Vendor Type" value={selectedVendor.vendor_type || "-"} />
+                      <Info label="Contractor Type" value={selectedVendor.contractor_type || "-"} />
                       <Info
                         label="Primary Contact"
                         value={

@@ -12,7 +12,6 @@ const DOCUMENT_BUCKET = "Vendor-Documents";
 const VENDOR_MASTER_DRIVE_ROOT_FOLDER_ID = "1_3FCygGl8wOMS8IBEInhIkEFt-C93I-5";
 
 type VendorPayload = {
-  vendor_type: string;
   contractor_type: string;
   status: string;
   pan: string;
@@ -362,7 +361,6 @@ export async function GET(
           id,
           organization_id,
           vendor_name,
-          vendor_type,
           pan,
           gstin,
           aadhaar_cin,
@@ -661,7 +659,6 @@ export async function PUT(
     const { error: vendorError } = await supabase
       .from("vendors")
       .update({
-        vendor_type: vendor.vendor_type,
         contractor_type: vendor.contractor_type,
         status: vendor.status,
         pan: vendor.pan,

@@ -17,7 +17,7 @@ import { can } from "@/lib/accessControl";
 type Vendor = {
   id: string;
   vendor_name: string;
-  vendor_type: string;
+  contractor_type: string | null;
   gstin: string | null;
   pan: string | null;
   aadhaar_cin: string | null;
@@ -57,7 +57,7 @@ export default function VendorsPage() {
   const [page, setPage] = useState(1);
   const [totalVendors, setTotalVendors] = useState(0);
   const [totalFilteredVendors, setTotalFilteredVendors] = useState(0);
-  const [vendorTypes, setVendorTypes] = useState<string[]>([]);
+  const [contractorTypes, setContractorTypes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -159,7 +159,7 @@ export default function VendorsPage() {
           setVendors(result.vendors || []);
           setTotalFilteredVendors(result.total || 0);
           setTotalVendors(result.total_all || result.total || 0);
-          setVendorTypes(result.vendor_types || []);
+          setContractorTypes(result.contractor_types || []);
         }
 
         setLoading(false);
@@ -305,7 +305,7 @@ export default function VendorsPage() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search vendor name, PAN, GSTIN, Aadhaar/CIN or type..."
+              placeholder="Search vendor name, PAN, GSTIN, Aadhaar/CIN or contractor type..."
               className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none transition focus:border-[#00658b] focus:bg-white focus:ring-2 focus:ring-[#00658b]/10"
             />
           </div>
@@ -317,8 +317,8 @@ export default function VendorsPage() {
               onChange={(e) => setTypeFilter(e.target.value)}
               className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-[#00658b]"
             >
-              <option value="all">Vendor Type: All</option>
-              {vendorTypes.map((type) => (
+              <option value="all">Contractor Type: All</option>
+              {contractorTypes.map((type) => (
                 <option key={type} value={normalize(type)}>
                   {type}
                 </option>
@@ -349,7 +349,7 @@ export default function VendorsPage() {
           <thead className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
             <tr>
               <th className="px-4 py-3 text-left">Vendor</th>
-              <th className="px-4 py-3 text-left">Vendor Type</th>
+              <th className="px-4 py-3 text-left">Contractor Type</th>
               <th className="px-4 py-3 text-left">GSTIN</th>
               <th className="px-4 py-3 text-left">PAN</th>
               <th className="px-4 py-3 text-left">Created Date</th>
@@ -393,7 +393,7 @@ export default function VendorsPage() {
                     </div>
                   </td>
                 <td className="px-4 py-4">
-                  <TypeBadge value={vendor.vendor_type} />
+                  <TypeBadge value={vendor.contractor_type || "-"} />
                 </td>
                 <td className="px-4 py-4 font-mono text-xs text-slate-600">
                   {vendor.gstin || "-"}

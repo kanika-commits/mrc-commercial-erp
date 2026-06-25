@@ -314,7 +314,6 @@ export default function VendorDetailPage() {
               {vendor.vendor_name}
             </h1>
             <div className="mt-4 flex flex-wrap gap-2">
-              <Badge>{vendor.vendor_type || "Vendor"}</Badge>
               <Badge>{vendor.contractor_type || "Contractor Type -"}</Badge>
               <Badge>PAN: {vendor.pan || "-"}</Badge>
               <Badge>GSTIN: {vendor.gstin || "-"}</Badge>
@@ -357,7 +356,6 @@ export default function VendorDetailPage() {
           <VendorCard title="Basic Information" icon={<Building2 className="h-5 w-5" />}>
             <div className="grid gap-x-8 gap-y-6 md:grid-cols-2 lg:grid-cols-3">
               <Info label="Vendor Name" value={vendor.vendor_name} />
-              <Info label="Vendor Type" value={vendor.vendor_type} />
               <Info label="Contractor Type" value={vendor.contractor_type} />
               <Info label="PAN" value={vendor.pan} />
               <Info label="Aadhaar/CIN" value={vendor.aadhaar_cin} />

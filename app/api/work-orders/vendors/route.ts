@@ -159,7 +159,7 @@ export async function GET(request: Request) {
     const { data: vendors, error: vendorsError } = vendorIds.length
       ? await admin
           .from("vendors")
-          .select("id, vendor_name, vendor_type, pan, gstin")
+          .select("id, vendor_name, contractor_type, pan, gstin")
           .in("id", vendorIds)
       : { data: [], error: null };
 
@@ -215,7 +215,7 @@ export async function GET(request: Request) {
               ? {
                   id: vendor.id,
                   vendor_name: vendor.vendor_name,
-                  vendor_type: vendor.vendor_type,
+                  contractor_type: vendor.contractor_type,
                   pan: vendor.pan,
                   gstin: vendor.gstin,
                   primary_contact: contactMap.get(vendor.id) || null,

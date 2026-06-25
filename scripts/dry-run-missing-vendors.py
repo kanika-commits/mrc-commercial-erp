@@ -54,7 +54,6 @@ def main():
                 missing_by_name[key] = {
                     "organization_id": organization_id,
                     "vendor_name": vendor_name,
-                    "vendor_type": "Contractor",
                     "status": "active",
                 }
 
@@ -64,7 +63,7 @@ def main():
     with output.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=["organization_id", "vendor_name", "vendor_type", "status"],
+            fieldnames=["organization_id", "vendor_name", "status"],
         )
         writer.writeheader()
         writer.writerows(rows)

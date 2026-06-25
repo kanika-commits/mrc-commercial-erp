@@ -9,7 +9,6 @@ import { can } from "@/lib/accessControl";
 
 type VendorForm = {
   vendor_name: string;
-  vendor_type: string;
   contractor_type: string;
   status: string;
   pan: string;
@@ -123,7 +122,6 @@ export default function EditVendorPage() {
 
   const [form, setForm] = useState<VendorForm>({
     vendor_name: "",
-    vendor_type: "Contractor",
     contractor_type: "Company",
     status: "active",
     pan: "",
@@ -188,7 +186,6 @@ export default function EditVendorPage() {
 
         setForm({
           vendor_name: vendor.vendor_name || "",
-          vendor_type: vendor.vendor_type || "Contractor",
           contractor_type: vendor.contractor_type || "Company",
           status: vendor.status || "active",
           pan: vendor.pan || "",
@@ -468,7 +465,6 @@ export default function EditVendorPage() {
     const primaryGstin = gstinRows.find((gstin) => gstin.is_primary) || gstinRows[0];
     const validationErrors: string[] = [];
 
-    if (!form.vendor_type.trim()) validationErrors.push("Vendor Type is required.");
     if (!form.contractor_type.trim()) validationErrors.push("Contractor Type is required.");
 
     if (!form.pan.trim()) {
@@ -574,7 +570,6 @@ export default function EditVendorPage() {
       payload.append(
         "vendor",
         JSON.stringify({
-          vendor_type: form.vendor_type,
           contractor_type: form.contractor_type,
           status: form.status,
           pan: form.pan,
@@ -753,23 +748,6 @@ export default function EditVendorPage() {
             </div>
 
             <div>
-              <label className={labelClass}>Vendor Type *</label>
-              <select
-                name="vendor_type"
-                value={form.vendor_type}
-                onChange={handleChange}
-                className={inputClass}
-              >
-                <option>Contractor</option>
-                <option>Supplier</option>
-                <option>Consultant</option>
-                <option>Labour Contractor</option>
-                <option>Equipment Rental</option>
-                <option>Transporter</option>
-              </select>
-            </div>
-
-            <div>
               <label className={labelClass}>Contractor Type *</label>
               <select
                 name="contractor_type"
@@ -778,9 +756,10 @@ export default function EditVendorPage() {
                 className={inputClass}
               >
                 <option>Company</option>
-                <option>LLP</option>
+                <option>Proprietorship</option>
                 <option>Partnership</option>
-                <option>Proprietor</option>
+                <option>LLP</option>
+                <option>Individual</option>
               </select>
             </div>
 

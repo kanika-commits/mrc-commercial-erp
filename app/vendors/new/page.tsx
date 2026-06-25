@@ -45,7 +45,6 @@ export default function NewVendorPage() {
 
   const [form, setForm] = useState({
     vendor_name: "",
-    vendor_type: "Contractor",
     contractor_type: "Company",
     status: "active",
 
@@ -101,7 +100,6 @@ export default function NewVendorPage() {
     const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
 
     if (!form.vendor_name.trim()) newErrors.vendor_name = "Vendor Name is required.";
-    if (!form.vendor_type.trim()) newErrors.vendor_type = "Vendor Type is required.";
     if (!form.contractor_type.trim())
       newErrors.contractor_type = "Contractor Type is required.";
 
@@ -111,7 +109,7 @@ export default function NewVendorPage() {
     if (!form.aadhaar_cin.trim()) {
       newErrors.aadhaar_cin = "Aadhaar / CIN is required.";
     } else if (
-      form.contractor_type === "Proprietor" &&
+      isProprietorship(form.contractor_type) &&
       !aadhaarRegex.test(form.aadhaar_cin)
     ) {
       newErrors.aadhaar_cin = "Invalid Aadhaar. It must be 12 digits.";
@@ -202,7 +200,7 @@ if (form.gstin && !files.GST_CERTIFICATE) {
   }
 
   function getErrorStep(key: string) {
-    if (["vendor_name", "vendor_type", "contractor_type"].includes(key)) {
+    if (["vendor_name", "contractor_type"].includes(key)) {
       return 1;
     }
 
@@ -665,28 +663,6 @@ if (form.gstin && !files.GST_CERTIFICATE) {
 
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">
-                    Vendor Type *
-                  </label>
-                  <select
-                    name="vendor_type"
-                    value={form.vendor_type}
-                    onChange={handleChange}
-                    className={`${inputClass} ${
-                      errors.vendor_type ? errorClass : ""
-                    }`}
-                  >
-                    <option>Contractor</option>
-                    <option>Supplier</option>
-                    <option>Consultant</option>
-                    <option>Labour Contractor</option>
-                    <option>Equipment Rental</option>
-                    <option>Transporter</option>
-                  </select>
-                  <ErrorText name="vendor_type" />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
                     Contractor Type *
                   </label>
                   <select
@@ -698,9 +674,10 @@ if (form.gstin && !files.GST_CERTIFICATE) {
                     }`}
                   >
                     <option>Company</option>
-                    <option>LLP</option>
+                    <option>Proprietorship</option>
                     <option>Partnership</option>
-                    <option>Proprietor</option>
+                    <option>LLP</option>
+                    <option>Individual</option>
                   </select>
                   <ErrorText name="contractor_type" />
                 </div>

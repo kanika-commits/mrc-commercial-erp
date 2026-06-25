@@ -178,7 +178,6 @@ async function main() {
   for (const row of rows) {
     const organizationId = row.organization_id;
     const vendorName = row.vendor_name;
-    const vendorType = row.vendor_type || "Contractor";
     const status = row.status || "active";
     const normalizedVendorName = normalizeName(vendorName);
     const key = `${organizationId}:${normalizedVendorName}`;
@@ -206,7 +205,6 @@ async function main() {
     const { error } = await supabase.from("vendors").insert({
       organization_id: organizationId,
       vendor_name: vendorName,
-      vendor_type: vendorType,
       status,
     });
 
