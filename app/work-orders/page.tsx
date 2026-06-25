@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
+  Edit3,
   Eye,
   ExternalLink,
   FileText,
@@ -94,6 +95,13 @@ const LIFECYCLE_STATUS_OPTIONS = [
   { value: "completed", label: "Completed" },
   { value: "suspended", label: "Suspended" },
   { value: "terminated", label: "Terminated" },
+];
+
+const WORK_ORDER_TYPE_OPTIONS = [
+  "Consultant",
+  "Contractor (Labour)",
+  "Contractor (SITC)",
+  "Rental",
 ];
 
 const PAGE_SIZE = 50;
@@ -219,6 +227,26 @@ function getApprovedBy(wo: WorkOrder) {
   return value?.trim() || "-";
 }
 
+function canFillWoDate(wo: WorkOrder | null) {
+  return String(wo?.wo_date || "").trim() === "";
+}
+
+function canFillWoValue(wo: WorkOrder | null) {
+  return (
+    wo?.wo_value === null ||
+    wo?.wo_value === undefined ||
+    Number(wo.wo_value || 0) === 0
+  );
+}
+
+function canFillGstPercent(wo: WorkOrder | null) {
+  return (
+    wo?.gst_percent === null ||
+    wo?.gst_percent === undefined ||
+    String(wo.gst_percent).trim() === ""
+  );
+}
+
 function getCreatedBy(wo: WorkOrder) {
   const value = [wo.created_by_name, wo.created_by_email].find(
     (item) => item && item.trim().length > 0,
@@ -342,7 +370,16 @@ export default function WorkOrdersPage() {
   const [message, setMessage] = useState("");
   const [canEdit, setCanEdit] = useState(false);
   const [canDelete, setCanDelete] = useState(false);
-  const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
+  const [editingWorkOrder, setEditingWorkOrder] = useState<WorkOrder | null>(null);
+  const [editForm, setEditForm] = useState({
+    description: "",
+    wo_type: "",
+    status: "active",
+    wo_date: "",
+    wo_value: "",
+    gst_percent: "",
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
   const [deleteWorkOrder, setDeleteWorkOrder] = useState<WorkOrder | null>(null);
   const [deletionReason, setDeletionReason] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -554,11 +591,29 @@ export default function WorkOrdersPage() {
     fetchWorkOrders();
   }, [access, requestKey, requestQuery]);
 
-  async function updateLifecycleStatus(workOrderId: string, nextStatus: string) {
-    const status = lifecycleStatusValue(nextStatus);
+  function openEditModal(wo: WorkOrder) {
+    setEditingWorkOrder(wo);
+    setEditForm({
+      description: wo.description || "",
+      wo_type: wo.wo_type || "",
+      status: lifecycleStatusValue(wo.status),
+      wo_date: wo.wo_date || "",
+      wo_value: String(wo.wo_value ?? ""),
+      gst_percent: String(wo.gst_percent ?? ""),
+    });
+    setMessage("");
+    setError(null);
+  }
+
+  function updateEditForm(field: keyof typeof editForm, value: string) {
+    setEditForm((previous) => ({ ...previous, [field]: value }));
+  }
+
+  async function saveWorkOrderEdit() {
+    if (!editingWorkOrder) return;
 
     try {
-      setUpdatingStatusId(workOrderId);
+      setSavingEdit(true);
       setMessage("");
       setError(null);
 
@@ -570,28 +625,57 @@ export default function WorkOrdersPage() {
         throw new Error("Please sign in again to update this Work Order.");
       }
 
-      const response = await fetch(`/api/work-orders/${workOrderId}`, {
+      const response = await fetch(`/api/work-orders/${editingWorkOrder.id}`, {
         method: "PATCH",
         headers: {
           Authorization: `Bearer ${session.access_token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({
+          action: "update_details",
+          description: editForm.description,
+          wo_type: editForm.wo_type,
+          status: editForm.status,
+          ...(canFillWoDate(editingWorkOrder) ? { wo_date: editForm.wo_date } : {}),
+          ...(canFillWoValue(editingWorkOrder) ? { wo_value: editForm.wo_value } : {}),
+          ...(canFillGstPercent(editingWorkOrder)
+            ? { gst_percent: editForm.gst_percent }
+            : {}),
+        }),
       });
-      const result = await response.json();
+      const result = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(result.error || "Failed to update Work Order status.");
+        throw new Error(result.error || "Failed to update Work Order.");
       }
 
-      setWorkOrders((prev) =>
-        prev.map((wo) => (wo.id === workOrderId ? { ...wo, status } : wo)),
+      setWorkOrders((previous) =>
+        previous.map((wo) =>
+          wo.id === editingWorkOrder.id
+            ? {
+                ...wo,
+                description: editForm.description || null,
+                wo_type: editForm.wo_type || null,
+                status: editForm.status,
+                ...(canFillWoDate(editingWorkOrder)
+                  ? { wo_date: editForm.wo_date || null }
+                  : {}),
+                ...(canFillWoValue(editingWorkOrder)
+                  ? { wo_value: Number(editForm.wo_value || 0) }
+                  : {}),
+                ...(canFillGstPercent(editingWorkOrder)
+                  ? { gst_percent: Number(editForm.gst_percent || 0) }
+                  : {}),
+              }
+            : wo,
+        ),
       );
-      setMessage("Work Order status updated.");
-    } catch (statusError: any) {
-      setMessage(statusError.message || "Failed to update Work Order status.");
+      setEditingWorkOrder(null);
+      setMessage("Work Order updated successfully.");
+    } catch (editError: any) {
+      setMessage(editError.message || "Failed to update Work Order.");
     } finally {
-      setUpdatingStatusId(null);
+      setSavingEdit(false);
     }
   }
 
@@ -1017,30 +1101,13 @@ export default function WorkOrdersPage() {
                       })()}
                     </td>
                     <td className="px-6 py-5 align-top">
-                      {canEdit ? (
-                        <select
-                          value={lifecycleStatus}
-                          onChange={(event) => updateLifecycleStatus(wo.id, event.target.value)}
-                          disabled={updatingStatusId === wo.id}
-                          className={`border px-2.5 py-1.5 text-sm font-semibold outline-none transition focus:ring-1 focus:ring-[#00658b] disabled:opacity-60 ${statusBadgeClass(
-                            lifecycleStatus,
-                          )}`}
-                        >
-                          {LIFECYCLE_STATUS_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span
-                          className={`inline-flex border px-2.5 py-1.5 text-sm font-semibold ${statusBadgeClass(
-                            lifecycleStatus,
-                          )}`}
-                        >
-                          {titleCase(lifecycleStatus)}
-                        </span>
-                      )}
+                      <span
+                        className={`inline-flex border px-2.5 py-1.5 text-sm font-semibold ${statusBadgeClass(
+                          lifecycleStatus,
+                        )}`}
+                      >
+                        {titleCase(lifecycleStatus)}
+                      </span>
                     </td>
                     <td className="px-6 py-5 align-top">
                       <span
@@ -1089,6 +1156,17 @@ export default function WorkOrdersPage() {
                         >
                           <Eye className="h-4 w-4" />
                         </Link>
+
+                        {canEdit && lifecycleStatus !== "suspended" && (
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(wo)}
+                            className="inline-flex h-9 w-9 items-center justify-center border border-sky-200 text-sky-700 transition hover:bg-sky-50"
+                            title="Edit"
+                          >
+                            <Edit3 className="h-4 w-4" />
+                          </button>
+                        )}
 
                         {canDelete && (
                           <button
@@ -1139,6 +1217,160 @@ export default function WorkOrdersPage() {
           </div>
         )}
       </section>
+
+      {editingWorkOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4">
+          <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
+              <div>
+                <h2 className="text-xl font-bold text-slate-950">Edit Work Order</h2>
+                <p className="mt-1 font-mono text-sm font-semibold text-sky-800">
+                  {editingWorkOrder.wo_number || "-"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingWorkOrder(null)}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+                disabled={savingEdit}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                  Work Order Type
+                </span>
+                <select
+                  value={editForm.wo_type}
+                  onChange={(event) => updateEditForm("wo_type", event.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+                  disabled={savingEdit}
+                >
+                  <option value="" disabled>
+                    Select Work Order Type
+                  </option>
+                  {WORK_ORDER_TYPE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                  Status
+                </span>
+                <select
+                  value={editForm.status}
+                  onChange={(event) => updateEditForm("status", event.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+                  disabled={savingEdit}
+                >
+                  {LIFECYCLE_STATUS_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                  WO Date
+                </span>
+                <input
+                  type="date"
+                  value={editForm.wo_date}
+                  onChange={(event) => updateEditForm("wo_date", event.target.value)}
+                  disabled={savingEdit || !canFillWoDate(editingWorkOrder)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100 disabled:text-slate-500"
+                />
+                {!canFillWoDate(editingWorkOrder) && (
+                  <span className="mt-1 block text-xs text-slate-500">
+                    Already populated and locked.
+                  </span>
+                )}
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                  WO Basic Value
+                </span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={editForm.wo_value}
+                  onChange={(event) => updateEditForm("wo_value", event.target.value)}
+                  disabled={savingEdit || !canFillWoValue(editingWorkOrder)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100 disabled:text-slate-500"
+                />
+                {!canFillWoValue(editingWorkOrder) && (
+                  <span className="mt-1 block text-xs text-slate-500">
+                    Already populated and locked.
+                  </span>
+                )}
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                  GST %
+                </span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={editForm.gst_percent}
+                  onChange={(event) => updateEditForm("gst_percent", event.target.value)}
+                  disabled={savingEdit || !canFillGstPercent(editingWorkOrder)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100 disabled:text-slate-500"
+                />
+                {!canFillGstPercent(editingWorkOrder) && (
+                  <span className="mt-1 block text-xs text-slate-500">
+                    Already populated and locked.
+                  </span>
+                )}
+              </label>
+            </div>
+
+            <label className="mt-4 block">
+              <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                Description
+              </span>
+              <textarea
+                value={editForm.description}
+                onChange={(event) => updateEditForm("description", event.target.value)}
+                rows={4}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+                disabled={savingEdit}
+              />
+            </label>
+
+            <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
+              <button
+                type="button"
+                onClick={() => setEditingWorkOrder(null)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                disabled={savingEdit}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveWorkOrderEdit}
+                className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                disabled={savingEdit}
+              >
+                {savingEdit ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {deleteWorkOrder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4">

@@ -18,6 +18,13 @@ const STATUS_OPTIONS = [
   { value: "terminated", label: "Terminated" },
 ];
 
+const WORK_ORDER_TYPE_OPTIONS = [
+  "Consultant",
+  "Contractor (Labour)",
+  "Contractor (SITC)",
+  "Rental",
+];
+
 const CHANGE_TYPES = {
   rate_terms_revision: {
     title: "Rate/Terms Revision",
@@ -139,11 +146,19 @@ const [documents, setDocuments] = useState<any[]>([]);
   const [statusMessage, setStatusMessage] = useState("");
   const permissions = access?.permissions || [];
   const canUpdateStatus = can(permissions, "work_orders", "edit");
+  const canEditWorkOrder = canUpdateStatus;
   const canRemoveLinkedVendor = can(permissions, "work_orders", "delete");
   const canExportWorkOrders = can(permissions, "work_orders", "export");
-  const [showStatusModal, setShowStatusModal] = useState(false);
-  const [selectedStatus, setSelectedStatus] = useState("active");
-  const [savingStatus, setSavingStatus] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editForm, setEditForm] = useState({
+    description: "",
+    wo_type: "",
+    status: "active",
+    wo_date: "",
+    wo_value: "",
+    gst_percent: "",
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
   const [showChangeModal, setShowChangeModal] = useState(false);
   const [showSubcontractorModal, setShowSubcontractorModal] = useState(false);
   const [subcontractorMode, setSubcontractorMode] = useState<"existing" | "new">("existing");
@@ -217,11 +232,6 @@ const [documents, setDocuments] = useState<any[]>([]);
       if (woError) throw woError;
 
       setWorkOrder(woData);
-      setSelectedStatus(
-        STATUS_OPTIONS.some((option) => option.value === String(woData.status || "").toLowerCase())
-          ? String(woData.status || "").toLowerCase()
-          : "active"
-      );
 
       const [companyResult, siteResult] = await Promise.all([
         woData.company_id
@@ -638,16 +648,29 @@ const [documents, setDocuments] = useState<any[]>([]);
     }
   }
 
-  async function updateWorkOrderStatus() {
+  function openEditModal() {
+    setEditForm({
+      description: workOrder.description || "",
+      wo_type: workOrder.wo_type || "",
+      status: STATUS_OPTIONS.some((option) => option.value === String(workOrder.status || "").toLowerCase())
+        ? String(workOrder.status || "").toLowerCase()
+        : "active",
+      wo_date: workOrder.wo_date || "",
+      wo_value: String(workOrder.wo_value ?? ""),
+      gst_percent: String(workOrder.gst_percent ?? ""),
+    });
     setStatusMessage("");
+    setShowEditModal(true);
+  }
 
-    if (!STATUS_OPTIONS.some((option) => option.value === selectedStatus)) {
-      setStatusMessage("Please select a valid Work Order status.");
-      return;
-    }
+  function updateEditForm(field: keyof typeof editForm, value: string) {
+    setEditForm((prev) => ({ ...prev, [field]: value }));
+  }
 
+  async function saveWorkOrderEdit() {
     try {
-      setSavingStatus(true);
+      setSavingEdit(true);
+      setStatusMessage("");
 
       const {
         data: { session },
@@ -663,24 +686,41 @@ const [documents, setDocuments] = useState<any[]>([]);
           Authorization: `Bearer ${session.access_token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ status: selectedStatus }),
+        body: JSON.stringify({
+          action: "update_details",
+          description: editForm.description,
+          wo_type: editForm.wo_type,
+          status: editForm.status,
+          ...(canFillWoDate ? { wo_date: editForm.wo_date } : {}),
+          ...(canFillWoValue ? { wo_value: editForm.wo_value } : {}),
+          ...(canFillGstPercent ? { gst_percent: editForm.gst_percent } : {}),
+        }),
       });
-      const result = await response.json();
+      const result = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(result.error || "Failed to update Work Order status.");
+        throw new Error(result.error || "Failed to update Work Order.");
       }
 
-      setShowStatusModal(false);
-      setStatusMessage("Work Order status updated.");
       setWorkOrder((previous: any) =>
-        previous ? { ...previous, status: selectedStatus } : previous
+        previous
+          ? {
+              ...previous,
+              description: editForm.description || null,
+              wo_type: editForm.wo_type || null,
+              status: editForm.status,
+              ...(canFillWoDate ? { wo_date: editForm.wo_date || null } : {}),
+              ...(canFillWoValue ? { wo_value: Number(editForm.wo_value || 0) } : {}),
+              ...(canFillGstPercent ? { gst_percent: Number(editForm.gst_percent || 0) } : {}),
+            }
+          : previous
       );
-      setStatusMessage("Work Order status updated.");
+      setShowEditModal(false);
+      setStatusMessage("Work Order updated successfully.");
     } catch (error: any) {
-      setStatusMessage(error.message || "Failed to update Work Order status.");
+      setStatusMessage(error.message || "Failed to update Work Order.");
     } finally {
-      setSavingStatus(false);
+      setSavingEdit(false);
     }
   }
 
@@ -1063,6 +1103,15 @@ function downloadWOLedger() {
     ["suspended", "cancelled"].includes(workOrderStatusKey) ||
     ["suspended", "cancelled"].includes(workOrderApprovalStatusKey);
   const canMutateWorkOrder = !isSuspendedWorkOrder;
+  const canFillWoDate = String(workOrder.wo_date || "").trim() === "";
+  const canFillWoValue =
+    workOrder.wo_value === null ||
+    workOrder.wo_value === undefined ||
+    Number(workOrder.wo_value || 0) === 0;
+  const canFillGstPercent =
+    workOrder.gst_percent === null ||
+    workOrder.gst_percent === undefined ||
+    String(workOrder.gst_percent).trim() === "";
   const canUndoSuspension = hasGlobalAccess(access) && isSuspendedWorkOrder;
   const statusBanner = workOrderStatusBanner(
     workOrder.status,
@@ -1155,18 +1204,10 @@ function downloadWOLedger() {
   {canUpdateStatus && canMutateWorkOrder && (
     <button
       type="button"
-      onClick={() => {
-        setSelectedStatus(
-          STATUS_OPTIONS.some((option) => option.value === String(workOrder.status || "").toLowerCase())
-            ? String(workOrder.status || "").toLowerCase()
-            : "active"
-        );
-        setStatusMessage("");
-        setShowStatusModal(true);
-      }}
-      className="rounded-lg border border-slate-300 px-4 py-2 font-medium text-slate-800 hover:bg-slate-50"
+      onClick={openEditModal}
+      className="rounded-lg bg-slate-950 px-4 py-2 font-medium text-white hover:bg-slate-800"
     >
-      Update Status
+      Edit
     </button>
   )}
 
@@ -1522,60 +1563,154 @@ function downloadWOLedger() {
         </div>
       )}
 
-      {showStatusModal && (
+      {showEditModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-            <div className="flex items-start justify-between gap-4">
+          <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
               <div>
-                <h2 className="text-xl font-bold text-slate-950">Update Status</h2>
+                <h2 className="text-xl font-bold text-slate-950">Edit Work Order</h2>
                 <p className="mt-1 text-sm text-slate-600">
-                  Change lifecycle status only for {workOrder.wo_number || "this Work Order"}.
+                  Maintain operational metadata for {workOrder.wo_number || "this Work Order"}.
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => setShowStatusModal(false)}
+                onClick={() => setShowEditModal(false)}
                 className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100"
-                disabled={savingStatus}
+                disabled={savingEdit}
               >
                 x
               </button>
             </div>
 
-            <label className="mt-5 block">
-              <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Status
-              </span>
-              <select
-                value={selectedStatus}
-                onChange={(event) => setSelectedStatus(event.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
-                disabled={savingStatus}
-              >
-                {STATUS_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                  Work Order Type
+                </span>
+                <select
+                  value={editForm.wo_type}
+                  onChange={(event) => updateEditForm("wo_type", event.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+                  disabled={savingEdit}
+                >
+                  <option value="" disabled>
+                    Select Work Order Type
                   </option>
-                ))}
-              </select>
+                  {WORK_ORDER_TYPE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                  Status
+                </span>
+                <select
+                  value={editForm.status}
+                  onChange={(event) => updateEditForm("status", event.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+                  disabled={savingEdit}
+                >
+                  {STATUS_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                  WO Date
+                </span>
+                <input
+                  type="date"
+                  value={editForm.wo_date}
+                  onChange={(event) => updateEditForm("wo_date", event.target.value)}
+                  disabled={savingEdit || !canFillWoDate}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100 disabled:text-slate-500"
+                />
+                {!canFillWoDate && (
+                  <span className="mt-1 block text-xs text-slate-500">
+                    Already populated and locked.
+                  </span>
+                )}
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                  WO Basic Value
+                </span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={editForm.wo_value}
+                  onChange={(event) => updateEditForm("wo_value", event.target.value)}
+                  disabled={savingEdit || !canFillWoValue}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100 disabled:text-slate-500"
+                />
+                {!canFillWoValue && (
+                  <span className="mt-1 block text-xs text-slate-500">
+                    Already populated and locked.
+                  </span>
+                )}
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                  GST %
+                </span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={editForm.gst_percent}
+                  onChange={(event) => updateEditForm("gst_percent", event.target.value)}
+                  disabled={savingEdit || !canFillGstPercent}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100 disabled:text-slate-500"
+                />
+                {!canFillGstPercent && (
+                  <span className="mt-1 block text-xs text-slate-500">
+                    Already populated and locked.
+                  </span>
+                )}
+              </label>
+            </div>
+
+            <label className="mt-4 block">
+              <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                Description
+              </span>
+              <textarea
+                value={editForm.description}
+                onChange={(event) => updateEditForm("description", event.target.value)}
+                rows={4}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+                disabled={savingEdit}
+              />
             </label>
 
-            <div className="mt-6 flex justify-end gap-3">
+            <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
               <button
                 type="button"
-                onClick={() => setShowStatusModal(false)}
+                onClick={() => setShowEditModal(false)}
                 className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                disabled={savingStatus}
+                disabled={savingEdit}
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={updateWorkOrderStatus}
+                onClick={saveWorkOrderEdit}
                 className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-                disabled={savingStatus}
+                disabled={savingEdit}
               >
-                {savingStatus ? "Saving..." : "Save Status"}
+                {savingEdit ? "Saving..." : "Save Changes"}
               </button>
             </div>
           </div>
