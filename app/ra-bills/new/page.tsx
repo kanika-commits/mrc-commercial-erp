@@ -41,49 +41,36 @@ export default function NewRABillPage() {
     loadInitialData();
   }, []);
 
+  async function fetchWithToken(url: string) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      throw new Error("Please sign in again to load form data.");
+    }
+
+    return fetch(url, {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    });
+  }
+
   async function loadInitialData() {
-    const { data: siteData, error: siteError } = await supabase
-      .from("sites")
-      .select("id, site_name, site_code, company_id")
-      .eq("status", "active")
-      .order("site_name");
+    try {
+      const response = await fetchWithToken("/api/commercial/create-lookups");
+      const result = await response.json();
 
-    if (siteError) {
-      setMessage(siteError.message);
-      return;
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to load form data.");
+      }
+
+      setSites(result.sites || []);
+      setWorkOrders(result.work_orders || []);
+    } catch (error: any) {
+      setMessage(error.message || "Failed to load form data.");
     }
-
-    const { data: woData, error: woError } = await supabase
-      .from("work_orders")
-      .select(`
-        id,
-        wo_number,
-        wo_date,
-        wo_value,
-        company_id,
-        site_id,
-        companies (
-          id,
-          company_name,
-          company_code
-        ),
-        sites (
-          id,
-          site_name,
-          site_code
-        )
-      `)
-      .eq("approval_status", "approved")
-      .eq("status", "active")
-      .order("wo_number");
-
-    if (woError) {
-      setMessage(woError.message);
-      return;
-    }
-
-    setSites(siteData || []);
-    setWorkOrders(woData || []);
   }
 
   const filteredWorkOrders = useMemo(() => {
@@ -160,30 +147,19 @@ export default function NewRABillPage() {
     setLinkedVendorName(vendorResult.vendor_name || "-");
     setLinkedVendorRole(vendorResult.vendor_role || "-");
 
-    const { data: raData, error: raError } = await supabase
-      .from("ra_bills")
-      .select(`
-        id,
-        ra_number,
-        ra_date,
-        gross_amount,
-        recovery_amount,
-        gst_amount,
-        net_amount,
-        status,
-        approval_status,
-        rejection_reason,
-        created_at
-      `)
-      .eq("work_order_id", workOrderId)
-      .order("created_at", { ascending: true });
+    const historyResponse = await fetchWithToken(
+      `/api/commercial/create-lookups?resource=ra_history&work_order_id=${encodeURIComponent(
+        workOrderId
+      )}`
+    );
+    const historyResult = await historyResponse.json();
 
-    if (raError) {
-      setMessage(raError.message);
+    if (!historyResponse.ok) {
+      setMessage(historyResult.error || "Failed to load previous RA Bills.");
       return;
     }
 
-    const previousBills = raData || [];
+    const previousBills: any[] = historyResult.ra_bills || [];
     const approvedBills = previousBills.filter(
       (bill) => String(bill.approval_status || "").toLowerCase() !== "rejected"
     );

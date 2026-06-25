@@ -32,32 +32,36 @@ export default function NewDebitNotePage() {
     loadInitialData();
   }, []);
 
+  async function fetchWithToken(url: string) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      throw new Error("Please sign in again to load form data.");
+    }
+
+    return fetch(url, {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    });
+  }
+
   async function loadInitialData() {
-    const { data: siteData, error: siteError } = await supabase
-      .from("sites")
-      .select("id, site_name, site_code")
-      .eq("status", "active")
-      .order("site_name");
+    try {
+      const response = await fetchWithToken("/api/commercial/create-lookups");
+      const result = await response.json();
 
-    if (siteError) {
-      setMessage(siteError.message);
-      return;
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to load form data.");
+      }
+
+      setSites(result.sites || []);
+      setWorkOrders(result.work_orders || []);
+    } catch (error: any) {
+      setMessage(error.message || "Failed to load form data.");
     }
-
-    const { data: woData, error: woError } = await supabase
-      .from("work_orders")
-      .select("id, wo_number, wo_value, company_id, site_id")
-      .ilike("approval_status", "approved")
-      .eq("status", "active")
-      .order("wo_number");
-
-    if (woError) {
-      setMessage(woError.message);
-      return;
-    }
-
-    setSites(siteData || []);
-    setWorkOrders(woData || []);
   }
 
   const filteredWorkOrders = useMemo(() => {

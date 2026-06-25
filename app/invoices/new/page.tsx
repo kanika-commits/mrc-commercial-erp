@@ -47,49 +47,36 @@ export default function NewInvoicePage() {
     loadInitialData();
   }, []);
 
+  async function fetchWithToken(url: string) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      throw new Error("Please sign in again to load form data.");
+    }
+
+    return fetch(url, {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    });
+  }
+
   async function loadInitialData() {
-    const { data: siteData, error: siteError } = await supabase
-      .from("sites")
-      .select("id, site_name, site_code, company_id")
-      .eq("status", "active")
-      .order("site_name");
+    try {
+      const response = await fetchWithToken("/api/commercial/create-lookups");
+      const result = await response.json();
 
-    if (siteError) {
-      setMessage(siteError.message);
-      return;
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to load form data.");
+      }
+
+      setSites(result.sites || []);
+      setWorkOrders(result.work_orders || []);
+    } catch (error: any) {
+      setMessage(error.message || "Failed to load form data.");
     }
-
-    const { data: woData, error: woError } = await supabase
-      .from("work_orders")
-      .select(`
-        id,
-        wo_number,
-        wo_date,
-        wo_value,
-        company_id,
-        site_id,
-        companies (
-          id,
-          company_name,
-          company_code
-        ),
-        sites (
-          id,
-          site_name,
-          site_code
-        )
-      `)
-      .in("approval_status", ["Approved", "approved"])
-      .eq("status", "active")
-      .order("wo_number");
-
-    if (woError) {
-      setMessage(woError.message);
-      return;
-    }
-
-    setSites(siteData || []);
-    setWorkOrders(woData || []);
   }
 
   const filteredWorkOrders = useMemo(() => {
@@ -175,27 +162,19 @@ export default function NewInvoicePage() {
     setLinkedVendors(linkedVendors);
     setLinkedVendor(linkedVendors.length === 1 ? linkedVendor : null);
 
-    const { data: invoiceData, error: invoiceError } = await supabase
-      .from("invoices")
-      .select(`
-        id,
-        invoice_number,
-        invoice_date,
-        taxable_amount,
-        gst_amount,
-        invoice_amount,
-        itc_status,
-        created_at
-      `)
-      .eq("work_order_id", workOrderId)
-      .order("created_at", { ascending: true });
+    const historyResponse = await fetchWithToken(
+      `/api/commercial/create-lookups?resource=invoice_history&work_order_id=${encodeURIComponent(
+        workOrderId
+      )}`
+    );
+    const historyResult = await historyResponse.json();
 
-    if (invoiceError) {
-      setMessage(invoiceError.message);
+    if (!historyResponse.ok) {
+      setMessage(historyResult.error || "Failed to load previous invoices.");
       return;
     }
 
-    setPreviousInvoices(invoiceData || []);
+    setPreviousInvoices(historyResult.invoices || []);
 
     setForm((prev) => ({
       ...prev,

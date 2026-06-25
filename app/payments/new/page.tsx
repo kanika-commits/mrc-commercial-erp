@@ -100,128 +100,79 @@ export default function NewPaymentPage() {
     loadData();
   }, []);
 
-  async function loadData() {
-    const { data: companyData, error: companyError } = await supabase
-      .from("companies")
-      .select("id, company_name, company_code")
-      .eq("status", "active")
-      .order("company_name");
-
-    if (companyError) {
-      setMessage(companyError.message);
-      return;
-    }
-
-    const sortedCompanies = sortCompanies(companyData || []);
-    setAllCompanies(sortedCompanies);
-    setCompanies(sortedCompanies);
-    setDefaultCompanyId(sortedCompanies[0]?.id || "");
-
-    const { data: woData, error: woError } = await supabase
-      .from("work_orders")
-      .select("id, wo_number, company_id")
-      .in("approval_status", ["Approved", "approved"])
-      .eq("status", "active")
-      .order("wo_number");
-
-    if (woError) {
-      setMessage(woError.message);
-      return;
-    }
-
-    setWorkOrders(woData || []);
-
-    const { data: invoiceData, error: invoiceError } = await supabase
-      .from("invoices")
-      .select("id, invoice_number, work_order_id, vendor_id, invoice_amount, itc_status")
-      .ilike("itc_status", "claimed")
-      .order("invoice_number");
-
-    if (invoiceError) {
-      setMessage(invoiceError.message);
-      return;
-    }
-
-    setInvoices(invoiceData || []);
-
-    const invoiceVendorIds = Array.from(
-      new Set((invoiceData || []).map((invoice: any) => invoice.vendor_id).filter(Boolean))
-    );
-
-    if (invoiceVendorIds.length) {
-      const { data: vendorData, error: vendorError } = await supabase
-        .from("vendors")
-        .select("id, vendor_name")
-        .in("id", invoiceVendorIds);
-
-      if (vendorError) {
-        setMessage(vendorError.message);
-        return;
-      }
-
-      setVendors(vendorData || []);
-    } else {
-      setVendors([]);
-    }
-
-    const { data: activeVendorData, error: activeVendorError } = await supabase
-      .from("vendors")
-      .select("id, vendor_name")
-      .eq("status", "active")
-      .order("vendor_name");
-
-    if (activeVendorError) {
-      setMessage(activeVendorError.message);
-      return;
-    }
-
-    setPurchaseOrderVendors(activeVendorData || []);
-
+  async function fetchWithToken(url: string) {
     const {
       data: { session },
     } = await supabase.auth.getSession();
 
     if (!session?.access_token) {
-      setMessage("Please sign in again to load company bank accounts.");
-      return;
+      throw new Error("Please sign in again to load payment form data.");
     }
 
-    const accountResponse = await fetch("/api/company-bank-accounts", {
+    return fetch(url, {
       headers: {
         Authorization: `Bearer ${session.access_token}`,
       },
     });
-    const accountResult = await accountResponse.json();
+  }
 
-    if (!accountResponse.ok) {
-      setMessage(accountResult.error || "Failed to load company bank accounts.");
-      return;
+  async function loadData() {
+    try {
+      const [lookupResponse, accountResponse] = await Promise.all([
+        fetchWithToken("/api/commercial/create-lookups"),
+        fetchWithToken("/api/company-bank-accounts"),
+      ]);
+
+      const lookupResult = await lookupResponse.json();
+      const accountResult = await accountResponse.json();
+
+      if (!lookupResponse.ok) {
+        throw new Error(lookupResult.error || "Failed to load payment form data.");
+      }
+
+      if (!accountResponse.ok) {
+        throw new Error(accountResult.error || "Failed to load company bank accounts.");
+      }
+
+      const sortedCompanies: any[] = sortCompanies((lookupResult.companies || []) as any[]);
+      setAllCompanies(sortedCompanies);
+      setCompanies(sortedCompanies);
+      setDefaultCompanyId(sortedCompanies[0]?.id || "");
+      setWorkOrders(lookupResult.work_orders || []);
+      setInvoices(lookupResult.invoices || []);
+      setVendors(lookupResult.vendors || []);
+      setPurchaseOrderVendors(lookupResult.purchase_order_vendors || []);
+
+      const allowedCompanyIds = new Set(sortedCompanies.map((company: any) => company.id));
+      const activeAccounts = (accountResult.accounts || []).filter(
+        (account: any) =>
+          String(account.status || "active").toLowerCase() === "active" &&
+          allowedCompanyIds.has(account.company_id)
+      );
+
+      setBankAccounts(activeAccounts);
+      setRows((prev) =>
+        prev.map((row) => {
+          const companyId = row.company_id || sortedCompanies[0]?.id || "";
+          const fromAccount = activeAccounts.find(
+            (account: any) => account.id === row.company_bank_account_id
+          );
+          const toAccount = activeAccounts.find(
+            (account: any) => account.id === row.to_company_bank_account_id
+          );
+
+          return {
+            ...row,
+            company_id: companyId,
+            company_bank_account_id:
+              fromAccount?.company_id === companyId ? row.company_bank_account_id : "",
+            to_company_bank_account_id: toAccount ? row.to_company_bank_account_id : "",
+          };
+        })
+      );
+    } catch (error: any) {
+      setMessage(error.message || "Failed to load payment form data.");
     }
-
-    const activeAccounts = (accountResult.accounts || []).filter(
-      (account: any) => String(account.status || "active").toLowerCase() === "active"
-    );
-
-    setBankAccounts(activeAccounts);
-    setRows((prev) =>
-      prev.map((row) => {
-        const companyId = row.company_id || sortedCompanies[0]?.id || "";
-        const fromAccount = activeAccounts.find(
-          (account: any) => account.id === row.company_bank_account_id
-        );
-        const toAccount = activeAccounts.find(
-          (account: any) => account.id === row.to_company_bank_account_id
-        );
-
-        return {
-          ...row,
-          company_id: companyId,
-          company_bank_account_id:
-            fromAccount?.company_id === companyId ? row.company_bank_account_id : "",
-          to_company_bank_account_id: toAccount ? row.to_company_bank_account_id : "",
-        };
-      })
-    );
   }
 
   function transferred(row: Row) {
