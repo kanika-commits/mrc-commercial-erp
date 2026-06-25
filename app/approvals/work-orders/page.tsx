@@ -12,6 +12,13 @@ function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
+const WORK_ORDER_TYPE_OPTIONS = [
+  "Consultant",
+  "Contractor (Labour)",
+  "Contractor (SITC)",
+  "Rental",
+];
+
 function workOrderCommercials(wo: any) {
   const basicValue = Number(wo?.wo_value || 0);
   const gstPercent = Number(wo?.gst_percent ?? 18);
@@ -666,13 +673,22 @@ export default function WorkOrderApprovalPage() {
 
               <label className="block text-sm font-semibold text-slate-700">
                 Work Order Type
-                <input
+                <select
                   value={editingRow.wo_type || ""}
                   onChange={(event) =>
                     updateEditRow(editingWorkOrder.id, "wo_type", event.target.value)
                   }
                   className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                />
+                >
+                  <option value="" disabled>
+                    Select Work Order Type
+                  </option>
+                  {WORK_ORDER_TYPE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
               </label>
 
               <label className="block text-sm font-semibold text-slate-700">

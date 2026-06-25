@@ -99,6 +99,17 @@ function readJsonString(payload: any, key: string) {
   return String(payload[key] ?? "").trim();
 }
 
+function isMissingTextValue(value: unknown) {
+  return String(value ?? "").trim() === "";
+}
+
+function isMissingNumericValue(value: unknown, allowZero = false) {
+  if (value === null || value === undefined || value === "") return true;
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return false;
+  return allowZero ? numericValue === 0 : false;
+}
+
 function normalizeStoragePath(document: any) {
   const explicitPath = String(document?.file_path || "").trim();
   if (explicitPath && !isGoogleDriveUrl(explicitPath)) {
@@ -825,7 +836,7 @@ export async function PATCH(
 
       const allowedTextFields = pending
         ? ["description", "wo_type", "wo_date", "wo_value", "gst_percent"]
-        : ["description", "wo_type", "status"];
+        : ["description", "wo_type", "status", "wo_date", "wo_value", "gst_percent"];
 
       for (const field of allowedTextFields) {
         const value = textValue(field);
@@ -862,9 +873,6 @@ export async function PATCH(
           "site_id",
           "vendor_id",
           "primary_vendor_id",
-          "wo_date",
-          "wo_value",
-          "gst_percent",
           "retention",
           "retention_percent",
           "security_deposit",
@@ -872,10 +880,40 @@ export async function PATCH(
         ]) {
           if (textValue(forbiddenField) !== undefined) {
             return NextResponse.json(
-              { error: "Approved Work Orders allow only description, type and status updates." },
+              { error: "Approved Work Orders cannot change company, site, vendor or locked commercial fields." },
               { status: 403 },
             );
           }
+        }
+
+        if (
+          textValue("wo_date") !== undefined &&
+          !isMissingTextValue(workOrder.wo_date)
+        ) {
+          return NextResponse.json(
+            { error: "Approved Work Order date is already set and cannot be changed here." },
+            { status: 403 },
+          );
+        }
+
+        if (
+          textValue("wo_value") !== undefined &&
+          !isMissingNumericValue(workOrder.wo_value, true)
+        ) {
+          return NextResponse.json(
+            { error: "Approved Work Order value is already set and cannot be changed here." },
+            { status: 403 },
+          );
+        }
+
+        if (
+          textValue("gst_percent") !== undefined &&
+          !isMissingNumericValue(workOrder.gst_percent, false)
+        ) {
+          return NextResponse.json(
+            { error: "Approved Work Order GST percent is already set and cannot be changed here." },
+            { status: 403 },
+          );
         }
       }
 
