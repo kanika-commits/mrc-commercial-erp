@@ -165,6 +165,25 @@ function isProprietorship(value: string | undefined) {
   return normalized === "proprietor" || normalized === "proprietorship";
 }
 
+function isAadhaarContractorType(value: string | undefined) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return isProprietorship(value) || normalized === "individual";
+}
+
+function isCinContractorType(value: string | undefined) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return [
+    "company",
+    "private limited",
+    "private limited company",
+    "pvt ltd",
+    "pvt. ltd.",
+    "public limited",
+    "public limited company",
+    "limited",
+  ].includes(normalized);
+}
+
 function vendorDriveFolderName(vendorName: string, vendorId: string) {
   return `${vendorName.trim()} - ${vendorId.slice(0, 8)}`;
 }
@@ -600,6 +619,14 @@ export async function PUT(
     const contacts = parseJson<ContactPayload[]>(formData, "contacts", []);
     const bankAccounts = parseJson<BankPayload[]>(formData, "bank_accounts", []);
     const gstins = parseJson<GstinPayload[]>(formData, "gstins", []);
+    const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+    const aadhaarRegex = /^[2-9][0-9]{11}$/;
+    const cinRegex = /^[A-Z][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}$/;
+    const gstRegex =
+      /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+    const mobileRegex = /^[6-9][0-9]{9}$/;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
 
     const { data: existingVendor, error: existingError } = await supabase
       .from("vendors")
@@ -618,6 +645,101 @@ export async function PUT(
     }
 
     const organizationId = existingVendor.organization_id || ORGANIZATION_ID;
+    const validationErrors: string[] = [];
+
+    if (!vendor.contractor_type?.trim()) {
+      validationErrors.push("Contractor Type is required.");
+    }
+
+    if (!vendor.pan?.trim()) {
+      validationErrors.push("PAN is required.");
+    } else if (!panRegex.test(vendor.pan.trim().toUpperCase())) {
+      validationErrors.push("Invalid PAN format.");
+    }
+
+    if (!vendor.aadhaar_cin?.trim()) {
+      validationErrors.push("Aadhaar / CIN is required.");
+    } else if (
+      isAadhaarContractorType(vendor.contractor_type) &&
+      !aadhaarRegex.test(vendor.aadhaar_cin.trim())
+    ) {
+      validationErrors.push("Invalid Aadhaar format.");
+    } else if (
+      isCinContractorType(vendor.contractor_type) &&
+      !cinRegex.test(vendor.aadhaar_cin.trim().toUpperCase())
+    ) {
+      validationErrors.push("Invalid CIN format.");
+    }
+
+    const normalizedGstins = gstins
+      .map((gstin) => gstin.gstin?.trim().toUpperCase() || "")
+      .filter(Boolean);
+    const duplicateGstins = new Set<string>();
+    const seenGstins = new Set<string>();
+
+    normalizedGstins.forEach((gstin) => {
+      if (seenGstins.has(gstin)) duplicateGstins.add(gstin);
+      seenGstins.add(gstin);
+    });
+
+    if (duplicateGstins.size > 0) {
+      validationErrors.push("Duplicate GSTIN rows are not allowed.");
+    }
+
+    normalizedGstins.forEach((gstin) => {
+      if (!gstRegex.test(gstin)) {
+        validationErrors.push(`Invalid GSTIN format: ${gstin}.`);
+      } else if (
+        vendor.pan &&
+        gstin.substring(2, 12) !== vendor.pan.trim().toUpperCase()
+      ) {
+        validationErrors.push(`GSTIN PAN does not match entered PAN: ${gstin}.`);
+      }
+    });
+
+    if (contacts.length === 0) {
+      validationErrors.push("At least one contact is required.");
+    }
+
+    contacts.forEach((contact) => {
+      if (!contact.contact_name?.trim()) validationErrors.push("Contact name is required.");
+      if (!contact.contact_number?.trim()) {
+        validationErrors.push("Contact number is required.");
+      } else if (!mobileRegex.test(contact.contact_number.trim())) {
+        validationErrors.push("Enter valid 10 digit contact mobile number.");
+      }
+      if (contact.email?.trim() && !emailRegex.test(contact.email.trim())) {
+        validationErrors.push("Invalid contact email format.");
+      }
+    });
+
+    if (bankAccounts.length === 0) {
+      validationErrors.push("At least one bank account is required.");
+    }
+
+    bankAccounts.forEach((bank) => {
+      if (!bank.account_holder_name?.trim()) validationErrors.push("Account holder name is required.");
+      if (!bank.bank_name?.trim()) validationErrors.push("Bank name is required.");
+      if (!bank.account_number?.trim()) validationErrors.push("Account number is required.");
+      if (!bank.ifsc_code?.trim()) {
+        validationErrors.push("IFSC code is required.");
+      } else if (!ifscRegex.test(bank.ifsc_code.trim().toUpperCase())) {
+        validationErrors.push("Invalid IFSC format.");
+      }
+    });
+
+    if (vendor.msme_registered === "Yes") {
+      if (!vendor.msme_number?.trim()) validationErrors.push("MSME number is required.");
+      if (!vendor.msme_category?.trim()) validationErrors.push("MSME category is required.");
+    }
+
+    if (validationErrors.length > 0) {
+      return NextResponse.json(
+        { error: Array.from(new Set(validationErrors)).join("\n") },
+        { status: 400 }
+      );
+    }
+
     const hasNewPanAadhaarProof = formData.get("document:PAN_AADHAAR_ATTACHMENT") instanceof File &&
       (formData.get("document:PAN_AADHAAR_ATTACHMENT") as File).size > 0;
 

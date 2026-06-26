@@ -41,7 +41,7 @@ export default function AlertMessage({
       role="alert"
       aria-live={type === "error" || type === "warning" ? "assertive" : "polite"}
     >
-      <p className="leading-6">{message}</p>
+      <p className="whitespace-pre-line leading-6">{message}</p>
       {onClose && (
         <button
           type="button"

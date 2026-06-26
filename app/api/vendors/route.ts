@@ -157,6 +157,25 @@ function isProprietorship(value: string | undefined) {
   return normalized === "proprietor" || normalized === "proprietorship";
 }
 
+function isAadhaarContractorType(value: string | undefined) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return isProprietorship(value) || normalized === "individual";
+}
+
+function isCinContractorType(value: string | undefined) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return [
+    "company",
+    "private limited",
+    "private limited company",
+    "pvt ltd",
+    "pvt. ltd.",
+    "public limited",
+    "public limited company",
+    "limited",
+  ].includes(normalized);
+}
+
 function vendorDriveFolderName(vendorName: string, vendorId: string) {
   return `${vendorName.trim()} - ${vendorId.slice(0, 8)}`;
 }
@@ -562,7 +581,7 @@ export async function POST(request: Request) {
     }
 
     if (
-      isProprietorship(vendor.contractor_type) &&
+      isAadhaarContractorType(vendor.contractor_type) &&
       !aadhaarRegex.test(vendor.aadhaar_cin)
     ) {
       return NextResponse.json(
@@ -572,13 +591,13 @@ export async function POST(request: Request) {
     }
 
     if (
-      vendor.contractor_type === "Company" &&
+      isCinContractorType(vendor.contractor_type) &&
       !cinRegex.test(vendor.aadhaar_cin)
     ) {
       return NextResponse.json({ error: "Invalid CIN format." }, { status: 400 });
     }
 
-    if (!vendor.pan_aadhaar_link_status?.trim()) {
+    if (isProprietorship(vendor.contractor_type) && !vendor.pan_aadhaar_link_status?.trim()) {
       return NextResponse.json(
         { error: "PAN-Aadhaar link status is required." },
         { status: 400 }

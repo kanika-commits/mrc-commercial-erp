@@ -29,6 +29,25 @@ function isProprietorship(value: string) {
   return normalized === "proprietor" || normalized === "proprietorship";
 }
 
+function isAadhaarContractorType(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return isProprietorship(value) || normalized === "individual";
+}
+
+function isCinContractorType(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return [
+    "company",
+    "private limited",
+    "private limited company",
+    "pvt ltd",
+    "pvt. ltd.",
+    "public limited",
+    "public limited company",
+    "limited",
+  ].includes(normalized);
+}
+
 export default function NewVendorPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -109,12 +128,12 @@ export default function NewVendorPage() {
     if (!form.aadhaar_cin.trim()) {
       newErrors.aadhaar_cin = "Aadhaar / CIN is required.";
     } else if (
-      isProprietorship(form.contractor_type) &&
+      isAadhaarContractorType(form.contractor_type) &&
       !aadhaarRegex.test(form.aadhaar_cin)
     ) {
       newErrors.aadhaar_cin = "Invalid Aadhaar. It must be 12 digits.";
     } else if (
-      form.contractor_type === "Company" &&
+      isCinContractorType(form.contractor_type) &&
       !cinRegex.test(form.aadhaar_cin)
     ) {
       newErrors.aadhaar_cin = "Invalid CIN format.";
