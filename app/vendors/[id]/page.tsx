@@ -429,13 +429,6 @@ export default function VendorDetailPage() {
             </div>
           </VendorCard>
 
-          <ActivityLogCard
-            logs={activityLogs}
-            vendor={vendor}
-            canRestore={canRestore}
-            onRestore={restoreVendorVersion}
-          />
-
           <VendorCard title="GST Details" icon={<FileText className="h-5 w-5" />}>
             {uniqueGstins.length === 0 ? (
               <EmptyState message="No GST details added." />
@@ -746,6 +739,13 @@ export default function VendorDetailPage() {
               </div>
             )}
           </VendorCard>
+
+          <ActivityLogCard
+            logs={activityLogs}
+            vendor={vendor}
+            canRestore={canRestore}
+            onRestore={restoreVendorVersion}
+          />
         </aside>
       </div>
     </section>
