@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
-import { requirePermission } from "@/lib/serverPermissions";
+import { requireAnyPermission, requirePermission } from "@/lib/serverPermissions";
 import { insertDeleteAudit } from "@/lib/serverDeleteAudit";
 import {
   isInOrganizationScope,
@@ -21,6 +21,18 @@ const ALLOWED_STATUSES = new Set([
   "suspended",
   "terminated",
 ]);
+
+function sameTextValue(current: any, next: any) {
+  return String(current ?? "").trim() === String(next ?? "").trim();
+}
+
+function sameNumberValue(current: any, next: any) {
+  const currentNumber = Number(current ?? 0);
+  const nextNumber = Number(next ?? 0);
+  return Number.isFinite(currentNumber) && Number.isFinite(nextNumber)
+    ? currentNumber === nextNumber
+    : sameTextValue(current, next);
+}
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -805,7 +817,10 @@ export async function PATCH(
       }
 
       const permission = pending
-        ? await requirePermission(request, "wo_approval", "approve")
+        ? await requireAnyPermission(request, [
+            { moduleCode: "wo_approval", actionCode: "edit" },
+            { moduleCode: "wo_approval", actionCode: "upload" },
+          ])
         : await requirePermission(request, MODULE_CODE, "edit");
 
       if ("response" in permission) {
@@ -850,6 +865,9 @@ export async function PATCH(
               { status: 400 },
             );
           }
+          if (pending && sameNumberValue(workOrder[field], numericValue)) {
+            continue;
+          }
           updatePayload[field] = numericValue;
         } else if (field === "status") {
           const statusValue = value.toLowerCase();
@@ -859,11 +877,23 @@ export async function PATCH(
               { status: 400 },
             );
           }
+          if (pending && sameTextValue(workOrder.status, statusValue)) {
+            continue;
+          }
           updatePayload.status = statusValue;
         } else if (field === "wo_date") {
-          updatePayload.wo_date = value || null;
+          const nextDate = value || null;
+          if (pending && sameTextValue(workOrder.wo_date, nextDate)) {
+            continue;
+          }
+          updatePayload.wo_date = nextDate;
         } else {
-          updatePayload[field] = value || null;
+          const nextValue = value || null;
+          const currentValue = workOrder[field as keyof typeof workOrder];
+          if (pending && sameTextValue(currentValue, nextValue)) {
+            continue;
+          }
+          updatePayload[field] = nextValue;
         }
       }
 
@@ -922,6 +952,18 @@ export async function PATCH(
           ? (formData.get("work_order_file") as File)
           : null;
 
+      let actionUser = permission.user;
+
+      if (pending && Object.keys(updatePayload).length > 0) {
+        const editPermission = await requirePermission(request, "wo_approval", "edit");
+
+        if ("response" in editPermission) {
+          return editPermission.response;
+        }
+
+        actionUser = editPermission.user;
+      }
+
       if (replacementFile && replacementFile.size > 0) {
         if (!pending) {
           return NextResponse.json(
@@ -930,7 +972,15 @@ export async function PATCH(
           );
         }
 
-        await replacePendingWorkOrderPdf(admin, workOrder, replacementFile, permission.user);
+        const uploadPermission = await requirePermission(request, "wo_approval", "upload");
+
+        if ("response" in uploadPermission) {
+          return uploadPermission.response;
+        }
+
+        actionUser = uploadPermission.user;
+
+        await replacePendingWorkOrderPdf(admin, workOrder, replacementFile, uploadPermission.user);
       }
 
       if (Object.keys(updatePayload).length > 0) {
@@ -941,7 +991,7 @@ export async function PATCH(
 
         if (updateError) throw updateError;
 
-        await insertDeleteAudit(admin, permission.user, {
+        await insertDeleteAudit(admin, actionUser, {
           organizationId: workOrder.organization_id,
           moduleCode: MODULE_CODE,
           documentType: "Work Order Correction",
@@ -1013,7 +1063,7 @@ export async function PATCH(
     }
 
     if (["suspended", "suspend", "cancelled", "cancel", "rejected", "reject"].includes(action)) {
-      const permission = await requirePermission(request, "wo_approval", "approve");
+      const permission = await requirePermission(request, "wo_approval", "reject");
 
       if ("response" in permission) {
         return permission.response;

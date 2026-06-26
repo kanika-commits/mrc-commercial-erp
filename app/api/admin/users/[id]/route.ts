@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sortCompanies } from "@/lib/companyOrdering";
 import { requirePermission } from "@/lib/serverPermissions";
+import { isValidPermissionAction } from "@/lib/permissionMatrix";
 import {
   canAccessTargetUser,
   loadActorOrganizationScope,
@@ -211,6 +212,17 @@ export async function GET(
       if (result.error) throw result.error;
     }
 
+    const visibleRoleIds = (roles.data || []).map((role: any) => role.id).filter(Boolean);
+    const rolePermissions =
+      visibleRoleIds.length > 0
+        ? await supabase
+            .from("role_permissions")
+            .select("role_id, module_code, action_code, allowed")
+            .in("role_id", visibleRoleIds)
+        : { data: [], error: null };
+
+    if (rolePermissions.error) throw rolePermissions.error;
+
     return NextResponse.json({
       profile: profile.data,
       roles: roles.data || [],
@@ -221,6 +233,7 @@ export async function GET(
       userRoles: userRoles.data || [],
       accessRows: accessRows.data || [],
       userPermissions: userPermissions.data || [],
+      rolePermissions: rolePermissions.data || [],
     });
   } catch (error: any) {
     return NextResponse.json(
@@ -501,7 +514,14 @@ export async function PUT(
 
     const permissionRows = uniqueRows<PermissionRow>(
       (user_permissions || [])
-        .filter((permission: any) => permission.allowed === true)
+        .filter(
+          (permission: any) =>
+            permission.allowed === true &&
+            isValidPermissionAction(
+              String(permission.module_code || ""),
+              String(permission.action_code || ""),
+            ),
+        )
         .map((permission: any) => ({
           user_id: id,
           module_code: permission.module_code,

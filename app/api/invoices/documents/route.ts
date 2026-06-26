@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { requirePermission } from "@/lib/serverPermissions";
+import { requireAnyPermission } from "@/lib/serverPermissions";
 import {
-  isInOrganizationScope,
-  loadActorOrganizationScope,
-} from "@/lib/serverOrganizationScope";
+  loadAllowedWorkOrderIds,
+  loadApprovalScope,
+} from "@/app/api/approvals/_shared";
 
 const DOCUMENT_BUCKET = "invoice-documents";
 
@@ -27,30 +27,6 @@ function adminClient() {
   return createClient(supabaseUrl, serviceRoleKey);
 }
 
-async function requireUser(request: Request) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  const token = request.headers.get("authorization")?.replace("Bearer ", "");
-
-  if (!token) {
-    return { error: "Missing auth token.", status: 401 };
-  }
-
-  const authClient = createClient(supabaseUrl, anonKey);
-  const {
-    data: { user },
-    error,
-  } = await authClient.auth.getUser(token);
-
-  if (error) throw error;
-
-  if (!user) {
-    return { error: "User not found.", status: 401 };
-  }
-
-  return { user };
-}
-
 function normalizeStoragePath(value: string | null) {
   const raw = String(value || "").trim();
 
@@ -69,7 +45,11 @@ function normalizeStoragePath(value: string | null) {
 
 export async function GET(request: Request) {
   try {
-    const auth = await requirePermission(request, "invoices", "view");
+    const auth = await requireAnyPermission(request, [
+      { moduleCode: "invoices", actionCode: "view" },
+      { moduleCode: "itc_claims", actionCode: "view" },
+      { moduleCode: "itc_claims", actionCode: "approve" },
+    ]);
 
     if ("response" in auth) {
       return auth.response;
@@ -93,7 +73,7 @@ export async function GET(request: Request) {
     const admin = adminClient();
     const { data: invoices, error: invoicesError } = await admin
       .from("invoices")
-      .select("id, organization_id")
+      .select("id, organization_id, work_order_id")
       .in("id", invoiceIds);
 
     if (invoicesError) throw invoicesError;
@@ -105,15 +85,23 @@ export async function GET(request: Request) {
       );
     }
 
-    const organizationScope = await loadActorOrganizationScope(admin, auth);
-    const outOfScope = (invoices || []).some(
-      (invoice) =>
-        !isInOrganizationScope(organizationScope, invoice.organization_id)
+    const { organizationScope, assignments } = await loadApprovalScope(admin, auth);
+    const allowedWorkOrderIds = await loadAllowedWorkOrderIds(
+      admin,
+      organizationScope,
+      assignments,
     );
 
-    if (outOfScope) {
+    if (
+      allowedWorkOrderIds !== null &&
+      (invoices || []).some(
+        (invoice) =>
+          !invoice.work_order_id ||
+          !allowedWorkOrderIds.includes(invoice.work_order_id),
+      )
+    ) {
       return NextResponse.json(
-        { error: "You do not have access to this organization." },
+        { error: "You do not have access to this Work Order scope." },
         { status: 403 }
       );
     }

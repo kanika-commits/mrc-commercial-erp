@@ -757,17 +757,10 @@ export async function PATCH(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    const auth = await requireUser(request);
-
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
-    }
-
     const { searchParams } = new URL(request.url);
     const invoiceId = searchParams.get("invoice_id")?.trim();
+    const action = searchParams.get("action")?.trim().toLowerCase() || "";
+    const isItcDelete = action === "itc_delete";
     const deletionReason = await readDeletionReason(request);
 
     if (!invoiceId) {
@@ -785,16 +778,45 @@ export async function DELETE(request: Request) {
     }
 
     const admin = adminClient();
-    const permission = await requireDeletePermission(
-      admin,
-      auth.user,
-      MODULE_CODE
-    );
+    let actingUser: any;
+    let organizationScope: Awaited<ReturnType<typeof loadActorOrganizationScope>>;
 
-    if ("error" in permission) {
-      return NextResponse.json(
-        { error: permission.error },
-        { status: permission.status }
+    if (isItcDelete) {
+      const auth = await requirePermission(request, "itc_claims", "delete");
+
+      if ("response" in auth) {
+        return auth.response;
+      }
+
+      actingUser = auth.user;
+      organizationScope = await loadActorOrganizationScope(admin, auth);
+    } else {
+      const auth = await requireUser(request);
+
+      if ("error" in auth) {
+        return NextResponse.json(
+          { error: auth.error },
+          { status: auth.status }
+        );
+      }
+
+      const permission = await requireDeletePermission(
+        admin,
+        auth.user,
+        MODULE_CODE
+      );
+
+      if ("error" in permission) {
+        return NextResponse.json(
+          { error: permission.error },
+          { status: permission.status }
+        );
+      }
+
+      actingUser = auth.user;
+      organizationScope = await loadOrganizationScopeForUser(
+        admin,
+        auth.user.id
       );
     }
 
@@ -812,11 +834,6 @@ export async function DELETE(request: Request) {
         { status: 404 }
       );
     }
-
-    const organizationScope = await loadOrganizationScopeForUser(
-      admin,
-      auth.user.id
-    );
 
     if (!isInOrganizationScope(organizationScope, invoice.organization_id)) {
       return NextResponse.json(
@@ -859,10 +876,10 @@ export async function DELETE(request: Request) {
       )
     );
 
-    await insertDeleteAudit(admin, auth.user, {
+    await insertDeleteAudit(admin, actingUser, {
       organizationId: invoice.organization_id,
-      moduleCode: MODULE_CODE,
-      documentType: "Invoice",
+      moduleCode: isItcDelete ? "itc_claims" : MODULE_CODE,
+      documentType: isItcDelete ? "ITC Review Invoice" : "Invoice",
       documentId: invoice.id,
       documentNumber: invoice.invoice_number,
       deletionReason,

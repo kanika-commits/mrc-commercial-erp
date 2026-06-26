@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { requirePermission } from "@/lib/serverPermissions";
+import { requireAnyPermission } from "@/lib/serverPermissions";
 import {
   isInOrganizationScope,
   loadActorOrganizationScope,
@@ -72,7 +72,14 @@ function normalizeStoragePath(document: any) {
 
 export async function GET(request: Request) {
   try {
-    const auth = await requirePermission(request, "work_orders", "view");
+    const auth = await requireAnyPermission(request, [
+      { moduleCode: "work_orders", actionCode: "view" },
+      { moduleCode: "wo_approval", actionCode: "view" },
+      { moduleCode: "wo_approval", actionCode: "edit" },
+      { moduleCode: "wo_approval", actionCode: "approve" },
+      { moduleCode: "wo_approval", actionCode: "reject" },
+      { moduleCode: "wo_approval", actionCode: "upload" },
+    ]);
 
     if ("response" in auth) {
       return auth.response;

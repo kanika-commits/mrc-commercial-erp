@@ -92,9 +92,18 @@ export default function WorkOrderApprovalPage() {
   const canViewWorkOrderApprovals =
     hasGlobalAccess(access) ||
     can(access?.permissions || [], "wo_approval", "view") ||
-    can(access?.permissions || [], "wo_approval", "approve");
-  const canManageWorkOrderApprovals =
+    can(access?.permissions || [], "wo_approval", "edit") ||
+    can(access?.permissions || [], "wo_approval", "approve") ||
+    can(access?.permissions || [], "wo_approval", "reject") ||
+    can(access?.permissions || [], "wo_approval", "upload");
+  const canEditWorkOrderApprovals =
+    hasGlobalAccess(access) || can(access?.permissions || [], "wo_approval", "edit");
+  const canApproveWorkOrderApprovals =
     hasGlobalAccess(access) || can(access?.permissions || [], "wo_approval", "approve");
+  const canRejectWorkOrderApprovals =
+    hasGlobalAccess(access) || can(access?.permissions || [], "wo_approval", "reject");
+  const canUploadWorkOrderApprovalFiles =
+    hasGlobalAccess(access) || can(access?.permissions || [], "wo_approval", "upload");
 
   useEffect(() => {
     if (access) {
@@ -585,8 +594,8 @@ export default function WorkOrderApprovalPage() {
                             View
                           </Link>
 
-                          {canManageWorkOrderApprovals && (
-                            <>
+                          {(canEditWorkOrderApprovals ||
+                            canUploadWorkOrderApprovalFiles) && (
                               <button
                                 type="button"
                                 disabled={isSaving}
@@ -595,7 +604,9 @@ export default function WorkOrderApprovalPage() {
                               >
                                 Edit
                               </button>
+                          )}
 
+                          {canApproveWorkOrderApprovals && (
                               <button
                                 type="button"
                                 disabled={isSaving}
@@ -605,7 +616,9 @@ export default function WorkOrderApprovalPage() {
                                 <CheckCircle2 className="h-3.5 w-3.5" />
                                 Approve
                               </button>
+                          )}
 
+                          {canRejectWorkOrderApprovals && (
                               <button
                                 type="button"
                                 disabled={isSaving}
@@ -615,7 +628,6 @@ export default function WorkOrderApprovalPage() {
                                 <PauseCircle className="h-3.5 w-3.5" />
                                 Suspend
                               </button>
-                            </>
                           )}
                         </div>
                       </td>
@@ -667,6 +679,7 @@ export default function WorkOrderApprovalPage() {
                   onChange={(event) =>
                     updateEditRow(editingWorkOrder.id, "wo_date", event.target.value)
                   }
+                  disabled={!canEditWorkOrderApprovals}
                   className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
                 />
               </label>
@@ -678,6 +691,7 @@ export default function WorkOrderApprovalPage() {
                   onChange={(event) =>
                     updateEditRow(editingWorkOrder.id, "wo_type", event.target.value)
                   }
+                  disabled={!canEditWorkOrderApprovals}
                   className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
                 >
                   <option value="" disabled>
@@ -701,6 +715,7 @@ export default function WorkOrderApprovalPage() {
                   onChange={(event) =>
                     updateEditRow(editingWorkOrder.id, "wo_value", event.target.value)
                   }
+                  disabled={!canEditWorkOrderApprovals}
                   className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
                 />
               </label>
@@ -715,6 +730,7 @@ export default function WorkOrderApprovalPage() {
                   onChange={(event) =>
                     updateEditRow(editingWorkOrder.id, "gst_percent", event.target.value)
                   }
+                  disabled={!canEditWorkOrderApprovals}
                   className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
                 />
               </label>
@@ -727,6 +743,7 @@ export default function WorkOrderApprovalPage() {
                 onChange={(event) =>
                   updateEditRow(editingWorkOrder.id, "description", event.target.value)
                 }
+                disabled={!canEditWorkOrderApprovals}
                 rows={5}
                 className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
               />
@@ -743,6 +760,7 @@ export default function WorkOrderApprovalPage() {
                     [editingWorkOrder.id]: event.target.files?.[0] || null,
                   }))
                 }
+                disabled={!canUploadWorkOrderApprovalFiles}
                 className="mt-1 block w-full rounded border border-slate-300 px-3 py-2 text-sm text-slate-600 file:mr-3 file:rounded file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-slate-700"
               />
               <span className="mt-1 block text-xs font-normal text-slate-500">
@@ -762,7 +780,10 @@ export default function WorkOrderApprovalPage() {
               <button
                 type="button"
                 onClick={() => saveWorkOrderCorrections(editingWorkOrder)}
-                disabled={savingId === editingWorkOrder.id}
+                disabled={
+                  savingId === editingWorkOrder.id ||
+                  (!canEditWorkOrderApprovals && !canUploadWorkOrderApprovalFiles)
+                }
                 className="rounded bg-sky-700 px-4 py-2 text-sm font-bold text-white hover:bg-sky-800 disabled:opacity-60"
               >
                 {savingId === editingWorkOrder.id ? "Saving..." : "Save Corrections"}

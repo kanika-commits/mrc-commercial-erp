@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { requireAnyPermission } from "@/lib/serverPermissions";
+import { isValidPermissionAction } from "@/lib/permissionMatrix";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -48,7 +49,14 @@ export async function PUT(request: Request) {
     const uniqueRows = new Map<string, any>();
 
     permissions
-      .filter((item: any) => item.allowed === true)
+      .filter(
+        (item: any) =>
+          item.allowed === true &&
+          isValidPermissionAction(
+            String(item.module_code || ""),
+            String(item.action_code || ""),
+          ),
+      )
       .forEach((item: any) => {
         uniqueRows.set(`${item.module_code}.${item.action_code}`, {
           role_id: roleId,

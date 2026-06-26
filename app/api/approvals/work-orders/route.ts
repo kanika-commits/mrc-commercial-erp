@@ -11,7 +11,10 @@ import {
 
 const WORK_ORDER_APPROVAL_PERMISSIONS = [
   { moduleCode: "wo_approval", actionCode: "view" },
+  { moduleCode: "wo_approval", actionCode: "edit" },
   { moduleCode: "wo_approval", actionCode: "approve" },
+  { moduleCode: "wo_approval", actionCode: "reject" },
+  { moduleCode: "wo_approval", actionCode: "upload" },
 ];
 
 export async function GET(request: Request) {
@@ -19,7 +22,7 @@ export async function GET(request: Request) {
     const auth = await requireAnyPermission(request, WORK_ORDER_APPROVAL_PERMISSIONS);
     if ("response" in auth) return auth.response;
 
-    if (!canAny(auth.permissions, "wo_approval", ["view", "approve"])) {
+    if (!canAny(auth.permissions, "wo_approval", ["view", "edit", "approve", "reject", "upload"])) {
       return NextResponse.json(
         { error: "You do not have permission to view Work Order approvals." },
         { status: 403 },

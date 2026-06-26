@@ -3,19 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-
-const actions = [
-  "view",
-  "add",
-  "edit",
-  "delete",
-  "approve",
-  "reject",
-  "upload",
-  "submit",
-  "mark_paid",
-  "export",
-];
+import {
+  PERMISSION_ACTIONS as actions,
+  availableActionsForModule,
+} from "@/lib/permissionMatrix";
 
 export default function PermissionsPage() {
   const searchParams = useSearchParams();
@@ -159,7 +150,7 @@ export default function PermissionsPage() {
     let next: any[] = [];
 
     modules.forEach((module) => {
-      actions.forEach((action) => {
+      availableActionsForModule(module.module_code).forEach((action) => {
         next = setPermission(next, module.module_code, action, allowed);
       });
     });
@@ -174,7 +165,7 @@ export default function PermissionsPage() {
       let next = [...prev];
 
       (groupedModules[groupName] || []).forEach((module) => {
-        actions.forEach((action) => {
+        availableActionsForModule(module.module_code).forEach((action) => {
           next = setPermission(next, module.module_code, action, allowed);
         });
       });
@@ -189,7 +180,7 @@ export default function PermissionsPage() {
     setPermissions((prev) => {
       let next = [...prev];
 
-      actions.forEach((action) => {
+      availableActionsForModule(moduleCode).forEach((action) => {
         next = setPermission(next, moduleCode, action, allowed);
       });
 
@@ -198,7 +189,9 @@ export default function PermissionsPage() {
   }
 
   function isRowAllChecked(moduleCode: string) {
-    return actions.every((action) => isAllowed(moduleCode, action));
+    return availableActionsForModule(moduleCode).every((action) =>
+      isAllowed(moduleCode, action)
+    );
   }
 
   async function savePermissions() {
@@ -352,44 +345,52 @@ export default function PermissionsPage() {
                     </thead>
 
                     <tbody>
-                      {items.map((module) => (
-                        <tr key={module.id} className="border-t">
-                          <td className="p-2 font-medium">
-                            {module.module_name}
-                          </td>
+                      {items.map((module) => {
+                        const availableActions = availableActionsForModule(module.module_code);
 
-                          <td className="p-2 text-center">
-                            <input
-                              type="checkbox"
-                              checked={isRowAllChecked(module.module_code)}
-                              onChange={(e) =>
-                                setRowPermissions(
-                                  module.module_code,
-                                  e.target.checked
-                                )
-                              }
-                            />
-                          </td>
+                        return (
+                          <tr key={module.id} className="border-t">
+                            <td className="p-2 font-medium">
+                              {module.module_name}
+                            </td>
 
-                          {actions.map((action) => (
-                            <td key={action} className="p-2 text-center">
+                            <td className="p-2 text-center">
                               <input
                                 type="checkbox"
-                                checked={isAllowed(
-                                  module.module_code,
-                                  action
-                                )}
-                                onChange={() =>
-                                  togglePermission(
+                                checked={isRowAllChecked(module.module_code)}
+                                onChange={(e) =>
+                                  setRowPermissions(
                                     module.module_code,
-                                    action
+                                    e.target.checked
                                   )
                                 }
                               />
                             </td>
-                          ))}
-                        </tr>
-                      ))}
+
+                            {actions.map((action) => (
+                              <td key={action} className="p-2 text-center">
+                                {availableActions.includes(action) ? (
+                                  <input
+                                    type="checkbox"
+                                    checked={isAllowed(
+                                      module.module_code,
+                                      action
+                                    )}
+                                    onChange={() =>
+                                      togglePermission(
+                                        module.module_code,
+                                        action
+                                      )
+                                    }
+                                  />
+                                ) : (
+                                  <span className="text-slate-300">-</span>
+                                )}
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

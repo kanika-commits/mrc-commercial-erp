@@ -11,7 +11,10 @@ const COUNT_PERMISSIONS = [
   { moduleCode: "dashboard", actionCode: "view" },
   { moduleCode: "work_orders", actionCode: "view" },
   { moduleCode: "wo_approval", actionCode: "view" },
+  { moduleCode: "wo_approval", actionCode: "edit" },
   { moduleCode: "wo_approval", actionCode: "approve" },
+  { moduleCode: "wo_approval", actionCode: "reject" },
+  { moduleCode: "wo_approval", actionCode: "upload" },
   { moduleCode: "ra_bills", actionCode: "view" },
   { moduleCode: "ra_approval", actionCode: "view" },
   { moduleCode: "ra_approval", actionCode: "approve" },
@@ -128,7 +131,13 @@ export async function GET(request: Request) {
 
     const canWorkOrders =
       canAny(auth.permissions, "work_orders", ["view"]) ||
-      canAny(auth.permissions, "wo_approval", ["view", "approve"]);
+      canAny(auth.permissions, "wo_approval", [
+        "view",
+        "edit",
+        "approve",
+        "reject",
+        "upload",
+      ]);
     const canCommercialApprovals = canAny(auth.permissions, "ra_approval", [
       "view",
       "approve",

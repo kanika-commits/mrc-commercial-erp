@@ -8,23 +8,10 @@ import { sortCompanies } from "@/lib/companyOrdering";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import AlertMessage from "@/components/AlertMessage";
-
-const actions = [
-  "view",
-  "add",
-  "edit",
-  "delete",
-  "approve",
-  "reject",
-  "upload",
-  "submit",
-  "mark_paid",
-  "export",
-];
-
-function availableActionsForModule(moduleCode: string) {
-  return moduleCode === "dashboard" ? ["view"] : actions;
-}
+import {
+  PERMISSION_ACTIONS as actions,
+  availableActionsForModule,
+} from "@/lib/permissionMatrix";
 
 export default function UserAccessPage() {
   const { access } = useAccessContext();
@@ -45,6 +32,7 @@ export default function UserAccessPage() {
   const [targetIsPlatformOwner, setTargetIsPlatformOwner] = useState(false);
 
   const [permissionMap, setPermissionMap] = useState<Record<string, boolean>>({});
+  const [rolePermissions, setRolePermissions] = useState<any[]>([]);
 
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
@@ -131,6 +119,7 @@ export default function UserAccessPage() {
       setOrganizations(result.organizations || []);
       setCompanies(sortCompanies(result.companies || []));
       setSites(result.sites || []);
+      setRolePermissions(result.rolePermissions || []);
       setModules(
         (result.modules || []).sort((a: any, b: any) => {
           if (a.module_group === b.module_group) {
@@ -189,6 +178,21 @@ export default function UserAccessPage() {
       return acc;
     }, {});
   }, [modules]);
+
+  const inheritedPermissionMap = useMemo(() => {
+    const next: Record<string, boolean> = {};
+
+    rolePermissions.forEach((permission) => {
+      if (
+        permission.allowed === true &&
+        selectedRoleIds.includes(permission.role_id)
+      ) {
+        next[key(permission.module_code, permission.action_code)] = true;
+      }
+    });
+
+    return next;
+  }, [rolePermissions, selectedRoleIds]);
 
   function toggleRole(roleId: string) {
     setSelectedRoleIds((prev) =>
@@ -266,21 +270,43 @@ export default function UserAccessPage() {
   }
 
   function isAllowed(moduleCode: string, actionCode: string) {
+    const permissionKey = key(moduleCode, actionCode);
+    return permissionMap[permissionKey] === true || inheritedPermissionMap[permissionKey] === true;
+  }
+
+  function isDirectOverride(moduleCode: string, actionCode: string) {
     return permissionMap[key(moduleCode, actionCode)] === true;
   }
 
+  function isInherited(moduleCode: string, actionCode: string) {
+    return inheritedPermissionMap[key(moduleCode, actionCode)] === true;
+  }
+
   function setPermission(moduleCode: string, actionCode: string, allowed: boolean) {
-    setPermissionMap((prev) => ({
-      ...prev,
-      [key(moduleCode, actionCode)]: allowed,
-    }));
+    setPermissionMap((prev) => {
+      const next = { ...prev };
+      const permissionKey = key(moduleCode, actionCode);
+
+      if (allowed && !inheritedPermissionMap[permissionKey]) {
+        next[permissionKey] = true;
+      } else {
+        delete next[permissionKey];
+      }
+
+      return next;
+    });
   }
 
   function setRow(moduleCode: string, allowed: boolean) {
     setPermissionMap((prev) => {
       const next = { ...prev };
       availableActionsForModule(moduleCode).forEach((action) => {
-        next[key(moduleCode, action)] = allowed;
+        const permissionKey = key(moduleCode, action);
+        if (allowed && !inheritedPermissionMap[permissionKey]) {
+          next[permissionKey] = true;
+        } else {
+          delete next[permissionKey];
+        }
       });
       return next;
     });
@@ -291,7 +317,12 @@ export default function UserAccessPage() {
       const next = { ...prev };
       (groupedModules[groupName] || []).forEach((module) => {
         availableActionsForModule(module.module_code).forEach((action) => {
-          next[key(module.module_code, action)] = allowed;
+          const permissionKey = key(module.module_code, action);
+          if (allowed && !inheritedPermissionMap[permissionKey]) {
+            next[permissionKey] = true;
+          } else {
+            delete next[permissionKey];
+          }
         });
       });
       return next;
@@ -303,7 +334,12 @@ export default function UserAccessPage() {
       const next = { ...prev };
       modules.forEach((module) => {
         availableActionsForModule(module.module_code).forEach((action) => {
-          next[key(module.module_code, action)] = allowed;
+          const permissionKey = key(module.module_code, action);
+          if (allowed && !inheritedPermissionMap[permissionKey]) {
+            next[permissionKey] = true;
+          } else {
+            delete next[permissionKey];
+          }
         });
       });
       return next;
@@ -335,7 +371,10 @@ export default function UserAccessPage() {
 
       modules.forEach((module) => {
         availableActionsForModule(module.module_code).forEach((action) => {
-          if (isAllowed(module.module_code, action)) {
+          if (
+            isDirectOverride(module.module_code, action) &&
+            !isInherited(module.module_code, action)
+          ) {
             permissionRows.push({
               user_id: userId,
               module_code: module.module_code,
@@ -845,13 +884,31 @@ export default function UserAccessPage() {
                         {actions.map((action) => (
                           <td key={action} className="p-2 text-center">
                             {availableActions.includes(action) ? (
-                              <input
-                                type="checkbox"
-                                checked={isAllowed(module.module_code, action)}
-                                onChange={(e) =>
-                                  setPermission(module.module_code, action, e.target.checked)
-                                }
-                              />
+                              <div className="flex flex-col items-center gap-1">
+                                <input
+                                  type="checkbox"
+                                  checked={isAllowed(module.module_code, action)}
+                                  disabled={
+                                    isInherited(module.module_code, action) &&
+                                    !isDirectOverride(module.module_code, action)
+                                  }
+                                  onChange={(e) =>
+                                    setPermission(module.module_code, action, e.target.checked)
+                                  }
+                                  className={
+                                    isInherited(module.module_code, action) &&
+                                    !isDirectOverride(module.module_code, action)
+                                      ? "cursor-not-allowed accent-slate-400"
+                                      : ""
+                                  }
+                                />
+                                {isInherited(module.module_code, action) &&
+                                  !isDirectOverride(module.module_code, action) && (
+                                    <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                      Role
+                                    </span>
+                                  )}
+                              </div>
                             ) : (
                               <span className="text-slate-300">-</span>
                             )}
