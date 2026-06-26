@@ -13,12 +13,12 @@ import {
   Landmark,
   Pencil,
   Phone,
+  RotateCcw,
   Trash2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
-import AuditTrailCard from "@/components/AuditTrailCard";
 import { formatIstTimestamp } from "@/lib/dateTime";
 
 function money(value: any) {
@@ -35,6 +35,7 @@ export default function VendorDetailPage() {
   const [bankAccounts, setBankAccounts] = useState<any[]>([]);
   const [documents, setDocuments] = useState<any[]>([]);
   const [gstins, setGstins] = useState<any[]>([]);
+  const [activityLogs, setActivityLogs] = useState<any[]>([]);
   const [workOrders, setWorkOrders] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
   const [companies, setCompanies] = useState<any[]>([]);
@@ -44,6 +45,9 @@ export default function VendorDetailPage() {
   const permissions = access?.permissions || [];
   const canEdit = can(permissions, "vendors", "edit");
   const canDelete = can(permissions, "vendors", "delete");
+  const canRestore =
+    Boolean(access?.roleCodes?.includes("platform_owner")) ||
+    Boolean(access?.roleCodes?.includes("super_admin"));
 
   const loadVendorLedger = useCallback(async () => {
     try {
@@ -63,10 +67,21 @@ export default function VendorDetailPage() {
           Authorization: `Bearer ${session.access_token}`,
         },
       });
-      const vendorResult = await vendorResponse.json();
+      const activityResponse = await fetch(`/api/vendors/${vendorId}/activity`, {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+      const [vendorResult, activityResult] = await Promise.all([
+        vendorResponse.json(),
+        activityResponse.json(),
+      ]);
 
       if (!vendorResponse.ok) {
         throw new Error(vendorResult.error || "Failed to load vendor master.");
+      }
+      if (!activityResponse.ok) {
+        throw new Error(activityResult.error || "Failed to load vendor activity.");
       }
 
       setVendor(vendorResult.vendor);
@@ -74,6 +89,7 @@ export default function VendorDetailPage() {
       setBankAccounts(vendorResult.bankAccounts || []);
       setDocuments(vendorResult.documents || []);
       setGstins(vendorResult.gstins || []);
+      setActivityLogs(activityResult.activityLogs || []);
       const mergedWorkOrders = (vendorResult.workOrders || []).sort((a: any, b: any) =>
         String(a.wo_number || "").localeCompare(String(b.wo_number || ""))
       );
@@ -255,6 +271,44 @@ export default function VendorDetailPage() {
     window.open(result.signedUrl, "_blank", "noopener,noreferrer");
   }
 
+  async function restoreVendorVersion(auditLog: any) {
+    const ok = window.confirm(
+      "Restore this vendor version? Only main Vendor Master fields will be restored. Contacts, bank accounts, GST rows and documents will not be changed."
+    );
+
+    if (!ok) return;
+
+    try {
+      setMessage("");
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/vendors/${vendorId}/restore`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ audit_log_id: auditLog.id }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to restore vendor version.");
+      }
+
+      await loadVendorLedger();
+    } catch (error: any) {
+      setMessage(error.message || "Failed to restore vendor version.");
+    }
+  }
+
   if (loading) {
     return <p className="text-sm text-slate-500">Loading vendor ledger...</p>;
   }
@@ -375,9 +429,11 @@ export default function VendorDetailPage() {
             </div>
           </VendorCard>
 
-          <AuditTrailCard
-            createdAt={vendor.created_at}
-            updatedAt={vendor.updated_at}
+          <ActivityLogCard
+            logs={activityLogs}
+            vendor={vendor}
+            canRestore={canRestore}
+            onRestore={restoreVendorVersion}
           />
 
           <VendorCard title="GST Details" icon={<FileText className="h-5 w-5" />}>
@@ -743,6 +799,130 @@ function SmallSummaryTile({
   );
 }
 
+function ActivityLogCard({
+  logs,
+  vendor,
+  canRestore,
+  onRestore,
+}: {
+  logs: any[];
+  vendor: any;
+  canRestore: boolean;
+  onRestore: (log: any) => void;
+}) {
+  const [openLogIds, setOpenLogIds] = useState<Set<string>>(new Set());
+
+  function toggleLog(logId: string) {
+    setOpenLogIds((current) => {
+      const next = new Set(current);
+      if (next.has(logId)) {
+        next.delete(logId);
+      } else {
+        next.add(logId);
+      }
+      return next;
+    });
+  }
+
+  return (
+    <VendorCard title="Activity Log" icon={<FileText className="h-5 w-5" />}>
+      {logs.length === 0 ? (
+        <EmptyState message="No vendor activity recorded yet." />
+      ) : (
+        <div className="space-y-4">
+          {logs.map((log, index) => {
+            const isOpen = openLogIds.has(log.id);
+            const isLatestEntry = index === 0;
+            const changedFields: string[] = Array.isArray(log.changed_fields)
+              ? log.changed_fields.map((field: any) => String(field))
+              : [];
+
+            return (
+              <div
+                key={log.id}
+                className="rounded-2xl border border-slate-200 bg-white p-4"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge>{activityActionLabel(log.action)}</Badge>
+                      <span className="text-sm font-semibold text-slate-950">
+                        {formatDateTime(log.changed_at)}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm text-slate-600">
+                      By {log.changed_by_name || log.changed_by_email || "System"}
+                    </p>
+                    {activityNote(log) && (
+                      <p className="mt-1 text-sm text-slate-500">{activityNote(log)}</p>
+                    )}
+                    <p className="mt-2 text-xs font-medium uppercase tracking-wide text-slate-500">
+                      {changedFields.length
+                        ? changedFields.map((field) => vendorFieldLabel(field, vendor)).join(", ")
+                        : "No field-level changes recorded"}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {(log.old_values || log.new_values) && (
+                      <button
+                        type="button"
+                        onClick={() => toggleLog(log.id)}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        {isOpen ? "Hide Changes" : "View Changes"}
+                      </button>
+                    )}
+                    {canRestore && !isLatestEntry && log.restore_snapshot && (
+                      <button
+                        type="button"
+                        onClick={() => onRestore(log)}
+                        className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        Restore this version
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {isOpen && (
+                  <div className="mt-4 overflow-x-auto rounded-xl border border-slate-100">
+                    <table className="w-full min-w-[620px] text-sm">
+                      <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                        <tr>
+                          <th className="px-4 py-3 text-left">Field</th>
+                          <th className="px-4 py-3 text-left">Old Value</th>
+                          <th className="px-4 py-3 text-left">New Value</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {changedFields.map((field) => (
+                          <tr key={field}>
+                            <td className="px-4 py-3 font-semibold text-slate-800">
+                              {vendorFieldLabel(field, vendor)}
+                            </td>
+                            <td className="px-4 py-3 text-slate-600">
+                              {formatAuditValue(log.old_values?.[field])}
+                            </td>
+                            <td className="px-4 py-3 text-slate-950">
+                              {formatAuditValue(log.new_values?.[field])}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </VendorCard>
+  );
+}
+
 function getInitials(value: string | null) {
   if (!value) return "V";
   return value
@@ -793,6 +973,74 @@ function maskAccount(value: string | null) {
 function isProprietorship(value: string | null) {
   const normalized = String(value || "").trim().toLowerCase();
   return normalized === "proprietor" || normalized === "proprietorship";
+}
+
+function isCinContractorType(value: string | null) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return [
+    "company",
+    "private limited",
+    "private limited company",
+    "pvt ltd",
+    "pvt. ltd.",
+    "public limited",
+    "public limited company",
+    "limited",
+  ].includes(normalized);
+}
+
+function activityActionLabel(value: string | null) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "created") return "Created";
+  if (normalized === "updated") return "Updated";
+  if (normalized === "restored") return "Restored";
+  return value || "Activity";
+}
+
+function activityNote(log: any) {
+  if (String(log?.action || "").trim().toLowerCase() !== "restored") {
+    return log?.note || "";
+  }
+
+  const match = String(log.note || "").match(/Restored vendor to version from ([^(]+)/);
+  const restoredFrom = match?.[1]?.trim();
+
+  if (!restoredFrom) {
+    return log.note || "";
+  }
+
+  const actor = log.changed_by_name || log.changed_by_email || "System";
+  return `Restored to the version saved on ${formatDateTime(restoredFrom)} by ${actor}.`;
+}
+
+function vendorFieldLabel(field: string, vendor: any) {
+  const labels: Record<string, string> = {
+    organization_id: "Organization",
+    vendor_name: "Vendor Name",
+    contractor_type: "Contractor Type",
+    status: "Status",
+    pan: "PAN",
+    aadhaar_cin: isCinContractorType(vendor?.contractor_type)
+      ? "CIN Number"
+      : "Aadhaar Number",
+    gstin: "GSTIN",
+    pan_aadhaar_link_status: "PAN-Aadhaar Linked",
+    msme_registered: "MSME Registered",
+    msme_number: "MSME Number",
+    msme_category: "MSME Category",
+    is_deleted: "Deleted",
+    vendor_created: "Vendor Created",
+  };
+
+  return labels[field] || field.replace(/_/g, " ");
+}
+
+function formatAuditValue(value: any) {
+  if (value === null || value === undefined || value === "") return "-";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (Array.isArray(value)) return value.join(", ");
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
 }
 
 function formatDate(value: string | null) {

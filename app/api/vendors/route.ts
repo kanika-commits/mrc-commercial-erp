@@ -11,6 +11,20 @@ const ORGANIZATION_ID = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
 const VENDOR_MASTER_DRIVE_ROOT_FOLDER_ID =
   process.env.GOOGLE_DRIVE_VENDOR_MASTER_FOLDER_ID ||
   "1_3FCygGl8wOMS8IBEInhIkEFt-C93I-5";
+const VENDOR_AUDIT_FIELDS = [
+  "organization_id",
+  "vendor_name",
+  "contractor_type",
+  "status",
+  "pan",
+  "aadhaar_cin",
+  "gstin",
+  "pan_aadhaar_link_status",
+  "msme_registered",
+  "msme_number",
+  "msme_category",
+  "is_deleted",
+] as const;
 
 type VendorPayload = {
   vendor_name: string;
@@ -18,6 +32,8 @@ type VendorPayload = {
   status: string;
   pan: string;
   aadhaar_cin: string;
+  aadhaar_number?: string;
+  cin_number?: string;
   gstin?: string;
   pan_aadhaar_link_status: string;
   msme_registered: string;
@@ -157,9 +173,22 @@ function isProprietorship(value: string | undefined) {
   return normalized === "proprietor" || normalized === "proprietorship";
 }
 
-function isAadhaarContractorType(value: string | undefined) {
+function isIndividual(value: string | undefined) {
   const normalized = String(value || "").trim().toLowerCase();
-  return isProprietorship(value) || normalized === "individual";
+  return normalized === "individual";
+}
+
+function isPartnershipOrLlp(value: string | undefined) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "partnership" || normalized === "llp";
+}
+
+function allowsAadhaar(value: string | undefined) {
+  return isIndividual(value) || isProprietorship(value) || isPartnershipOrLlp(value);
+}
+
+function requiresAadhaar(value: string | undefined) {
+  return isIndividual(value) || isProprietorship(value);
 }
 
 function isCinContractorType(value: string | undefined) {
@@ -176,8 +205,85 @@ function isCinContractorType(value: string | undefined) {
   ].includes(normalized);
 }
 
+function requiresGstin(value: string | undefined) {
+  return isProprietorship(value) || isCinContractorType(value);
+}
+
+function requiresPanAadhaarProof(value: string | undefined) {
+  return isIndividual(value) || isProprietorship(value);
+}
+
+function normalizeVendorIdentity(vendor: VendorPayload) {
+  const aadhaarNumber = String(
+    vendor.aadhaar_number ||
+      (!isCinContractorType(vendor.contractor_type) ? vendor.aadhaar_cin : "") ||
+      ""
+  ).trim();
+  const cinNumber = String(
+    vendor.cin_number ||
+      (isCinContractorType(vendor.contractor_type) ? vendor.aadhaar_cin : "") ||
+      ""
+  )
+    .trim()
+    .toUpperCase();
+
+  return {
+    aadhaarNumber,
+    cinNumber,
+    identityValue: isCinContractorType(vendor.contractor_type)
+      ? cinNumber
+      : aadhaarNumber,
+  };
+}
+
 function vendorDriveFolderName(vendorName: string, vendorId: string) {
   return `${vendorName.trim()} - ${vendorId.slice(0, 8)}`;
+}
+
+function vendorSnapshot(row: any) {
+  return Object.fromEntries(
+    VENDOR_AUDIT_FIELDS.map((field) => [field, row?.[field] ?? null])
+  );
+}
+
+function actorName(user: any) {
+  return (
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.email ||
+    null
+  );
+}
+
+async function insertVendorAuditLog(
+  supabase: ReturnType<typeof adminClient>,
+  params: {
+    vendorId: string;
+    organizationId: string | null;
+    action: "created" | "updated" | "restored";
+    user: any;
+    changedFields: string[];
+    oldValues?: Record<string, any> | null;
+    newValues?: Record<string, any> | null;
+    restoreSnapshot?: Record<string, any> | null;
+    note?: string | null;
+  }
+) {
+  const { error } = await supabase.from("vendor_audit_logs").insert({
+    vendor_id: params.vendorId,
+    organization_id: params.organizationId,
+    action: params.action,
+    changed_by_user_id: params.user?.id || null,
+    changed_by_email: params.user?.email || null,
+    changed_by_name: actorName(params.user),
+    changed_fields: params.changedFields,
+    old_values: params.oldValues || null,
+    new_values: params.newValues || null,
+    restore_snapshot: params.restoreSnapshot || null,
+    note: params.note || null,
+  });
+
+  if (error) throw error;
 }
 
 async function findDuplicateVendor(
@@ -557,6 +663,19 @@ export async function POST(request: Request) {
     const mobileRegex = /^[6-9][0-9]{9}$/;
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+    const normalizedIdentity = normalizeVendorIdentity(vendor);
+    const normalizedGstin = isIndividual(vendor.contractor_type)
+      ? ""
+      : String(vendor.gstin || "").trim().toUpperCase();
+    const normalizedVendor = {
+      ...vendor,
+      pan: String(vendor.pan || "").trim().toUpperCase(),
+      aadhaar_cin: normalizedIdentity.identityValue,
+      gstin: normalizedGstin,
+      pan_aadhaar_link_status: requiresPanAadhaarProof(vendor.contractor_type)
+        ? "Yes"
+        : "",
+    };
     const hasDocument = (documentType: string) => {
       const file = formData.get(`document:${documentType}`);
       return file instanceof File && file.size > 0;
@@ -570,24 +689,25 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Contractor Type is required." }, { status: 400 });
     }
 
-    if (!vendor.pan?.trim()) {
+    if (!normalizedVendor.pan) {
       return NextResponse.json({ error: "PAN is required." }, { status: 400 });
     }
 
-    if (!panRegex.test(vendor.pan)) {
+    if (!panRegex.test(normalizedVendor.pan)) {
       return NextResponse.json({ error: "Invalid PAN format." }, { status: 400 });
     }
 
-    if (!vendor.aadhaar_cin?.trim()) {
+    if (requiresAadhaar(vendor.contractor_type) && !normalizedIdentity.aadhaarNumber) {
       return NextResponse.json(
-        { error: "Aadhaar / CIN is required." },
+        { error: "Aadhaar Number is required." },
         { status: 400 }
       );
     }
 
     if (
-      isAadhaarContractorType(vendor.contractor_type) &&
-      !aadhaarRegex.test(vendor.aadhaar_cin)
+      allowsAadhaar(vendor.contractor_type) &&
+      normalizedIdentity.aadhaarNumber &&
+      !aadhaarRegex.test(normalizedIdentity.aadhaarNumber)
     ) {
       return NextResponse.json(
         { error: "Invalid Aadhaar format." },
@@ -595,29 +715,43 @@ export async function POST(request: Request) {
       );
     }
 
-    if (
-      isCinContractorType(vendor.contractor_type) &&
-      !cinRegex.test(vendor.aadhaar_cin)
-    ) {
-      return NextResponse.json({ error: "Invalid CIN format." }, { status: 400 });
-    }
-
-    if (isProprietorship(vendor.contractor_type) && !vendor.pan_aadhaar_link_status?.trim()) {
+    if (isCinContractorType(vendor.contractor_type) && !normalizedIdentity.cinNumber) {
       return NextResponse.json(
-        { error: "PAN-Aadhaar link status is required." },
+        { error: "CIN Number is required." },
         { status: 400 }
       );
     }
 
-    if (vendor.gstin) {
-      if (!gstRegex.test(vendor.gstin)) {
+    if (
+      isCinContractorType(vendor.contractor_type) &&
+      !cinRegex.test(normalizedIdentity.cinNumber)
+    ) {
+      return NextResponse.json({ error: "Invalid CIN format." }, { status: 400 });
+    }
+
+    if (
+      requiresPanAadhaarProof(vendor.contractor_type) &&
+      normalizedVendor.pan_aadhaar_link_status !== "Yes"
+    ) {
+      return NextResponse.json(
+        { error: "PAN-Aadhaar link status must be Yes." },
+        { status: 400 }
+      );
+    }
+
+    if (requiresGstin(vendor.contractor_type) && !normalizedGstin) {
+      return NextResponse.json({ error: "GSTIN is required." }, { status: 400 });
+    }
+
+    if (normalizedGstin) {
+      if (!gstRegex.test(normalizedGstin)) {
         return NextResponse.json(
           { error: "Invalid GSTIN format." },
           { status: 400 }
         );
       }
 
-      if (vendor.gstin.substring(2, 12) !== vendor.pan) {
+      if (normalizedGstin.substring(2, 12) !== normalizedVendor.pan) {
         return NextResponse.json(
           { error: "GSTIN PAN does not match entered PAN." },
           { status: 400 }
@@ -669,9 +803,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "PAN copy is required." }, { status: 400 });
     }
 
-    if (!hasDocument("AADHAAR_CIN")) {
+    const needsIdentityDocument =
+      requiresAadhaar(vendor.contractor_type) ||
+      isCinContractorType(vendor.contractor_type) ||
+      (isPartnershipOrLlp(vendor.contractor_type) && !!normalizedIdentity.aadhaarNumber);
+
+    if (needsIdentityDocument && !hasDocument("AADHAAR_CIN")) {
       return NextResponse.json(
-        { error: "Aadhaar / CIN copy is required." },
+        {
+          error: isCinContractorType(vendor.contractor_type)
+            ? "CIN attachment is required."
+            : "Aadhaar attachment is required.",
+        },
         { status: 400 }
       );
     }
@@ -683,7 +826,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (vendor.gstin && !hasDocument("GST_CERTIFICATE")) {
+    if ((requiresGstin(vendor.contractor_type) || normalizedGstin) && !hasDocument("GST_CERTIFICATE")) {
       return NextResponse.json(
         { error: "GST certificate is required when GSTIN is entered." },
         { status: 400 }
@@ -691,8 +834,7 @@ export async function POST(request: Request) {
     }
 
     if (
-      isProprietorship(vendor.contractor_type) &&
-      vendor.pan_aadhaar_link_status === "Yes" &&
+      requiresPanAadhaarProof(vendor.contractor_type) &&
       !hasDocument("PAN_AADHAAR_ATTACHMENT")
     ) {
       return NextResponse.json(
@@ -736,7 +878,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const duplicateVendor = await findDuplicateVendor(supabase, vendor, organizationId);
+    const duplicateVendor = await findDuplicateVendor(supabase, normalizedVendor, organizationId);
 
     if (duplicateVendor) {
       return NextResponse.json(
@@ -757,22 +899,34 @@ export async function POST(request: Request) {
         vendor_name: vendor.vendor_name.trim(),
         contractor_type: vendor.contractor_type,
         status: vendor.status,
-        pan: vendor.pan,
-        aadhaar_cin: vendor.aadhaar_cin,
-        gstin: vendor.gstin || null,
-        pan_aadhaar_link_status: vendor.pan_aadhaar_link_status,
+        pan: normalizedVendor.pan,
+        aadhaar_cin: normalizedVendor.aadhaar_cin,
+        gstin: normalizedVendor.gstin || null,
+        pan_aadhaar_link_status: normalizedVendor.pan_aadhaar_link_status,
         msme_registered: vendor.msme_registered === "Yes",
         msme_number:
           vendor.msme_registered === "Yes" ? vendor.msme_number?.trim() || null : null,
         msme_category:
           vendor.msme_registered === "Yes" ? vendor.msme_category || null : null,
       })
-      .select("id")
+      .select("*")
       .single();
 
     if (vendorError) throw vendorError;
 
     const vendorId = createdVendor.id;
+    const createdSnapshot = vendorSnapshot(createdVendor);
+
+    await insertVendorAuditLog(supabase, {
+      vendorId,
+      organizationId,
+      action: "created",
+      user: access.user,
+      changedFields: ["vendor_created"],
+      newValues: createdSnapshot,
+      restoreSnapshot: createdSnapshot,
+    });
+
     const vendorFolder = await ensureVendorDriveFolder(
       supabase,
       vendorId,
@@ -816,12 +970,12 @@ export async function POST(request: Request) {
       if (bankError) throw bankError;
     }
 
-    if (vendor.gstin) {
+    if (normalizedGstin) {
       const { error: gstinError } = await supabase.from("vendor_gstins").insert({
         organization_id: organizationId,
         vendor_id: vendorId,
-        gstin: vendor.gstin,
-        state_code: vendor.gstin.slice(0, 2),
+        gstin: normalizedGstin,
+        state_code: normalizedGstin.slice(0, 2),
         state_name: null,
         is_primary: true,
       });

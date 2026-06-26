@@ -10,12 +10,28 @@ import {
 const ORGANIZATION_ID = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
 const DOCUMENT_BUCKET = "Vendor-Documents";
 const VENDOR_MASTER_DRIVE_ROOT_FOLDER_ID = "1_3FCygGl8wOMS8IBEInhIkEFt-C93I-5";
+const VENDOR_AUDIT_FIELDS = [
+  "organization_id",
+  "vendor_name",
+  "contractor_type",
+  "status",
+  "pan",
+  "aadhaar_cin",
+  "gstin",
+  "pan_aadhaar_link_status",
+  "msme_registered",
+  "msme_number",
+  "msme_category",
+  "is_deleted",
+] as const;
 
 type VendorPayload = {
   contractor_type: string;
   status: string;
   pan: string;
   aadhaar_cin: string;
+  aadhaar_number?: string;
+  cin_number?: string;
   gstin?: string;
   pan_aadhaar_link_status: string;
   msme_registered: string;
@@ -165,9 +181,22 @@ function isProprietorship(value: string | undefined) {
   return normalized === "proprietor" || normalized === "proprietorship";
 }
 
-function isAadhaarContractorType(value: string | undefined) {
+function isIndividual(value: string | undefined) {
   const normalized = String(value || "").trim().toLowerCase();
-  return isProprietorship(value) || normalized === "individual";
+  return normalized === "individual";
+}
+
+function isPartnershipOrLlp(value: string | undefined) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "partnership" || normalized === "llp";
+}
+
+function allowsAadhaar(value: string | undefined) {
+  return isIndividual(value) || isProprietorship(value) || isPartnershipOrLlp(value);
+}
+
+function requiresAadhaar(value: string | undefined) {
+  return isIndividual(value) || isProprietorship(value);
 }
 
 function isCinContractorType(value: string | undefined) {
@@ -184,8 +213,104 @@ function isCinContractorType(value: string | undefined) {
   ].includes(normalized);
 }
 
+function requiresGstin(value: string | undefined) {
+  return isProprietorship(value) || isCinContractorType(value);
+}
+
+function requiresPanAadhaarProof(value: string | undefined) {
+  return isIndividual(value) || isProprietorship(value);
+}
+
+function normalizeVendorIdentity(vendor: VendorPayload) {
+  const aadhaarNumber = String(
+    vendor.aadhaar_number ||
+      (!isCinContractorType(vendor.contractor_type) ? vendor.aadhaar_cin : "") ||
+      ""
+  ).trim();
+  const cinNumber = String(
+    vendor.cin_number ||
+      (isCinContractorType(vendor.contractor_type) ? vendor.aadhaar_cin : "") ||
+      ""
+  )
+    .trim()
+    .toUpperCase();
+
+  return {
+    aadhaarNumber,
+    cinNumber,
+    identityValue: isCinContractorType(vendor.contractor_type)
+      ? cinNumber
+      : aadhaarNumber,
+  };
+}
+
 function vendorDriveFolderName(vendorName: string, vendorId: string) {
   return `${vendorName.trim()} - ${vendorId.slice(0, 8)}`;
+}
+
+function vendorSnapshot(row: any) {
+  return Object.fromEntries(
+    VENDOR_AUDIT_FIELDS.map((field) => [field, row?.[field] ?? null])
+  );
+}
+
+function changedVendorValues(oldRow: any, newRow: any) {
+  const changedFields: string[] = [];
+  const oldValues: Record<string, any> = {};
+  const newValues: Record<string, any> = {};
+
+  VENDOR_AUDIT_FIELDS.forEach((field) => {
+    const oldValue = oldRow?.[field] ?? null;
+    const newValue = newRow?.[field] ?? null;
+
+    if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
+      changedFields.push(field);
+      oldValues[field] = oldValue;
+      newValues[field] = newValue;
+    }
+  });
+
+  return { changedFields, oldValues, newValues };
+}
+
+function actorName(user: any) {
+  return (
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.email ||
+    null
+  );
+}
+
+async function insertVendorAuditLog(
+  supabase: ReturnType<typeof adminClient>,
+  params: {
+    vendorId: string;
+    organizationId: string | null;
+    action: "created" | "updated" | "restored";
+    user: any;
+    changedFields: string[];
+    oldValues?: Record<string, any> | null;
+    newValues?: Record<string, any> | null;
+    restoreSnapshot?: Record<string, any> | null;
+    note?: string | null;
+  }
+) {
+  const { error } = await supabase.from("vendor_audit_logs").insert({
+    vendor_id: params.vendorId,
+    organization_id: params.organizationId,
+    action: params.action,
+    changed_by_user_id: params.user?.id || null,
+    changed_by_email: params.user?.email || null,
+    changed_by_name: actorName(params.user),
+    changed_fields: params.changedFields,
+    old_values: params.oldValues || null,
+    new_values: params.newValues || null,
+    restore_snapshot: params.restoreSnapshot || null,
+    note: params.note || null,
+  });
+
+  if (error) throw error;
 }
 
 function normalizeStoragePath(value: string | null) {
@@ -627,10 +752,24 @@ export async function PUT(
     const mobileRegex = /^[6-9][0-9]{9}$/;
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+    const normalizedIdentity = normalizeVendorIdentity(vendor);
+    const normalizedVendorPan = String(vendor.pan || "").trim().toUpperCase();
+    const normalizedGstin = isIndividual(vendor.contractor_type)
+      ? ""
+      : String(vendor.gstin || "").trim().toUpperCase();
+    const normalizedVendor = {
+      ...vendor,
+      pan: normalizedVendorPan,
+      aadhaar_cin: normalizedIdentity.identityValue,
+      gstin: normalizedGstin,
+      pan_aadhaar_link_status: requiresPanAadhaarProof(vendor.contractor_type)
+        ? "Yes"
+        : "",
+    };
 
     const { data: existingVendor, error: existingError } = await supabase
       .from("vendors")
-      .select("id, organization_id, vendor_name, vendor_drive_folder_id, vendor_drive_folder_name")
+      .select("*")
       .eq("id", id)
       .maybeSingle();
 
@@ -651,27 +790,33 @@ export async function PUT(
       validationErrors.push("Contractor Type is required.");
     }
 
-    if (!vendor.pan?.trim()) {
+    if (!normalizedVendorPan) {
       validationErrors.push("PAN is required.");
-    } else if (!panRegex.test(vendor.pan.trim().toUpperCase())) {
+    } else if (!panRegex.test(normalizedVendorPan)) {
       validationErrors.push("Invalid PAN format.");
     }
 
-    if (!vendor.aadhaar_cin?.trim()) {
-      validationErrors.push("Aadhaar / CIN is required.");
+    if (requiresAadhaar(vendor.contractor_type) && !normalizedIdentity.aadhaarNumber) {
+      validationErrors.push("Aadhaar Number is required.");
     } else if (
-      isAadhaarContractorType(vendor.contractor_type) &&
-      !aadhaarRegex.test(vendor.aadhaar_cin.trim())
+      allowsAadhaar(vendor.contractor_type) &&
+      normalizedIdentity.aadhaarNumber &&
+      !aadhaarRegex.test(normalizedIdentity.aadhaarNumber)
     ) {
       validationErrors.push("Invalid Aadhaar format.");
+    }
+
+    if (isCinContractorType(vendor.contractor_type) && !normalizedIdentity.cinNumber) {
+      validationErrors.push("CIN Number is required.");
     } else if (
       isCinContractorType(vendor.contractor_type) &&
-      !cinRegex.test(vendor.aadhaar_cin.trim().toUpperCase())
+      normalizedIdentity.cinNumber &&
+      !cinRegex.test(normalizedIdentity.cinNumber)
     ) {
       validationErrors.push("Invalid CIN format.");
     }
 
-    const normalizedGstins = gstins
+    const normalizedGstins = (isIndividual(vendor.contractor_type) ? [] : gstins)
       .map((gstin) => gstin.gstin?.trim().toUpperCase() || "")
       .filter(Boolean);
     const duplicateGstins = new Set<string>();
@@ -690,12 +835,16 @@ export async function PUT(
       if (!gstRegex.test(gstin)) {
         validationErrors.push(`Invalid GSTIN format: ${gstin}.`);
       } else if (
-        vendor.pan &&
-        gstin.substring(2, 12) !== vendor.pan.trim().toUpperCase()
+        normalizedVendorPan &&
+        gstin.substring(2, 12) !== normalizedVendorPan
       ) {
         validationErrors.push(`GSTIN PAN does not match entered PAN: ${gstin}.`);
       }
     });
+
+    if (requiresGstin(vendor.contractor_type) && normalizedGstins.length === 0 && !normalizedGstin) {
+      validationErrors.push("GSTIN is required.");
+    }
 
     if (contacts.length === 0) {
       validationErrors.push("At least one contact is required.");
@@ -755,11 +904,11 @@ export async function PUT(
     }
 
     const duplicateChecks = [
-      { field: "pan", label: "PAN", value: vendor.pan?.trim().toUpperCase() },
+      { field: "pan", label: "PAN", value: normalizedVendor.pan },
       {
         field: "aadhaar_cin",
-        label: "Aadhaar/CIN",
-        value: vendor.aadhaar_cin?.trim().toUpperCase(),
+        label: isCinContractorType(vendor.contractor_type) ? "CIN" : "Aadhaar",
+        value: normalizedVendor.aadhaar_cin?.trim().toUpperCase(),
       },
     ].filter((check) => check.value);
 
@@ -787,7 +936,7 @@ export async function PUT(
       new Set(
         [
           ...normalizedGstins,
-          vendor.gstin?.trim().toUpperCase() || "",
+          normalizedGstin,
         ].filter(Boolean)
       )
     );
@@ -841,23 +990,60 @@ export async function PUT(
       );
     }
 
-    const hasNewPanAadhaarProof = formData.get("document:PAN_AADHAAR_ATTACHMENT") instanceof File &&
-      (formData.get("document:PAN_AADHAAR_ATTACHMENT") as File).size > 0;
-
-    if (
-      isProprietorship(vendor.contractor_type) &&
-      vendor.pan_aadhaar_link_status === "Yes" &&
-      !hasNewPanAadhaarProof
-    ) {
-      const { count: existingProofCount, error: existingProofError } = await supabase
+    const hasNewDocument = (documentType: string) => {
+      const file = formData.get(`document:${documentType}`);
+      return file instanceof File && file.size > 0;
+    };
+    const hasExistingDocument = async (documentType: string) => {
+      const { count, error } = await supabase
         .from("vendor_documents")
         .select("id", { count: "exact", head: true })
         .eq("vendor_id", id)
-        .eq("document_type", "PAN_AADHAAR_ATTACHMENT");
+        .eq("document_type", documentType);
 
-      if (existingProofError) throw existingProofError;
+      if (error) throw error;
 
-      if (!existingProofCount) {
+      return Boolean(count);
+    };
+
+    const needsIdentityDocument =
+      requiresAadhaar(vendor.contractor_type) ||
+      isCinContractorType(vendor.contractor_type) ||
+      (isPartnershipOrLlp(vendor.contractor_type) && !!normalizedIdentity.aadhaarNumber);
+
+    if (
+      needsIdentityDocument &&
+      !hasNewDocument("AADHAAR_CIN") &&
+      !(await hasExistingDocument("AADHAAR_CIN"))
+    ) {
+      return NextResponse.json(
+        {
+          error: isCinContractorType(vendor.contractor_type)
+            ? "CIN attachment is required."
+            : "Aadhaar attachment is required.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (
+      (requiresGstin(vendor.contractor_type) || gstinValues.length > 0) &&
+      !hasNewDocument("GST_CERTIFICATE") &&
+      !(await hasExistingDocument("GST_CERTIFICATE"))
+    ) {
+      return NextResponse.json(
+        { error: "GST certificate is required when GSTIN is entered." },
+        { status: 400 }
+      );
+    }
+
+    const hasNewPanAadhaarProof = hasNewDocument("PAN_AADHAAR_ATTACHMENT");
+
+    if (
+      requiresPanAadhaarProof(vendor.contractor_type) &&
+      !hasNewPanAadhaarProof
+    ) {
+      if (!(await hasExistingDocument("PAN_AADHAAR_ATTACHMENT"))) {
         return NextResponse.json(
           { error: "PAN-Aadhaar Linked Proof is required." },
           { status: 400 }
@@ -865,7 +1051,7 @@ export async function PUT(
       }
     }
 
-    const gstinRows = gstins
+    const gstinRows = (isIndividual(vendor.contractor_type) ? [] : gstins)
       .map((gstin) => ({
         gstin: gstin.gstin?.trim().toUpperCase() || "",
         state_code: gstin.state_code?.trim() || gstin.gstin?.slice(0, 2) || null,
@@ -876,7 +1062,7 @@ export async function PUT(
     const primaryGstin =
       gstinRows.find((gstin) => gstin.is_primary)?.gstin ||
       gstinRows[0]?.gstin ||
-      vendor.gstin ||
+      normalizedGstin ||
       null;
 
     const { error: vendorError } = await supabase
@@ -884,10 +1070,10 @@ export async function PUT(
       .update({
         contractor_type: vendor.contractor_type,
         status: vendor.status,
-        pan: vendor.pan,
-        aadhaar_cin: vendor.aadhaar_cin,
+        pan: normalizedVendor.pan,
+        aadhaar_cin: normalizedVendor.aadhaar_cin,
         gstin: primaryGstin,
-        pan_aadhaar_link_status: vendor.pan_aadhaar_link_status,
+        pan_aadhaar_link_status: normalizedVendor.pan_aadhaar_link_status,
         msme_registered: vendor.msme_registered === "Yes",
         msme_number:
           vendor.msme_registered === "Yes" ? vendor.msme_number?.trim() || null : null,
@@ -897,6 +1083,29 @@ export async function PUT(
       .eq("id", id);
 
     if (vendorError) throw vendorError;
+
+    const { data: updatedVendor, error: updatedVendorError } = await supabase
+      .from("vendors")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (updatedVendorError) throw updatedVendorError;
+
+    const vendorChanges = changedVendorValues(existingVendor, updatedVendor);
+
+    if (vendorChanges.changedFields.length > 0) {
+      await insertVendorAuditLog(supabase, {
+        vendorId: id,
+        organizationId,
+        action: "updated",
+        user: access.user,
+        changedFields: vendorChanges.changedFields,
+        oldValues: vendorChanges.oldValues,
+        newValues: vendorChanges.newValues,
+        restoreSnapshot: vendorSnapshot(existingVendor),
+      });
+    }
 
     const { error: deleteContactsError } = await supabase
       .from("vendor_contacts")

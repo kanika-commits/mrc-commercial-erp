@@ -13,7 +13,8 @@ type VendorForm = {
   contractor_type: string;
   status: string;
   pan: string;
-  aadhaar_cin: string;
+  aadhaar_number: string;
+  cin_number: string;
   gstin: string;
   pan_aadhaar_link_status: string;
   msme_registered: string;
@@ -100,9 +101,22 @@ function isProprietorship(value: string) {
   return normalized === "proprietor" || normalized === "proprietorship";
 }
 
-function isAadhaarContractorType(value: string) {
+function isIndividual(value: string) {
   const normalized = value.trim().toLowerCase();
-  return isProprietorship(value) || normalized === "individual";
+  return normalized === "individual";
+}
+
+function isPartnershipOrLlp(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "partnership" || normalized === "llp";
+}
+
+function allowsAadhaar(value: string) {
+  return isIndividual(value) || isProprietorship(value) || isPartnershipOrLlp(value);
+}
+
+function requiresAadhaar(value: string) {
+  return isIndividual(value) || isProprietorship(value);
 }
 
 function isCinContractorType(value: string) {
@@ -117,6 +131,20 @@ function isCinContractorType(value: string) {
     "public limited company",
     "limited",
   ].includes(normalized);
+}
+
+function requiresGstin(value: string) {
+  return isProprietorship(value) || isCinContractorType(value);
+}
+
+function requiresPanAadhaarProof(value: string) {
+  return isIndividual(value) || isProprietorship(value);
+}
+
+function identityValueForContractorType(form: VendorForm) {
+  return isCinContractorType(form.contractor_type)
+    ? form.cin_number.trim().toUpperCase()
+    : form.aadhaar_number.trim();
 }
 
 function duplicateValues(values: string[]) {
@@ -145,9 +173,10 @@ export default function EditVendorPage() {
     contractor_type: "Company",
     status: "active",
     pan: "",
-    aadhaar_cin: "",
+    aadhaar_number: "",
+    cin_number: "",
     gstin: "",
-    pan_aadhaar_link_status: "Yet to check",
+    pan_aadhaar_link_status: "",
     msme_registered: "No",
     msme_number: "",
     msme_category: "Micro",
@@ -203,16 +232,19 @@ export default function EditVendorPage() {
         }
 
         const vendor = result.vendor;
+        const contractorType = vendor.contractor_type || "Company";
+        const existingIdentity = vendor.aadhaar_cin || "";
 
         setForm({
           vendor_name: vendor.vendor_name || "",
-          contractor_type: vendor.contractor_type || "Company",
+          contractor_type: contractorType,
           status: vendor.status || "active",
           pan: vendor.pan || "",
-          aadhaar_cin: vendor.aadhaar_cin || "",
-          gstin: vendor.gstin || "",
+          aadhaar_number: isCinContractorType(contractorType) ? "" : existingIdentity,
+          cin_number: isCinContractorType(contractorType) ? existingIdentity : "",
+          gstin: isIndividual(contractorType) ? "" : vendor.gstin || "",
           pan_aadhaar_link_status:
-            vendor.pan_aadhaar_link_status || "Yet to check",
+            requiresPanAadhaarProof(contractorType) ? "Yes" : "",
           msme_registered: vendor.msme_registered ? "Yes" : "No",
           msme_number: vendor.msme_number || "",
           msme_category: vendor.msme_category || "Micro",
@@ -283,7 +315,7 @@ export default function EditVendorPage() {
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) {
     const { name, value } = e.target;
-    const finalValue = ["pan", "gstin", "aadhaar_cin", "ifsc_code"].includes(name)
+    const finalValue = ["pan", "gstin", "cin_number", "ifsc_code"].includes(name)
       ? value.toUpperCase()
       : value;
 
@@ -295,18 +327,40 @@ export default function EditVendorPage() {
         next.msme_category = "";
       }
 
-      if (name === "contractor_type" && !isProprietorship(finalValue)) {
-        next.pan_aadhaar_link_status = "";
+      if (name === "contractor_type") {
+        next.pan_aadhaar_link_status = requiresPanAadhaarProof(finalValue)
+          ? "Yes"
+          : "";
+
+        if (!allowsAadhaar(finalValue)) {
+          next.aadhaar_number = "";
+        }
+
+        if (!isCinContractorType(finalValue)) {
+          next.cin_number = "";
+        }
+
+        if (isIndividual(finalValue)) {
+          next.gstin = "";
+        }
       }
 
       return next;
     });
 
-    if (
-      (name === "contractor_type" && !isProprietorship(finalValue)) ||
-      (name === "pan_aadhaar_link_status" && finalValue !== "Yes")
-    ) {
-      setFiles((prev) => ({ ...prev, PAN_AADHAAR_ATTACHMENT: null }));
+    if (name === "contractor_type") {
+      if (isIndividual(finalValue)) {
+        setGstins([{ ...emptyGstin }]);
+      }
+
+      setFiles((prev) => ({
+        ...prev,
+        AADHAAR_CIN: null,
+        GST_CERTIFICATE: isIndividual(finalValue) ? null : prev.GST_CERTIFICATE,
+        PAN_AADHAAR_ATTACHMENT: requiresPanAadhaarProof(finalValue)
+          ? prev.PAN_AADHAAR_ATTACHMENT
+          : null,
+      }));
     }
   }
 
@@ -481,7 +535,9 @@ export default function EditVendorPage() {
       ].some((value) => value.trim())
     );
 
-    const gstinRows = gstins.filter((gstin) => gstin.gstin.trim());
+    const gstinRows = isIndividual(form.contractor_type)
+      ? []
+      : gstins.filter((gstin) => gstin.gstin.trim());
     const primaryGstin = gstinRows.find((gstin) => gstin.is_primary) || gstinRows[0];
     const validationErrors: string[] = [];
 
@@ -493,12 +549,28 @@ export default function EditVendorPage() {
       validationErrors.push("Invalid PAN. Example: ABCDE1234F.");
     }
 
-    if (!form.aadhaar_cin.trim()) {
-      validationErrors.push("Aadhaar / CIN is required.");
-    } else if (isAadhaarContractorType(form.contractor_type) && !aadhaarRegex.test(form.aadhaar_cin.trim())) {
+    if (requiresAadhaar(form.contractor_type) && !form.aadhaar_number.trim()) {
+      validationErrors.push("Aadhaar Number is required.");
+    } else if (
+      allowsAadhaar(form.contractor_type) &&
+      form.aadhaar_number.trim() &&
+      !aadhaarRegex.test(form.aadhaar_number.trim())
+    ) {
       validationErrors.push("Invalid Aadhaar. It must be 12 digits.");
-    } else if (isCinContractorType(form.contractor_type) && !cinRegex.test(form.aadhaar_cin.trim())) {
+    }
+
+    if (isCinContractorType(form.contractor_type) && !form.cin_number.trim()) {
+      validationErrors.push("CIN Number is required.");
+    } else if (
+      isCinContractorType(form.contractor_type) &&
+      form.cin_number.trim() &&
+      !cinRegex.test(form.cin_number.trim())
+    ) {
       validationErrors.push("Invalid CIN format.");
+    }
+
+    if (requiresGstin(form.contractor_type) && gstinRows.length === 0) {
+      validationErrors.push("GSTIN is required.");
     }
 
     const gstinDuplicates = duplicateValues(gstinRows.map((gstin) => gstin.gstin));
@@ -556,13 +628,44 @@ export default function EditVendorPage() {
       if (!form.msme_category.trim()) validationErrors.push("MSME category is required.");
     }
 
+    const hasExistingIdentityDocument = documents.some(
+      (document) => document.document_type === "AADHAAR_CIN"
+    );
+    const needsIdentityDocument =
+      requiresAadhaar(form.contractor_type) ||
+      isCinContractorType(form.contractor_type) ||
+      (isPartnershipOrLlp(form.contractor_type) && !!form.aadhaar_number.trim());
+
+    if (
+      needsIdentityDocument &&
+      !files.AADHAAR_CIN &&
+      !hasExistingIdentityDocument
+    ) {
+      validationErrors.push(
+        isCinContractorType(form.contractor_type)
+          ? "CIN attachment is required."
+          : "Aadhaar attachment is required."
+      );
+    }
+
+    const hasExistingGstCertificate = documents.some(
+      (document) => document.document_type === "GST_CERTIFICATE"
+    );
+
+    if (
+      (requiresGstin(form.contractor_type) || gstinRows.length > 0) &&
+      !files.GST_CERTIFICATE &&
+      !hasExistingGstCertificate
+    ) {
+      validationErrors.push("GST certificate is required when GSTIN is entered.");
+    }
+
     const hasExistingPanAadhaarProof = documents.some(
       (document) => document.document_type === "PAN_AADHAAR_ATTACHMENT"
     );
 
     if (
-      isProprietorship(form.contractor_type) &&
-      form.pan_aadhaar_link_status === "Yes" &&
+      requiresPanAadhaarProof(form.contractor_type) &&
       !files.PAN_AADHAAR_ATTACHMENT &&
       !hasExistingPanAadhaarProof
     ) {
@@ -593,10 +696,14 @@ export default function EditVendorPage() {
           contractor_type: form.contractor_type,
           status: form.status,
           pan: form.pan,
-          aadhaar_cin: form.aadhaar_cin,
-          gstin: primaryGstin?.gstin || form.gstin,
-          pan_aadhaar_link_status: isProprietorship(form.contractor_type)
-            ? form.pan_aadhaar_link_status
+          aadhaar_number: form.aadhaar_number,
+          cin_number: form.cin_number,
+          aadhaar_cin: identityValueForContractorType(form),
+          gstin: isIndividual(form.contractor_type)
+            ? ""
+            : primaryGstin?.gstin || form.gstin,
+          pan_aadhaar_link_status: requiresPanAadhaarProof(form.contractor_type)
+            ? "Yes"
             : "",
           msme_registered: form.msme_registered,
           msme_number: form.msme_registered === "Yes" ? form.msme_number : "",
@@ -659,7 +766,7 @@ export default function EditVendorPage() {
   function documentLabel(value: string | null) {
     const labels: Record<string, string> = {
       PAN: "PAN",
-      AADHAAR_CIN: "Aadhaar/CIN",
+      AADHAAR_CIN: isCinContractorType(form.contractor_type) ? "CIN" : "Aadhaar",
       GST_CERTIFICATE: "GST Certificate",
       PAN_AADHAAR_ATTACHMENT: "PAN-Aadhaar Linked Proof",
       MSME_CERTIFICATE: "MSME Certificate",
@@ -682,7 +789,7 @@ export default function EditVendorPage() {
       case "PAN":
         return form.pan || "-";
       case "AADHAAR_CIN":
-        return form.aadhaar_cin || "-";
+        return identityValueForContractorType(form) || "-";
       case "GST_CERTIFICATE":
         return primaryGstin || "-";
       case "PAN_AADHAAR_ATTACHMENT":
@@ -852,20 +959,42 @@ export default function EditVendorPage() {
             </div>
 
             <div>
-              <label className={labelClass}>Aadhaar / CIN</label>
+              <label className={labelClass}>
+                Aadhaar Number{requiresAadhaar(form.contractor_type) ? " *" : ""}
+              </label>
               <input
-                name="aadhaar_cin"
-                value={form.aadhaar_cin}
+                name="aadhaar_number"
+                value={form.aadhaar_number}
                 onChange={handleChange}
-                className={`${inputClass} uppercase`}
+                disabled={!allowsAadhaar(form.contractor_type)}
+                className={`${inputClass} disabled:bg-slate-100 disabled:text-slate-400`}
               />
             </div>
 
             <div>
-              <label className={labelClass}>Primary GSTIN</label>
+              <label className={labelClass}>
+                CIN Number{isCinContractorType(form.contractor_type) ? " *" : ""}
+              </label>
+              <input
+                name="cin_number"
+                value={form.cin_number}
+                onChange={handleChange}
+                disabled={!isCinContractorType(form.contractor_type)}
+                className={`${inputClass} uppercase disabled:bg-slate-100 disabled:text-slate-400`}
+              />
+            </div>
+
+            <div>
+              <label className={labelClass}>
+                Primary GSTIN{requiresGstin(form.contractor_type) ? " *" : ""}
+              </label>
               <input
                 name="gstin"
-                value={gstins.find((gstin) => gstin.is_primary)?.gstin || form.gstin}
+                value={
+                  isIndividual(form.contractor_type)
+                    ? ""
+                    : gstins.find((gstin) => gstin.is_primary)?.gstin || form.gstin
+                }
                 onChange={(e) => {
                   const primaryIndex = Math.max(
                     0,
@@ -876,7 +1005,8 @@ export default function EditVendorPage() {
                   setForm((prev) => ({ ...prev, gstin: normalized }));
                   updateGstin(primaryIndex, "gstin", normalized);
                 }}
-                className={`${inputClass} uppercase`}
+                disabled={isIndividual(form.contractor_type)}
+                className={`${inputClass} uppercase disabled:bg-slate-100 disabled:text-slate-400`}
               />
             </div>
 
@@ -886,7 +1016,7 @@ export default function EditVendorPage() {
                 name="pan_aadhaar_link_status"
                 value={form.pan_aadhaar_link_status}
                 onChange={handleChange}
-                disabled={!isProprietorship(form.contractor_type)}
+                disabled={requiresPanAadhaarProof(form.contractor_type)}
                 className={`${inputClass} disabled:bg-slate-100 disabled:text-slate-400`}
               >
                 <option value="">Not applicable</option>
@@ -894,9 +1024,13 @@ export default function EditVendorPage() {
                 <option>Yes</option>
                 <option>No</option>
               </select>
-              {!isProprietorship(form.contractor_type) && (
+              {requiresPanAadhaarProof(form.contractor_type) ? (
                 <p className="mt-1 text-xs text-slate-500">
-                  Applicable only for Proprietorship vendors.
+                  Always Yes for Individual and Proprietorship vendors.
+                </p>
+              ) : (
+                <p className="mt-1 text-xs text-slate-500">
+                  Not required for this contractor type.
                 </p>
               )}
             </div>
@@ -1219,10 +1353,14 @@ export default function EditVendorPage() {
           <div className="grid gap-4 md:grid-cols-2">
             {[
               ["PAN", "PAN Copy"],
-              ["AADHAAR_CIN", "Aadhaar / CIN Copy"],
+              [
+                "AADHAAR_CIN",
+                isCinContractorType(form.contractor_type)
+                  ? "CIN Attachment"
+                  : "Aadhaar Attachment",
+              ],
               ["GST_CERTIFICATE", "GST Certificate"],
-              ...(isProprietorship(form.contractor_type) &&
-              form.pan_aadhaar_link_status === "Yes"
+              ...(requiresPanAadhaarProof(form.contractor_type)
                 ? ([
                     [
                       "PAN_AADHAAR_ATTACHMENT",
