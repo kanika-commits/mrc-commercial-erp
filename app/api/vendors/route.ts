@@ -555,6 +555,7 @@ export async function POST(request: Request) {
     const gstRegex =
       /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
     const mobileRegex = /^[6-9][0-9]{9}$/;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
     const hasDocument = (documentType: string) => {
       const file = formData.get(`document:${documentType}`);
@@ -563,6 +564,10 @@ export async function POST(request: Request) {
 
     if (!vendor.vendor_name?.trim()) {
       return NextResponse.json({ error: "Vendor Name is required." }, { status: 400 });
+    }
+
+    if (!vendor.contractor_type?.trim()) {
+      return NextResponse.json({ error: "Contractor Type is required." }, { status: 400 });
     }
 
     if (!vendor.pan?.trim()) {
@@ -620,56 +625,42 @@ export async function POST(request: Request) {
       }
     }
 
-    const firstContact = contacts[0];
+    const validationErrors: string[] = [];
 
-    if (!firstContact?.contact_name?.trim()) {
+    if (contacts.length === 0) {
+      validationErrors.push("At least one contact is required.");
+    }
+
+    contacts.forEach((contact) => {
+      if (!contact.contact_name?.trim()) validationErrors.push("Contact name is required.");
+      if (!contact.contact_number?.trim()) {
+        validationErrors.push("Contact number is required.");
+      } else if (!mobileRegex.test(contact.contact_number.trim())) {
+        validationErrors.push("Enter valid 10 digit contact mobile number.");
+      }
+      if (contact.email?.trim() && !emailRegex.test(contact.email.trim())) {
+        validationErrors.push("Invalid contact email format.");
+      }
+    });
+
+    if (bankAccounts.length === 0) {
+      validationErrors.push("At least one bank account is required.");
+    }
+
+    bankAccounts.forEach((bank) => {
+      if (!bank.account_holder_name?.trim()) validationErrors.push("Account holder name is required.");
+      if (!bank.bank_name?.trim()) validationErrors.push("Bank name is required.");
+      if (!bank.account_number?.trim()) validationErrors.push("Account number is required.");
+      if (!bank.ifsc_code?.trim()) {
+        validationErrors.push("IFSC code is required.");
+      } else if (!ifscRegex.test(bank.ifsc_code.trim().toUpperCase())) {
+        validationErrors.push("Invalid IFSC format.");
+      }
+    });
+
+    if (validationErrors.length > 0) {
       return NextResponse.json(
-        { error: "Primary contact name is required." },
-        { status: 400 }
-      );
-    }
-
-    if (!firstContact?.contact_number?.trim()) {
-      return NextResponse.json(
-        { error: "Primary contact number is required." },
-        { status: 400 }
-      );
-    }
-
-    if (!mobileRegex.test(firstContact.contact_number)) {
-      return NextResponse.json(
-        { error: "Primary contact number is invalid." },
-        { status: 400 }
-      );
-    }
-
-    const firstBank = bankAccounts[0];
-
-    if (!firstBank?.account_holder_name?.trim()) {
-      return NextResponse.json(
-        { error: "Bank account holder name is required." },
-        { status: 400 }
-      );
-    }
-
-    if (!firstBank?.bank_name?.trim()) {
-      return NextResponse.json({ error: "Bank name is required." }, { status: 400 });
-    }
-
-    if (!firstBank?.account_number?.trim()) {
-      return NextResponse.json(
-        { error: "Bank account number is required." },
-        { status: 400 }
-      );
-    }
-
-    if (!firstBank?.ifsc_code?.trim()) {
-      return NextResponse.json({ error: "IFSC is required." }, { status: 400 });
-    }
-
-    if (!ifscRegex.test(firstBank.ifsc_code)) {
-      return NextResponse.json(
-        { error: "Invalid IFSC format." },
+        { error: Array.from(new Set(validationErrors)).join("\n") },
         { status: 400 }
       );
     }
@@ -714,6 +705,13 @@ export async function POST(request: Request) {
       if (!vendor.msme_number?.trim()) {
         return NextResponse.json(
           { error: "MSME number is required." },
+          { status: 400 }
+        );
+      }
+
+      if (!vendor.msme_category?.trim()) {
+        return NextResponse.json(
+          { error: "MSME category is required." },
           { status: 400 }
         );
       }

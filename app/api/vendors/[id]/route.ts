@@ -728,9 +728,110 @@ export async function PUT(
       }
     });
 
+    const seenBankAccounts = new Set<string>();
+    const duplicateBankAccounts = new Set<string>();
+    bankAccounts
+      .map((bank) => bank.account_number?.trim())
+      .filter(Boolean)
+      .forEach((accountNumber) => {
+        if (seenBankAccounts.has(accountNumber)) duplicateBankAccounts.add(accountNumber);
+        seenBankAccounts.add(accountNumber);
+      });
+
+    if (duplicateBankAccounts.size > 0) {
+      validationErrors.push("Duplicate bank account numbers are not allowed.");
+    }
+
     if (vendor.msme_registered === "Yes") {
       if (!vendor.msme_number?.trim()) validationErrors.push("MSME number is required.");
       if (!vendor.msme_category?.trim()) validationErrors.push("MSME category is required.");
+    }
+
+    if (validationErrors.length > 0) {
+      return NextResponse.json(
+        { error: Array.from(new Set(validationErrors)).join("\n") },
+        { status: 400 }
+      );
+    }
+
+    const duplicateChecks = [
+      { field: "pan", label: "PAN", value: vendor.pan?.trim().toUpperCase() },
+      {
+        field: "aadhaar_cin",
+        label: "Aadhaar/CIN",
+        value: vendor.aadhaar_cin?.trim().toUpperCase(),
+      },
+    ].filter((check) => check.value);
+
+    for (const check of duplicateChecks) {
+      const { data: duplicateVendor, error: duplicateError } = await supabase
+        .from("vendors")
+        .select("id, vendor_name")
+        .eq("organization_id", organizationId)
+        .neq("status", "deleted")
+        .neq("id", id)
+        .eq(check.field, check.value)
+        .limit(1)
+        .maybeSingle();
+
+      if (duplicateError) throw duplicateError;
+
+      if (duplicateVendor) {
+        validationErrors.push(
+          `Vendor already exists with same ${check.label}: ${duplicateVendor.vendor_name}`
+        );
+      }
+    }
+
+    const gstinValues = Array.from(
+      new Set(
+        [
+          ...normalizedGstins,
+          vendor.gstin?.trim().toUpperCase() || "",
+        ].filter(Boolean)
+      )
+    );
+
+    for (const gstin of gstinValues) {
+      const { data: duplicateVendor, error: duplicateVendorError } = await supabase
+        .from("vendors")
+        .select("id, vendor_name")
+        .eq("organization_id", organizationId)
+        .neq("status", "deleted")
+        .neq("id", id)
+        .eq("gstin", gstin)
+        .limit(1)
+        .maybeSingle();
+
+      if (duplicateVendorError) throw duplicateVendorError;
+
+      if (duplicateVendor) {
+        validationErrors.push(
+          `Vendor already exists with same GSTIN: ${duplicateVendor.vendor_name}`
+        );
+        continue;
+      }
+
+      const { data: duplicateGstin, error: duplicateGstinError } = await supabase
+        .from("vendor_gstins")
+        .select("vendor_id, vendors!inner(vendor_name, status)")
+        .eq("organization_id", organizationId)
+        .neq("vendor_id", id)
+        .eq("gstin", gstin)
+        .limit(1)
+        .maybeSingle();
+
+      if (duplicateGstinError) throw duplicateGstinError;
+
+      const linkedVendor = Array.isArray(duplicateGstin?.vendors)
+        ? duplicateGstin?.vendors[0]
+        : duplicateGstin?.vendors;
+
+      if (duplicateGstin && linkedVendor?.status !== "deleted") {
+        validationErrors.push(
+          `Vendor already exists with same GSTIN: ${linkedVendor?.vendor_name || duplicateGstin.vendor_id}`
+        );
+      }
     }
 
     if (validationErrors.length > 0) {

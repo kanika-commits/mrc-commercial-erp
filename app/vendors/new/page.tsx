@@ -180,6 +180,10 @@ export default function NewVendorPage() {
       newErrors.msme_number = "MSME number is required.";
     }
 
+    if (form.msme_registered === "Yes" && !form.msme_category.trim()) {
+      newErrors.msme_category = "MSME category is required.";
+    }
+
     if (!files.PAN) newErrors.PAN = "PAN copy is required.";
 
 if (!files.AADHAAR_CIN)
