@@ -4,10 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
-  AlertTriangle,
   ArrowLeft,
   Building2,
-  CheckCircle2,
   ExternalLink,
   FileText,
   Landmark,
@@ -489,13 +487,12 @@ export default function VendorDetailPage() {
               <EmptyState message="No documents uploaded." />
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[900px] text-sm">
+                <table className="w-full min-w-[820px] text-sm">
                   <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                     <tr>
                       <th className="px-4 py-3 text-left">Document</th>
                       <th className="px-4 py-3 text-left">Linked Number</th>
                       <th className="px-4 py-3 text-left">Uploaded</th>
-                      <th className="px-4 py-3 text-left">Status</th>
                       <th className="px-4 py-3 text-right">Action</th>
                     </tr>
                   </thead>
@@ -528,19 +525,6 @@ export default function VendorDetailPage() {
                         <td className="px-4 py-3 text-slate-700">
                           {formatDateTime(document.uploaded_at)}
                         </td>
-                        <td className="px-4 py-3">
-                          {document.is_verified ? (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-                              <CheckCircle2 className="h-3.5 w-3.5" />
-                              Verified
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
-                              <AlertTriangle className="h-3.5 w-3.5" />
-                              Pending
-                            </span>
-                          )}
-                        </td>
                         <td className="px-4 py-3 text-right">
                           <button
                             type="button"
@@ -549,7 +533,7 @@ export default function VendorDetailPage() {
                             className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             <ExternalLink className="h-3.5 w-3.5" />
-                            View
+                            Open
                           </button>
                         </td>
                       </tr>
@@ -704,7 +688,7 @@ export default function VendorDetailPage() {
                         <td className="px-4 py-3">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="font-semibold text-slate-950">
-                              {maskAccount(account.account_number)}
+                              {account.account_number || "-"}
                             </span>
                             {account.is_primary && <Badge>Primary</Badge>}
                           </div>
@@ -962,12 +946,6 @@ function EmptyState({ message }: { message: string }) {
       {message}
     </div>
   );
-}
-
-function maskAccount(value: string | null) {
-  if (!value) return "-";
-  const last4 = value.slice(-4);
-  return `•••• •••• ${last4}`;
 }
 
 function isProprietorship(value: string | null) {
