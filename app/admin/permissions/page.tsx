@@ -92,10 +92,6 @@ export default function PermissionsPage() {
     }, {});
   }, [modules]);
 
-  function permissionKey(moduleCode: string, actionCode: string) {
-    return `${moduleCode}.${actionCode}`;
-  }
-
   function isAllowed(moduleCode: string, actionCode: string) {
     return permissions.some(
       (permission) =>
@@ -137,6 +133,21 @@ export default function PermissionsPage() {
     ];
   }
 
+  function applyPermissionsToModules(
+    currentPermissions: any[],
+    moduleCodes: string[],
+    allowed: boolean
+  ) {
+    return moduleCodes.reduce(
+      (next, moduleCode) =>
+        availableActionsForModule(moduleCode).reduce(
+          (updated, action) => setPermission(updated, moduleCode, action, allowed),
+          next
+        ),
+      [...currentPermissions]
+    );
+  }
+
   function togglePermission(moduleCode: string, actionCode: string) {
     setPermissions((prev) => {
       const current = isAllowed(moduleCode, actionCode);
@@ -147,45 +158,31 @@ export default function PermissionsPage() {
   function setAllPermissions(allowed: boolean) {
     if (!selectedRoleId) return;
 
-    let next: any[] = [];
-
-    modules.forEach((module) => {
-      availableActionsForModule(module.module_code).forEach((action) => {
-        next = setPermission(next, module.module_code, action, allowed);
-      });
-    });
-
-    setPermissions(next);
+    setPermissions(
+      applyPermissionsToModules(
+        [],
+        modules.map((module) => module.module_code),
+        allowed
+      )
+    );
   }
 
   function setGroupPermissions(groupName: string, allowed: boolean) {
     if (!selectedRoleId) return;
 
-    setPermissions((prev) => {
-      let next = [...prev];
-
-      (groupedModules[groupName] || []).forEach((module) => {
-        availableActionsForModule(module.module_code).forEach((action) => {
-          next = setPermission(next, module.module_code, action, allowed);
-        });
-      });
-
-      return next;
-    });
+    setPermissions((prev) =>
+      applyPermissionsToModules(
+        prev,
+        (groupedModules[groupName] || []).map((module) => module.module_code),
+        allowed
+      )
+    );
   }
 
   function setRowPermissions(moduleCode: string, allowed: boolean) {
     if (!selectedRoleId) return;
 
-    setPermissions((prev) => {
-      let next = [...prev];
-
-      availableActionsForModule(moduleCode).forEach((action) => {
-        next = setPermission(next, moduleCode, action, allowed);
-      });
-
-      return next;
-    });
+    setPermissions((prev) => applyPermissionsToModules(prev, [moduleCode], allowed));
   }
 
   function isRowAllChecked(moduleCode: string) {
