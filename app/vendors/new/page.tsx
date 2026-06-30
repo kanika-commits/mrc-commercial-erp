@@ -24,6 +24,13 @@ type FileKey =
   | "BANK_PROOF"
   | "ADDITIONAL_DOCUMENT";
 
+const MAX_VENDOR_DOCUMENT_FILE_SIZE = 2 * 1024 * 1024;
+const MAX_VENDOR_DOCUMENT_TOTAL_SIZE = 4.5 * 1024 * 1024;
+const VENDOR_DOCUMENT_SIZE_ERROR =
+  "Uploaded documents are too large for one save. Please compress files or upload fewer/smaller documents. Maximum allowed now: 2 MB per file and 4.5 MB total.";
+const VENDOR_DOCUMENT_413_ERROR =
+  "Uploaded documents are too large for one save. Please compress files or upload fewer/smaller documents.";
+
 function isProprietorship(value: string) {
   const normalized = value.trim().toLowerCase();
   return normalized === "proprietor" || normalized === "proprietorship";
@@ -77,6 +84,52 @@ function identityValueForContractorType(form: {
   return isCinContractorType(form.contractor_type)
     ? form.cin_number.trim().toUpperCase()
     : form.aadhaar_number.trim();
+}
+
+async function parseVendorSaveResponse(response: Response) {
+  const contentType = response.headers.get("content-type") || "";
+  const text = await response.text();
+
+  if (response.status === 413) {
+    return {
+      error: VENDOR_DOCUMENT_413_ERROR,
+      raw_response: text,
+    };
+  }
+
+  if (contentType.includes("application/json") || text.trim().startsWith("{")) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return {
+        error: text.trim()
+          ? `Vendor save returned an invalid JSON response: ${text.trim()}`
+          : `Vendor save failed with HTTP ${response.status} ${response.statusText}`.trim(),
+        raw_response: text,
+      };
+    }
+  }
+
+  return {
+    error:
+      text.trim()
+        ? `Vendor save failed before the API returned JSON: ${text.trim()}`
+        :
+      `Vendor save failed with HTTP ${response.status} ${response.statusText}`.trim(),
+    raw_response: text,
+  };
+}
+
+function validateVendorDocumentSizes(files: Record<FileKey, File | null>) {
+  const selectedFiles = Object.values(files).filter((file): file is File => Boolean(file));
+  const totalSize = selectedFiles.reduce((sum, file) => sum + file.size, 0);
+  const oversizedFile = selectedFiles.find((file) => file.size > MAX_VENDOR_DOCUMENT_FILE_SIZE);
+
+  if (oversizedFile || totalSize > MAX_VENDOR_DOCUMENT_TOTAL_SIZE) {
+    return VENDOR_DOCUMENT_SIZE_ERROR;
+  }
+
+  return "";
 }
 
 export default function NewVendorPage() {
@@ -433,6 +486,11 @@ if ((requiresGstin(form.contractor_type) || form.gstin) && !files.GST_CERTIFICAT
         throw new Error("Your session expired. Please log in again.");
       }
 
+      const documentSizeError = validateVendorDocumentSizes(files);
+      if (documentSizeError) {
+        throw new Error(documentSizeError);
+      }
+
       const payload = new FormData();
 
       const vendorPayload = {
@@ -477,7 +535,7 @@ if ((requiresGstin(form.contractor_type) || form.gstin) && !files.GST_CERTIFICAT
         body: payload,
       });
 
-      const result = await response.json();
+      const result = await parseVendorSaveResponse(response);
 
       if (!response.ok) {
         if (response.status === 409 && result.duplicate_vendor_id && linkWorkOrderId) {
@@ -488,7 +546,9 @@ if ((requiresGstin(form.contractor_type) || form.gstin) && !files.GST_CERTIFICAT
           setMessage("This vendor already exists. Link existing vendor as subcontractor?");
           return;
         }
-        throw new Error(result.error || "Something went wrong while saving vendor.");
+        throw new Error(
+          result.error || "Something went wrong while saving vendor."
+        );
       }
 
       if (linkWorkOrderId) {

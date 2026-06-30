@@ -642,6 +642,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  let vendorIdForLog: string | null = null;
+
   try {
     const access = await assertPermission(request, "add");
 
@@ -651,10 +653,12 @@ export async function POST(request: Request) {
 
     const supabase = adminClient();
     const organizationScope = await loadOrganizationScopeForUser(supabase, access.user.id);
+
     const formData = await request.formData();
     const vendor = parseJson<VendorPayload>(formData, "vendor", {} as VendorPayload);
     const contacts = parseJson<ContactPayload[]>(formData, "contacts", []);
     const bankAccounts = parseJson<BankPayload[]>(formData, "bank_accounts", []);
+
     const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
     const aadhaarRegex = /^[2-9][0-9]{11}$/;
     const cinRegex = /^[A-Z][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}$/;
@@ -915,6 +919,7 @@ export async function POST(request: Request) {
     if (vendorError) throw vendorError;
 
     const vendorId = createdVendor.id;
+    vendorIdForLog = vendorId;
     const createdSnapshot = vendorSnapshot(createdVendor);
 
     await insertVendorAuditLog(supabase, {
@@ -1009,8 +1014,14 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ vendor_id: vendorId });
   } catch (error: any) {
+    console.error("[vendor:create:error]", {
+      message: error?.message || "Failed to save vendor.",
+      vendor_id: vendorIdForLog,
+    });
     return NextResponse.json(
-      { error: error.message || "Failed to save vendor." },
+      {
+        error: error.message || "Failed to save vendor.",
+      },
       { status: 500 }
     );
   }
