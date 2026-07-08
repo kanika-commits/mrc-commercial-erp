@@ -120,7 +120,7 @@ export default function NewPaymentPage() {
     try {
       const [lookupResponse, accountResponse] = await Promise.all([
         fetchWithToken("/api/commercial/create-lookups"),
-        fetchWithToken("/api/company-bank-accounts"),
+        fetchWithToken("/api/payments/company-bank-accounts"),
       ]);
 
       const lookupResult = await lookupResponse.json();
@@ -134,7 +134,19 @@ export default function NewPaymentPage() {
         throw new Error(accountResult.error || "Failed to load company bank accounts.");
       }
 
-      const sortedCompanies: any[] = sortCompanies((lookupResult.companies || []) as any[]);
+      const lookupCompanies = (lookupResult.companies || []) as any[];
+      const companySource =
+        lookupCompanies.length > 0
+          ? lookupCompanies
+          : Array.from(
+              new Map(
+                ((lookupResult.work_orders || []) as any[])
+                  .map((workOrder) => workOrder.companies)
+                  .filter((company) => company?.id)
+                  .map((company) => [company.id, company]),
+              ).values(),
+            );
+      const sortedCompanies: any[] = sortCompanies(companySource as any[]);
       setAllCompanies(sortedCompanies);
       setCompanies(sortedCompanies);
       setDefaultCompanyId(sortedCompanies[0]?.id || "");

@@ -148,8 +148,23 @@ async function loadScopedCompanies(
   if (!query) return [];
 
   if (assignments.siteIds.length > 0) {
+    let siteCompanyQuery = admin
+      .from("sites")
+      .select("company_id, organization_id")
+      .in("id", assignments.siteIds);
+
+    siteCompanyQuery = applyScopeToQuery(siteCompanyQuery, organizationScope);
+    if (!siteCompanyQuery) return [];
+
+    const { data: assignedSites, error: assignedSitesError } = await siteCompanyQuery;
+    if (assignedSitesError) throw assignedSitesError;
+
     const companyIds = Array.from(
-      new Set(scopedSites.map((site) => site.company_id).filter(Boolean)),
+      new Set(
+        ((assignedSites && assignedSites.length > 0 ? assignedSites : scopedSites) || [])
+          .map((site) => site.company_id)
+          .filter(Boolean),
+      ),
     );
     if (companyIds.length === 0) return [];
     query = query.in("id", companyIds);
