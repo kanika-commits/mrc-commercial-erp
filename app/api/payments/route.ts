@@ -171,9 +171,8 @@ export async function POST(request: Request) {
     const totalPayment = roundAmount(formData.get("total_payment"));
     const tdsAmount = roundAmount(formData.get("tds_amount"));
     const transferredAmount = roundAmount(formData.get("transferred_amount"));
-    const referenceNumber = String(
-      formData.get("reference_number") || formData.get("utr_number") || ""
-    ).trim();
+    const referenceNumber = String(formData.get("reference_number") || "").trim();
+    const utrNumber = String(formData.get("utr_number") || "").trim();
     const remarks = String(formData.get("remarks") || "").trim();
 
     if (!invoiceId) {
@@ -467,7 +466,7 @@ export async function POST(request: Request) {
           payment_date: paymentDate,
           payment_type: paymentType,
           reference_number: referenceNumber || null,
-          utr_number: referenceNumber || null,
+          utr_number: utrNumber || null,
           company_bank_account_id: companyBankAccountId,
           total_payment: totalPayment,
           tds_amount: tdsAmount,
@@ -691,11 +690,11 @@ export async function POST(request: Request) {
       );
     }
 
-    if (referenceNumber) {
+    if (utrNumber) {
       const utrDuplicate = (existingPayments || []).find(
         (payment) =>
           normalized(String(payment.utr_number || "")) ===
-          normalized(referenceNumber)
+          normalized(utrNumber)
       );
 
       if (utrDuplicate) {
@@ -718,7 +717,7 @@ export async function POST(request: Request) {
         payment_date: paymentDate,
         payment_type: "Invoice",
         reference_number: referenceNumber || null,
-        utr_number: referenceNumber || null,
+        utr_number: utrNumber || null,
         company_bank_account_id: companyBankAccountId || null,
         total_payment: totalPayment,
         tds_amount: tdsAmount,
