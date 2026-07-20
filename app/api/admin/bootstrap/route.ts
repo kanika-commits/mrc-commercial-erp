@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { loadActiveAccountContext } from "@/lib/serverAccountAccess";
 
 type Permission = {
   module_code: string;
@@ -82,82 +83,10 @@ export async function GET(request: Request) {
             return value;
           });
 
-    const userRoles = await adminClient
-      .from("user_roles")
-      .select("role_id")
-      .eq("user_id", user.id);
+    const accountContext = await loadActiveAccountContext(adminClient, user);
 
-    if (userRoles.error) throw userRoles.error;
-
-    const roleIds = (userRoles.data || []).map((row) => row.role_id).filter(Boolean);
-    let roleCodes: string[] = [];
-    let rolePermissionRows: Permission[] = [];
-
-    if (roleIds.length > 0) {
-      const roles = await adminClient
-        .from("roles")
-        .select("role_code")
-        .in("id", roleIds);
-
-      if (roles.error) throw roles.error;
-
-      roleCodes = (roles.data || []).map((role) => role.role_code).filter(Boolean);
-    }
-
-    const isWildcard = roleCodes.includes("platform_owner");
-    let permissions: Permission[] = [];
-    let organizations: string[] = [];
-    let companies: string[] = [];
-    let sites: string[] = [];
-
-    if (isWildcard) {
-      permissions = [{ module_code: "*", action_code: "*", allowed: true }];
-    } else {
-      const userPermissions = await adminClient
-        .from("user_permissions")
-        .select("module_code, action_code, allowed")
-        .eq("user_id", user.id);
-
-      if (userPermissions.error) throw userPermissions.error;
-
-      if (roleIds.length > 0) {
-        const rolePermissions = await adminClient
-          .from("role_permissions")
-          .select("module_code, action_code, allowed")
-          .in("role_id", roleIds);
-
-        if (rolePermissions.error) throw rolePermissions.error;
-        rolePermissionRows = rolePermissions.data || [];
-      }
-
-      const accessRows = await adminClient
-        .from("user_access_assignments")
-        .select("organization_id, company_id, site_id")
-        .eq("user_id", user.id);
-
-      if (accessRows.error) throw accessRows.error;
-
-      const permissionMap = new Map<string, Permission>();
-
-      [...rolePermissionRows, ...((userPermissions.data || []) as Permission[])].forEach(
-        (permission) => {
-          permissionMap.set(
-            `${permission.module_code}:${permission.action_code}`,
-            permission,
-          );
-        },
-      );
-
-      permissions = Array.from(permissionMap.values());
-      organizations = Array.from(
-        new Set((accessRows.data || []).map((row) => row.organization_id).filter(Boolean)),
-      );
-      companies = Array.from(
-        new Set((accessRows.data || []).map((row) => row.company_id).filter(Boolean)),
-      );
-      sites = Array.from(
-        new Set((accessRows.data || []).map((row) => row.site_id).filter(Boolean)),
-      );
+    if ("response" in accountContext) {
+      return accountContext.response;
     }
 
     const moduleNavigation = await navigationPromise;
@@ -166,12 +95,12 @@ export async function GET(request: Request) {
       user,
       access: {
         user,
-        roleCodes,
-        permissions,
-        organizations,
-        companies,
-        sites,
-        isGlobalAccess: isWildcard,
+        roleCodes: accountContext.roleCodes,
+        permissions: accountContext.permissions as Permission[],
+        organizations: accountContext.organizations,
+        companies: accountContext.companies,
+        sites: accountContext.sites,
+        isGlobalAccess: accountContext.isGlobalAccess,
       },
       moduleNavigation,
     });

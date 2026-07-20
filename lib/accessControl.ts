@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
+import { ACCOUNT_INACTIVE_CODE } from "@/lib/accountStatus";
 
 export type UserPermission = {
   module_code: string;
@@ -45,9 +46,22 @@ export async function getCurrentUserAccess(): Promise<CurrentUserAccess> {
         },
       });
 
-      if (response.ok) {
-        return response.json();
+      if (response.ok) return response.json();
+
+      const payload = await response.json().catch(() => null);
+
+      if (payload?.code === ACCOUNT_INACTIVE_CODE) {
+        await supabase.auth.signOut();
       }
+
+      return {
+        user: null,
+        roleCodes: [],
+        permissions: [],
+        organizations: [],
+        companies: [],
+        sites: [],
+      };
     }
   }
 
