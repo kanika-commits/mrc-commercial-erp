@@ -4,9 +4,14 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
+import { formatStatusLabel } from "@/lib/statusLabels";
+import DeleteCompanyButton from "@/components/DeleteCompanyButton";
+import { isOrganizationAllowed } from "@/lib/clientOrganizationScope";
 
 export default function CompanyDetailPage() {
+  const { access, loading: accessLoading } = useAccessContext();
   const params = useParams<{ id: string }>();
   const id = params.id;
 
@@ -14,31 +19,27 @@ export default function CompanyDetailPage() {
   const [organization, setOrganization] = useState<any>(null);
   const [sites, setSites] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
-  const [canEditCompany, setCanEditCompany] = useState(false);
-  const [canDeleteCompany, setCanDeleteCompany] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const roleCodes = access?.roleCodes || [];
+  const permissions = access?.permissions || [];
+  const canEditCompany =
+    roleCodes.includes("platform_owner") ||
+    can(permissions, "companies", "edit");
+  const canDeleteCompany =
+    roleCodes.includes("platform_owner") ||
+    can(permissions, "companies", "delete");
 
   useEffect(() => {
-    loadCompany();
-  }, [id]);
+    if (!accessLoading && access) {
+      loadCompany();
+    }
+  }, [access, accessLoading, id]);
 
   async function loadCompany() {
     try {
       setLoading(true);
       setMessage("");
-
-      const access = await getCurrentUserAccess();
-      setCanEditCompany(
-        access.roleCodes.includes("platform_owner") ||
-          access.roleCodes.includes("super_admin") ||
-          can(access.permissions, "companies", "edit")
-      );
-      setCanDeleteCompany(
-        access.roleCodes.includes("platform_owner") ||
-          access.roleCodes.includes("super_admin") ||
-          can(access.permissions, "companies", "delete")
-      );
 
       const { data: companyData, error: companyError } = await supabase
         .from("companies")
@@ -47,6 +48,10 @@ export default function CompanyDetailPage() {
         .single();
 
       if (companyError) throw companyError;
+
+      if (!isOrganizationAllowed(access, companyData.organization_id)) {
+        throw new Error("Company not found.");
+      }
 
       setCompany(companyData);
 
@@ -97,40 +102,6 @@ export default function CompanyDetailPage() {
     }
   }
 
-  async function deleteCompany() {
-    const ok = window.confirm(
-      `Delete company "${company?.company_name || "Company"}"? This is blocked automatically if linked records exist.`
-    );
-
-    if (!ok) return;
-
-    try {
-      setMessage("");
-
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session?.access_token) {
-        throw new Error("Your session expired. Please log in again.");
-      }
-
-      const response = await fetch(`/api/companies/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to delete company.");
-      }
-
-      window.location.href = "/companies";
-    } catch (error: any) {
-      setMessage(error.message || "Failed to delete company.");
-    }
-  }
-
   if (loading) {
     return <p className="text-gray-500">Loading company...</p>;
   }
@@ -167,13 +138,12 @@ export default function CompanyDetailPage() {
             </Link>
           )}
           {canDeleteCompany && (
-            <button
-              type="button"
-              onClick={deleteCompany}
-              className="rounded-lg border border-red-200 px-4 py-2 text-red-700 hover:bg-red-50"
-            >
-              Delete
-            </button>
+            <DeleteCompanyButton
+              companyId={company.id}
+              companyName={company.company_name}
+              redirectTo="/companies"
+              className="rounded-lg border border-red-200 px-4 py-2 text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+            />
           )}
         </div>
       </div>
@@ -190,7 +160,7 @@ export default function CompanyDetailPage() {
         <div className="grid gap-4 md:grid-cols-4">
           <Info label="Company" value={company.company_name || "-"} />
           <Info label="Code" value={company.company_code || "-"} />
-          <Info label="Status" value={company.status || "active"} />
+          <Info label="Status" value={formatStatusLabel(company.status || "active")} />
           <Info
             label="Organization"
             value={
@@ -227,7 +197,7 @@ export default function CompanyDetailPage() {
                 <tr key={site.id} className="border-t">
                   <td className="p-3">{site.site_name}</td>
                   <td className="p-3">{site.site_code || "-"}</td>
-                  <td className="p-3">{site.status || "active"}</td>
+                  <td className="p-3">{formatStatusLabel(site.status || "active")}</td>
                 </tr>
               ))}
 
@@ -261,7 +231,7 @@ export default function CompanyDetailPage() {
                 <tr key={user.id} className="border-t">
                   <td className="p-3">{user.full_name || "-"}</td>
                   <td className="p-3">{user.email || "-"}</td>
-                  <td className="p-3">{user.status || "active"}</td>
+                  <td className="p-3">{formatStatusLabel(user.status || "active")}</td>
                 </tr>
               ))}
 

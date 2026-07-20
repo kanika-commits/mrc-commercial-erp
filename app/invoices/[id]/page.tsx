@@ -11,24 +11,15 @@ import {
   Paperclip,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import AuditTrailCard from "@/components/AuditTrailCard";
+import { formatIstTimestamp } from "@/lib/dateTime";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
 function formatDateTime(value: string | null | undefined) {
-  if (!value) return "-";
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "-";
-
-  return parsed.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatIstTimestamp(value);
 }
 
 function statusClass(value?: string | null) {
@@ -316,6 +307,16 @@ export default function InvoiceDetailPage() {
         )}
       </section>
 
+      <AuditTrailCard
+        createdBy={invoice.created_by_name || invoice.created_by_email}
+        createdAt={invoice.created_at}
+        approvedBy={invoice.itc_claimed_by_name || invoice.itc_claimed_by_email}
+        approvedAt={invoice.itc_claimed_at}
+        rejectedBy={invoice.itc_rejected_by_name || invoice.itc_rejected_by_email}
+        rejectedAt={invoice.itc_rejected_at}
+        rejectReason={invoice.itc_rejection_reason}
+      />
+
       <section className="rounded-2xl border bg-white p-6 shadow-sm">
         <div className="mb-4 flex items-center gap-2">
           <Paperclip className="h-5 w-5 text-slate-400" />
@@ -330,9 +331,7 @@ export default function InvoiceDetailPage() {
               <p className="font-medium text-slate-950">{document.file_name}</p>
               <p className="text-xs text-slate-500">
                 Uploaded:{" "}
-                {document.uploaded_at
-                  ? new Date(document.uploaded_at).toLocaleString()
-                  : "-"}
+                {formatIstTimestamp(document.uploaded_at)}
               </p>
             </div>
 

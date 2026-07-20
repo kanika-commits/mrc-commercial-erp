@@ -1,10 +1,23 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireAnyPermission } from "@/lib/serverPermissions";
+import {
+  isInOrganizationScope,
+  loadActorOrganizationScope,
+} from "@/lib/serverOrganizationScope";
+import {
+  loadAllowedWorkOrderIds,
+  loadApprovalScope,
+} from "@/app/api/approvals/_shared";
 
 const DOCUMENT_BUCKET = "debit-note-documents";
 
 function isGoogleDriveUrl(value: string | null | undefined) {
-  return String(value || "").trim().startsWith("https://drive.google.com/");
+  const url = String(value || "").trim();
+  return (
+    url.startsWith("https://drive.google.com/") ||
+    url.startsWith("https://docs.google.com/")
+  );
 }
 
 function adminClient() {
@@ -55,13 +68,15 @@ function normalizeStoragePath(value: string | null) {
 
 export async function GET(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const auth = await requireAnyPermission(request, [
+      { moduleCode: "debit_notes", actionCode: "view" },
+      { moduleCode: "ra_approval", actionCode: "view" },
+      { moduleCode: "ra_approval", actionCode: "approve" },
+      { moduleCode: "ra_approval", actionCode: "reject" },
+    ]);
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("response" in auth) {
+      return auth.response;
     }
 
     const { searchParams } = new URL(request.url);
@@ -80,6 +95,55 @@ export async function GET(request: Request) {
     }
 
     const admin = adminClient();
+    const { data: debitNotes, error: debitNotesError } = await admin
+      .from("debit_notes")
+      .select("id, organization_id, work_order_id")
+      .in("id", debitNoteIds);
+
+    if (debitNotesError) throw debitNotesError;
+
+    if ((debitNotes || []).length !== debitNoteIds.length) {
+      return NextResponse.json(
+        { error: "One or more Debit Notes were not found." },
+        { status: 404 }
+      );
+    }
+
+    const organizationScope = await loadActorOrganizationScope(admin, auth);
+    const outOfScope = (debitNotes || []).some(
+      (debitNote) =>
+        !isInOrganizationScope(organizationScope, debitNote.organization_id)
+    );
+
+    if (outOfScope) {
+      return NextResponse.json(
+        { error: "You do not have access to this organization." },
+        { status: 403 }
+      );
+    }
+
+    const { organizationScope: approvalOrganizationScope, assignments } =
+      await loadApprovalScope(admin, auth);
+    const allowedWorkOrderIds = await loadAllowedWorkOrderIds(
+      admin,
+      approvalOrganizationScope,
+      assignments
+    );
+
+    if (
+      allowedWorkOrderIds !== null &&
+      (debitNotes || []).some(
+        (debitNote) =>
+          debitNote.work_order_id &&
+          !allowedWorkOrderIds.includes(debitNote.work_order_id)
+      )
+    ) {
+      return NextResponse.json(
+        { error: "You do not have access to one or more Debit Note Work Orders." },
+        { status: 403 }
+      );
+    }
+
     const { data: documents, error } = await admin
       .from("debit_note_documents")
       .select("id, debit_note_id, file_name, file_url, uploaded_at")

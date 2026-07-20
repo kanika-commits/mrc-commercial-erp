@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 export default function RolesPage() {
   const [roles, setRoles] = useState<any[]>([]);
@@ -16,7 +17,22 @@ export default function RolesPage() {
     setLoading(true);
     setMessage("");
 
-    const response = await fetch("/api/admin/roles");
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      setMessage("Your session expired. Please log in again.");
+      setRoles([]);
+      setLoading(false);
+      return;
+    }
+
+    const response = await fetch("/api/admin/roles", {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    });
     const result = await response.json();
 
     if (!response.ok) {

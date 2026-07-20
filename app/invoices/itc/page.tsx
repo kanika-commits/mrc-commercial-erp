@@ -12,13 +12,15 @@ import {
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can, hasGlobalAccess } from "@/lib/accessControl";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
 export default function ITCReviewPage() {
+  const { access } = useAccessContext();
   const [invoices, setInvoices] = useState<any[]>([]);
   const [workOrders, setWorkOrders] = useState<Map<string, any>>(new Map());
   const [vendors, setVendors] = useState<Map<string, any>>(new Map());
@@ -27,75 +29,61 @@ export default function ITCReviewPage() {
   const [savingId, setSavingId] = useState("");
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
-  const [canDelete, setCanDelete] = useState(false);
   const [deleteInvoice, setDeleteInvoice] = useState<any | null>(null);
   const [deletionReason, setDeletionReason] = useState("");
+  const canViewItcReview =
+    hasGlobalAccess(access) ||
+    can(access?.permissions || [], "itc_claims", "view") ||
+    can(access?.permissions || [], "itc_claims", "approve");
+  const canManageItcReview =
+    hasGlobalAccess(access) || can(access?.permissions || [], "itc_claims", "approve");
+  const canDeleteItcReview =
+    hasGlobalAccess(access) || can(access?.permissions || [], "itc_claims", "delete");
 
   useEffect(() => {
-    loadAccess();
-    loadInvoices();
-  }, []);
-
-  async function loadAccess() {
-    const access = await getCurrentUserAccess();
-    setCanDelete(can(access.permissions, "invoices", "delete"));
-  }
+    if (access) {
+      loadInvoices();
+    }
+  }, [access]);
 
   async function loadInvoices() {
     try {
       setLoading(true);
       setMessage("");
 
-      const { data: invoiceData, error: invoiceError } = await supabase
-        .from("invoices")
-        .select(`
-          id,
-          work_order_id,
-          vendor_id,
-          invoice_number,
-          invoice_date,
-          taxable_amount,
-          gst_rate,
-          gst_amount,
-          invoice_amount,
-          itc_status,
-          remarks,
-          created_at
-        `)
-        .or("itc_status.is.null,itc_status.ilike.pending")
-        .order("invoice_date", { ascending: false });
+      if (!canViewItcReview) {
+        setInvoices([]);
+        setWorkOrders(new Map());
+        setVendors(new Map());
+        setDocuments(new Map());
+        setMessage("You do not have permission to view ITC review.");
+        return;
+      }
 
-      if (invoiceError) throw invoiceError;
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      setInvoices(invoiceData || []);
+      if (!session?.access_token) {
+        throw new Error("Unable to load ITC review: missing auth session.");
+      }
 
-      const workOrderIds = Array.from(
-        new Set((invoiceData || []).map((i: any) => i.work_order_id).filter(Boolean))
-      );
+      const response = await fetch("/api/invoices/itc", {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+      const result = await response.json().catch(() => ({}));
 
-      const vendorIds = Array.from(
-        new Set((invoiceData || []).map((i: any) => i.vendor_id).filter(Boolean))
-      );
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to load ITC review.");
+      }
 
-      const [{ data: woData }, { data: vendorData }] = await Promise.all([
-        workOrderIds.length
-          ? supabase
-              .from("work_orders")
-              .select("id, wo_number")
-              .in("id", workOrderIds)
-          : Promise.resolve({ data: [] }),
-
-        vendorIds.length
-          ? supabase
-              .from("vendors")
-              .select("id, vendor_name")
-              .in("id", vendorIds)
-          : Promise.resolve({ data: [] }),
-      ]);
-
-      setWorkOrders(new Map((woData || []).map((wo: any) => [wo.id, wo])));
-      setVendors(new Map((vendorData || []).map((vendor: any) => [vendor.id, vendor])));
-      await loadDocuments((invoiceData || []).map((invoice: any) => invoice.id));
+      const invoiceData = result.invoices || [];
+      setInvoices(invoiceData);
+      setWorkOrders(new Map((result.workOrders || []).map((wo: any) => [wo.id, wo])));
+      setVendors(new Map((result.vendors || []).map((vendor: any) => [vendor.id, vendor])));
+      await loadDocuments(invoiceData.map((invoice: any) => invoice.id));
     } catch (error: any) {
       setMessage(error.message || "Failed to load ITC review.");
     } finally {
@@ -147,40 +135,31 @@ export default function ITCReviewPage() {
     setDocuments(documentMap);
   }
 
-  async function getCurrentUserNameEmail() {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    const name =
-      user?.user_metadata?.full_name ||
-      user?.user_metadata?.name ||
-      user?.email ||
-      "Unknown User";
-
-    return {
-      name,
-      email: user?.email || "",
-    };
-  }
-
   async function claimITC(invoiceId: string) {
     try {
       setMessage("");
 
-      const user = await getCurrentUserNameEmail();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      const { error } = await supabase
-        .from("invoices")
-        .update({
-          itc_status: "Claimed",
-          itc_claimed_by_name: user.name,
-          itc_claimed_by_email: user.email,
-          itc_claimed_at: new Date().toISOString(),
-        })
-        .eq("id", invoiceId);
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
 
-      if (error) throw error;
+      const response = await fetch(`/api/invoices?invoice_id=${invoiceId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ action: "itc_claimed" }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to claim ITC.");
+      }
 
       setInvoices((prev) => prev.filter((invoice) => invoice.id !== invoiceId));
       setMessage("ITC claimed successfully.");
@@ -212,7 +191,7 @@ export default function ITCReviewPage() {
       }
 
       const response = await fetch(
-        `/api/invoices?invoice_id=${encodeURIComponent(deleteInvoice.id)}`,
+        `/api/invoices?invoice_id=${encodeURIComponent(deleteInvoice.id)}&action=itc_delete`,
         {
           method: "DELETE",
           headers: {
@@ -438,17 +417,19 @@ export default function ITCReviewPage() {
                           View
                         </Link>
 
-                        <button
-                          type="button"
-                          disabled={savingId === invoice.id}
-                          onClick={() => claimITC(invoice.id)}
-                          className="inline-flex items-center justify-center gap-1 rounded-lg bg-blue-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-800 disabled:opacity-60"
-                        >
-                          <CheckCircle className="h-3.5 w-3.5" />
-                          ITC Claimed
-                        </button>
+                        {canManageItcReview && (
+                          <button
+                            type="button"
+                            disabled={savingId === invoice.id}
+                            onClick={() => claimITC(invoice.id)}
+                            className="inline-flex items-center justify-center gap-1 rounded-lg bg-blue-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-800 disabled:opacity-60"
+                          >
+                            <CheckCircle className="h-3.5 w-3.5" />
+                            ITC Claimed
+                          </button>
+                        )}
 
-                        {canDelete && (
+                        {canDeleteItcReview && (
                           <button
                             type="button"
                             disabled={savingId === invoice.id}
@@ -463,6 +444,7 @@ export default function ITCReviewPage() {
                             Delete
                           </button>
                         )}
+
                       </div>
                     </td>
                   </tr>

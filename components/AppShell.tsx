@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
   Bell,
@@ -11,69 +11,199 @@ import {
   Home,
   LayoutGrid,
   RefreshCcw,
-  Search,
   Settings,
+  UsersRound,
 } from "lucide-react";
 import UserHeader from "@/components/UserHeader";
-import { can, getCurrentUserAccess, type UserPermission } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import {
+  EMPTY_NOTIFICATION_COUNTS,
+  NotificationCountsProvider,
+  type NotificationCounts,
+} from "@/components/NotificationCountsContext";
+import { can, hasGlobalAccess } from "@/lib/accessControl";
+import { DEFAULT_MODULE_NAVIGATION } from "@/lib/defaultModuleNavigation";
+import { supabase } from "@/lib/supabase";
 
-const sidebarItems = [
-  { label: "Dashboard", href: "/", icon: Home, groupCode: "dashboard" },
-  { label: "Modules", href: "/modules", icon: LayoutGrid, alwaysShow: true },
-  { label: "Master Setup", href: "/modules/master-setup", icon: Building2, groupCode: "master_setup" },
-  { label: "Contract Management", href: "/modules/contract-management", icon: FileText, groupCode: "contract_management" },
-  { label: "Reports", href: "/modules/reports", icon: BarChart3, groupCode: "reports" },
-  { label: "Administration", href: "/modules/administration", icon: Settings, groupCode: "administration" },
-];
+const sidebarGroupMeta = {
+  master_setup: { label: "Master Setup", href: "/modules/master-setup", icon: Building2 },
+  contract_management: { label: "Contract Management", href: "/modules/contract-management", icon: FileText },
+  reports: { label: "Reports", href: "/modules/reports", icon: BarChart3 },
+  administration: { label: "Administration", href: "/modules/administration", icon: Settings },
+  hr: { label: "HR", href: "/modules/hr", icon: UsersRound },
+} as const;
+
+type SidebarItem = {
+  label: string;
+  href: string;
+  icon: typeof Home;
+  groupCode?: string;
+  superOnly?: boolean;
+};
+
+const notificationLinks = [
+  {
+    label: "Pending Work Orders",
+    key: "pendingWorkOrders",
+    href: "/approvals/work-orders",
+  },
+  {
+    label: "Pending RA Bills",
+    key: "pendingRaBills",
+    href: "/approvals",
+  },
+  {
+    label: "Pending Debit Notes",
+    key: "pendingDebitNotes",
+    href: "/approvals",
+  },
+  {
+    label: "Pending ITC Review",
+    key: "pendingItcReview",
+    href: "/invoices/itc",
+  },
+] as const;
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const [visibleGroupCodes, setVisibleGroupCodes] = useState<Set<string>>(new Set());
-  const [permissions, setPermissions] = useState<UserPermission[]>([]);
+  const {
+    access,
+    moduleNavigation,
+    loading: accessLoading,
+    user,
+  } = useAccessContext();
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationCounts, setNotificationCounts] = useState<NotificationCounts>(
+    EMPTY_NOTIFICATION_COUNTS,
+  );
+  const [notificationCountsLoading, setNotificationCountsLoading] = useState(false);
+  const [notificationCountsLoaded, setNotificationCountsLoaded] = useState(false);
+  const notificationsStartedRef = useRef(false);
 
-  useEffect(() => {
-    async function loadNavigationAccess() {
-      const [access, navigationResponse] = await Promise.all([
-        getCurrentUserAccess(),
-        fetch("/api/admin/module-navigation"),
-      ]);
+  const permissions = access?.permissions || [];
+  const globalAccess = hasGlobalAccess(access);
+  const effectiveNavigation =
+    globalAccess && (moduleNavigation.groups || []).length === 0
+      ? DEFAULT_MODULE_NAVIGATION
+      : moduleNavigation;
+  const dashboardHref = globalAccess || can(permissions, "dashboard", "view") ? "/" : "/modules";
+  const visibleGroupCodes = useMemo(() => {
+    const nextVisibleGroups = new Set<string>();
 
-      setPermissions(access.permissions || []);
+    (effectiveNavigation.modules || []).forEach((module: any) => {
+      if (globalAccess || can(permissions, module.module_code, "view")) {
+        nextVisibleGroups.add(module.module_group);
+      }
+    });
 
-      if (!navigationResponse.ok) {
-        setVisibleGroupCodes(new Set());
+    return nextVisibleGroups;
+  }, [effectiveNavigation.modules, globalAccess, permissions]);
+
+  const visibleSidebarItems = useMemo<SidebarItem[]>(() => {
+    const items: SidebarItem[] = [];
+
+    if (globalAccess || can(permissions, "dashboard", "view")) {
+      items.push({ label: "Dashboard", href: "/", icon: Home, groupCode: "dashboard" });
+    }
+
+    if (globalAccess) {
+      items.push({ label: "Modules", href: "/modules", icon: LayoutGrid, superOnly: true });
+    }
+
+    (effectiveNavigation.groups || [])
+      .filter((group: any) => group.module_code !== "dashboard")
+      .filter((group: any) => globalAccess || visibleGroupCodes.has(group.module_code))
+      .forEach((group: any) => {
+        const meta = sidebarGroupMeta[group.module_code as keyof typeof sidebarGroupMeta];
+        const fallbackHref = `/modules/${String(group.module_code || "").replace(/_/g, "-")}`;
+
+        items.push({
+          label: group.module_name || meta?.label || String(group.module_code || "Module"),
+          href: group.route || meta?.href || fallbackHref,
+          icon: meta?.icon || LayoutGrid,
+          groupCode: group.module_code,
+        });
+      });
+
+    return items;
+  }, [effectiveNavigation.groups, globalAccess, permissions, visibleGroupCodes]);
+
+  const loadNotificationCounts = useCallback(async () => {
+    try {
+      setNotificationCountsLoading(true);
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
         return;
       }
 
-      const navigation = await navigationResponse.json();
-      const modules = navigation.modules || [];
-      const nextVisibleGroups = new Set<string>();
-
-      modules.forEach((module: any) => {
-        if (can(access.permissions, module.module_code, "view")) {
-          nextVisibleGroups.add(module.module_group);
-        }
+      const response = await fetch("/api/notifications/counts", {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
       });
+      const counts = await response.json();
 
-      setVisibleGroupCodes(nextVisibleGroups);
+      if (!response.ok) {
+        throw new Error(counts.error || "Failed to load notification counts.");
+      }
+
+      setNotificationCounts({
+        pendingWorkOrders: counts.pendingWorkOrders || 0,
+        pendingRaBills: counts.pendingRaBills || 0,
+        pendingDebitNotes: counts.pendingDebitNotes || 0,
+        pendingItcReview: counts.pendingItcReview || 0,
+        pendingInvoiceApprovals: counts.pendingInvoiceApprovals || 0,
+        totalVendors: counts.totalVendors || 0,
+        panAadhaarPending: counts.panAadhaarPending || 0,
+        blockedVendors: counts.blockedVendors || 0,
+        inactiveVendors: counts.inactiveVendors || 0,
+      });
+      setNotificationCountsLoaded(true);
+    } catch (error) {
+      console.error("Notification count load failed:", error);
+    } finally {
+      setNotificationCountsLoading(false);
     }
-
-    loadNavigationAccess();
   }, []);
 
-  const visibleSidebarItems = sidebarItems.filter((item) => {
-    if (item.alwaysShow) return true;
-    if (item.groupCode === "dashboard") {
-      return can(permissions, "dashboard", "view") || permissions.length === 0;
-    }
-    if (!item.groupCode) return true;
-    return visibleGroupCodes.has(item.groupCode);
-  });
+  useEffect(() => {
+    if (!user || notificationsStartedRef.current) return;
+
+    notificationsStartedRef.current = true;
+    const timer = window.setTimeout(() => {
+      loadNotificationCounts();
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [loadNotificationCounts, user]);
+
+  useEffect(() => {
+    setNotificationsOpen(false);
+  }, [pathname]);
+
+  const totalNotifications = notificationLinks.reduce(
+    (sum, item) => sum + (notificationCounts[item.key] || 0),
+    0,
+  );
+
+  const notificationCountsContextValue = useMemo(
+    () => ({
+      counts: notificationCounts,
+      loading: notificationCountsLoading,
+      loaded: notificationCountsLoaded,
+      refresh: loadNotificationCounts,
+    }),
+    [loadNotificationCounts, notificationCounts, notificationCountsLoaded, notificationCountsLoading],
+  );
 
   return (
+    <NotificationCountsProvider value={notificationCountsContextValue}>
     <div className="min-h-screen bg-[#f3f6f8]">
       <aside className="fixed left-0 top-0 z-40 flex h-screen w-[224px] flex-col bg-black px-4 py-8 text-white">
-        <Link href="/" className="mb-8 block px-2">
+        <Link href={dashboardHref} className="mb-8 block px-2">
           <h1 className="text-2xl font-bold tracking-tight">ConstructIQ</h1>
           <p className="mt-2 text-sm font-medium text-white/50">
             Enterprise ERP
@@ -81,7 +211,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </Link>
 
         <nav className="space-y-2">
-          {visibleSidebarItems.map((item) => {
+          {accessLoading && visibleSidebarItems.length === 0
+            ? Array.from({ length: 4 }).map((_, index) => (
+                <div
+                  key={index}
+                  className="h-13 animate-pulse rounded-md bg-white/10"
+                />
+              ))
+            : visibleSidebarItems.map((item) => {
             const Icon = item.icon;
             const active =
               item.href === "/"
@@ -112,15 +249,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="mt-auto space-y-2 border-t border-white/10 pt-7">
-          {visibleGroupCodes.has("administration") && (
-            <Link
-              href="/settings/appearance"
-              className="flex h-12 items-center gap-3 rounded-md px-3 text-sm font-bold text-white/55 transition hover:bg-white/10 hover:text-white"
-            >
-              <Settings className="h-5 w-5" />
-              Settings
-            </Link>
-          )}
+          <Link
+            href="/settings"
+            className="flex h-12 items-center gap-3 rounded-md px-3 text-sm font-bold text-white/55 transition hover:bg-white/10 hover:text-white"
+          >
+            <Settings className="h-5 w-5" />
+            Settings
+          </Link>
           <div className="flex h-12 items-center gap-3 rounded-md px-3 text-sm font-bold text-white/55">
             <span className="grid h-5 w-5 place-items-center rounded-full border border-white/55 text-xs">
               ?
@@ -132,30 +267,70 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       <main className="min-h-screen pl-[224px]">
         <header className="sticky top-0 z-30 border-b border-[#d7dde3] bg-[#fbf9fa] px-10 py-4">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="relative w-full max-w-sm">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-              <input
-                className="h-11 w-full rounded-xl border-0 bg-white px-11 text-sm font-semibold text-slate-700 shadow-sm outline-none ring-1 ring-black/5 placeholder:text-slate-500 focus:ring-[#04779e]"
-                placeholder="Search projects..."
-              />
-            </div>
-
-            <div className="flex items-center gap-7 text-sm font-bold text-slate-700">
-              {visibleGroupCodes.has("master_setup") && (
-                <Link href="/modules/master-setup">Directory</Link>
-              )}
-              {visibleGroupCodes.has("reports") && (
-                <Link href="/modules/reports">Reports</Link>
-              )}
-              {can(permissions, "approvals", "view") && (
-                <Link href="/approvals">Archives</Link>
-              )}
-            </div>
-
+          <div className="flex flex-wrap items-center justify-end gap-4">
             <div className="flex items-center gap-5">
-              <Bell className="h-5 w-5 text-slate-700" />
-              <RefreshCcw className="h-5 w-5 text-slate-700" />
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setNotificationsOpen((open) => !open)}
+                  className="relative flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 transition hover:bg-slate-100"
+                  aria-label="Notifications"
+                  aria-expanded={notificationsOpen}
+                >
+                  <Bell className="h-5 w-5" />
+                  {totalNotifications > 0 && (
+                    <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold leading-4 text-white">
+                      {totalNotifications}
+                    </span>
+                  )}
+                </button>
+
+                {notificationsOpen && (
+                  <div className="absolute right-0 top-11 z-50 w-80 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
+                    <div className="border-b border-slate-100 px-2 pb-2">
+                      <p className="text-sm font-bold text-slate-950">
+                        Notifications
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        Pending workflow alerts
+                      </p>
+                    </div>
+
+                    {totalNotifications === 0 ? (
+                      <div className="px-2 py-4 text-sm text-slate-500">
+                        No pending alerts
+                      </div>
+                    ) : (
+                      <div className="mt-2 space-y-1">
+                        {notificationLinks
+                          .filter((item) => notificationCounts[item.key] > 0)
+                          .map((item) => (
+                            <Link
+                              key={item.key}
+                              href={item.href}
+                              className="flex items-center justify-between rounded-lg px-2 py-2 text-sm transition hover:bg-slate-50"
+                            >
+                              <span className="font-medium text-slate-700">
+                                {item.label}
+                              </span>
+                              <span className="rounded-full bg-slate-900 px-2 py-0.5 text-xs font-bold text-white">
+                                {notificationCounts[item.key]}
+                              </span>
+                            </Link>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 transition hover:bg-slate-100"
+                aria-label="Refresh"
+              >
+                <RefreshCcw className="h-5 w-5" />
+              </button>
               <div className="hidden h-8 w-px bg-slate-300 md:block" />
               <UserHeader />
             </div>
@@ -165,5 +340,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <div>{children}</div>
       </main>
     </div>
+    </NotificationCountsProvider>
   );
 }

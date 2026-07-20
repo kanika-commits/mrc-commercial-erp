@@ -5,10 +5,16 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { sortCompanies } from "@/lib/companyOrdering";
-
-const actions = ["view", "add", "edit", "delete", "approve", "reject", "upload", "export"];
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
+import AlertMessage from "@/components/AlertMessage";
+import {
+  PERMISSION_ACTIONS as actions,
+  availableActionsForModule,
+} from "@/lib/permissionMatrix";
 
 export default function UserAccessPage() {
+  const { access } = useAccessContext();
   const params = useParams();
   const userId = params.id as string;
 
@@ -23,13 +29,34 @@ export default function UserAccessPage() {
   const [selectedOrganizationIds, setSelectedOrganizationIds] = useState<string[]>([]);
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
   const [selectedSiteIds, setSelectedSiteIds] = useState<string[]>([]);
+  const [targetIsPlatformOwner, setTargetIsPlatformOwner] = useState(false);
 
   const [permissionMap, setPermissionMap] = useState<Record<string, boolean>>({});
+  const [rolePermissions, setRolePermissions] = useState<any[]>([]);
 
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [savingName, setSavingName] = useState(false);
   const [loading, setLoading] = useState(true);
   const [permissionsSaved, setPermissionsSaved] = useState(false);
+  const [editFullName, setEditFullName] = useState("");
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showResetPasswordModal, setShowResetPasswordModal] = useState(false);
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetConfirmPassword, setResetConfirmPassword] = useState("");
+  const [resetConfirmationText, setResetConfirmationText] = useState("");
+  const [resettingPassword, setResettingPassword] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const permissions = access?.permissions || [];
+  const roleCodes = access?.roleCodes || [];
+  const canEditUser =
+    roleCodes.includes("platform_owner") ||
+    can(permissions, "*", "*") ||
+    can(permissions, "users", "edit");
+  const canDeleteUser =
+    roleCodes.includes("platform_owner") ||
+    can(permissions, "*", "*") ||
+    can(permissions, "users", "delete");
 
   useEffect(() => {
     loadData();
@@ -44,7 +71,19 @@ export default function UserAccessPage() {
       setLoading(true);
       setMessage("");
 
-      const response = await fetch(`/api/admin/users/${userId}`);
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/admin/users/${userId}`, {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
       const result = await response.json();
 
       if (!response.ok) {
@@ -55,7 +94,14 @@ export default function UserAccessPage() {
         throw new Error("User profile was not found.");
       }
 
+      const allRoles = result.roles || [];
+      const platformOwnerRole = allRoles.find(
+        (role: any) => role.role_code === "platform_owner"
+      );
       const roleIds = (result.userRoles || []).map((item: any) => item.role_id);
+      const platformOwnerRoleId = platformOwnerRole?.id;
+      const hasPlatformOwnerRole =
+        Boolean(platformOwnerRoleId) && roleIds.includes(platformOwnerRoleId);
       const userPermissionData = result.userPermissions || [];
 
       setPermissionsSaved(userPermissionData.length > 0);
@@ -67,10 +113,13 @@ export default function UserAccessPage() {
       });
 
       setProfile(result.profile);
-      setRoles(result.roles || []);
+      setEditFullName(result.profile.full_name || "");
+      setRoles(allRoles.filter((role: any) => role.role_code !== "platform_owner"));
+      setTargetIsPlatformOwner(hasPlatformOwnerRole);
       setOrganizations(result.organizations || []);
       setCompanies(sortCompanies(result.companies || []));
       setSites(result.sites || []);
+      setRolePermissions(result.rolePermissions || []);
       setModules(
         (result.modules || []).sort((a: any, b: any) => {
           if (a.module_group === b.module_group) {
@@ -80,7 +129,11 @@ export default function UserAccessPage() {
         })
       );
 
-      setSelectedRoleIds(roleIds);
+      setSelectedRoleIds(
+        platformOwnerRoleId
+          ? roleIds.filter((roleId: string) => roleId !== platformOwnerRoleId)
+          : roleIds
+      );
 
       setSelectedOrganizationIds(
         Array.from(new Set((result.accessRows || []).map((x: any) => x.organization_id).filter(Boolean)))
@@ -125,6 +178,21 @@ export default function UserAccessPage() {
       return acc;
     }, {});
   }, [modules]);
+
+  const inheritedPermissionMap = useMemo(() => {
+    const next: Record<string, boolean> = {};
+
+    rolePermissions.forEach((permission) => {
+      if (
+        permission.allowed === true &&
+        selectedRoleIds.includes(permission.role_id)
+      ) {
+        next[key(permission.module_code, permission.action_code)] = true;
+      }
+    });
+
+    return next;
+  }, [rolePermissions, selectedRoleIds]);
 
   function toggleRole(roleId: string) {
     setSelectedRoleIds((prev) =>
@@ -183,22 +251,62 @@ export default function UserAccessPage() {
     );
   }
 
+  const visibleSiteIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [...filteredSites, ...unassignedSites].map((site) => site.id).filter(Boolean)
+        )
+      ),
+    [filteredSites, unassignedSites]
+  );
+
+  function selectVisibleSites() {
+    setSelectedSiteIds((prev) => Array.from(new Set([...prev, ...visibleSiteIds])));
+  }
+
+  function clearVisibleSites() {
+    setSelectedSiteIds((prev) => prev.filter((siteId) => !visibleSiteIds.includes(siteId)));
+  }
+
   function isAllowed(moduleCode: string, actionCode: string) {
+    const permissionKey = key(moduleCode, actionCode);
+    return permissionMap[permissionKey] === true || inheritedPermissionMap[permissionKey] === true;
+  }
+
+  function isDirectOverride(moduleCode: string, actionCode: string) {
     return permissionMap[key(moduleCode, actionCode)] === true;
   }
 
+  function isInherited(moduleCode: string, actionCode: string) {
+    return inheritedPermissionMap[key(moduleCode, actionCode)] === true;
+  }
+
   function setPermission(moduleCode: string, actionCode: string, allowed: boolean) {
-    setPermissionMap((prev) => ({
-      ...prev,
-      [key(moduleCode, actionCode)]: allowed,
-    }));
+    setPermissionMap((prev) => {
+      const next = { ...prev };
+      const permissionKey = key(moduleCode, actionCode);
+
+      if (allowed && !inheritedPermissionMap[permissionKey]) {
+        next[permissionKey] = true;
+      } else {
+        delete next[permissionKey];
+      }
+
+      return next;
+    });
   }
 
   function setRow(moduleCode: string, allowed: boolean) {
     setPermissionMap((prev) => {
       const next = { ...prev };
-      actions.forEach((action) => {
-        next[key(moduleCode, action)] = allowed;
+      availableActionsForModule(moduleCode).forEach((action) => {
+        const permissionKey = key(moduleCode, action);
+        if (allowed && !inheritedPermissionMap[permissionKey]) {
+          next[permissionKey] = true;
+        } else {
+          delete next[permissionKey];
+        }
       });
       return next;
     });
@@ -208,8 +316,13 @@ export default function UserAccessPage() {
     setPermissionMap((prev) => {
       const next = { ...prev };
       (groupedModules[groupName] || []).forEach((module) => {
-        actions.forEach((action) => {
-          next[key(module.module_code, action)] = allowed;
+        availableActionsForModule(module.module_code).forEach((action) => {
+          const permissionKey = key(module.module_code, action);
+          if (allowed && !inheritedPermissionMap[permissionKey]) {
+            next[permissionKey] = true;
+          } else {
+            delete next[permissionKey];
+          }
         });
       });
       return next;
@@ -220,8 +333,13 @@ export default function UserAccessPage() {
     setPermissionMap((prev) => {
       const next = { ...prev };
       modules.forEach((module) => {
-        actions.forEach((action) => {
-          next[key(module.module_code, action)] = allowed;
+        availableActionsForModule(module.module_code).forEach((action) => {
+          const permissionKey = key(module.module_code, action);
+          if (allowed && !inheritedPermissionMap[permissionKey]) {
+            next[permissionKey] = true;
+          } else {
+            delete next[permissionKey];
+          }
         });
       });
       return next;
@@ -229,7 +347,9 @@ export default function UserAccessPage() {
   }
 
   function rowChecked(moduleCode: string) {
-    return actions.every((action) => isAllowed(moduleCode, action));
+    return availableActionsForModule(moduleCode).every((action) =>
+      isAllowed(moduleCode, action)
+    );
   }
 
   async function saveAccess() {
@@ -250,21 +370,33 @@ export default function UserAccessPage() {
       const permissionRows: any[] = [];
 
       modules.forEach((module) => {
-  actions.forEach((action) => {
-    if (isAllowed(module.module_code, action)) {
-      permissionRows.push({
-        user_id: userId,
-        module_code: module.module_code,
-        action_code: action,
-        allowed: true,
+        availableActionsForModule(module.module_code).forEach((action) => {
+          if (
+            isDirectOverride(module.module_code, action) &&
+            !isInherited(module.module_code, action)
+          ) {
+            permissionRows.push({
+              user_id: userId,
+              module_code: module.module_code,
+              action_code: action,
+              allowed: true,
+            });
+          }
+        });
       });
-    }
-  });
-});
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
 
       const response = await fetch(`/api/admin/users/${userId}`, {
         method: "PUT",
         headers: {
+          Authorization: `Bearer ${session.access_token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -294,19 +426,143 @@ export default function UserAccessPage() {
     }
   }
 
-  async function updateStatus(status: string) {
-    const { error } = await supabase
-      .from("profiles")
-      .update({ status })
-      .eq("id", userId);
+  async function saveUserName() {
+    try {
+      setSavingName(true);
+      setMessage("");
 
-    if (error) {
-      setMessage(error.message);
-      return;
+      const fullName = editFullName.trim();
+
+      if (!fullName) {
+        setMessage("User name is required.");
+        return;
+      }
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/admin/users/${userId}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          full_name: fullName,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to update user name.");
+      }
+
+      setProfile((current: any) => ({
+        ...(current || {}),
+        full_name: result.full_name || fullName,
+      }));
+      setEditFullName(result.full_name || fullName);
+      setMessage("User name updated successfully.");
+    } catch (error: any) {
+      setMessage(error.message || "Failed to update user name.");
+    } finally {
+      setSavingName(false);
     }
+  }
 
-    await loadData();
-    setMessage("User status updated.");
+  async function deleteUser() {
+    try {
+      setDeleting(true);
+      setMessage("");
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/admin/users/${userId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to delete user.");
+      }
+
+      window.location.href = "/admin/users";
+    } catch (error: any) {
+      setMessage(error.message || "Failed to delete user.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function resetUserPassword() {
+    try {
+      setResettingPassword(true);
+      setMessage("");
+
+      if (!resetPassword || !resetConfirmPassword) {
+        setMessage("Enter and confirm the new password.");
+        return;
+      }
+
+      if (resetPassword.length < 8) {
+        setMessage("New password must be at least 8 characters.");
+        return;
+      }
+
+      if (resetPassword !== resetConfirmPassword) {
+        setMessage("New password and confirmation do not match.");
+        return;
+      }
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/admin/users/${userId}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "reset_password",
+          new_password: resetPassword,
+          confirmation_text: resetConfirmationText,
+        }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to reset password.");
+      }
+
+      setResetPassword("");
+      setResetConfirmPassword("");
+      setResetConfirmationText("");
+      setShowResetPasswordModal(false);
+      setMessage("Password reset successfully. Share the new password manually.");
+    } catch (error: any) {
+      setMessage(error.message || "Failed to reset password.");
+    } finally {
+      setResettingPassword(false);
+    }
   }
 
   if (loading) return <p className="text-gray-500">Loading user access...</p>;
@@ -334,11 +590,11 @@ export default function UserAccessPage() {
         </Link>
       </div>
 
-      {message && (
-        <div className="rounded-lg border bg-yellow-50 p-3 text-sm text-yellow-800">
-          {message}
-        </div>
-      )}
+      <AlertMessage
+        type={message.toLowerCase().includes("success") ? "success" : "error"}
+        message={message}
+        onClose={() => setMessage("")}
+      />
 {!permissionsSaved && (
   <div className="rounded-lg border border-orange-300 bg-orange-50 p-3 text-sm text-orange-800">
     This user has no explicit user permission overrides. Role permissions will apply automatically until you save overrides here.
@@ -353,27 +609,70 @@ export default function UserAccessPage() {
           <Info label="Status" value={profile.status || "active"} />
         </div>
 
-        <div className="mt-4 flex gap-3">
-          <button
-            type="button"
-            onClick={() => updateStatus("active")}
-            className="rounded bg-blue-600 px-3 py-1 text-white"
-          >
-            Activate
-          </button>
+        {(canEditUser || canDeleteUser) && (
+          <div className="mt-4 flex gap-3">
+            {canEditUser && (
+              <button
+                type="button"
+                onClick={() => setShowResetPasswordModal(true)}
+                className="rounded border border-blue-200 px-3 py-1 text-blue-700 hover:bg-blue-50"
+              >
+                Reset Password
+              </button>
+            )}
 
-          <button
-            type="button"
-            onClick={() => updateStatus("inactive")}
-            className="rounded bg-red-600 px-3 py-1 text-white"
-          >
-            Deactivate
-          </button>
-        </div>
+            {canDeleteUser && (
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(true)}
+                className="rounded border border-red-200 px-3 py-1 text-red-700 hover:bg-red-50"
+              >
+                Delete User
+              </button>
+            )}
+          </div>
+        )}
       </section>
+
+      {canEditUser && (
+        <section className="rounded-lg border bg-white p-6">
+          <h2 className="mb-4 text-xl font-semibold">Edit Display Name</h2>
+          <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium text-gray-700">
+                Full Name
+              </span>
+              <input
+                value={editFullName}
+                onChange={(event) => setEditFullName(event.target.value)}
+                className="w-full rounded border px-3 py-2"
+                placeholder="Enter user's display name"
+              />
+            </label>
+
+            <button
+              type="button"
+              onClick={saveUserName}
+              disabled={savingName}
+              className="rounded bg-slate-900 px-4 py-2 text-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {savingName ? "Saving..." : "Save Name"}
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-gray-500">
+            This updates the ERP display name only. Email and password are unchanged.
+          </p>
+        </section>
+      )}
 
       <section className="rounded-lg border bg-white p-6">
         <h2 className="mb-4 text-xl font-semibold">Roles</h2>
+
+        {targetIsPlatformOwner && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
+            Platform Owner
+          </div>
+        )}
 
         <div className="grid gap-3 md:grid-cols-2">
           {roles.map((role) => (
@@ -432,7 +731,29 @@ export default function UserAccessPage() {
       </section>
 
       <section className="rounded-lg border bg-white p-6">
-        <h2 className="mb-4 text-xl font-semibold">Site Access</h2>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-xl font-semibold">Site Access</h2>
+          {selectedCompanyIds.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={selectVisibleSites}
+                disabled={visibleSiteIds.length === 0}
+                className="rounded bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                Select All Sites
+              </button>
+              <button
+                type="button"
+                onClick={clearVisibleSites}
+                disabled={visibleSiteIds.length === 0}
+                className="rounded border px-3 py-1.5 text-sm font-semibold disabled:opacity-50"
+              >
+                Clear All Sites
+              </button>
+            </div>
+          )}
+        </div>
 
         {selectedCompanyIds.length === 0 ? (
           <p className="text-gray-500">Select companies first.</p>
@@ -545,31 +866,57 @@ export default function UserAccessPage() {
                 </thead>
 
                 <tbody>
-                  {items.map((module: any) => (
-                    <tr key={module.id} className="border-t">
-                      <td className="p-2 font-medium">{module.module_name}</td>
+                  {items.map((module: any) => {
+                    const availableActions = availableActionsForModule(module.module_code);
 
-                      <td className="p-2 text-center">
-                        <input
-                          type="checkbox"
-                          checked={rowChecked(module.module_code)}
-                          onChange={(e) => setRow(module.module_code, e.target.checked)}
-                        />
-                      </td>
+                    return (
+                      <tr key={module.id} className="border-t">
+                        <td className="p-2 font-medium">{module.module_name}</td>
 
-                      {actions.map((action) => (
-                        <td key={action} className="p-2 text-center">
+                        <td className="p-2 text-center">
                           <input
                             type="checkbox"
-                            checked={isAllowed(module.module_code, action)}
-                            onChange={(e) =>
-                              setPermission(module.module_code, action, e.target.checked)
-                            }
+                            checked={rowChecked(module.module_code)}
+                            onChange={(e) => setRow(module.module_code, e.target.checked)}
                           />
                         </td>
-                      ))}
-                    </tr>
-                  ))}
+
+                        {actions.map((action) => (
+                          <td key={action} className="p-2 text-center">
+                            {availableActions.includes(action) ? (
+                              <div className="flex flex-col items-center gap-1">
+                                <input
+                                  type="checkbox"
+                                  checked={isAllowed(module.module_code, action)}
+                                  disabled={
+                                    isInherited(module.module_code, action) &&
+                                    !isDirectOverride(module.module_code, action)
+                                  }
+                                  onChange={(e) =>
+                                    setPermission(module.module_code, action, e.target.checked)
+                                  }
+                                  className={
+                                    isInherited(module.module_code, action) &&
+                                    !isDirectOverride(module.module_code, action)
+                                      ? "cursor-not-allowed accent-slate-400"
+                                      : ""
+                                  }
+                                />
+                                {isInherited(module.module_code, action) &&
+                                  !isDirectOverride(module.module_code, action) && (
+                                    <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                      Role
+                                    </span>
+                                  )}
+                              </div>
+                            ) : (
+                              <span className="text-slate-300">-</span>
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -587,6 +934,115 @@ export default function UserAccessPage() {
           {saving ? "Saving..." : "Save User Access"}
         </button>
       </div>
+
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h2 className="text-xl font-bold text-slate-950">Delete User</h2>
+            <p className="mt-3 text-sm leading-6 text-slate-600">
+              Delete app user record for{" "}
+              <span className="font-semibold text-slate-950">
+                {profile.full_name || profile.email || "-"}
+              </span>
+              ? This removes the ERP profile, roles, permissions and access
+              assignments. The Supabase Auth user is not deleted.
+            </p>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(false)}
+                disabled={deleting}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={deleteUser}
+                disabled={deleting}
+                className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+              >
+                {deleting ? "Deleting..." : "Delete User"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showResetPasswordModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h2 className="text-xl font-bold text-slate-950">Reset Password</h2>
+            <p className="mt-3 text-sm leading-6 text-slate-600">
+              Set a new password for{" "}
+              <span className="font-semibold text-slate-950">
+                {profile.full_name || profile.email || "-"}
+              </span>
+              . The password will not be emailed automatically.
+            </p>
+
+            <div className="mt-5 space-y-4">
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">
+                  New Password
+                </span>
+                <input
+                  type="password"
+                  value={resetPassword}
+                  onChange={(event) => setResetPassword(event.target.value)}
+                  className="mt-1 w-full rounded-lg border px-3 py-2"
+                  autoComplete="new-password"
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">
+                  Confirm Password
+                </span>
+                <input
+                  type="password"
+                  value={resetConfirmPassword}
+                  onChange={(event) => setResetConfirmPassword(event.target.value)}
+                  className="mt-1 w-full rounded-lg border px-3 py-2"
+                  autoComplete="new-password"
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">
+                  Type RESET to confirm
+                </span>
+                <input
+                  type="text"
+                  value={resetConfirmationText}
+                  onChange={(event) => setResetConfirmationText(event.target.value)}
+                  className="mt-1 w-full rounded-lg border px-3 py-2"
+                />
+              </label>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowResetPasswordModal(false)}
+                disabled={resettingPassword}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={resetUserPassword}
+                disabled={resettingPassword}
+                className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+              >
+                {resettingPassword ? "Resetting..." : "Reset Password"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

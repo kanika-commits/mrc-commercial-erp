@@ -1,5 +1,14 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireAnyPermission } from "@/lib/serverPermissions";
+import {
+  isInOrganizationScope,
+  loadActorOrganizationScope,
+} from "@/lib/serverOrganizationScope";
+import {
+  loadAllowedWorkOrderIds,
+  loadApprovalScope,
+} from "@/app/api/approvals/_shared";
 
 const DOCUMENT_BUCKET = "ra-bill-documents";
 
@@ -61,13 +70,15 @@ function normalizeStoragePath(value: string | null) {
 
 export async function GET(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const auth = await requireAnyPermission(request, [
+      { moduleCode: "ra_bills", actionCode: "view" },
+      { moduleCode: "ra_approval", actionCode: "view" },
+      { moduleCode: "ra_approval", actionCode: "approve" },
+      { moduleCode: "ra_approval", actionCode: "reject" },
+    ]);
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("response" in auth) {
+      return auth.response;
     }
 
     const { searchParams } = new URL(request.url);
@@ -86,6 +97,53 @@ export async function GET(request: Request) {
     }
 
     const admin = adminClient();
+    const { data: raBills, error: raBillsError } = await admin
+      .from("ra_bills")
+      .select("id, organization_id, work_order_id")
+      .in("id", billIds);
+
+    if (raBillsError) throw raBillsError;
+
+    if ((raBills || []).length !== billIds.length) {
+      return NextResponse.json(
+        { error: "One or more RA Bills were not found." },
+        { status: 404 }
+      );
+    }
+
+    const organizationScope = await loadActorOrganizationScope(admin, auth);
+    const outOfScope = (raBills || []).some(
+      (raBill) => !isInOrganizationScope(organizationScope, raBill.organization_id)
+    );
+
+    if (outOfScope) {
+      return NextResponse.json(
+        { error: "You do not have access to this organization." },
+        { status: 403 }
+      );
+    }
+
+    const { organizationScope: approvalOrganizationScope, assignments } =
+      await loadApprovalScope(admin, auth);
+    const allowedWorkOrderIds = await loadAllowedWorkOrderIds(
+      admin,
+      approvalOrganizationScope,
+      assignments
+    );
+
+    if (
+      allowedWorkOrderIds !== null &&
+      (raBills || []).some(
+        (raBill) =>
+          raBill.work_order_id && !allowedWorkOrderIds.includes(raBill.work_order_id)
+      )
+    ) {
+      return NextResponse.json(
+        { error: "You do not have access to one or more RA Bill Work Orders." },
+        { status: 403 }
+      );
+    }
+
     const { data: documents, error } = await admin
       .from("ra_bill_documents")
       .select("id, ra_bill_id, file_name, file_url, uploaded_at")

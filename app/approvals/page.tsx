@@ -3,17 +3,29 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { CheckCircle2, FileMinus, FileText, Trash2 } from "lucide-react";
+import AlertMessage from "@/components/AlertMessage";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can, hasGlobalAccess } from "@/lib/accessControl";
+import { formatIstTimestamp } from "@/lib/dateTime";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
+}
+
+function formatDateTime(value: string | null | undefined) {
+  return formatIstTimestamp(value);
+}
+
+function auditName(name: string | null | undefined, email: string | null | undefined) {
+  return name || email || "-";
 }
 
 type ApprovalAction = "Approved" | "Rejected";
 type RaApprovalAction = "Approved" | "Rejected";
 
 export default function ApprovalsPage() {
+  const { access } = useAccessContext();
   const [bills, setBills] = useState<any[]>([]);
   const [debitNotes, setDebitNotes] = useState<any[]>([]);
 
@@ -28,120 +40,85 @@ export default function ApprovalsPage() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState("");
   const [message, setMessage] = useState("");
+  const [messageType, setMessageType] = useState<"success" | "error">("error");
   const [remarks, setRemarks] = useState<Record<string, string>>({});
-  const [canDeleteDebitNotes, setCanDeleteDebitNotes] = useState(false);
+  const canViewCommercialApprovals =
+    hasGlobalAccess(access) ||
+    can(access?.permissions || [], "ra_approval", "view") ||
+    can(access?.permissions || [], "ra_approval", "approve") ||
+    can(access?.permissions || [], "ra_approval", "reject");
+  const canApproveCommercialApprovals =
+    hasGlobalAccess(access) || can(access?.permissions || [], "ra_approval", "approve");
+  const canRejectCommercialApprovals =
+    hasGlobalAccess(access) || can(access?.permissions || [], "ra_approval", "reject");
 
   useEffect(() => {
-    loadAccess();
-    loadApprovals();
-  }, []);
+    if (access) {
+      loadApprovals();
+    }
+  }, [access]);
 
-  async function loadAccess() {
-    const access = await getCurrentUserAccess();
-    setCanDeleteDebitNotes(can(access.permissions, "debit_notes", "delete"));
+  function showMessage(type: "success" | "error", text: string) {
+    setMessageType(type);
+    setMessage(text);
   }
 
   async function loadApprovals() {
     setLoading(true);
     setMessage("");
 
-    const { data: billData, error: billError } = await supabase
-      .from("ra_bills")
-      .select("*")
-      .eq("approval_status", "Pending")
-      .order("created_at", { ascending: false });
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const token = session?.access_token;
 
-    if (billError) {
-      setMessage(billError.message);
+    if (!canViewCommercialApprovals) {
+      setBills([]);
+      setDebitNotes([]);
+      setWorkOrders([]);
+      setVendors([]);
+      setSites([]);
+      setCompanies([]);
+      setRaDocuments([]);
+      setDebitDocuments([]);
       setLoading(false);
       return;
     }
 
-    const { data: debitData, error: debitError } = await supabase
-      .from("debit_notes")
-      .select("*")
-      .eq("approval_status", "Pending")
-      .order("created_at", { ascending: false });
-
-    if (debitError) {
-      setMessage(debitError.message);
+    if (!token) {
+      showMessage("error", "Unable to load approvals: missing auth session.");
       setLoading(false);
       return;
     }
 
-    const raBills = billData || [];
-    const notes = debitData || [];
+    const approvalResponse = await fetch("/api/approvals", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+    });
+
+    const approvalResult = await approvalResponse.json().catch(() => ({}));
+
+    if (!approvalResponse.ok) {
+      showMessage("error", approvalResult.error || "Failed to load approvals.");
+      setLoading(false);
+      return;
+    }
+
+    const raBills: any[] = approvalResult.bills || [];
+    const notes: any[] = approvalResult.debitNotes || [];
 
     setBills(raBills);
     setDebitNotes(notes);
 
-    const workOrderIds = Array.from(
-      new Set(
-        [
-          ...raBills.map((b) => b.work_order_id),
-          ...notes.map((n) => n.work_order_id),
-        ].filter(Boolean)
-      )
-    );
-
-    const vendorIds = Array.from(
-      new Set(
-        [
-          ...raBills.map((b) => b.vendor_id),
-          ...notes.map((n) => n.vendor_id),
-        ].filter(Boolean)
-      )
-    );
-
     const raBillIds = raBills.map((b) => b.id);
     const debitNoteIds = notes.map((n) => n.id);
-
-    const { data: woData } = workOrderIds.length
-      ? await supabase
-          .from("work_orders")
-          .select("id, wo_number, company_id, site_id")
-          .in("id", workOrderIds)
-      : { data: [] };
-
-    const siteIds = Array.from(
-      new Set((woData || []).map((wo: any) => wo.site_id).filter(Boolean))
-    );
-
-    const companyIds = Array.from(
-      new Set((woData || []).map((wo: any) => wo.company_id).filter(Boolean))
-    );
-
-    const { data: vendorData } = vendorIds.length
-      ? await supabase
-          .from("vendors")
-          .select("id, vendor_name")
-          .in("id", vendorIds)
-      : { data: [] };
-
-    const { data: siteData } = siteIds.length
-      ? await supabase
-          .from("sites")
-          .select("id, site_name, site_code")
-          .in("id", siteIds)
-      : { data: [] };
-
-    const { data: companyData } = companyIds.length
-      ? await supabase
-          .from("companies")
-          .select("id, company_name, company_code")
-          .in("id", companyIds)
-      : { data: [] };
 
     let raDocumentData: any[] = [];
 
     if (raBillIds.length) {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
       if (!token) {
-        setMessage("Unable to load RA Bill documents: missing auth session.");
+        showMessage("error", "Unable to load RA Bill documents: missing auth session.");
         setLoading(false);
         return;
       }
@@ -159,7 +136,7 @@ export default function ApprovalsPage() {
       const documentResult = await documentResponse.json();
 
       if (!documentResponse.ok) {
-        setMessage(documentResult.error || "Failed to load RA Bill documents.");
+        showMessage("error", documentResult.error || "Failed to load RA Bill documents.");
         setLoading(false);
         return;
       }
@@ -170,13 +147,8 @@ export default function ApprovalsPage() {
     let debitDocumentData: any[] = [];
 
     if (debitNoteIds.length) {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
       if (!token) {
-        setMessage("Unable to load Debit Note documents: missing auth session.");
+        showMessage("error", "Unable to load Debit Note documents: missing auth session.");
         setLoading(false);
         return;
       }
@@ -194,7 +166,7 @@ export default function ApprovalsPage() {
       const documentResult = await documentResponse.json();
 
       if (!documentResponse.ok) {
-        setMessage(documentResult.error || "Failed to load Debit Note documents.");
+        showMessage("error", documentResult.error || "Failed to load Debit Note documents.");
         setLoading(false);
         return;
       }
@@ -202,10 +174,10 @@ export default function ApprovalsPage() {
       debitDocumentData = documentResult.documents || [];
     }
 
-    setWorkOrders(woData || []);
-    setVendors(vendorData || []);
-    setSites(siteData || []);
-    setCompanies(companyData || []);
+    setWorkOrders(approvalResult.workOrders || []);
+    setVendors(approvalResult.vendors || []);
+    setSites(approvalResult.sites || []);
+    setCompanies(approvalResult.companies || []);
     setRaDocuments(raDocumentData || []);
     setDebitDocuments(debitDocumentData || []);
 
@@ -231,7 +203,8 @@ export default function ApprovalsPage() {
 
   function openRaDocument(document: any) {
     if (!document.signed_url) {
-      setMessage(
+      showMessage(
+        "error",
         document.signed_url_error ||
           "Unable to open RA Bill file. Signed URL was not available."
       );
@@ -252,7 +225,8 @@ export default function ApprovalsPage() {
 
   function openDebitDocument(document: any) {
     if (!document.signed_url) {
-      setMessage(
+      showMessage(
+        "error",
         document.signed_url_error ||
           "Unable to open Debit Note file. Signed URL was not available."
       );
@@ -266,159 +240,140 @@ export default function ApprovalsPage() {
     setMessage("");
     setSavingId(`ra-${billId}`);
 
-    const remark = remarks[`ra-${billId}`]?.trim() || "";
-
-    if (action === "Rejected" && !remark) {
-      setMessage("Reason is required for Reject.");
+    if (
+      (action === "Approved" && !canApproveCommercialApprovals) ||
+      (action === "Rejected" && !canRejectCommercialApprovals)
+    ) {
+      showMessage("error", "You do not have permission to perform this approval action.");
       setSavingId("");
       return;
     }
 
-    const { data: userData } = await supabase.auth.getUser();
-    const email = userData.user?.email || "";
-    const name =
-      userData.user?.user_metadata?.full_name ||
-      userData.user?.email ||
-      "HO User";
+    const remark = remarks[`ra-${billId}`]?.trim() || "";
 
-    const now = new Date().toISOString();
-
-    let updateData: any = {
-      approval_status: action,
-    };
-
-    if (action === "Approved") {
-      updateData = {
-        ...updateData,
-        status: "Approved",
-        approved_by_name: name,
-        approved_by_email: email,
-        approved_at: now,
-      };
+    if (action === "Rejected" && !remark) {
+      showMessage("error", "Reason is required for Reject.");
+      setSavingId("");
+      
+      return;
     }
 
-    if (action === "Rejected") {
-      updateData = {
-        ...updateData,
-        status: "Rejected",
-        rejected_by_name: name,
-        rejected_by_email: email,
-        rejected_at: now,
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      showMessage("error", "Your session has expired. Please sign in again.");
+      setSavingId("");
+      return;
+    }
+
+    const response = await fetch(`/api/ra-bills/${billId}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action,
         rejection_reason: remark,
-      };
-    }
+      }),
+    });
 
-    const { error } = await supabase
-      .from("ra_bills")
-      .update(updateData)
-      .eq("id", billId);
+    const result = await response.json().catch(() => ({}));
 
-    if (error) {
-      setMessage(error.message);
+    if (!response.ok) {
+      showMessage(
+        "error",
+        result.error || `Failed to ${action === "Approved" ? "approve" : "reject"} RA Bill.`
+      );
       setSavingId("");
       return;
     }
 
     setBills((prev) => prev.filter((bill) => bill.id !== billId));
-    setSavingId("");
-  }
-
-  async function updateDebitNoteStatus(
-    debitNoteId: string,
-    action: ApprovalAction
-  ) {
-    setMessage("");
-    setSavingId(`dn-${debitNoteId}`);
-
-    const remark = remarks[`dn-${debitNoteId}`]?.trim() || "";
-
-    if (action === "Rejected" && remark.length < 10) {
-      setMessage("Reason must be at least 10 characters for Reject/Delete.");
-      setSavingId("");
-      return;
-    }
-
-    const { data: userData } = await supabase.auth.getUser();
-    const email = userData.user?.email || "";
-    const name =
-      userData.user?.user_metadata?.full_name ||
-      userData.user?.email ||
-      "HO User";
-
-    const now = new Date().toISOString();
-
-    if (action === "Rejected") {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session?.access_token) {
-        setMessage("Please sign in again to delete the Debit Note.");
-        setSavingId("");
-        return;
-      }
-
-      const response = await fetch(
-        `/api/debit-notes?debit_note_id=${encodeURIComponent(debitNoteId)}`,
-        {
-          method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ deletion_reason: remark }),
-        }
-      );
-      const result = await response.json();
-
-      if (!response.ok) {
-        setMessage(result.error || "Failed to delete Debit Note.");
-        setSavingId("");
-        return;
-      }
-
-      setDebitNotes((prev) =>
-        prev.filter((note) => note.id !== debitNoteId)
-      );
-      setDebitDocuments((prev) =>
-        prev.filter((document) => document.debit_note_id !== debitNoteId)
-      );
-      setSavingId("");
-      return;
-    }
-
-    let updateData: any = {
-      approval_status: action,
-    };
-
-    if (action === "Approved") {
-      updateData = {
-        ...updateData,
-        status: "Approved",
-        approved_by_name: name,
-        approved_by_email: email,
-        approved_at: now,
-      };
-    }
-
-    const { error } = await supabase
-      .from("debit_notes")
-      .update(updateData)
-      .eq("id", debitNoteId);
-
-    if (error) {
-      setMessage(error.message);
-      setSavingId("");
-      return;
-    }
-
-    setDebitNotes((prev) =>
-      prev.filter((note) => note.id !== debitNoteId)
+    showMessage(
+      "success",
+      action === "Approved"
+        ? "RA Bill approved successfully."
+        : "RA Bill rejected successfully."
     );
     setSavingId("");
   }
 
+async function updateDebitNoteStatus(
+  debitNoteId: string,
+  action: ApprovalAction
+) {
+  setMessage("");
+  setSavingId(`dn-${debitNoteId}`);
+
+  if (
+    (action === "Approved" && !canApproveCommercialApprovals) ||
+    (action === "Rejected" && !canRejectCommercialApprovals)
+  ) {
+    showMessage("error", "You do not have permission to perform this approval action.");
+    setSavingId("");
+    return;
+  }
+
+  const remark = remarks[`dn-${debitNoteId}`]?.trim() || "";
+
+  if (action === "Rejected" && remark.length < 10) {
+    showMessage("error", "Reason must be at least 10 characters for Reject.");
+    setSavingId("");
+    return;
+  }
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    showMessage("error", "Your session has expired. Please sign in again.");
+    setSavingId("");
+    return;
+  }
+
+  const response = await fetch(
+    `/api/debit-notes?debit_note_id=${encodeURIComponent(debitNoteId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action,
+        rejection_reason: remark,
+      }),
+    }
+  );
+
+  const result = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    showMessage(
+      "error",
+      result.error ||
+        `Failed to ${action === "Approved" ? "approve" : "reject"} Debit Note.`
+    );
+    setSavingId("");
+    return;
+  }
+
+  setDebitNotes((prev) => prev.filter((note) => note.id !== debitNoteId));
+  showMessage(
+    "success",
+    action === "Approved"
+      ? "Debit Note approved successfully."
+      : "Debit Note rejected successfully."
+  );
+  setSavingId("");
+}
+
   if (loading) {
+    
     return <p className="text-sm text-slate-500">Loading approvals...</p>;
   }
 
@@ -446,13 +401,13 @@ export default function ApprovalsPage() {
         </button>
       </div>
 
-      {message && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {message}
-        </div>
-      )}
+      <AlertMessage
+        type={messageType}
+        message={message}
+        onClose={() => setMessage("")}
+      />
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Summary title="Pending RA Bills" value={String(bills.length)} />
         <Summary title="Pending Debit Notes" value={String(debitNotes.length)} />
         <Summary
@@ -482,12 +437,14 @@ export default function ApprovalsPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1300px] text-sm">
+          <table className="w-full min-w-[1480px] text-sm">
             <thead className="bg-slate-50 text-xs uppercase text-slate-500">
               <tr>
                 <th className="p-3 text-left">RA Details</th>
                 <th className="p-3 text-left">Site / WO</th>
                 <th className="p-3 text-left">Vendor</th>
+                <th className="p-3 text-left">Created By</th>
+                <th className="p-3 text-left">Created At</th>
                 <th className="p-3 text-right">Gross</th>
                 <th className="p-3 text-right">GST</th>
                 <th className="p-3 text-right">Net</th>
@@ -544,6 +501,21 @@ export default function ApprovalsPage() {
                     </td>
 
                     <td className="p-3">{vendor?.vendor_name || "-"}</td>
+
+                    <td className="p-3">
+                      <div className="max-w-[180px] truncate font-medium text-slate-800">
+                        {auditName(bill.created_by_name, bill.created_by_email)}
+                      </div>
+                      {bill.created_by_name && bill.created_by_email && bill.created_by_name !== bill.created_by_email && (
+                        <div className="max-w-[180px] truncate text-xs text-slate-500">
+                          {bill.created_by_email}
+                        </div>
+                      )}
+                    </td>
+
+                    <td className="p-3 text-slate-700">
+                      {formatDateTime(bill.created_at)}
+                    </td>
 
                     <td className="p-3 text-right font-semibold">
                       {money(bill.gross_amount)}
@@ -612,6 +584,8 @@ export default function ApprovalsPage() {
                       <ActionButtons
                         saving={savingId === remarkKey}
                         viewHref={`/ra-bills/${bill.id}`}
+                        showApprove={canApproveCommercialApprovals}
+                        showReject={canRejectCommercialApprovals}
                         onApprove={() => updateRaStatus(bill.id, "Approved")}
                         onReject={() => updateRaStatus(bill.id, "Rejected")}
                       />
@@ -622,7 +596,7 @@ export default function ApprovalsPage() {
 
               {bills.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="p-8 text-center text-slate-500">
+                  <td colSpan={11} className="p-8 text-center text-slate-500">
                     No pending RA Bills found.
                   </td>
                 </tr>
@@ -641,17 +615,19 @@ export default function ApprovalsPage() {
             </h2>
           </div>
           <p className="text-xs text-slate-500">
-            Approve or reject/delete debit notes.
+            Approve or reject debit notes. Rejected records remain available for audit.
           </p>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1250px] text-sm">
+          <table className="w-full min-w-[1430px] text-sm">
             <thead className="bg-slate-50 text-xs uppercase text-slate-500">
               <tr>
                 <th className="p-3 text-left">DN Details</th>
                 <th className="p-3 text-left">Site / WO</th>
                 <th className="p-3 text-left">Vendor</th>
+                <th className="p-3 text-left">Created By</th>
+                <th className="p-3 text-left">Created At</th>
                 <th className="p-3 text-left">Type</th>
                 <th className="p-3 text-right">Amount</th>
                 <th className="p-3 text-left">Reason</th>
@@ -709,6 +685,19 @@ export default function ApprovalsPage() {
                     </td>
 
                     <td className="p-3">{vendor?.vendor_name || "-"}</td>
+                    <td className="p-3">
+                      <div className="max-w-[180px] truncate font-medium text-slate-800">
+                        {auditName(note.created_by_name, note.created_by_email)}
+                      </div>
+                      {note.created_by_name && note.created_by_email && note.created_by_name !== note.created_by_email && (
+                        <div className="max-w-[180px] truncate text-xs text-slate-500">
+                          {note.created_by_email}
+                        </div>
+                      )}
+                    </td>
+                    <td className="p-3 text-slate-700">
+                      {formatDateTime(note.created_at)}
+                    </td>
                     <td className="p-3">{note.debit_note_type || "-"}</td>
 
                     <td className="p-3 text-right font-semibold">
@@ -764,7 +753,7 @@ export default function ApprovalsPage() {
                           }))
                         }
                         className="min-h-24 w-64 rounded-xl border px-3 py-2 text-sm outline-none focus:border-slate-400"
-                        placeholder="Required for reject/delete"
+                        placeholder="Required for reject"
                       />
                     </td>
 
@@ -772,7 +761,8 @@ export default function ApprovalsPage() {
                       <ActionButtons
                         saving={savingId === remarkKey}
                         viewHref={`/debit-notes/${note.id}`}
-                        showReject={canDeleteDebitNotes}
+                        showApprove={canApproveCommercialApprovals}
+                        showReject={canRejectCommercialApprovals}
                         onApprove={() =>
                           updateDebitNoteStatus(note.id, "Approved")
                         }
@@ -787,7 +777,7 @@ export default function ApprovalsPage() {
 
               {debitNotes.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="p-8 text-center text-slate-500">
+                  <td colSpan={11} className="p-8 text-center text-slate-500">
                     No pending Debit Notes found.
                   </td>
                 </tr>
@@ -796,6 +786,7 @@ export default function ApprovalsPage() {
           </table>
         </div>
       </div>
+
     </section>
   );
 }
@@ -803,12 +794,14 @@ export default function ApprovalsPage() {
 function ActionButtons({
   saving,
   viewHref,
+  showApprove = true,
   showReject = true,
   onApprove,
   onReject,
 }: {
   saving: boolean;
   viewHref: string;
+  showApprove?: boolean;
   showReject?: boolean;
   onApprove: () => void;
   onReject: () => void;
@@ -822,15 +815,17 @@ function ActionButtons({
         View
       </Link>
 
-      <button
-        type="button"
-        disabled={saving}
-        onClick={onApprove}
-        className="inline-flex w-28 items-center justify-center gap-1 rounded-xl bg-green-600 px-3 py-2 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-60"
-      >
-        <CheckCircle2 className="h-3.5 w-3.5" />
-        Approve
-      </button>
+      {showApprove && (
+        <button
+          type="button"
+          disabled={saving}
+          onClick={onApprove}
+          className="inline-flex w-28 items-center justify-center gap-1 rounded-xl bg-green-600 px-3 py-2 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-60"
+        >
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          Approve
+        </button>
+      )}
 
       {showReject && (
         <button

@@ -1,10 +1,19 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireAnyPermission } from "@/lib/serverPermissions";
+import {
+  loadAllowedWorkOrderIds,
+  loadApprovalScope,
+} from "@/app/api/approvals/_shared";
 
 const DOCUMENT_BUCKET = "invoice-documents";
 
 function isGoogleDriveUrl(value: string | null | undefined) {
-  return String(value || "").trim().startsWith("https://drive.google.com/");
+  const url = String(value || "").trim();
+  return (
+    url.startsWith("https://drive.google.com/") ||
+    url.startsWith("https://docs.google.com/")
+  );
 }
 
 function adminClient() {
@@ -16,30 +25,6 @@ function adminClient() {
   }
 
   return createClient(supabaseUrl, serviceRoleKey);
-}
-
-async function requireUser(request: Request) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  const token = request.headers.get("authorization")?.replace("Bearer ", "");
-
-  if (!token) {
-    return { error: "Missing auth token.", status: 401 };
-  }
-
-  const authClient = createClient(supabaseUrl, anonKey);
-  const {
-    data: { user },
-    error,
-  } = await authClient.auth.getUser(token);
-
-  if (error) throw error;
-
-  if (!user) {
-    return { error: "User not found.", status: 401 };
-  }
-
-  return { user };
 }
 
 function normalizeStoragePath(value: string | null) {
@@ -60,13 +45,14 @@ function normalizeStoragePath(value: string | null) {
 
 export async function GET(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const auth = await requireAnyPermission(request, [
+      { moduleCode: "invoices", actionCode: "view" },
+      { moduleCode: "itc_claims", actionCode: "view" },
+      { moduleCode: "itc_claims", actionCode: "approve" },
+    ]);
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("response" in auth) {
+      return auth.response;
     }
 
     const { searchParams } = new URL(request.url);
@@ -85,6 +71,41 @@ export async function GET(request: Request) {
     }
 
     const admin = adminClient();
+    const { data: invoices, error: invoicesError } = await admin
+      .from("invoices")
+      .select("id, organization_id, work_order_id")
+      .in("id", invoiceIds);
+
+    if (invoicesError) throw invoicesError;
+
+    if ((invoices || []).length !== invoiceIds.length) {
+      return NextResponse.json(
+        { error: "One or more invoices were not found." },
+        { status: 404 }
+      );
+    }
+
+    const { organizationScope, assignments } = await loadApprovalScope(admin, auth);
+    const allowedWorkOrderIds = await loadAllowedWorkOrderIds(
+      admin,
+      organizationScope,
+      assignments,
+    );
+
+    if (
+      allowedWorkOrderIds !== null &&
+      (invoices || []).some(
+        (invoice) =>
+          !invoice.work_order_id ||
+          !allowedWorkOrderIds.includes(invoice.work_order_id),
+      )
+    ) {
+      return NextResponse.json(
+        { error: "You do not have access to this Work Order scope." },
+        { status: 403 }
+      );
+    }
+
     const { data: documents, error } = await admin
       .from("invoice_documents")
       .select("id, invoice_id, file_name, file_url, uploaded_at")

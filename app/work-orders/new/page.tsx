@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { sortCompanies } from "@/lib/companyOrdering";
+import AlertMessage from "@/components/AlertMessage";
 
 type Vendor = {
   id: string;
@@ -39,9 +40,11 @@ type FormState = {
   wo_number: string;
   wo_date: string;
   wo_type: string;
+  wo_value: string;
+  gst_percent: string;
   description: string;
-  primary_vendor_id: string;
-  primary_vendor_role: string;
+  vendor_id: string;
+  vendor_role: string;
 };
 
 const steps = [
@@ -90,9 +93,11 @@ export default function NewWorkOrderPage() {
     wo_number: "",
     wo_date: "",
     wo_type: "Consultant",
+    wo_value: "",
+    gst_percent: "18",
     description: "",
-    primary_vendor_id: "",
-    primary_vendor_role: "Main Contractor",
+    vendor_id: "",
+    vendor_role: "Main Contractor",
   });
 
   useEffect(() => {
@@ -110,9 +115,25 @@ export default function NewWorkOrderPage() {
   );
 
   const selectedVendor = useMemo(
-    () => vendors.find((item) => item.id === form.primary_vendor_id),
-    [vendors, form.primary_vendor_id]
+    () => vendors.find((item) => item.id === form.vendor_id),
+    [vendors, form.vendor_id]
   );
+
+  const commercialTotals = useMemo(() => {
+    const basicValue = Number(form.wo_value || 0);
+    const gstPercent = Number(form.gst_percent || 0);
+    const gstAmount =
+      Number.isFinite(basicValue) && Number.isFinite(gstPercent)
+        ? (basicValue * gstPercent) / 100
+        : 0;
+
+    return {
+      basicValue: Number.isFinite(basicValue) ? basicValue : 0,
+      gstPercent: Number.isFinite(gstPercent) ? gstPercent : 0,
+      gstAmount,
+      totalValue: (Number.isFinite(basicValue) ? basicValue : 0) + gstAmount,
+    };
+  }, [form.wo_value, form.gst_percent]);
 
   async function loadData() {
     const { data: vendorData, error: vendorError } = await supabase
@@ -248,19 +269,22 @@ export default function NewWorkOrderPage() {
     if (step === 2) {
       if (!form.wo_date) errors.wo_date = "WO Date is required.";
       if (!form.wo_type) errors.wo_type = "WO Type is required.";
+      if (!form.wo_value || Number(form.wo_value) <= 0) {
+        errors.wo_value = "WO Basic Value is required.";
+      }
+      if (form.gst_percent === "" || Number(form.gst_percent) < 0) {
+        errors.gst_percent = "GST % is required.";
+      }
       if (!workOrderFile) errors.work_order_file = "Work Order file is required.";
     }
 
     if (step === 3) {
-      if (!form.primary_vendor_id) {
-        errors.primary_vendor_id = "Primary vendor is required.";
-      }
-      if (!form.primary_vendor_role) {
-        errors.primary_vendor_role = "Vendor role is required.";
-      }
-    }
+  if (!form.vendor_id) {
+    errors.vendor_id = "Primary vendor is required.";
+  }
+}
 
-    setFieldErrors(errors);
+setFieldErrors(errors);
     if (Object.keys(errors).length > 0) {
       setMessage("Please fix the highlighted fields before continuing.");
       return false;
@@ -289,9 +313,31 @@ export default function NewWorkOrderPage() {
     return null;
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function parseApiResponse(response: Response) {
+    const contentType = response.headers.get("content-type") || "";
+
+    if (contentType.includes("application/json")) {
+      return response.json();
+    }
+
+    const text = await response.text();
+    console.error(
+      "POST /api/work-orders returned non-JSON response:",
+      text.slice(0, 200)
+    );
+
+    return {
+      error: "Server returned an invalid response. Check API logs.",
+    };
+  }
+
+  async function handleSubmit(e?: React.FormEvent | React.MouseEvent) {
+  e?.preventDefault();
     setMessage("");
+
+    if (saving) return;
+
+  
 
     const firstInvalidStep = await findFirstInvalidStep();
     if (firstInvalidStep) {
@@ -323,9 +369,11 @@ export default function NewWorkOrderPage() {
       payload.append("wo_number", form.wo_number.trim());
       payload.append("wo_date", form.wo_date);
       payload.append("wo_type", form.wo_type);
+      payload.append("wo_value", String(commercialTotals.basicValue));
+      payload.append("gst_percent", String(commercialTotals.gstPercent));
       payload.append("description", form.description);
-      payload.append("primary_vendor_id", form.primary_vendor_id);
-      payload.append("primary_vendor_role", form.primary_vendor_role);
+      payload.append("vendor_id", form.vendor_id);
+      payload.append("vendor_role", form.vendor_role);
       payload.append("work_order_file", workOrderFile);
 
       const response = await fetch("/api/work-orders", {
@@ -336,7 +384,7 @@ export default function NewWorkOrderPage() {
         body: payload,
       });
 
-      const result = await response.json();
+      const result = await parseApiResponse(response);
 
       if (!response.ok) {
         throw new Error(result.error || "Failed to create work order.");
@@ -355,7 +403,7 @@ export default function NewWorkOrderPage() {
     "w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-950 shadow-sm outline-none transition focus:border-sky-700 focus:ring-2 focus:ring-sky-100";
 
   return (
-    <form onSubmit={handleSubmit} className="mx-auto max-w-7xl space-y-8">
+    <div className="mx-auto max-w-7xl space-y-8">
       <header className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <nav className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -452,22 +500,21 @@ export default function NewWorkOrderPage() {
         <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="h-1 rounded-t-xl bg-gradient-to-r from-sky-200 to-sky-700" />
           <div className="p-6 lg:p-8">
-            {message && (
-              <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-                {message}
-              </div>
-            )}
+            <div className="mb-6">
+              <AlertMessage
+                type="error"
+                message={message}
+                onClose={() => setMessage("")}
+              />
+            </div>
 
             {currentErrors.length > 0 && (
-              <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
-                <p className="text-sm font-semibold text-amber-900">
-                  Please resolve these fields:
-                </p>
-                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-800">
-                  {currentErrors.map((error) => (
-                    <li key={error}>{error}</li>
-                  ))}
-                </ul>
+              <div className="mb-6">
+                <AlertMessage
+                  type="error"
+                  message={`Please resolve these fields: ${currentErrors.join(" ")}`}
+                  onClose={() => setFieldErrors({})}
+                />
               </div>
             )}
 
@@ -570,6 +617,52 @@ export default function NewWorkOrderPage() {
                       <option>Rental</option>
                     </select>
                   </FieldShell>
+
+                  <FieldShell
+                    label="WO Basic Value"
+                    required
+                    error={fieldErrors.wo_value}
+                  >
+                    <input
+                      name="wo_value"
+                      value={form.wo_value}
+                      onChange={handleChange}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="Enter WO Basic Value"
+                      className={inputClass}
+                    />
+                  </FieldShell>
+
+                  <FieldShell label="GST %" required error={fieldErrors.gst_percent}>
+                    <input
+                      name="gst_percent"
+                      value={form.gst_percent}
+                      onChange={handleChange}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="Enter GST %"
+                      className={inputClass}
+                    />
+                  </FieldShell>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-3">
+                  <CommercialSummary
+                    label="WO Basic Value"
+                    value={money(commercialTotals.basicValue)}
+                  />
+                  <CommercialSummary
+                    label="GST Amount"
+                    value={money(commercialTotals.gstAmount)}
+                  />
+                  <CommercialSummary
+                    label="Total Value of WO"
+                    value={money(commercialTotals.totalValue)}
+                    highlight
+                  />
                 </div>
 
                 <FieldShell
@@ -607,11 +700,11 @@ export default function NewWorkOrderPage() {
                   <FieldShell
                     label="Vendor"
                     required
-                    error={fieldErrors.primary_vendor_id}
+                    error={fieldErrors.vendor_id}
                   >
                     <select
-                      name="primary_vendor_id"
-                      value={form.primary_vendor_id}
+                      name="vendor_id"
+                      value={form.vendor_id}
                       onChange={handleChange}
                       className={inputClass}
                     >
@@ -624,25 +717,7 @@ export default function NewWorkOrderPage() {
                     </select>
                   </FieldShell>
 
-                  <FieldShell
-                    label="Role in Work Order"
-                    required
-                    error={fieldErrors.primary_vendor_role}
-                  >
-                    <select
-                      name="primary_vendor_role"
-                      value={form.primary_vendor_role}
-                      onChange={handleChange}
-                      className={inputClass}
-                    >
-                      <option>Main Contractor</option>
-                      <option>Subcontractor</option>
-                      <option>Supplier</option>
-                      <option>Consultant</option>
-                      <option>Labour Contractor</option>
-                      <option>Equipment Rental</option>
-                    </select>
-                  </FieldShell>
+            
                 </div>
 
                 {selectedVendor && (
@@ -686,6 +761,18 @@ export default function NewWorkOrderPage() {
                   <ReviewItem label="WO Date" value={form.wo_date} />
                   <ReviewItem label="WO Type" value={form.wo_type} />
                   <ReviewItem
+                    label="WO Basic Value"
+                    value={money(commercialTotals.basicValue)}
+                  />
+                  <ReviewItem
+                    label="GST"
+                    value={`${money(commercialTotals.gstAmount)} (${commercialTotals.gstPercent}%)`}
+                  />
+                  <ReviewItem
+                    label="Total Value of WO"
+                    value={money(commercialTotals.totalValue)}
+                  />
+                  <ReviewItem
                     label="Uploaded File"
                     value={workOrderFile?.name || "-"}
                     wide
@@ -694,7 +781,7 @@ export default function NewWorkOrderPage() {
 
                 <ReviewSection title="Vendor Details" onEdit={() => setCurrentStep(3)}>
                   <ReviewItem label="Vendor" value={selectedVendor?.vendor_name} />
-                  <ReviewItem label="Role" value={form.primary_vendor_role} />
+                  
                 </ReviewSection>
               </StepPanel>
             )}
@@ -730,20 +817,21 @@ export default function NewWorkOrderPage() {
                   </button>
                 ) : (
                   <button
-                    type="submit"
-                    disabled={saving}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-sky-700 px-6 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-sky-800 disabled:opacity-60"
-                  >
-                    <FileText className="h-4 w-4" />
-                    {saving ? "Saving..." : "Submit Work Order"}
-                  </button>
+  type="button"
+  onClick={handleSubmit}
+  disabled={saving}
+  className="inline-flex items-center justify-center gap-2 rounded-lg bg-sky-700 px-6 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-sky-800 disabled:opacity-60"
+>
+  <FileText className="h-4 w-4" />
+  {saving ? "Saving..." : "Submit Work Order"}
+</button>
                 )}
               </div>
             </footer>
           </div>
         </section>
       </div>
-    </form>
+    </div>
   );
 }
 
@@ -763,6 +851,37 @@ function StepPanel({
         <p className="mt-2 text-sm text-slate-600">{description}</p>
       </header>
       <div className="space-y-6">{children}</div>
+    </div>
+  );
+}
+
+function money(value: number) {
+  return `Rs. ${Number(value || 0).toLocaleString("en-IN", {
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function CommercialSummary({
+  label,
+  value,
+  highlight = false,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div
+      className={`rounded-xl border p-4 ${
+        highlight
+          ? "border-sky-200 bg-sky-50"
+          : "border-slate-200 bg-slate-50"
+      }`}
+    >
+      <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
+        {label}
+      </p>
+      <p className="mt-2 text-lg font-bold text-slate-950">{value}</p>
     </div>
   );
 }

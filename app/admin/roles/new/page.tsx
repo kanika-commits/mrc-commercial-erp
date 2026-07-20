@@ -35,16 +35,30 @@ export default function NewRolePage() {
       const finalRoleCode =
         roleCode.trim() || generateCode(roleName);
 
-      const { error } = await supabase
-        .from("roles")
-        .insert({
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch("/api/admin/roles", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
           role_name: roleName.trim(),
           role_code: finalRoleCode,
-          status: "active",
-          is_system_role: false,
-        });
+        }),
+      });
+      const result = await response.json();
 
-      if (error) throw error;
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to create role.");
+      }
 
       router.push("/admin/roles");
     } catch (error: any) {

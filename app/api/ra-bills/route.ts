@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { optimizeUploadFile } from "@/lib/fileOptimization";
+import { requirePermission } from "@/lib/serverPermissions";
+import {
+  isInOrganizationScope,
+  loadActorOrganizationScope,
+} from "@/lib/serverOrganizationScope";
 
+
+const MODULE_CODE = "ra_bills";
 const DOCUMENT_BUCKET = "ra-bill-documents";
 
 function adminClient() {
@@ -38,12 +46,12 @@ async function requireUser(request: Request) {
   return { user };
 }
 
-function safeFileName(name: string) {
-  return name.replace(/[^a-zA-Z0-9.]/g, "_");
-}
-
 function normalized(value: string) {
   return value.trim().toLowerCase();
+}
+
+function safeFileName(fileName: string) {
+  return fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
 function duplicateErrorMessage(error: any) {
@@ -79,13 +87,10 @@ async function cleanupRABill(
 
 export async function POST(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const auth = await requirePermission(request, MODULE_CODE, "add");
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("response" in auth) {
+      return auth.response;
     }
 
     const formData = await request.formData();
@@ -149,7 +154,7 @@ export async function POST(request: Request) {
 
     const { data: workOrder, error: workOrderError } = await admin
       .from("work_orders")
-      .select("id, organization_id")
+      .select("id, organization_id, status, approval_status")
       .eq("id", workOrderId)
       .maybeSingle();
 
@@ -159,6 +164,30 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "Selected Work Order was not found." },
         { status: 404 }
+      );
+    }
+
+    const workOrderStatus = String(workOrder.status || "").trim().toLowerCase();
+    const workOrderApprovalStatus = String(workOrder.approval_status || "")
+      .trim()
+      .toLowerCase();
+
+    if (
+      workOrderStatus !== "active" ||
+      !["pending", "approved"].includes(workOrderApprovalStatus)
+    ) {
+      return NextResponse.json(
+        { error: "This Work Order is suspended and cannot accept new transactions." },
+        { status: 400 }
+      );
+    }
+
+    const organizationScope = await loadActorOrganizationScope(admin, auth);
+
+    if (!isInOrganizationScope(organizationScope, workOrder.organization_id)) {
+      return NextResponse.json(
+        { error: "You do not have access to this organization." },
+        { status: 403 }
       );
     }
 
@@ -180,14 +209,16 @@ export async function POST(request: Request) {
 
     const { data: existingRaBills, error: duplicateError } = await admin
       .from("ra_bills")
-      .select("id, ra_number")
+      .select("id, ra_number, approval_status")
       .eq("work_order_id", workOrderId);
 
     if (duplicateError) throw duplicateError;
 
     const duplicate = (existingRaBills || []).find(
-      (bill) => normalized(String(bill.ra_number || "")) === normalized(raNumber)
-    );
+  (bill) =>
+    normalized(String(bill.ra_number || "")) === normalized(raNumber) &&
+    normalized(String(bill.approval_status || "")) !== "rejected"
+);
 
     if (duplicate) {
       return NextResponse.json(
@@ -235,15 +266,26 @@ export async function POST(request: Request) {
       raBillId = raBill.id;
 
       for (const file of files) {
-        const path = `${workOrder.organization_id}/ra-bills/${raBill.id}/${Date.now()}_${safeFileName(file.name)}`;
+        const fileBuffer = Buffer.from(await file.arrayBuffer());
+        const optimizedFile = await optimizeUploadFile(
+          fileBuffer,
+          file.type || "application/octet-stream",
+          file.name
+        );
+        const storagePath = `${workOrder.organization_id}/pending/${raBill.id}/${Date.now()}-${safeFileName(
+          file.name
+        )}`;
 
         const { error: uploadError } = await admin.storage
           .from(DOCUMENT_BUCKET)
-          .upload(path, file);
+          .upload(storagePath, optimizedFile.buffer, {
+            contentType: optimizedFile.mimeType || "application/octet-stream",
+            upsert: false,
+          });
 
         if (uploadError) throw uploadError;
 
-        uploadedPaths.push(path);
+        uploadedPaths.push(storagePath);
 
         const { error: documentError } = await admin
           .from("ra_bill_documents")
@@ -251,7 +293,9 @@ export async function POST(request: Request) {
             organization_id: workOrder.organization_id,
             ra_bill_id: raBill.id,
             file_name: file.name,
-            file_url: path,
+            file_url: storagePath,
+            file_path: storagePath,
+            uploaded_at: new Date().toISOString(),
           });
 
         if (documentError) throw documentError;

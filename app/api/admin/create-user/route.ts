@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requirePermission } from "@/lib/serverPermissions";
+import {
+  canAccessTargetUser,
+  loadActorOrganizationScope,
+  validateSubmittedUserScope,
+} from "@/lib/adminUserScope";
 
 type RoleRow = {
   user_id: string;
@@ -23,6 +29,12 @@ function uniqueRows<T>(rows: T[], keyFor: (row: T) => string) {
 
 export async function POST(request: Request) {
   try {
+    const permission = await requirePermission(request, "users", "add");
+
+    if ("response" in permission) {
+      return permission.response;
+    }
+
     const body = await request.json();
 
     const {
@@ -67,6 +79,45 @@ export async function POST(request: Request) {
     }
 
     const adminSupabase = createClient(supabaseUrl, serviceRoleKey);
+
+    const { data: selectedRoles, error: selectedRolesError } = await adminSupabase
+      .from("roles")
+      .select("id, role_code")
+      .in("id", role_ids);
+
+    if (selectedRolesError) throw selectedRolesError;
+
+    if ((selectedRoles || []).some((role) => role.role_code === "platform_owner")) {
+      return NextResponse.json(
+        {
+          error:
+            "Platform Owner is a system identity and cannot be assigned through user management.",
+        },
+        { status: 403 }
+      );
+    }
+
+    const actorOrganizationIds = await loadActorOrganizationScope(
+      adminSupabase,
+      permission
+    );
+    const scopeValidation = await validateSubmittedUserScope(
+      adminSupabase,
+      actorOrganizationIds,
+      {
+        organizationIds: organization_ids || [],
+        companyIds: company_ids || [],
+        siteIds: site_ids || [],
+      }
+    );
+
+    if (!scopeValidation.allowed) {
+      return NextResponse.json(
+        { error: scopeValidation.error },
+        { status: 403 }
+      );
+    }
+
     const normalizedEmail = normalizeEmail(email);
 
     const { data: existingUsers, error: listUsersError } =
@@ -77,6 +128,16 @@ export async function POST(request: Request) {
     let user = existingUsers.users.find(
       (item) => item.email?.toLowerCase() === normalizedEmail
     );
+
+    if (
+      user &&
+      !(await canAccessTargetUser(adminSupabase, actorOrganizationIds, user.id))
+    ) {
+      return NextResponse.json(
+        { error: "You do not have permission to manage this existing user." },
+        { status: 403 }
+      );
+    }
 
     if (!user) {
       const { data: authData, error: authError } =
@@ -127,7 +188,7 @@ export async function POST(request: Request) {
     const { data: siteData, error: siteError } = (site_ids || []).length
       ? await adminSupabase
           .from("sites")
-          .select("id, company_id")
+          .select("id, company_id, organization_id")
           .in("id", site_ids || [])
       : { data: [], error: null };
 

@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sortCompanies } from "@/lib/companyOrdering";
+import { requirePermission } from "@/lib/serverPermissions";
+import { isValidPermissionAction } from "@/lib/permissionMatrix";
+import {
+  canAccessTargetUser,
+  loadActorOrganizationScope,
+  validateSubmittedUserScope,
+} from "@/lib/adminUserScope";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -13,13 +20,138 @@ function adminClient() {
   return createClient(supabaseUrl, serviceRoleKey);
 }
 
+async function requireUserPermission(request: Request, actionCode: "delete") {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+  const token = request.headers.get("authorization")?.replace("Bearer ", "");
+
+  if (!token) {
+    return { error: "Missing auth token.", status: 401 };
+  }
+
+  if (!serviceRoleKey) {
+    throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY.");
+  }
+
+  const authClient = createClient(supabaseUrl, anonKey);
+  const supabase = createClient(supabaseUrl, serviceRoleKey);
+
+  const {
+    data: { user },
+    error: userError,
+  } = await authClient.auth.getUser(token);
+
+  if (userError) throw userError;
+
+  if (!user) {
+    return { error: "User not found.", status: 401 };
+  }
+
+  const { data: userRoles, error: userRolesError } = await supabase
+    .from("user_roles")
+    .select("role_id")
+    .eq("user_id", user.id);
+
+  if (userRolesError) throw userRolesError;
+
+  const roleIds = (userRoles || []).map((row) => row.role_id).filter(Boolean);
+
+  if (roleIds.length === 0) {
+    return {
+      error: `You do not have permission to ${actionCode} users.`,
+      status: 403,
+    };
+  }
+
+  const { data: roles, error: rolesError } = await supabase
+    .from("roles")
+    .select("id, role_code")
+    .in("id", roleIds);
+
+  if (rolesError) throw rolesError;
+
+  const roleCodes = (roles || []).map((role) => role.role_code).filter(Boolean);
+
+  if (roleCodes.includes("platform_owner")) {
+    return { user };
+  }
+
+  const [
+    { data: rolePermissions, error: rolePermissionError },
+    { data: userPermissions, error: userPermissionError },
+  ] = await Promise.all([
+    supabase
+      .from("role_permissions")
+      .select("module_code, action_code, allowed")
+      .in("role_id", roleIds),
+    supabase
+      .from("user_permissions")
+      .select("module_code, action_code, allowed")
+      .eq("user_id", user.id),
+  ]);
+
+  if (rolePermissionError) throw rolePermissionError;
+  if (userPermissionError) throw userPermissionError;
+
+  const allowed = [...(rolePermissions || []), ...(userPermissions || [])].some(
+    (permission) =>
+      permission.allowed === true &&
+      ((permission.module_code === "*" && permission.action_code === "*") ||
+        (permission.module_code === "users" &&
+          permission.action_code === actionCode))
+  );
+
+  if (!allowed) {
+    return {
+      error: `You do not have permission to ${actionCode} users.`,
+      status: 403,
+    };
+  }
+
+  return { user };
+}
+
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const permission = await requirePermission(request, "users", "view");
+
+    if ("response" in permission) {
+      return permission.response;
+    }
+
     const { id } = await params;
     const supabase = adminClient();
+    const actorOrganizationIds = await loadActorOrganizationScope(
+      supabase,
+      permission
+    );
+
+    if (!(await canAccessTargetUser(supabase, actorOrganizationIds, id))) {
+      return NextResponse.json(
+        { error: "You do not have permission to access this user." },
+        { status: 403 }
+      );
+    }
+
+    const organizationsQuery = supabase
+      .from("organizations")
+      .select("id, name, code, status")
+      .eq("status", "active")
+      .order("name");
+    const companiesQuery = supabase
+      .from("companies")
+      .select("id, organization_id, company_name, company_code, status")
+      .eq("status", "active")
+      .order("company_name");
+    const sitesQuery = supabase
+      .from("sites")
+      .select("id, organization_id, company_id, site_name, site_code, status")
+      .eq("status", "active")
+      .order("site_name");
 
     const [
       profile,
@@ -42,25 +174,19 @@ export async function GET(
         .select("id, role_name, role_code, status")
         .eq("status", "active")
         .order("role_name"),
-      supabase
-        .from("organizations")
-        .select("id, name, code, status")
-        .eq("status", "active")
-        .order("name"),
-      supabase
-        .from("companies")
-        .select("id, organization_id, company_name, company_code, status")
-        .eq("status", "active")
-        .order("company_name"),
-      supabase
-        .from("sites")
-        .select("id, company_id, site_name, site_code, status")
-        .eq("status", "active")
-        .order("site_name"),
+      actorOrganizationIds
+        ? organizationsQuery.in("id", actorOrganizationIds)
+        : organizationsQuery,
+      actorOrganizationIds
+        ? companiesQuery.in("organization_id", actorOrganizationIds)
+        : companiesQuery,
+      actorOrganizationIds
+        ? sitesQuery.in("organization_id", actorOrganizationIds)
+        : sitesQuery,
       supabase
         .from("erp_modules")
         .select("id, module_group, module_code, module_name, sort_order")
-        .eq("status", "active"),
+        .or("status.eq.active,module_code.eq.dashboard"),
       supabase.from("user_roles").select("role_id").eq("user_id", id),
       supabase
         .from("user_access_assignments")
@@ -86,6 +212,17 @@ export async function GET(
       if (result.error) throw result.error;
     }
 
+    const visibleRoleIds = (roles.data || []).map((role: any) => role.id).filter(Boolean);
+    const rolePermissions =
+      visibleRoleIds.length > 0
+        ? await supabase
+            .from("role_permissions")
+            .select("role_id, module_code, action_code, allowed")
+            .in("role_id", visibleRoleIds)
+        : { data: [], error: null };
+
+    if (rolePermissions.error) throw rolePermissions.error;
+
     return NextResponse.json({
       profile: profile.data,
       roles: roles.data || [],
@@ -96,6 +233,7 @@ export async function GET(
       userRoles: userRoles.data || [],
       accessRows: accessRows.data || [],
       userPermissions: userPermissions.data || [],
+      rolePermissions: rolePermissions.data || [],
     });
   } catch (error: any) {
     return NextResponse.json(
@@ -133,24 +271,57 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const permission = await requirePermission(request, "users", "edit");
+
+    if ("response" in permission) {
+      return permission.response;
+    }
+
     const { id } = await params;
     const body = await request.json();
     const {
+      full_name,
       role_ids,
       organization_ids,
       company_ids,
       site_ids,
       user_permissions,
     } = body;
+    const hasNameUpdate = Object.prototype.hasOwnProperty.call(body, "full_name");
+    const hasAccessUpdate =
+      Object.prototype.hasOwnProperty.call(body, "role_ids") ||
+      Object.prototype.hasOwnProperty.call(body, "organization_ids") ||
+      Object.prototype.hasOwnProperty.call(body, "company_ids") ||
+      Object.prototype.hasOwnProperty.call(body, "site_ids") ||
+      Object.prototype.hasOwnProperty.call(body, "user_permissions");
 
-    if (!Array.isArray(role_ids) || role_ids.length === 0) {
+    const trimmedFullName = hasNameUpdate ? String(full_name || "").trim() : null;
+
+    if (hasNameUpdate && !trimmedFullName) {
+      return NextResponse.json(
+        { error: "User name is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!hasNameUpdate && !hasAccessUpdate) {
+      return NextResponse.json(
+        { error: "No user changes were provided." },
+        { status: 400 }
+      );
+    }
+
+    if (hasAccessUpdate && (!Array.isArray(role_ids) || role_ids.length === 0)) {
       return NextResponse.json(
         { error: "Select at least one role." },
         { status: 400 }
       );
     }
 
-    if (!Array.isArray(organization_ids) || organization_ids.length === 0) {
+    if (
+      hasAccessUpdate &&
+      (!Array.isArray(organization_ids) || organization_ids.length === 0)
+    ) {
       return NextResponse.json(
         { error: "Select at least one organization." },
         { status: 400 }
@@ -158,6 +329,85 @@ export async function PUT(
     }
 
     const supabase = adminClient();
+    const actorOrganizationIds = await loadActorOrganizationScope(
+      supabase,
+      permission
+    );
+
+    if (!(await canAccessTargetUser(supabase, actorOrganizationIds, id))) {
+      return NextResponse.json(
+        { error: "You do not have permission to edit this user." },
+        { status: 403 }
+      );
+    }
+
+    if (hasAccessUpdate) {
+      const { data: existingUserRoles, error: existingUserRolesError } = await supabase
+        .from("user_roles")
+        .select("role_id")
+        .eq("user_id", id);
+
+      if (existingUserRolesError) throw existingUserRolesError;
+
+      const currentRoleIds = (existingUserRoles || [])
+        .map((role) => role.role_id)
+        .filter(Boolean);
+      const submittedRoleIds = (role_ids || []).filter(Boolean);
+      const roleIdsToCheck = Array.from(
+        new Set([...currentRoleIds, ...submittedRoleIds])
+      );
+
+      const { data: roleRowsForValidation, error: roleValidationError } =
+        roleIdsToCheck.length > 0
+          ? await supabase
+              .from("roles")
+              .select("id, role_code")
+              .in("id", roleIdsToCheck)
+          : { data: [], error: null };
+
+      if (roleValidationError) throw roleValidationError;
+
+      const platformOwnerRoleIds = new Set(
+        (roleRowsForValidation || [])
+          .filter((role) => role.role_code === "platform_owner")
+          .map((role) => role.id)
+      );
+      const targetIsPlatformOwner = currentRoleIds.some((roleId) =>
+        platformOwnerRoleIds.has(roleId)
+      );
+      const payloadAssignsPlatformOwner = submittedRoleIds.some((roleId: string) =>
+        platformOwnerRoleIds.has(roleId)
+      );
+
+      if (targetIsPlatformOwner || payloadAssignsPlatformOwner) {
+        return NextResponse.json(
+          {
+            error:
+              "Platform Owner is a system identity and cannot be changed through user management.",
+          },
+          { status: 403 }
+        );
+      }
+    }
+
+    if (hasAccessUpdate) {
+      const scopeValidation = await validateSubmittedUserScope(
+        supabase,
+        actorOrganizationIds,
+        {
+          organizationIds: organization_ids || [],
+          companyIds: company_ids || [],
+          siteIds: site_ids || [],
+        }
+      );
+
+      if (!scopeValidation.allowed) {
+        return NextResponse.json(
+          { error: scopeValidation.error },
+          { status: 403 }
+        );
+      }
+    }
 
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
@@ -174,10 +424,27 @@ export async function PUT(
       );
     }
 
+    if (hasNameUpdate) {
+      const { error: updateProfileError } = await supabase
+        .from("profiles")
+        .update({ full_name: trimmedFullName })
+        .eq("id", id);
+
+      if (updateProfileError) throw updateProfileError;
+
+      if (!hasAccessUpdate) {
+        return NextResponse.json({
+          user_id: id,
+          full_name: trimmedFullName,
+          profile_updated: true,
+        });
+      }
+    }
+
     const { data: selectedSites, error: siteError } = site_ids?.length
       ? await supabase
           .from("sites")
-          .select("id, company_id")
+          .select("id, company_id, organization_id")
           .in("id", site_ids)
       : { data: [], error: null };
 
@@ -247,7 +514,14 @@ export async function PUT(
 
     const permissionRows = uniqueRows<PermissionRow>(
       (user_permissions || [])
-        .filter((permission: any) => permission.allowed === true)
+        .filter(
+          (permission: any) =>
+            permission.allowed === true &&
+            isValidPermissionAction(
+              String(permission.module_code || ""),
+              String(permission.action_code || ""),
+            ),
+        )
         .map((permission: any) => ({
           user_id: id,
           module_code: permission.module_code,
@@ -309,6 +583,164 @@ export async function PUT(
   } catch (error: any) {
     return NextResponse.json(
       { error: error.message || "Failed to save user access." },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const permission = await requirePermission(request, "users", "edit");
+
+    if ("response" in permission) {
+      return permission.response;
+    }
+
+    const { id } = await params;
+    const body = await request.json().catch(() => ({}));
+    const action = String(body.action || "").trim();
+
+    if (action !== "reset_password") {
+      return NextResponse.json({ error: "Unsupported action." }, { status: 400 });
+    }
+
+    const newPassword = String(body.new_password || "");
+    const confirmationText = String(body.confirmation_text || "").trim();
+
+    if (confirmationText !== "RESET") {
+      return NextResponse.json(
+        { error: "Type RESET to confirm password reset." },
+        { status: 400 }
+      );
+    }
+
+    if (newPassword.length < 8) {
+      return NextResponse.json(
+        { error: "New password must be at least 8 characters." },
+        { status: 400 }
+      );
+    }
+
+    const supabase = adminClient();
+    const actorOrganizationIds = await loadActorOrganizationScope(
+      supabase,
+      permission
+    );
+
+    if (!(await canAccessTargetUser(supabase, actorOrganizationIds, id))) {
+      return NextResponse.json(
+        { error: "You do not have permission to reset this user's password." },
+        { status: 403 }
+      );
+    }
+
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (profileError) throw profileError;
+
+    if (!profile) {
+      return NextResponse.json(
+        { error: "User profile was not found." },
+        { status: 404 }
+      );
+    }
+
+    const { error: resetError } = await supabase.auth.admin.updateUserById(id, {
+      password: newPassword,
+    });
+
+    if (resetError) throw resetError;
+
+    return NextResponse.json({ user_id: id, password_reset: true });
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: error.message || "Failed to reset password." },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const access = await requirePermission(request, "users", "delete");
+
+    if ("response" in access) {
+      return access.response;
+    }
+
+    const { id } = await params;
+
+    if (access.user.id === id) {
+      return NextResponse.json(
+        { error: "You cannot delete your own app user record." },
+        { status: 400 }
+      );
+    }
+
+    const supabase = adminClient();
+    const actorOrganizationIds = await loadActorOrganizationScope(supabase, access);
+
+    if (!(await canAccessTargetUser(supabase, actorOrganizationIds, id))) {
+      return NextResponse.json(
+        { error: "You do not have permission to delete this user." },
+        { status: 403 }
+      );
+    }
+
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (profileError) throw profileError;
+
+    if (!profile) {
+      return NextResponse.json(
+        { error: "User profile was not found." },
+        { status: 404 }
+      );
+    }
+
+    const [
+      deletePermissions,
+      deleteAccess,
+      deleteRoles,
+    ] = await Promise.all([
+      supabase.from("user_permissions").delete().eq("user_id", id),
+      supabase.from("user_access_assignments").delete().eq("user_id", id),
+      supabase.from("user_roles").delete().eq("user_id", id),
+    ]);
+
+    for (const result of [deletePermissions, deleteAccess, deleteRoles]) {
+      if (result.error) throw result.error;
+    }
+
+    const { error: deleteProfileError } = await supabase
+      .from("profiles")
+      .delete()
+      .eq("id", id);
+
+    if (deleteProfileError) throw deleteProfileError;
+
+    return NextResponse.json({
+      user_id: id,
+      deleted: true,
+      auth_user_deleted: false,
+    });
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: error.message || "Failed to delete user." },
       { status: 500 }
     );
   }

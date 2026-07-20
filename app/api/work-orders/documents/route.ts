@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireAnyPermission } from "@/lib/serverPermissions";
+import {
+  isInOrganizationScope,
+  loadActorOrganizationScope,
+} from "@/lib/serverOrganizationScope";
 
 const DOCUMENT_BUCKET = "work-order-documents";
 
@@ -67,13 +72,17 @@ function normalizeStoragePath(document: any) {
 
 export async function GET(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const auth = await requireAnyPermission(request, [
+      { moduleCode: "work_orders", actionCode: "view" },
+      { moduleCode: "wo_approval", actionCode: "view" },
+      { moduleCode: "wo_approval", actionCode: "edit" },
+      { moduleCode: "wo_approval", actionCode: "approve" },
+      { moduleCode: "wo_approval", actionCode: "reject" },
+      { moduleCode: "wo_approval", actionCode: "upload" },
+    ]);
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("response" in auth) {
+      return auth.response;
     }
 
     const { searchParams } = new URL(request.url);
@@ -92,6 +101,33 @@ export async function GET(request: Request) {
     }
 
     const admin = adminClient();
+    const { data: workOrders, error: workOrdersError } = await admin
+      .from("work_orders")
+      .select("id, organization_id")
+      .in("id", workOrderIds);
+
+    if (workOrdersError) throw workOrdersError;
+
+    if ((workOrders || []).length !== workOrderIds.length) {
+      return NextResponse.json(
+        { error: "One or more Work Orders were not found." },
+        { status: 404 }
+      );
+    }
+
+    const organizationScope = await loadActorOrganizationScope(admin, auth);
+    const outOfScope = (workOrders || []).some(
+      (workOrder) =>
+        !isInOrganizationScope(organizationScope, workOrder.organization_id)
+    );
+
+    if (outOfScope) {
+      return NextResponse.json(
+        { error: "You do not have access to this organization." },
+        { status: 403 }
+      );
+    }
+
     const { data: documents, error } = await admin
       .from("work_order_documents")
       .select("id, organization_id, work_order_id, file_name, file_url, file_path, uploaded_at")

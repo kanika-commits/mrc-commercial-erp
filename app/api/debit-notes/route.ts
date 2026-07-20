@@ -4,6 +4,14 @@ import {
   insertDeleteAudit,
   requireDeletePermission,
 } from "@/lib/serverDeleteAudit";
+import { optimizeUploadFile } from "@/lib/fileOptimization";
+import { uploadDriveFile } from "@/src/lib/googleDrive";
+import { requirePermission } from "@/lib/serverPermissions";
+import {
+  isInOrganizationScope,
+  loadActorOrganizationScope,
+  loadOrganizationScopeForUser,
+} from "@/lib/serverOrganizationScope";
 
 const DOCUMENT_BUCKET = "debit-note-documents";
 const MODULE_CODE = "debit_notes";
@@ -76,6 +84,59 @@ function normalizeStoragePath(value: string | null) {
   }
 
   return raw;
+}
+
+function isGoogleDriveUrl(value: string | null | undefined) {
+  const url = String(value || "").trim();
+  return (
+    url.startsWith("https://drive.google.com/") ||
+    url.startsWith("https://docs.google.com/")
+  );
+}
+
+function documentStoragePath(document: any) {
+  const filePath = String(document?.file_path || "").trim();
+  const fileUrl = String(document?.file_url || "").trim();
+
+  if (isGoogleDriveUrl(fileUrl) || isGoogleDriveUrl(filePath)) {
+    return "";
+  }
+
+  return normalizeStoragePath(filePath || fileUrl);
+}
+
+function mimeTypeFromFileName(fileName: string) {
+  const extension = fileName.split(".").pop()?.toLowerCase();
+
+  switch (extension) {
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "png":
+      return "image/png";
+    case "pdf":
+      return "application/pdf";
+    case "xlsx":
+      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    case "xls":
+      return "application/vnd.ms-excel";
+    case "docx":
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case "doc":
+      return "application/msword";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+async function readApprovalAction(request: Request) {
+  const body = await request.json().catch(() => ({}));
+  const action = String(body.action || body.approval_status || "").trim();
+  const rejectionReason = String(
+    body.rejection_reason || body.rejectionReason || ""
+  ).trim();
+
+  return { action, rejectionReason };
 }
 
 async function readDeletionReason(request: Request) {
@@ -164,18 +225,15 @@ async function cleanupDebitNote(
 
 export async function POST(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const auth = await requirePermission(request, MODULE_CODE, "add");
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("response" in auth) {
+      return auth.response;
     }
 
     const formData = await request.formData();
     const workOrderId = String(formData.get("work_order_id") || "").trim();
-    const vendorId = String(formData.get("vendor_id") || "").trim();
+    let vendorId = String(formData.get("vendor_id") || "").trim();
     const raBillId = String(formData.get("ra_bill_id") || "").trim();
     const debitNoteNumber = String(
       formData.get("debit_note_number") || ""
@@ -191,13 +249,6 @@ export async function POST(request: Request) {
     if (!workOrderId) {
       return NextResponse.json(
         { error: "Work Order is required." },
-        { status: 400 }
-      );
-    }
-
-    if (!vendorId) {
-      return NextResponse.json(
-        { error: "Vendor is required." },
         { status: 400 }
       );
     }
@@ -237,18 +288,11 @@ export async function POST(request: Request) {
       );
     }
 
-    if (files.length === 0) {
-      return NextResponse.json(
-        { error: "At least one Debit Note attachment is required." },
-        { status: 400 }
-      );
-    }
-
     const admin = adminClient();
 
     const { data: workOrder, error: workOrderError } = await admin
       .from("work_orders")
-      .select("id, organization_id")
+      .select("id, organization_id, status, approval_status")
       .eq("id", workOrderId)
       .maybeSingle();
 
@@ -261,34 +305,104 @@ export async function POST(request: Request) {
       );
     }
 
-    const { data: vendorLink, error: vendorLinkError } = await admin
+    const workOrderStatus = String(workOrder.status || "").trim().toLowerCase();
+    const workOrderApprovalStatus = String(workOrder.approval_status || "")
+      .trim()
+      .toLowerCase();
+
+    if (
+      workOrderStatus !== "active" ||
+      !["pending", "approved"].includes(workOrderApprovalStatus)
+    ) {
+      return NextResponse.json(
+        { error: "This Work Order is suspended and cannot accept new transactions." },
+        { status: 400 }
+      );
+    }
+
+    const organizationScope = await loadActorOrganizationScope(admin, auth);
+
+    if (!isInOrganizationScope(organizationScope, workOrder.organization_id)) {
+      return NextResponse.json(
+        { error: "You do not have access to this organization." },
+        { status: 403 }
+      );
+    }
+
+    if (raBillId) {
+      const { data: raBill, error: raBillError } = await admin
+        .from("ra_bills")
+        .select("id, organization_id, work_order_id")
+        .eq("id", raBillId)
+        .maybeSingle();
+
+      if (raBillError) throw raBillError;
+
+      if (!raBill) {
+        return NextResponse.json(
+          { error: "Selected RA Bill was not found." },
+          { status: 404 }
+        );
+      }
+
+      if (
+        raBill.organization_id !== workOrder.organization_id ||
+        raBill.work_order_id !== workOrderId ||
+        !isInOrganizationScope(organizationScope, raBill.organization_id)
+      ) {
+        return NextResponse.json(
+          { error: "Selected RA Bill is not available for this Work Order." },
+          { status: 403 }
+        );
+      }
+    }
+
+    let vendorLinkQuery = admin
       .from("work_order_vendors")
-      .select("id")
-      .eq("work_order_id", workOrderId)
-      .eq("vendor_id", vendorId)
-      .maybeSingle();
+      .select("id, vendor_id, is_primary")
+      .eq("work_order_id", workOrderId);
+
+    if (vendorId) {
+      vendorLinkQuery = vendorLinkQuery.eq("vendor_id", vendorId);
+    }
+
+    const { data: vendorLinks, error: vendorLinkError } = await vendorLinkQuery
+      .order("is_primary", { ascending: false });
 
     if (vendorLinkError) throw vendorLinkError;
 
+    const vendorLink =
+      vendorLinks?.find((link) => link.is_primary) || vendorLinks?.[0];
+
     if (!vendorLink) {
       return NextResponse.json(
-        { error: "Selected vendor is not linked to this Work Order." },
+        { error: "No vendor is linked to this Work Order." },
+        { status: 400 }
+      );
+    }
+
+    vendorId = vendorId || vendorLink.vendor_id;
+
+    if (!vendorId) {
+      return NextResponse.json(
+        { error: "Vendor could not be found for this Work Order." },
         { status: 400 }
       );
     }
 
     const { data: existingDebitNotes, error: duplicateError } = await admin
       .from("debit_notes")
-      .select("id, debit_note_number")
+      .select("id, debit_note_number, approval_status")
       .eq("organization_id", workOrder.organization_id);
 
     if (duplicateError) throw duplicateError;
 
     const duplicate = (existingDebitNotes || []).find(
-      (note) =>
-        normalized(String(note.debit_note_number || "")) ===
-        normalized(debitNoteNumber)
-    );
+  (note) =>
+    normalized(String(note.debit_note_number || "")) ===
+      normalized(debitNoteNumber) &&
+    normalized(String(note.approval_status || "")) !== "rejected"
+);
 
     if (duplicate) {
       return NextResponse.json(
@@ -337,13 +451,22 @@ export async function POST(request: Request) {
       debitNoteId = debitNote.id;
 
       for (const file of files) {
-        const filePath = `${workOrder.organization_id}/debit-notes/${
-          debitNote.id
-        }/${Date.now()}_${safeFileName(file.name)}`;
+        const fileBuffer = Buffer.from(await file.arrayBuffer());
+        const optimizedFile = await optimizeUploadFile(
+          fileBuffer,
+          file.type || "application/octet-stream",
+          file.name
+        );
+        const filePath = `${workOrder.organization_id}/pending/${debitNote.id}/${Date.now()}-${safeFileName(
+          file.name
+        )}`;
 
         const { error: uploadError } = await admin.storage
           .from(DOCUMENT_BUCKET)
-          .upload(filePath, file, { upsert: false });
+          .upload(filePath, optimizedFile.buffer, {
+            contentType: optimizedFile.mimeType || "application/octet-stream",
+            upsert: false,
+          });
 
         if (uploadError) throw uploadError;
 
@@ -367,17 +490,274 @@ export async function POST(request: Request) {
       throw error;
     }
   } catch (error: any) {
+    console.error("[Debit Note POST] Failed to create Debit Note", {
+      message: error?.message,
+      code: error?.code,
+      details: error?.details,
+      hint: error?.hint,
+    });
+
     const friendlyDuplicate = duplicateErrorMessage(error);
 
     if (friendlyDuplicate) {
       return NextResponse.json({ error: friendlyDuplicate }, { status: 409 });
     }
 
+    const message = String(error?.message || "");
+    const friendlyMessage = message.includes("file_path")
+      ? "Failed to save Debit Note attachment metadata. Please contact support."
+      : message || "Failed to create Debit Note.";
+
     return NextResponse.json(
-      { error: error.message || "Failed to create Debit Note." },
+      { error: friendlyMessage },
       { status: 500 }
     );
   }
+}
+
+export async function PATCH(request: Request) {
+  const fail = (message: string, status = 500, details?: any) => {
+    if (details) {
+      console.error("[Debit Note APPROVAL]", message, details);
+    }
+
+    return NextResponse.json({ error: message, details }, { status });
+  };
+
+  const { searchParams } = new URL(request.url);
+  const debitNoteId = searchParams.get("debit_note_id")?.trim() || "";
+
+  if (!debitNoteId) {
+    return fail("debit_note_id is required.", 400);
+  }
+
+  const { action, rejectionReason } = await readApprovalAction(request);
+  const normalizedAction = action.toLowerCase();
+
+  if (!["approved", "rejected"].includes(normalizedAction)) {
+    return fail("Approval action must be Approved or Rejected.", 400);
+  }
+
+  if (normalizedAction === "rejected" && rejectionReason.length < 10) {
+    return fail("Reason must be at least 10 characters for Reject.", 400);
+  }
+
+  const auth = await requirePermission(
+    request,
+    "ra_approval",
+    normalizedAction === "approved" ? "approve" : "reject"
+  );
+
+  if ("response" in auth) {
+    return auth.response;
+  }
+
+  const admin = adminClient();
+  const { data: debitNote, error: debitNoteError } = await admin
+    .from("debit_notes")
+    .select("*")
+    .eq("id", debitNoteId)
+    .maybeSingle();
+
+  if (debitNoteError) {
+    return fail("Failed to load Debit Note.", 500, debitNoteError);
+  }
+
+  if (!debitNote) {
+    return fail("Debit Note was not found.", 404);
+  }
+
+  const organizationScope = await loadActorOrganizationScope(admin, auth);
+
+  if (!isInOrganizationScope(organizationScope, debitNote.organization_id)) {
+    return fail("You do not have access to this organization.", 403);
+  }
+
+  const { data: documents, error: documentsError } = await admin
+    .from("debit_note_documents")
+    .select("*")
+    .eq("debit_note_id", debitNoteId);
+
+  if (documentsError) {
+    return fail("Failed to load Debit Note documents.", 500, documentsError);
+  }
+
+  const userEmail = auth.user.email || "";
+  const userName =
+    auth.user.user_metadata?.full_name ||
+    auth.user.user_metadata?.name ||
+    userEmail ||
+    "HO User";
+  const now = new Date().toISOString();
+
+  if (normalizedAction === "approved") {
+    const { data: driveFolder, error: driveFolderError } = await admin
+      .from("work_order_drive_folders")
+      .select("debit_notes_folder_id")
+      .eq("work_order_id", debitNote.work_order_id)
+      .maybeSingle();
+
+    if (driveFolderError) {
+      return fail("Failed to load Work Order Drive folder.", 500, driveFolderError);
+    }
+
+    if (!driveFolder?.debit_notes_folder_id) {
+      return fail("Work Order Google Drive Debit Notes folder was not found.", 400);
+    }
+
+    for (const document of documents || []) {
+      if (isGoogleDriveUrl(document.file_url)) {
+        continue;
+      }
+
+      const tempPath = documentStoragePath(document);
+
+      if (!tempPath) {
+        return fail(
+          `Temporary file path was not found for ${document.file_name || "attachment"}.`,
+          400
+        );
+      }
+
+      const { data: fileBlob, error: downloadError } = await admin.storage
+        .from(DOCUMENT_BUCKET)
+        .download(tempPath);
+
+      if (downloadError || !fileBlob) {
+        return fail("Failed to read temporary Debit Note attachment.", 500, downloadError);
+      }
+
+      const fileBuffer = Buffer.from(await fileBlob.arrayBuffer());
+      const fileName = document.file_name || "debit-note-attachment";
+      const optimizedFile = await optimizeUploadFile(
+        fileBuffer,
+        mimeTypeFromFileName(fileName),
+        fileName
+      );
+      const driveFile = await uploadDriveFile({
+        targetFolderId: driveFolder.debit_notes_folder_id,
+        fileName,
+        mimeType: optimizedFile.mimeType || mimeTypeFromFileName(fileName),
+        base64: optimizedFile.buffer.toString("base64"),
+      });
+
+      const { error: documentUpdateError } = await admin
+        .from("debit_note_documents")
+        .update({
+          file_name: driveFile.file_name || fileName,
+          file_url: driveFile.file_url,
+        })
+        .eq("id", document.id);
+
+      if (documentUpdateError) {
+        return fail(
+          "Failed to update Debit Note document after Google Drive upload.",
+          500,
+          documentUpdateError
+        );
+      }
+
+      const { error: storageDeleteError } = await admin.storage
+        .from(DOCUMENT_BUCKET)
+        .remove([tempPath]);
+
+      if (storageDeleteError) {
+        return fail(
+          "Failed to delete temporary Debit Note attachment after Google Drive upload.",
+          500,
+          storageDeleteError
+        );
+      }
+    }
+
+    const { error: approvalError } = await admin
+      .from("debit_notes")
+      .update({
+        approval_status: "Approved",
+        status: "Approved",
+        approved_by_name: userName,
+        approved_by_email: userEmail,
+        approved_at: now,
+      })
+      .eq("id", debitNoteId);
+
+    if (approvalError) {
+      return fail("Failed to approve Debit Note.", 500, approvalError);
+    }
+
+    return NextResponse.json({ approved: true });
+  }
+
+  const { error: rejectionAuditError } = await admin
+    .from("debit_note_rejections")
+    .insert({
+      organization_id: debitNote.organization_id,
+      debit_note_id: debitNote.id,
+      rejected_by_name: userName,
+      rejected_by_email: userEmail,
+      rejection_reason: rejectionReason,
+      rejected_at: now,
+    });
+
+  if (rejectionAuditError) {
+    return fail("Failed to save Debit Note rejection reason.", 500, rejectionAuditError);
+  }
+
+  const tempPaths = Array.from(
+    new Set((documents || []).map(documentStoragePath).filter(Boolean))
+  );
+  const driveDocuments = (documents || []).filter((document) =>
+    isGoogleDriveUrl(document.file_url)
+  );
+
+  if (tempPaths.length > 0) {
+    const { error: storageDeleteError } = await admin.storage
+      .from(DOCUMENT_BUCKET)
+      .remove(tempPaths);
+
+    if (storageDeleteError) {
+      return fail("Failed to delete temporary Debit Note attachments.", 500, storageDeleteError);
+    }
+  }
+
+  if (driveDocuments.length > 0) {
+    console.warn(
+      "[Debit Note REJECTION] Google Drive deletion helper is not available; Drive files were not deleted.",
+      {
+        debit_note_id: debitNoteId,
+        drive_files: driveDocuments.map((document) => ({
+          id: document.id,
+          file_name: document.file_name,
+          file_path: document.file_path,
+          file_url: document.file_url,
+        })),
+      }
+    );
+  }
+
+  const { error: documentDeleteError } = await admin
+    .from("debit_note_documents")
+    .delete()
+    .eq("debit_note_id", debitNoteId);
+
+  if (documentDeleteError) {
+    return fail("Failed to delete rejected Debit Note document rows.", 500, documentDeleteError);
+  }
+
+  const { error: debitNoteDeleteError } = await admin
+    .from("debit_notes")
+    .delete()
+    .eq("id", debitNoteId);
+
+  if (debitNoteDeleteError) {
+    return fail("Failed to delete rejected Debit Note.", 500, debitNoteDeleteError);
+  }
+
+  return NextResponse.json({
+    rejected: true,
+    deleted: true,
+    drive_files_not_deleted: driveDocuments.length,
+  });
 }
 
 export async function DELETE(request: Request) {
@@ -461,6 +841,19 @@ export async function DELETE(request: Request) {
     return fail("fetch_debit_note", { message: "Debit Note was not found." }, 404);
   }
 
+  const organizationScope = await loadOrganizationScopeForUser(
+    admin,
+    auth.user.id
+  );
+
+  if (!isInOrganizationScope(organizationScope, debitNote.organization_id)) {
+    return fail(
+      "fetch_debit_note",
+      { message: "You do not have access to this organization." },
+      403
+    );
+  }
+
   const normalizedApprovalStatus = String(
     debitNote.approval_status || debitNote.status || ""
   )
@@ -487,7 +880,7 @@ export async function DELETE(request: Request) {
   const paths = Array.from(
     new Set(
       documents
-        .map((document) => normalizeStoragePath(document.file_url))
+        .map(documentStoragePath)
         .filter(Boolean)
     )
   );

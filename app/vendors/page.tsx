@@ -1,85 +1,196 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
-  AlertTriangle,
-  CheckCircle2,
   Filter,
   Pencil,
   Search,
-  ShieldCheck,
   Trash2,
   UserRoundPlus,
   Users,
-  XCircle,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { getCurrentUserAccess, can } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 
 type Vendor = {
   id: string;
   vendor_name: string;
-  vendor_type: string;
+  contractor_type: string | null;
   gstin: string | null;
   pan: string | null;
   aadhaar_cin: string | null;
-  pan_aadhaar_link_status: string | null;
-  status: string | null;
   created_at: string | null;
+  contacts?: VendorContact[];
+  bank_accounts?: VendorBankAccount[];
 };
 
+type VendorContact = {
+  id: string;
+  vendor_id: string;
+  contact_name: string | null;
+  contact_number: string | null;
+  email: string | null;
+  designation?: string | null;
+  is_primary?: boolean | null;
+};
+
+type VendorBankAccount = {
+  id: string;
+  vendor_id: string;
+  account_number: string | null;
+  ifsc_code?: string | null;
+  bank_name?: string | null;
+  branch_name?: string | null;
+  is_primary?: boolean | null;
+};
+
+const PAGE_SIZE = 50;
+
 export default function VendorsPage() {
+  const { access } = useAccessContext();
   const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [canAdd, setCanAdd] = useState(false);
-  const [canEdit, setCanEdit] = useState(false);
-  const [canDelete, setCanDelete] = useState(false);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [complianceFilter, setComplianceFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const [totalVendors, setTotalVendors] = useState(0);
+  const [totalFilteredVendors, setTotalFilteredVendors] = useState(0);
+  const [contractorTypes, setContractorTypes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const hasLoadedRef = useRef(false);
+  const inFlightKeyRef = useRef("");
+  const activeRequestSeqRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  const loadPage = useCallback(async () => {
-    setLoading(true);
-
-    const [access, vendorRes] = await Promise.all([
-      getCurrentUserAccess(),
-
-      supabase
-        .from("vendors")
-        .select(`
-          id,
-          vendor_name,
-          vendor_type,
-          gstin,
-          pan,
-          aadhaar_cin,
-          pan_aadhaar_link_status,
-          status,
-          created_at
-        `)
-        .neq("status", "deleted")
-        .order("created_at", { ascending: false }),
-    ]);
-
-    setCanAdd(can(access.permissions, "vendors", "add"));
-    setCanEdit(can(access.permissions, "vendors", "edit"));
-    setCanDelete(can(access.permissions, "vendors", "delete"));
-
-    if (vendorRes.error) {
-      setErrorMessage(vendorRes.error.message);
-    } else {
-      setVendors(vendorRes.data || []);
-    }
-
-    setLoading(false);
-  }, []);
+  const permissions = access?.permissions || [];
+  const canAdd = can(permissions, "vendors", "add");
+  const canEdit = can(permissions, "vendors", "edit");
+  const canDelete = can(permissions, "vendors", "delete");
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+    }, 450);
+
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  const requestKey = useMemo(
+    () =>
+      JSON.stringify({
+        page,
+        pageSize: PAGE_SIZE,
+        search: debouncedSearch,
+        typeFilter,
+        refreshNonce,
+      }),
+    [debouncedSearch, page, refreshNonce, typeFilter],
+  );
+
+  useEffect(() => {
+    if (inFlightKeyRef.current === requestKey) {
+      return;
+    }
+
+    const abortController = new AbortController();
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = abortController;
+    inFlightKeyRef.current = requestKey;
+    const requestSeq = activeRequestSeqRef.current + 1;
+    activeRequestSeqRef.current = requestSeq;
+    const hasRows = hasLoadedRef.current;
+
+    if (hasRows) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    setErrorMessage("");
+
+    async function loadPage() {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (abortController.signal.aborted) return;
+
+        if (!session?.access_token) {
+          setErrorMessage("Your session expired. Please log in again.");
+          setLoading(false);
+          setRefreshing(false);
+          return;
+        }
+
+        const params = new URLSearchParams({
+          include_children: "summary",
+          page: String(page),
+          page_size: String(PAGE_SIZE),
+        });
+
+        if (debouncedSearch) {
+          params.set("search", debouncedSearch);
+        }
+
+        if (typeFilter !== "all") {
+          params.set("type_filter", typeFilter);
+        }
+
+        const response = await fetch(`/api/vendors?${params.toString()}`, {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          signal: abortController.signal,
+        });
+        const result = await response.json();
+
+        if (abortController.signal.aborted || activeRequestSeqRef.current !== requestSeq) {
+          return;
+        }
+
+        if (!response.ok) {
+          setErrorMessage(result.error || "Failed to load vendors.");
+        } else {
+          setVendors(result.vendors || []);
+          setTotalFilteredVendors(result.total || 0);
+          setTotalVendors(result.total_all || result.total || 0);
+          setContractorTypes(result.contractor_types || []);
+        }
+
+        setLoading(false);
+        setRefreshing(false);
+        hasLoadedRef.current = true;
+      } catch (error: any) {
+        if (error?.name === "AbortError") {
+          return;
+        }
+
+        if (activeRequestSeqRef.current === requestSeq) {
+          setErrorMessage(error.message || "Failed to load vendors.");
+          setLoading(false);
+          setRefreshing(false);
+        }
+      } finally {
+        if (activeRequestSeqRef.current === requestSeq) {
+          inFlightKeyRef.current = "";
+        }
+      }
+    }
+
     loadPage();
-  }, [loadPage]);
+
+    return () => {
+      abortController.abort();
+      if (activeRequestSeqRef.current === requestSeq) {
+        inFlightKeyRef.current = "";
+      }
+    };
+  }, [debouncedSearch, page, requestKey, typeFilter]);
 
   async function deleteVendor(vendor: Vendor) {
     const ok = window.confirm(
@@ -109,59 +220,32 @@ export default function VendorsPage() {
     }
 
     setVendors((prev) => prev.filter((item) => item.id !== vendor.id));
+    setRefreshNonce((value) => value + 1);
   }
 
-  const filteredVendors = useMemo(() => {
-    const value = search.toLowerCase().trim();
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, typeFilter]);
 
-    return vendors.filter((vendor) => {
-      const matchesSearch =
-        !value ||
-        [
-        vendor.vendor_name,
-        vendor.vendor_type,
-        vendor.gstin,
-        vendor.pan,
-        vendor.aadhaar_cin,
-        vendor.pan_aadhaar_link_status,
-        vendor.status,
-      ]
-        .filter(Boolean)
-        .some((field) => field!.toLowerCase().includes(value));
+  const totalPages = Math.max(1, Math.ceil(totalFilteredVendors / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const startIndex = (currentPage - 1) * PAGE_SIZE;
+  const endIndex = Math.min(startIndex + vendors.length, totalFilteredVendors);
+  const paginatedVendors = vendors;
+  const rangeStart = totalFilteredVendors === 0 ? 0 : startIndex + 1;
 
-      const matchesType =
-        typeFilter === "all" || normalize(vendor.vendor_type) === typeFilter;
-      const matchesStatus =
-        statusFilter === "all" || normalize(vendor.status || "active") === statusFilter;
-      const matchesCompliance =
-        complianceFilter === "all" ||
-        getComplianceState(vendor) === complianceFilter;
-
-      return matchesSearch && matchesType && matchesStatus && matchesCompliance;
-    });
-  }, [complianceFilter, search, statusFilter, typeFilter, vendors]);
-
-  const vendorTypes = useMemo(() => {
-    return Array.from(
-      new Set(vendors.map((vendor) => vendor.vendor_type).filter(Boolean))
-    ).sort();
-  }, [vendors]);
-
-  const totalVendors = vendors.length;
-  const activeVendors = vendors.filter(
-    (vendor) => normalize(vendor.status || "active") === "active"
-  ).length;
-  const pendingPanAadhaar = vendors.filter((vendor) => !isPanAadhaarVerified(vendor)).length;
-  const missingTaxIds = vendors.filter((vendor) => !vendor.gstin || !vendor.pan).length;
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
   function clearFilters() {
     setSearch("");
     setTypeFilter("all");
-    setStatusFilter("all");
-    setComplianceFilter("all");
   }
 
-  if (loading) {
+  if (loading && vendors.length === 0) {
     return (
       <section className="min-h-[60vh] bg-[#f8fafc] p-8 text-sm font-medium text-slate-500">
         Loading vendors...
@@ -169,7 +253,7 @@ export default function VendorsPage() {
     );
   }
 
-  if (errorMessage) {
+  if (errorMessage && vendors.length === 0) {
     return (
       <div className="rounded-lg border bg-red-50 p-4 text-red-700">
         Failed to load vendors: {errorMessage}
@@ -212,24 +296,6 @@ export default function VendorsPage() {
           icon={Users}
           tone="slate"
         />
-        <KpiCard
-          label="Active Vendors"
-          value={String(activeVendors)}
-          icon={CheckCircle2}
-          tone="green"
-        />
-        <KpiCard
-          label="Pending PAN-Aadhaar"
-          value={String(pendingPanAadhaar)}
-          icon={AlertTriangle}
-          tone="amber"
-        />
-        <KpiCard
-          label="Missing GST/PAN"
-          value={String(missingTaxIds)}
-          icon={XCircle}
-          tone="red"
-        />
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -239,7 +305,7 @@ export default function VendorsPage() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search vendor name, PAN, GSTIN, Aadhaar/CIN, type or status..."
+              placeholder="Search vendor name, PAN, GSTIN, Aadhaar/CIN or contractor type..."
               className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none transition focus:border-[#00658b] focus:bg-white focus:ring-2 focus:ring-[#00658b]/10"
             />
           </div>
@@ -251,35 +317,12 @@ export default function VendorsPage() {
               onChange={(e) => setTypeFilter(e.target.value)}
               className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-[#00658b]"
             >
-              <option value="all">Vendor Type: All</option>
-              {vendorTypes.map((type) => (
+              <option value="all">Contractor Type: All</option>
+              {contractorTypes.map((type) => (
                 <option key={type} value={normalize(type)}>
                   {type}
                 </option>
               ))}
-            </select>
-
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-[#00658b]"
-            >
-              <option value="all">Status: All</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-              <option value="blocked">Blocked</option>
-              <option value="pending">Pending</option>
-            </select>
-
-            <select
-              value={complianceFilter}
-              onChange={(e) => setComplianceFilter(e.target.value)}
-              className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-[#00658b]"
-            >
-              <option value="all">Compliance: All</option>
-              <option value="verified">Verified</option>
-              <option value="pending">Pending</option>
-              <option value="review">Review</option>
             </select>
 
             <button
@@ -293,64 +336,70 @@ export default function VendorsPage() {
         </div>
 
         <p className="mt-3 text-xs font-medium text-slate-500">
-          Showing {filteredVendors.length} of {vendors.length} vendors
+          Showing {rangeStart}–{endIndex} of {totalFilteredVendors} vendors
+          {refreshing ? (
+            <span className="ml-2 text-[#00658b]">Updating results...</span>
+          ) : null}
         </p>
       </div>
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
-        <table className="w-full min-w-[1120px] text-sm">
+        <table className="w-full min-w-[900px] text-sm">
           <thead className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
             <tr>
               <th className="px-4 py-3 text-left">Vendor</th>
-              <th className="px-4 py-3 text-left">Vendor Type</th>
+              <th className="px-4 py-3 text-left">Contractor Type</th>
               <th className="px-4 py-3 text-left">GSTIN</th>
               <th className="px-4 py-3 text-left">PAN</th>
-              <th className="px-4 py-3 text-left">PAN-Aadhaar Status</th>
-              <th className="px-4 py-3 text-left">Status</th>
               <th className="px-4 py-3 text-left">Created Date</th>
               <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
 
           <tbody className="divide-y divide-slate-100">
-            {filteredVendors.map((vendor) => (
-              <tr
-                key={vendor.id}
-                className="group transition-colors hover:bg-slate-50/80"
-              >
-                <td className="px-4 py-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-xs font-bold uppercase text-white shadow-sm">
-                      {initials(vendor.vendor_name)}
+            {paginatedVendors.map((vendor) => {
+              const contactMatch = getContactMatch(vendor, search);
+
+              return (
+                <tr
+                  key={vendor.id}
+                  className="group transition-colors hover:bg-slate-50/80"
+                >
+                  <td className="px-4 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-xs font-bold uppercase text-white shadow-sm">
+                        {initials(vendor.vendor_name)}
+                      </div>
+                      <div className="min-w-0">
+                        <Link
+                          href={`/vendors/${vendor.id}`}
+                          className="font-semibold text-slate-950 hover:text-[#00658b]"
+                        >
+                          {vendor.vendor_name || "-"}
+                        </Link>
+                        <p className="mt-0.5 text-xs text-slate-500">
+                          {contactMatch
+                            ? `Contact: ${contactMatch.contact_name || "-"}${
+                                contactMatch.contact_number
+                                  ? ` • ${contactMatch.contact_number}`
+                                  : ""
+                              }`
+                            : vendor.aadhaar_cin
+                              ? `Aadhaar/CIN: ${vendor.aadhaar_cin}`
+                              : "Vendor master record"}
+                        </p>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <Link
-                        href={`/vendors/${vendor.id}`}
-                        className="font-semibold text-slate-950 hover:text-[#00658b]"
-                      >
-                        {vendor.vendor_name || "-"}
-                      </Link>
-                      <p className="mt-0.5 text-xs text-slate-500">
-                        {vendor.aadhaar_cin ? `Aadhaar/CIN: ${vendor.aadhaar_cin}` : "Vendor master record"}
-                      </p>
-                    </div>
-                  </div>
-                </td>
+                  </td>
                 <td className="px-4 py-4">
-                  <TypeBadge value={vendor.vendor_type} />
+                  <TypeBadge value={vendor.contractor_type || "-"} />
                 </td>
                 <td className="px-4 py-4 font-mono text-xs text-slate-600">
                   {vendor.gstin || "-"}
                 </td>
                 <td className="px-4 py-4 font-mono text-xs text-slate-600">
                   {vendor.pan || "-"}
-                </td>
-                <td className="px-4 py-4">
-                  <ComplianceBadge value={vendor.pan_aadhaar_link_status} />
-                </td>
-                <td className="px-4 py-4">
-                  <StatusBadge value={vendor.status || "active"} />
                 </td>
                 <td className="px-4 py-4 text-sm text-slate-500">
                   {formatDate(vendor.created_at)}
@@ -386,15 +435,16 @@ export default function VendorsPage() {
                     )}
                   </div>
                 </td>
-              </tr>
-            ))}
+                </tr>
+              );
+            })}
 
-            {filteredVendors.length === 0 && (
+            {totalFilteredVendors === 0 && (
               <tr>
-                <td className="px-6 py-14 text-center" colSpan={8}>
+                <td className="px-6 py-14 text-center" colSpan={6}>
                   <div className="mx-auto max-w-sm">
                     <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
-                      <ShieldCheck className="h-5 w-5" />
+                      <Users className="h-5 w-5" />
                     </div>
                     <h2 className="text-base font-semibold text-slate-950">
                       No vendors found
@@ -419,6 +469,30 @@ export default function VendorsPage() {
           </tbody>
         </table>
         </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          <div>
+            Showing {rangeStart}–{endIndex} of {totalFilteredVendors} vendors
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPage((value) => Math.max(1, value - 1))}
+              disabled={currentPage <= 1}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
+              disabled={currentPage >= totalPages}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
+        </div>
       </div>
       </div>
     </section>
@@ -441,6 +515,23 @@ function initials(name: string) {
     .toUpperCase();
 }
 
+function getContactMatch(vendor: Vendor, search: string) {
+  const value = search.trim().toLowerCase();
+  if (!value) return null;
+
+  return (
+    (vendor.contacts || []).find((contact) =>
+      [
+        contact.contact_name,
+        contact.contact_number,
+        contact.email,
+      ]
+        .filter(Boolean)
+        .some((field) => String(field).toLowerCase().includes(value))
+    ) || null
+  );
+}
+
 function formatDate(value: string | null) {
   if (!value) return "-";
   return new Date(value).toLocaleDateString("en-IN", {
@@ -448,17 +539,6 @@ function formatDate(value: string | null) {
     month: "short",
     year: "numeric",
   });
-}
-
-function isPanAadhaarVerified(vendor: Vendor) {
-  return normalize(vendor.pan_aadhaar_link_status) === "yes";
-}
-
-function getComplianceState(vendor: Vendor) {
-  const value = normalize(vendor.pan_aadhaar_link_status);
-  if (value === "yes") return "verified";
-  if (value === "no") return "pending";
-  return "review";
 }
 
 function KpiCard({
@@ -500,53 +580,6 @@ function TypeBadge({ value }: { value: string | null }) {
   return (
     <span className="inline-flex rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
       {value || "-"}
-    </span>
-  );
-}
-
-function StatusBadge({ value }: { value: string }) {
-  const status = normalize(value);
-  const className =
-    status === "blocked"
-      ? "bg-red-50 text-red-700 ring-red-100"
-      : status === "inactive"
-      ? "bg-slate-100 text-slate-600 ring-slate-200"
-      : status === "pending"
-      ? "bg-amber-50 text-amber-700 ring-amber-100"
-      : "bg-emerald-50 text-emerald-700 ring-emerald-100";
-
-  return (
-    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold capitalize ring-1 ${className}`}>
-      {value || "active"}
-    </span>
-  );
-}
-
-function ComplianceBadge({ value }: { value: string | null }) {
-  const state = normalize(value);
-
-  if (state === "yes") {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100">
-        <CheckCircle2 className="h-3.5 w-3.5" />
-        Verified
-      </span>
-    );
-  }
-
-  if (state === "no") {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 ring-1 ring-amber-100">
-        <AlertTriangle className="h-3.5 w-3.5" />
-        Pending
-      </span>
-    );
-  }
-
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200">
-      <ShieldCheck className="h-3.5 w-3.5" />
-      Review
     </span>
   );
 }

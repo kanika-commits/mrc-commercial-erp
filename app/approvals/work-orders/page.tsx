@@ -2,11 +2,36 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, ExternalLink, FileText, RefreshCw, Trash2 } from "lucide-react";
+import { CheckCircle2, ExternalLink, FileText, PauseCircle, RefreshCw } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { useAccessContext } from "@/components/AccessContext";
+import { can, hasGlobalAccess } from "@/lib/accessControl";
+import { formatIstTimestamp } from "@/lib/dateTime";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
+}
+
+const WORK_ORDER_TYPE_OPTIONS = [
+  "Consultant",
+  "Contractor (Labour)",
+  "Contractor (SITC)",
+  "Rental",
+];
+
+function workOrderCommercials(wo: any) {
+  const basicValue = Number(wo?.wo_value || 0);
+  const gstPercent = Number(wo?.gst_percent ?? 18);
+  const safeBasic = Number.isFinite(basicValue) ? basicValue : 0;
+  const safeGstPercent = Number.isFinite(gstPercent) ? gstPercent : 0;
+  const gstAmount = (safeBasic * safeGstPercent) / 100;
+
+  return {
+    basicValue: safeBasic,
+    gstPercent: safeGstPercent,
+    gstAmount,
+    totalValue: safeBasic + gstAmount,
+  };
 }
 
 function formatDate(date: string | null | undefined) {
@@ -20,6 +45,14 @@ function formatDate(date: string | null | undefined) {
     month: "short",
     year: "numeric",
   });
+}
+
+function formatDateTime(date: string | null | undefined) {
+  return formatIstTimestamp(date);
+}
+
+function auditName(name: string | null | undefined, email: string | null | undefined) {
+  return name || email || "-";
 }
 
 function badgeClass(value?: string | null) {
@@ -36,7 +69,7 @@ function badgeClass(value?: string | null) {
     return "border-amber-200 bg-amber-50 text-amber-700";
   }
 
-  if (status === "rejected") {
+  if (status === "rejected" || status === "suspended" || status === "cancelled") {
     return "border-rose-200 bg-rose-50 text-rose-700";
   }
 
@@ -44,87 +77,115 @@ function badgeClass(value?: string | null) {
 }
 
 export default function WorkOrderApprovalPage() {
+  const { access } = useAccessContext();
   const [workOrders, setWorkOrders] = useState<any[]>([]);
   const [companies, setCompanies] = useState<Map<string, string>>(new Map());
   const [sites, setSites] = useState<Map<string, string>>(new Map());
   const [documents, setDocuments] = useState<Map<string, any[]>>(new Map());
+  const [editRows, setEditRows] = useState<Record<string, any>>({});
+  const [replacementFiles, setReplacementFiles] = useState<Record<string, File | null>>({});
+  const [editingWorkOrderId, setEditingWorkOrderId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState("");
   const [message, setMessage] = useState("");
+  // Approval module permissions govern approval queues/actions; base work_orders permissions govern normal WO CRUD.
+  const canViewWorkOrderApprovals =
+    hasGlobalAccess(access) ||
+    can(access?.permissions || [], "wo_approval", "view") ||
+    can(access?.permissions || [], "wo_approval", "edit") ||
+    can(access?.permissions || [], "wo_approval", "approve") ||
+    can(access?.permissions || [], "wo_approval", "reject") ||
+    can(access?.permissions || [], "wo_approval", "upload");
+  const canEditWorkOrderApprovals =
+    hasGlobalAccess(access) || can(access?.permissions || [], "wo_approval", "edit");
+  const canApproveWorkOrderApprovals =
+    hasGlobalAccess(access) || can(access?.permissions || [], "wo_approval", "approve");
+  const canRejectWorkOrderApprovals =
+    hasGlobalAccess(access) || can(access?.permissions || [], "wo_approval", "reject");
+  const canUploadWorkOrderApprovalFiles =
+    hasGlobalAccess(access) || can(access?.permissions || [], "wo_approval", "upload");
 
   useEffect(() => {
-    loadWorkOrders();
-  }, []);
+    if (access) {
+      loadWorkOrders();
+    }
+  }, [access]);
 
   async function loadWorkOrders() {
     try {
       setLoading(true);
       setMessage("");
 
-      const { data: woData, error: woError } = await supabase
-        .from("work_orders")
-        .select(`
-          id,
-          organization_id,
-          company_id,
-          site_id,
-          wo_number,
-          wo_date,
-          wo_type,
-          description,
-          status,
-          wo_value,
-          approval_status,
-          department,
-          cost_code,
-          created_at,
-          approved_at
-        `)
-        .or("approval_status.is.null,approval_status.ilike.pending,approval_status.ilike.draft")
-        .order("created_at", { ascending: false });
+      if (!canViewWorkOrderApprovals) {
+        setWorkOrders([]);
+        setCompanies(new Map());
+        setSites(new Map());
+        setDocuments(new Map());
+        setLoading(false);
+        return;
+      }
 
-      if (woError) throw woError;
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Unable to load Work Order approvals: missing auth session.");
+      }
+
+      const approvalResponse = await fetch("/api/approvals/work-orders", {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+      const approvalResult = await approvalResponse.json().catch(() => ({}));
+
+      if (!approvalResponse.ok) {
+        throw new Error(
+          approvalResult.error || "Failed to load Work Order approvals.",
+        );
+      }
+
+      const woData = approvalResult.workOrders || [];
+      setEditRows(
+        Object.fromEntries(
+          (woData || []).map((wo: any) => [
+            wo.id,
+            {
+              wo_date: wo.wo_date || "",
+              wo_type: wo.wo_type || "",
+              description: wo.description || "",
+              wo_value: String(wo.wo_value ?? ""),
+              gst_percent: String(wo.gst_percent ?? 18),
+            },
+          ]),
+        ),
+      );
+      setReplacementFiles({});
+      setEditingWorkOrderId(null);
 
       const workOrderIds = Array.from(
         new Set((woData || []).map((wo: any) => wo.id).filter(Boolean))
       );
 
-      const companyIds = Array.from(
-        new Set((woData || []).map((wo: any) => wo.company_id).filter(Boolean))
+      setCompanies(
+        new Map(
+          (approvalResult.companies || []).map((item: any) => [
+            item.id,
+            item.company_name,
+          ]),
+        ),
       );
-
-      const siteIds = Array.from(
-        new Set((woData || []).map((wo: any) => wo.site_id).filter(Boolean))
+      setSites(
+        new Map(
+          (approvalResult.sites || []).map((item: any) => [
+            item.id,
+            item.site_name,
+          ]),
+        ),
       );
-
-      if (companyIds.length > 0) {
-        const { data: companyData } = await supabase
-          .from("companies")
-          .select("id, company_name")
-          .in("id", companyIds);
-
-        setCompanies(
-          new Map((companyData || []).map((item: any) => [item.id, item.company_name]))
-        );
-      } else {
-        setCompanies(new Map());
-      }
-
-      if (siteIds.length > 0) {
-        const { data: siteData } = await supabase
-          .from("sites")
-          .select("id, site_name")
-          .in("id", siteIds);
-
-        setSites(new Map((siteData || []).map((item: any) => [item.id, item.site_name])));
-      } else {
-        setSites(new Map());
-      }
 
       if (workOrderIds.length > 0) {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
         const token = session?.access_token;
 
         if (!token) {
@@ -181,33 +242,111 @@ export default function WorkOrderApprovalPage() {
     window.open(document.signed_url, "_blank", "noopener,noreferrer");
   }
 
+  function updateEditRow(workOrderId: string, field: string, value: string) {
+    setEditRows((prev) => ({
+      ...prev,
+      [workOrderId]: {
+        ...(prev[workOrderId] || {}),
+        [field]: value,
+      },
+    }));
+  }
+
+  function openEditPanel(wo: any) {
+    setEditRows((prev) => ({
+      ...prev,
+      [wo.id]: {
+        wo_date: wo.wo_date || "",
+        wo_type: wo.wo_type || "",
+        description: wo.description || "",
+        wo_value: String(wo.wo_value ?? ""),
+        gst_percent: String(wo.gst_percent ?? 18),
+      },
+    }));
+    setReplacementFiles((prev) => ({ ...prev, [wo.id]: null }));
+    setEditingWorkOrderId(wo.id);
+  }
+
+  function closeEditPanel() {
+    setEditingWorkOrderId(null);
+  }
+
+  async function saveWorkOrderCorrections(wo: any) {
+    try {
+      setSavingId(wo.id);
+      setMessage("");
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const row = editRows[wo.id] || {};
+      const formData = new FormData();
+      formData.append("action", "update_details");
+      formData.append("wo_date", row.wo_date || "");
+      formData.append("wo_type", row.wo_type || "");
+      formData.append("description", row.description || "");
+      formData.append("wo_value", row.wo_value || "0");
+      formData.append("gst_percent", row.gst_percent || "0");
+
+      const replacementFile = replacementFiles[wo.id];
+      if (replacementFile) {
+        formData.append("work_order_file", replacementFile);
+      }
+
+      const response = await fetch(`/api/work-orders/${wo.id}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: formData,
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to save Work Order corrections.");
+      }
+
+      setMessage("Work Order corrections saved successfully.");
+      await loadWorkOrders();
+      setEditingWorkOrderId(null);
+    } catch (error: any) {
+      setMessage(error.message || "Failed to save Work Order corrections.");
+    } finally {
+      setSavingId("");
+    }
+  }
+
   async function approveWorkOrder(wo: any) {
   try {
     setSavingId(wo.id);
     setMessage("");
 
     const {
-      data: { user },
-    } = await supabase.auth.getUser();
+      data: { session },
+    } = await supabase.auth.getSession();
 
-    const userEmail = user?.email || "";
-    const userName =
-      user?.user_metadata?.full_name ||
-      user?.user_metadata?.name ||
-      userEmail;
+    if (!session?.access_token) {
+      throw new Error("Your session expired. Please log in again.");
+    }
 
-    const { error } = await supabase
-      .from("work_orders")
-      .update({
-        approval_status: "approved",
-        status: "active",
-        approved_by_name: userName,
-        approved_by_email: userEmail,
-        approved_at: new Date().toISOString(),
-      })
-      .eq("id", wo.id);
+    const response = await fetch(`/api/work-orders/${wo.id}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ action: "approved" }),
+    });
+    const result = await response.json();
 
-    if (error) throw error;
+    if (!response.ok) {
+      throw new Error(result.error || "Failed to approve work order.");
+    }
 
     setMessage("Work order approved successfully.");
     await loadWorkOrders();
@@ -218,49 +357,37 @@ export default function WorkOrderApprovalPage() {
   }
 }
 
-  async function rejectWorkOrder(wo: any) {
+  async function suspendWorkOrder(wo: any) {
   try {
     setSavingId(wo.id);
     setMessage("");
 
-    const currentDocuments = documents.get(wo.id) || [];
-    const storagePaths = currentDocuments
-      .map((doc) => doc.file_path)
-      .filter(Boolean);
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-    if (storagePaths.length > 0) {
-      const { error: storageError } = await supabase.storage
-        .from("work-order-documents")
-        .remove(storagePaths);
-
-      if (storageError) throw storageError;
+    if (!session?.access_token) {
+      throw new Error("Your session expired. Please log in again.");
     }
 
-    const { error: vendorError } = await supabase
-      .from("work_order_vendors")
-      .delete()
-      .eq("work_order_id", wo.id);
+    const response = await fetch(`/api/work-orders/${wo.id}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ action: "suspended" }),
+    });
+    const result = await response.json();
 
-    if (vendorError) throw vendorError;
+    if (!response.ok) {
+      throw new Error(result.error || "Failed to suspend work order.");
+    }
 
-    const { error: documentError } = await supabase
-      .from("work_order_documents")
-      .delete()
-      .eq("work_order_id", wo.id);
-
-    if (documentError) throw documentError;
-
-    const { error: orderError } = await supabase
-      .from("work_orders")
-      .delete()
-      .eq("id", wo.id);
-
-    if (orderError) throw orderError;
-
-    setMessage("Work order rejected and deleted successfully.");
+    setMessage("Work order suspended successfully.");
     await loadWorkOrders();
   } catch (error: any) {
-    setMessage(error.message || "Failed to reject work order.");
+    setMessage(error.message || "Failed to suspend work order.");
   } finally {
     setSavingId("");
   }
@@ -271,8 +398,14 @@ export default function WorkOrderApprovalPage() {
       .trim()
       .toLowerCase();
 
-    return approvalStatus !== "approved" && approvalStatus !== "rejected";
+    return !["approved", "rejected", "suspended", "cancelled"].includes(
+      approvalStatus
+    );
   });
+  const editingWorkOrder = editingWorkOrderId
+    ? pendingWorkOrders.find((wo) => wo.id === editingWorkOrderId) || null
+    : null;
+  const editingRow = editingWorkOrder ? editRows[editingWorkOrder.id] || {} : {};
 
   return (
     <div className="space-y-6">
@@ -285,7 +418,7 @@ export default function WorkOrderApprovalPage() {
           </nav>
           <h1 className="text-3xl font-bold text-slate-950">Work Order Approval</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Review pending work orders and approve or reject them based on documentation.
+            Review pending work orders and approve or suspend them based on documentation.
           </p>
         </div>
 
@@ -307,13 +440,15 @@ export default function WorkOrderApprovalPage() {
 
       <div className="overflow-hidden rounded border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1320px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[1500px] border-collapse text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-3 font-semibold">Company / Site</th>
                 <th className="px-4 py-3 font-semibold">WO Number</th>
                 <th className="px-4 py-3 font-semibold">WO Details</th>
                 <th className="w-[18%] px-4 py-3 font-semibold">Description</th>
+                <th className="px-4 py-3 font-semibold">Created By</th>
+                <th className="px-4 py-3 font-semibold">Created At</th>
                 <th className="px-4 py-3 text-center font-semibold">Documentation</th>
                 <th className="px-4 py-3 text-center font-semibold">Status</th>
                 <th className="px-4 py-3 text-center font-semibold">Approval</th>
@@ -324,13 +459,13 @@ export default function WorkOrderApprovalPage() {
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-slate-500">
+                  <td colSpan={10} className="p-8 text-center text-slate-500">
                     Loading work orders...
                   </td>
                 </tr>
               ) : pendingWorkOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-slate-500">
+                  <td colSpan={10} className="p-8 text-center text-slate-500">
                     No pending work orders found.
                   </td>
                 </tr>
@@ -338,6 +473,7 @@ export default function WorkOrderApprovalPage() {
                 pendingWorkOrders.map((wo) => {
                   const currentDocuments = documents.get(wo.id) || [];
                   const isSaving = savingId === wo.id;
+                  const commercials = workOrderCommercials(wo);
 
                   return (
                     <tr key={wo.id} className="align-top transition-colors hover:bg-slate-50">
@@ -365,12 +501,39 @@ export default function WorkOrderApprovalPage() {
                           <span className="text-slate-400">Type:</span>{" "}
                           {wo.wo_type || "-"}
                         </div>
+                        <div className="mt-1 text-sm text-slate-700">
+                          <span className="text-slate-400">Basic:</span>{" "}
+                          {money(commercials.basicValue)}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-700">
+                          <span className="text-slate-400">GST:</span>{" "}
+                          {money(commercials.gstAmount)} ({commercials.gstPercent}%)
+                        </div>
+                        <div className="mt-1 text-sm font-semibold text-slate-950">
+                          <span className="text-slate-400">Total:</span>{" "}
+                          {money(commercials.totalValue)}
+                        </div>
                       </td>
 
                       <td className="w-[18%] max-w-[240px] px-4 py-5">
                         <p className="line-clamp-2 text-sm leading-5 text-slate-600">
                           {wo.description || "-"}
                         </p>
+                      </td>
+
+                      <td className="px-4 py-5">
+                        <div className="max-w-[180px] truncate text-sm font-medium text-slate-800">
+                          {auditName(wo.created_by_name, wo.created_by_email)}
+                        </div>
+                        {wo.created_by_name && wo.created_by_email && wo.created_by_name !== wo.created_by_email && (
+                          <div className="mt-1 max-w-[180px] truncate text-xs text-slate-500">
+                            {wo.created_by_email}
+                          </div>
+                        )}
+                      </td>
+
+                      <td className="px-4 py-5 text-sm font-medium text-slate-700">
+                        {formatDateTime(wo.created_at)}
                       </td>
 
                       <td className="px-4 py-5">
@@ -431,25 +594,41 @@ export default function WorkOrderApprovalPage() {
                             View
                           </Link>
 
-                          <button
-                            type="button"
-                            disabled={isSaving}
-                            onClick={() => approveWorkOrder(wo)}
-                            className="inline-flex items-center gap-1 rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
-                          >
-                            <CheckCircle2 className="h-3.5 w-3.5" />
-                            Approve
-                          </button>
+                          {(canEditWorkOrderApprovals ||
+                            canUploadWorkOrderApprovalFiles) && (
+                              <button
+                                type="button"
+                                disabled={isSaving}
+                                onClick={() => openEditPanel(wo)}
+                                className="rounded border border-sky-200 px-3 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-60"
+                              >
+                                Edit
+                              </button>
+                          )}
 
-                          <button
-                            type="button"
-                            disabled={isSaving}
-                            onClick={() => rejectWorkOrder(wo)}
-                            className="inline-flex items-center gap-1 rounded bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            Reject
-                          </button>
+                          {canApproveWorkOrderApprovals && (
+                              <button
+                                type="button"
+                                disabled={isSaving}
+                                onClick={() => approveWorkOrder(wo)}
+                                className="inline-flex items-center gap-1 rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                              >
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                Approve
+                              </button>
+                          )}
+
+                          {canRejectWorkOrderApprovals && (
+                              <button
+                                type="button"
+                                disabled={isSaving}
+                                onClick={() => suspendWorkOrder(wo)}
+                                className="inline-flex items-center gap-1 rounded bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
+                              >
+                                <PauseCircle className="h-3.5 w-3.5" />
+                                Suspend
+                              </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -468,6 +647,151 @@ export default function WorkOrderApprovalPage() {
           pending Work Orders
         </div>
       </div>
+
+      {editingWorkOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4 py-6">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-2xl">
+            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-4">
+              <div>
+                <h2 className="text-xl font-bold text-slate-950">
+                  Edit Pending Work Order
+                </h2>
+                <p className="mt-1 font-mono text-sm font-semibold text-sky-800">
+                  {editingWorkOrder.wo_number}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeEditPanel}
+                disabled={savingId === editingWorkOrder.id}
+                className="rounded border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <label className="block text-sm font-semibold text-slate-700">
+                WO Date
+                <input
+                  type="date"
+                  value={editingRow.wo_date || ""}
+                  onChange={(event) =>
+                    updateEditRow(editingWorkOrder.id, "wo_date", event.target.value)
+                  }
+                  disabled={!canEditWorkOrderApprovals}
+                  className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                />
+              </label>
+
+              <label className="block text-sm font-semibold text-slate-700">
+                Work Order Type
+                <select
+                  value={editingRow.wo_type || ""}
+                  onChange={(event) =>
+                    updateEditRow(editingWorkOrder.id, "wo_type", event.target.value)
+                  }
+                  disabled={!canEditWorkOrderApprovals}
+                  className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="" disabled>
+                    Select Work Order Type
+                  </option>
+                  {WORK_ORDER_TYPE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block text-sm font-semibold text-slate-700">
+                Basic Value
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={editingRow.wo_value || ""}
+                  onChange={(event) =>
+                    updateEditRow(editingWorkOrder.id, "wo_value", event.target.value)
+                  }
+                  disabled={!canEditWorkOrderApprovals}
+                  className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                />
+              </label>
+
+              <label className="block text-sm font-semibold text-slate-700">
+                GST %
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={editingRow.gst_percent || ""}
+                  onChange={(event) =>
+                    updateEditRow(editingWorkOrder.id, "gst_percent", event.target.value)
+                  }
+                  disabled={!canEditWorkOrderApprovals}
+                  className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+
+            <label className="mt-4 block text-sm font-semibold text-slate-700">
+              Description
+              <textarea
+                value={editingRow.description || ""}
+                onChange={(event) =>
+                  updateEditRow(editingWorkOrder.id, "description", event.target.value)
+                }
+                disabled={!canEditWorkOrderApprovals}
+                rows={5}
+                className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              />
+            </label>
+
+            <label className="mt-4 block text-sm font-semibold text-slate-700">
+              Replace Work Order PDF
+              <input
+                type="file"
+                accept="application/pdf,image/*"
+                onChange={(event) =>
+                  setReplacementFiles((prev) => ({
+                    ...prev,
+                    [editingWorkOrder.id]: event.target.files?.[0] || null,
+                  }))
+                }
+                disabled={!canUploadWorkOrderApprovalFiles}
+                className="mt-1 block w-full rounded border border-slate-300 px-3 py-2 text-sm text-slate-600 file:mr-3 file:rounded file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-slate-700"
+              />
+              <span className="mt-1 block text-xs font-normal text-slate-500">
+                Leave blank to keep the current PDF.
+              </span>
+            </label>
+
+            <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
+              <button
+                type="button"
+                onClick={closeEditPanel}
+                disabled={savingId === editingWorkOrder.id}
+                className="rounded border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => saveWorkOrderCorrections(editingWorkOrder)}
+                disabled={
+                  savingId === editingWorkOrder.id ||
+                  (!canEditWorkOrderApprovals && !canUploadWorkOrderApprovalFiles)
+                }
+                className="rounded bg-sky-700 px-4 py-2 text-sm font-bold text-white hover:bg-sky-800 disabled:opacity-60"
+              >
+                {savingId === editingWorkOrder.id ? "Saving..." : "Save Corrections"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

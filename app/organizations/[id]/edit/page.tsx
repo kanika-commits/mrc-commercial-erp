@@ -72,16 +72,31 @@ export default function EditOrganizationPage() {
       setSaving(true);
       setMessage("");
 
-      const { error } = await supabase
-        .from("organizations")
-        .update({
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/admin/organizations/${id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
           name: form.name,
           code: form.code,
           status: form.status,
-        })
-        .eq("id", id);
+        }),
+      });
+      const result = await response.json();
 
-      if (error) throw error;
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to update organization.");
+      }
 
       setMessage("Organization updated successfully.");
       router.refresh();
@@ -93,18 +108,45 @@ export default function EditOrganizationPage() {
   }
 
   async function toggleCompanyStatus(companyId: string, status: string) {
-    const { error } = await supabase
-      .from("companies")
-      .update({ status })
-      .eq("id", companyId);
+    const company = companies.find((item) => item.id === companyId);
 
-    if (error) {
-      setMessage(error.message);
+    if (!company) {
+      setMessage("Company was not found.");
       return;
     }
 
-    await loadData();
-    setMessage("Company status updated.");
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/companies/${companyId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          company_name: company.company_name,
+          company_code: company.company_code,
+          status,
+        }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to update company status.");
+      }
+
+      await loadData();
+      setMessage("Company status updated.");
+    } catch (error: any) {
+      setMessage(error.message || "Failed to update company status.");
+    }
   }
 
   if (loading) {

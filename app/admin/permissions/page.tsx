@@ -3,17 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-
-const actions = [
-  "view",
-  "add",
-  "edit",
-  "delete",
-  "approve",
-  "reject",
-  "upload",
-  "export",
-];
+import {
+  PERMISSION_ACTIONS as actions,
+  availableActionsForModule,
+} from "@/lib/permissionMatrix";
 
 export default function PermissionsPage() {
   const searchParams = useSearchParams();
@@ -157,7 +150,7 @@ export default function PermissionsPage() {
     let next: any[] = [];
 
     modules.forEach((module) => {
-      actions.forEach((action) => {
+      availableActionsForModule(module.module_code).forEach((action) => {
         next = setPermission(next, module.module_code, action, allowed);
       });
     });
@@ -172,7 +165,7 @@ export default function PermissionsPage() {
       let next = [...prev];
 
       (groupedModules[groupName] || []).forEach((module) => {
-        actions.forEach((action) => {
+        availableActionsForModule(module.module_code).forEach((action) => {
           next = setPermission(next, module.module_code, action, allowed);
         });
       });
@@ -187,7 +180,7 @@ export default function PermissionsPage() {
     setPermissions((prev) => {
       let next = [...prev];
 
-      actions.forEach((action) => {
+      availableActionsForModule(moduleCode).forEach((action) => {
         next = setPermission(next, moduleCode, action, allowed);
       });
 
@@ -196,7 +189,9 @@ export default function PermissionsPage() {
   }
 
   function isRowAllChecked(moduleCode: string) {
-    return actions.every((action) => isAllowed(moduleCode, action));
+    return availableActionsForModule(moduleCode).every((action) =>
+      isAllowed(moduleCode, action)
+    );
   }
 
   async function savePermissions() {
@@ -209,34 +204,29 @@ export default function PermissionsPage() {
       setSaving(true);
       setMessage("");
 
-      const { error: deleteError } = await supabase
-        .from("role_permissions")
-        .delete()
-        .eq("role_id", selectedRoleId);
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (deleteError) throw deleteError;
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
 
-      const uniqueRows = new Map<string, any>();
+      const response = await fetch("/api/admin/permissions", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          role_id: selectedRoleId,
+          permissions,
+        }),
+      });
+      const result = await response.json();
 
-      permissions
-        .filter((item) => item.allowed === true)
-        .forEach((item) => {
-          uniqueRows.set(permissionKey(item.module_code, item.action_code), {
-            role_id: selectedRoleId,
-            module_code: item.module_code,
-            action_code: item.action_code,
-            allowed: true,
-          });
-        });
-
-      const rows = Array.from(uniqueRows.values());
-
-      if (rows.length > 0) {
-        const { error: insertError } = await supabase
-          .from("role_permissions")
-          .insert(rows);
-
-        if (insertError) throw insertError;
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to save permissions.");
       }
 
       await loadPermissions(selectedRoleId);
@@ -355,44 +345,52 @@ export default function PermissionsPage() {
                     </thead>
 
                     <tbody>
-                      {items.map((module) => (
-                        <tr key={module.id} className="border-t">
-                          <td className="p-2 font-medium">
-                            {module.module_name}
-                          </td>
+                      {items.map((module) => {
+                        const availableActions = availableActionsForModule(module.module_code);
 
-                          <td className="p-2 text-center">
-                            <input
-                              type="checkbox"
-                              checked={isRowAllChecked(module.module_code)}
-                              onChange={(e) =>
-                                setRowPermissions(
-                                  module.module_code,
-                                  e.target.checked
-                                )
-                              }
-                            />
-                          </td>
+                        return (
+                          <tr key={module.id} className="border-t">
+                            <td className="p-2 font-medium">
+                              {module.module_name}
+                            </td>
 
-                          {actions.map((action) => (
-                            <td key={action} className="p-2 text-center">
+                            <td className="p-2 text-center">
                               <input
                                 type="checkbox"
-                                checked={isAllowed(
-                                  module.module_code,
-                                  action
-                                )}
-                                onChange={() =>
-                                  togglePermission(
+                                checked={isRowAllChecked(module.module_code)}
+                                onChange={(e) =>
+                                  setRowPermissions(
                                     module.module_code,
-                                    action
+                                    e.target.checked
                                   )
                                 }
                               />
                             </td>
-                          ))}
-                        </tr>
-                      ))}
+
+                            {actions.map((action) => (
+                              <td key={action} className="p-2 text-center">
+                                {availableActions.includes(action) ? (
+                                  <input
+                                    type="checkbox"
+                                    checked={isAllowed(
+                                      module.module_code,
+                                      action
+                                    )}
+                                    onChange={() =>
+                                      togglePermission(
+                                        module.module_code,
+                                        action
+                                      )
+                                    }
+                                  />
+                                ) : (
+                                  <span className="text-slate-300">-</span>
+                                )}
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Eye,
@@ -13,7 +13,9 @@ import {
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
+import { formatIstTimestamp } from "@/lib/dateTime";
 
 type WorkOrder = {
   id: string;
@@ -23,10 +25,13 @@ type WorkOrder = {
   description: string | null;
   status: string | null;
   wo_value: number | string | null;
+  gst_percent: number | string | null;
   approval_status: string | null;
   approved_by_name: string | null;
   approved_by_email: string | null;
   approved_at: string | null;
+  created_by_name: string | null;
+  created_by_email: string | null;
   company_id: string | null;
   site_id: string | null;
   organization_id: string | null;
@@ -40,6 +45,7 @@ type WorkOrder = {
   vendor_name?: string | null;
   vendor_names?: string[] | null;
   documents?: WorkOrderDocument[] | null;
+  document_count?: number | null;
   company?: { company_name?: string | null } | null;
   site?: { site_name?: string | null } | null;
   vendor?: { vendor_name?: string | null } | null;
@@ -90,6 +96,8 @@ const LIFECYCLE_STATUS_OPTIONS = [
   { value: "terminated", label: "Terminated" },
 ];
 
+const PAGE_SIZE = 50;
+
 function cleanValue(...values: Array<string | null | undefined>) {
   const value = values.find((item) => item && item.trim().length > 0);
   return value?.trim() || "Unassigned";
@@ -138,15 +146,6 @@ function lifecycleStatusValue(status: string | null | undefined) {
     : "yet_to_start";
 }
 
-function getUniqueValues(values: string[]) {
-  const unique = Array.from(new Set(values.map((value) => value || "Unassigned")));
-  return unique.sort((a, b) => {
-    if (a === "Unassigned") return 1;
-    if (b === "Unassigned") return -1;
-    return a.localeCompare(b);
-  });
-}
-
 function selectAll(values: string[]) {
   return values.reduce<SelectionMap>((next, value) => {
     next[value] = true;
@@ -180,6 +179,21 @@ function formatCurrency(value: number | string | null) {
   }).format(amount);
 }
 
+function workOrderCommercials(wo: Pick<WorkOrder, "wo_value" | "gst_percent">) {
+  const basicValue = Number(wo.wo_value || 0);
+  const gstPercent = Number(wo.gst_percent ?? 18);
+  const safeBasic = Number.isFinite(basicValue) ? basicValue : 0;
+  const safeGstPercent = Number.isFinite(gstPercent) ? gstPercent : 0;
+  const gstAmount = (safeBasic * safeGstPercent) / 100;
+
+  return {
+    basicValue: safeBasic,
+    gstPercent: safeGstPercent,
+    gstAmount,
+    totalValue: safeBasic + gstAmount,
+  };
+}
+
 function formatDate(date: string | null) {
   if (!date) return "-";
 
@@ -194,22 +208,19 @@ function formatDate(date: string | null) {
 }
 
 function formatDateTime(date: string | null) {
-  if (!date) return "-";
-
-  const parsed = new Date(date);
-  if (Number.isNaN(parsed.getTime())) return "-";
-
-  return parsed.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatIstTimestamp(date);
 }
 
 function getApprovedBy(wo: WorkOrder) {
   const value = [wo.approved_by_name, wo.approved_by_email].find(
+    (item) => item && item.trim().length > 0,
+  );
+
+  return value?.trim() || "-";
+}
+
+function getCreatedBy(wo: WorkOrder) {
+  const value = [wo.created_by_name, wo.created_by_email].find(
     (item) => item && item.trim().length > 0,
   );
 
@@ -231,29 +242,24 @@ function statusBadgeClass(status: string | null) {
     return "bg-amber-100 text-amber-800 border-amber-200";
   }
 
-  if (normalized === "terminated" || normalized === "rejected") {
+  if (normalized === "terminated" || normalized === "rejected" || normalized === "cancelled") {
     return "bg-red-100 text-red-800 border-red-200";
   }
 
   return "bg-gray-100 text-gray-700 border-gray-200";
 }
 
-function chunkArray<T>(items: T[], size: number) {
-  const chunks: T[][] = [];
+function selectedFilterValues(values: string[], selection: SelectionMap) {
+  if (values.length === 0) return [];
+  const selected = values.filter((value) => selection[value] !== false);
 
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size));
-  }
-
-  return chunks;
+  if (selected.length === values.length) return [];
+  if (selected.length === 0) return ["__none__"];
+  return selected;
 }
 
-function compareValues(a: string | number, b: string | number) {
-  if (typeof a === "number" && typeof b === "number") {
-    return a - b;
-  }
-
-  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+function sameStringArray(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function FilterGroup({
@@ -307,25 +313,43 @@ function FilterGroup({
 }
 
 export default function WorkOrdersPage() {
+  const { access } = useAccessContext();
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [woSearch, setWoSearch] = useState("");
+  const [debouncedWoSearch, setDebouncedWoSearch] = useState("");
   const [contractorSearch, setContractorSearch] = useState("");
+  const [debouncedContractorSearch, setDebouncedContractorSearch] = useState("");
   const [selectedCompanies, setSelectedCompanies] = useState<SelectionMap>({});
   const [selectedSites, setSelectedSites] = useState<SelectionMap>({});
   const [selectedStatuses, setSelectedStatuses] = useState<SelectionMap>({});
   const [selectedTypes, setSelectedTypes] = useState<SelectionMap>({});
-  const [sortField, setSortField] = useState<SortField>("wo_date");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [companyOptions, setCompanyOptions] = useState<string[]>([]);
+  const [siteOptions, setSiteOptions] = useState<string[]>([]);
+  const [typeOptions, setTypeOptions] = useState<string[]>([]);
+  const [totalWorkOrders, setTotalWorkOrders] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadedDocumentsByWorkOrder, setLoadedDocumentsByWorkOrder] = useState<
+    Record<string, WorkOrderDocument[]>
+  >({});
+  const [loadingDocumentsByWorkOrder, setLoadingDocumentsByWorkOrder] = useState<
+    Record<string, boolean>
+  >({});
+  const [sortField, setSortField] = useState<SortField>("wo_number");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [message, setMessage] = useState("");
-  const [canEdit, setCanEdit] = useState(false);
   const [canDelete, setCanDelete] = useState(false);
-  const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
   const [deleteWorkOrder, setDeleteWorkOrder] = useState<WorkOrder | null>(null);
   const [deletionReason, setDeletionReason] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const hasLoadedRef = useRef(false);
+  const requestIdRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const inFlightRequestKeyRef = useRef<string | null>(null);
 
   function openDocument(document: WorkOrderDocument) {
     if (!document.signed_url) {
@@ -339,233 +363,194 @@ export default function WorkOrdersPage() {
     window.open(document.signed_url, "_blank", "noopener,noreferrer");
   }
 
-  async function loadWorkOrders() {
-    setLoading(true);
-    setError(null);
-
-    const { data, error: loadError } = await supabase
-      .from("work_orders")
-      .select(
-        `
-          id,
-          wo_number,
-          wo_date,
-          wo_type,
-          description,
-          status,
-          wo_value,
-          approval_status,
-          approved_by_name,
-          approved_by_email,
-          approved_at,
-          company_id,
-          site_id,
-          organization_id,
-          department,
-          cost_code,
-          created_at
-        `,
-      )
-      .ilike("approval_status", "approved")
-      .order("created_at", { ascending: false });
-
-    if (loadError) {
-      setError(loadError.message);
-      setWorkOrders([]);
-    } else {
-      const rows = ((data as WorkOrder[]) || []).map((row) => ({ ...row }));
-      const companyIds = Array.from(new Set(rows.map((row) => row.company_id).filter(Boolean)));
-      const siteIds = Array.from(new Set(rows.map((row) => row.site_id).filter(Boolean)));
-      const workOrderIds = rows.map((row) => row.id);
-
-      const [companiesResult, sitesResult] = await Promise.all([
-        companyIds.length
-          ? supabase
-              .from("companies")
-              .select("id, company_name, company_code, organization_id")
-              .in("id", companyIds)
-          : Promise.resolve({ data: [] as Company[], error: null }),
-        siteIds.length
-          ? supabase
-              .from("sites")
-              .select("id, site_name, site_code, organization_id")
-              .in("id", siteIds)
-          : Promise.resolve({ data: [] as Site[], error: null }),
-      ]);
-
-      if (companiesResult.error || sitesResult.error) {
-        setError(
-          companiesResult.error?.message ||
-            sitesResult.error?.message ||
-            "Could not load related work order names.",
-        );
-        setWorkOrders([]);
-        setLoading(false);
-        return;
-      }
-
-      const companyMap = new Map(
-        ((companiesResult.data as Company[]) || []).map((company) => [company.id, company]),
-      );
-      const siteMap = new Map(((sitesResult.data as Site[]) || []).map((site) => [site.id, site]));
-
-      let documentsByWorkOrder = new Map<string, WorkOrderDocument[]>();
-      let vendorsByWorkOrder = new Map<string, WorkOrderVendorSummary>();
-
-      if (workOrderIds.length) {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        const token = session?.access_token;
-
-        if (!token) {
-          setError("Unable to load Work Order documents: missing auth session.");
-          setWorkOrders([]);
-          setLoading(false);
-          return;
-        }
-
-        const documentRows: WorkOrderDocument[] = [];
-
-        for (const idChunk of chunkArray(workOrderIds, 50)) {
-          const response = await fetch(
-            `/api/work-orders/documents?work_order_ids=${encodeURIComponent(
-              idChunk.join(","),
-            )}`,
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-              },
-            },
-          );
-          const result = await response.json();
-
-          if (!response.ok) {
-            setError(result.error || "Could not load Work Order documents.");
-            setWorkOrders([]);
-            setLoading(false);
-            return;
-          }
-
-          documentRows.push(...((result.documents as WorkOrderDocument[]) || []));
-        }
-
-        documentsByWorkOrder = documentRows.reduce<Map<string, WorkOrderDocument[]>>(
-          (map, document) => {
-            const existing = map.get(document.work_order_id) || [];
-            map.set(document.work_order_id, [...existing, document]);
-            return map;
-          },
-          new Map(),
-        );
-
-        const vendorRows: Array<[string, WorkOrderVendorSummary | null]> = [];
-
-        for (const idChunk of chunkArray(workOrderIds, 50)) {
-          const response = await fetch(
-            `/api/work-orders/vendors?work_order_ids=${encodeURIComponent(
-              idChunk.join(","),
-            )}`,
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-              },
-            },
-          );
-          const result = await response.json();
-
-          if (!response.ok) {
-            setError(result.error || "Could not load Work Order vendors.");
-            setWorkOrders([]);
-            setLoading(false);
-            return;
-          }
-
-          vendorRows.push(
-            ...Object.entries(result.vendors || {}) as Array<
-              [string, WorkOrderVendorSummary | null]
-            >,
-          );
-        }
-
-        vendorsByWorkOrder = new Map(
-          vendorRows.filter(([, vendor]) => vendor?.vendor_name) as Array<
-            [string, WorkOrderVendorSummary]
-          >,
-        );
-      }
-
-      const enrichedRows = rows.map((row) => {
-        const company = row.company_id ? companyMap.get(row.company_id) : null;
-        const site = row.site_id ? siteMap.get(row.site_id) : null;
-        const vendor = vendorsByWorkOrder.get(row.id);
-        const vendorName = vendor?.vendor_name?.trim() || null;
-
-        return {
-          ...row,
-          company_name: company?.company_name || company?.company_code || null,
-          company_code: company?.company_code || null,
-          site_name: site?.site_name || site?.site_code || null,
-          site_code: site?.site_code || null,
-          vendor_names: vendorName ? [vendorName] : [],
-          vendor_name: vendorName,
-          documents: documentsByWorkOrder.get(row.id) || [],
-        };
-      });
-
-      setWorkOrders(enrichedRows);
-      setLastUpdated(new Date());
+  async function loadDocumentsForWorkOrder(workOrderId: string) {
+    if (loadedDocumentsByWorkOrder[workOrderId] || loadingDocumentsByWorkOrder[workOrderId]) {
+      return;
     }
 
-    setLoading(false);
-  }
-
-  async function loadAccess() {
-    const access = await getCurrentUserAccess();
-    setCanEdit(can(access.permissions, "work_orders", "edit"));
-    setCanDelete(can(access.permissions, "work_orders", "delete"));
-  }
-
-  async function updateLifecycleStatus(workOrderId: string, nextStatus: string) {
-    const status = lifecycleStatusValue(nextStatus);
+    setLoadingDocumentsByWorkOrder((previous) => ({
+      ...previous,
+      [workOrderId]: true,
+    }));
+    setError(null);
 
     try {
-      setUpdatingStatusId(workOrderId);
-      setMessage("");
-      setError(null);
-
       const {
         data: { session },
       } = await supabase.auth.getSession();
 
       if (!session?.access_token) {
-        throw new Error("Please sign in again to update this Work Order.");
+        throw new Error("Unable to load Work Order documents: missing auth session.");
       }
 
-      const response = await fetch(`/api/work-orders/${workOrderId}`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-          "Content-Type": "application/json",
+      const response = await fetch(
+        `/api/work-orders/documents?work_order_id=${encodeURIComponent(workOrderId)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
         },
-        body: JSON.stringify({ status }),
-      });
+      );
       const result = await response.json();
 
       if (!response.ok) {
-        throw new Error(result.error || "Failed to update Work Order status.");
+        throw new Error(result.error || "Could not load Work Order documents.");
       }
 
-      setWorkOrders((prev) =>
-        prev.map((wo) => (wo.id === workOrderId ? { ...wo, status } : wo)),
-      );
-      setMessage("Work Order status updated.");
-    } catch (statusError: any) {
-      setMessage(statusError.message || "Failed to update Work Order status.");
+      setLoadedDocumentsByWorkOrder((previous) => ({
+        ...previous,
+        [workOrderId]: (result.documents || []) as WorkOrderDocument[],
+      }));
+    } catch (documentError: any) {
+      setError(documentError.message || "Could not load Work Order documents.");
     } finally {
-      setUpdatingStatusId(null);
+      setLoadingDocumentsByWorkOrder((previous) => ({
+        ...previous,
+        [workOrderId]: false,
+      }));
     }
   }
+
+  const statusOptions = useMemo(
+    () => LIFECYCLE_STATUS_OPTIONS.map((option) => option.label),
+    [],
+  );
+  const companyFilterKey = selectedFilterValues(companyOptions, selectedCompanies).join("\u001f");
+  const siteFilterKey = selectedFilterValues(siteOptions, selectedSites).join("\u001f");
+  const statusFilterKey = selectedFilterValues(statusOptions, selectedStatuses).join("\u001f");
+  const typeFilterKey = selectedFilterValues(typeOptions, selectedTypes).join("\u001f");
+  const requestQuery = useMemo(() => {
+    const params = new URLSearchParams({
+      page: String(pageIndex + 1),
+      page_size: String(PAGE_SIZE),
+      sort_field: sortField,
+      sort_direction: sortDirection,
+      include_documents: "count",
+    });
+
+    if (debouncedWoSearch) params.set("wo_search", debouncedWoSearch);
+    if (debouncedContractorSearch) {
+      params.set("contractor_search", debouncedContractorSearch);
+    }
+
+    companyFilterKey
+      .split("\u001f")
+      .filter(Boolean)
+      .forEach((value) => params.append("company", value));
+    siteFilterKey
+      .split("\u001f")
+      .filter(Boolean)
+      .forEach((value) => params.append("site", value));
+    statusFilterKey
+      .split("\u001f")
+      .filter(Boolean)
+      .forEach((value) => params.append("statuses", value));
+    typeFilterKey
+      .split("\u001f")
+      .filter(Boolean)
+      .forEach((value) => params.append("wo_types", value));
+
+    return params.toString();
+  }, [
+    companyFilterKey,
+    debouncedContractorSearch,
+    debouncedWoSearch,
+    pageIndex,
+    siteFilterKey,
+    sortDirection,
+    sortField,
+    statusFilterKey,
+    typeFilterKey,
+  ]);
+  const requestKey = `${requestQuery}|refresh=${refreshNonce}`;
+
+  useEffect(() => {
+    if (!access) return;
+
+    if (inFlightRequestKeyRef.current === requestKey) {
+      return;
+    }
+
+    abortControllerRef.current?.abort();
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    inFlightRequestKeyRef.current = requestKey;
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    const hasLoaded = hasLoadedRef.current;
+
+    if (hasLoaded) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    setError(null);
+
+    async function fetchWorkOrders() {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (!session?.access_token) {
+          setError("Unable to load Work Orders: missing auth session.");
+          setWorkOrders([]);
+          return;
+        }
+
+        const response = await fetch(`/api/work-orders/register?${requestQuery}`, {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          signal: abortController.signal,
+        });
+        const result = await response.json();
+
+        if (requestId !== requestIdRef.current) return;
+
+        if (!response.ok) {
+          setError(result.error || "Could not load Work Orders.");
+          if (!hasLoaded) setWorkOrders([]);
+        } else {
+          setWorkOrders((result.rows || []) as WorkOrder[]);
+          setTotalWorkOrders(Number(result.total || 0));
+          const nextCompanies = result.filters?.companies || [];
+          const nextSites = result.filters?.sites || [];
+          const nextTypes = result.filters?.wo_types || [];
+
+          setCompanyOptions((previous) =>
+            sameStringArray(previous, nextCompanies) ? previous : nextCompanies,
+          );
+          setSiteOptions((previous) =>
+            sameStringArray(previous, nextSites) ? previous : nextSites,
+          );
+          setTypeOptions((previous) =>
+            sameStringArray(previous, nextTypes) ? previous : nextTypes,
+          );
+          setLastUpdated(result.last_updated ? new Date(result.last_updated) : new Date());
+          hasLoadedRef.current = true;
+      }
+    } catch (fetchError: any) {
+      if (fetchError?.name === "AbortError") {
+          return;
+        }
+
+        setError(fetchError.message || "Could not load Work Orders.");
+        if (!hasLoaded) setWorkOrders([]);
+      } finally {
+        if (requestId === requestIdRef.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
+
+        if (inFlightRequestKeyRef.current === requestKey) {
+          inFlightRequestKeyRef.current = null;
+        }
+      }
+    }
+
+    fetchWorkOrders();
+  }, [access, requestKey, requestQuery]);
 
   async function confirmDelete() {
     if (!deleteWorkOrder) return;
@@ -608,6 +593,7 @@ export default function WorkOrdersPage() {
       }
 
       setWorkOrders((prev) => prev.filter((wo) => wo.id !== deleteWorkOrder.id));
+      setTotalWorkOrders((prev) => Math.max(0, prev - 1));
       setDeleteWorkOrder(null);
       setDeletionReason("");
       setMessage("Work Order deleted successfully.");
@@ -619,29 +605,25 @@ export default function WorkOrdersPage() {
   }
 
   useEffect(() => {
-    loadAccess();
-    loadWorkOrders();
-  }, []);
+    if (!access) return;
+    setCanDelete(can(access.permissions, "work_orders", "delete"));
+  }, [access]);
 
-  const companyOptions = useMemo(
-    () => getUniqueValues(workOrders.map((wo) => getCompanyName(wo))),
-    [workOrders],
-  );
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedWoSearch(woSearch.trim());
+    }, 450);
 
-  const siteOptions = useMemo(
-    () => getUniqueValues(workOrders.map((wo) => getSiteName(wo))),
-    [workOrders],
-  );
+    return () => window.clearTimeout(timer);
+  }, [woSearch]);
 
-  const statusOptions = useMemo(
-    () => LIFECYCLE_STATUS_OPTIONS.map((option) => option.label),
-    [],
-  );
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedContractorSearch(contractorSearch.trim());
+    }, 450);
 
-  const typeOptions = useMemo(
-    () => getUniqueValues(workOrders.map((wo) => titleCase(wo.wo_type))),
-    [workOrders],
-  );
+    return () => window.clearTimeout(timer);
+  }, [contractorSearch]);
 
   useEffect(() => {
     setSelectedCompanies(selectAll(companyOptions));
@@ -659,84 +641,33 @@ export default function WorkOrdersPage() {
     setSelectedTypes(selectAll(typeOptions));
   }, [typeOptions]);
 
-  const filteredWorkOrders = useMemo(() => {
-    const normalizedWoSearch = woSearch.trim().toLowerCase();
-    const normalizedContractorSearch = contractorSearch.trim().toLowerCase();
+  const sortedWorkOrders = workOrders;
 
-    return workOrders.filter((wo) => {
-      const company = getCompanyName(wo);
-      const site = getSiteName(wo);
-      const status = getStatusFilterValue(wo);
-      const type = titleCase(wo.wo_type);
-
-      const matchesWo =
-        !normalizedWoSearch || (wo.wo_number || "").toLowerCase().includes(normalizedWoSearch);
-      const vendorSearchText = [getVendorName(wo), ...(wo.vendor_names || [])]
-        .join(" ")
-        .toLowerCase();
-      const matchesContractor =
-        !normalizedContractorSearch || vendorSearchText.includes(normalizedContractorSearch);
-
-      return (
-        matchesWo &&
-        matchesContractor &&
-        selectedCompanies[company] !== false &&
-        selectedSites[site] !== false &&
-        selectedStatuses[status] !== false &&
-        selectedTypes[type] !== false &&
-        hasAnySelected(selectedCompanies) &&
-        hasAnySelected(selectedSites) &&
-        hasAnySelected(selectedStatuses) &&
-        hasAnySelected(selectedTypes)
-      );
-    });
+  useEffect(() => {
+    setPageIndex(0);
   }, [
-    workOrders,
     woSearch,
     contractorSearch,
+    sortField,
+    sortDirection,
     selectedCompanies,
     selectedSites,
     selectedStatuses,
     selectedTypes,
   ]);
 
-  const sortedWorkOrders = useMemo(() => {
-    const direction = sortDirection === "asc" ? 1 : -1;
+  const totalPages = Math.max(1, Math.ceil(totalWorkOrders / PAGE_SIZE));
+  const currentPageIndex = Math.min(pageIndex, totalPages - 1);
+  const startIndex = currentPageIndex * PAGE_SIZE;
+  const endIndex = Math.min(startIndex + sortedWorkOrders.length, totalWorkOrders);
+  const paginatedWorkOrders = sortedWorkOrders;
+  const rangeStart = totalWorkOrders === 0 ? 0 : startIndex + 1;
 
-    return [...filteredWorkOrders].sort((a, b) => {
-      let aValue: string | number;
-      let bValue: string | number;
-
-      switch (sortField) {
-        case "vendor_name":
-          aValue = getVendorName(a);
-          bValue = getVendorName(b);
-          break;
-        case "wo_value":
-          aValue = typeof a.wo_value === "string" ? Number(a.wo_value) || 0 : a.wo_value || 0;
-          bValue = typeof b.wo_value === "string" ? Number(b.wo_value) || 0 : b.wo_value || 0;
-          break;
-        case "status":
-          aValue = titleCase(lifecycleStatusValue(a.status));
-          bValue = titleCase(lifecycleStatusValue(b.status));
-          break;
-        case "approval_status":
-          aValue = titleCase(a.approval_status);
-          bValue = titleCase(b.approval_status);
-          break;
-        case "wo_date":
-          aValue = new Date(a.wo_date || a.created_at || 0).getTime() || 0;
-          bValue = new Date(b.wo_date || b.created_at || 0).getTime() || 0;
-          break;
-        case "wo_number":
-        default:
-          aValue = a.wo_number || "";
-          bValue = b.wo_number || "";
-      }
-
-      return compareValues(aValue, bValue) * direction;
-    });
-  }, [filteredWorkOrders, sortDirection, sortField]);
+  useEffect(() => {
+    if (pageIndex > totalPages - 1) {
+      setPageIndex(totalPages - 1);
+    }
+  }, [pageIndex, totalPages]);
 
   return (
     <div className="space-y-8">
@@ -768,20 +699,14 @@ export default function WorkOrdersPage() {
             <p className="mt-1 text-xs text-slate-500">
               Updated{" "}
               {lastUpdated
-                ? lastUpdated.toLocaleString("en-IN", {
-                    day: "2-digit",
-                    month: "short",
-                    year: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })
+                ? formatIstTimestamp(lastUpdated)
                 : "-"}
             </p>
           </div>
 
           <button
             type="button"
-            onClick={loadWorkOrders}
+            onClick={() => setRefreshNonce((value) => value + 1)}
             className="inline-flex items-center justify-center gap-2 bg-[#00658b] px-6 py-3 text-sm font-bold text-white transition hover:bg-[#005174]"
           >
             <RefreshCw className="h-4 w-4" />
@@ -887,22 +812,23 @@ export default function WorkOrdersPage() {
               </select>
             </label>
             <span className="text-xs text-slate-500">
-              {sortedWorkOrders.length === 0
+              {totalWorkOrders === 0
                 ? "Showing 0 of 0"
-                : `Showing 1-${sortedWorkOrders.length} of ${sortedWorkOrders.length}`}
+                : `Showing ${rangeStart}–${endIndex} of ${totalWorkOrders}`}
+              {refreshing ? " · Updating..." : ""}
             </span>
           </div>
         </div>
 
-        {loading ? (
+        {loading && sortedWorkOrders.length === 0 ? (
           <div className="p-10 text-center text-slate-500">Loading work orders...</div>
         ) : error ? (
           <div className="m-4 border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
-        ) : sortedWorkOrders.length === 0 ? (
+        ) : totalWorkOrders === 0 ? (
           <div className="p-10 text-center text-slate-500">No work orders match the selected filters.</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1420px] border-collapse text-left text-sm">
+            <table className="w-full min-w-[1660px] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-300 bg-[#f6f3f5]">
                   <th className="w-[12%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
@@ -914,8 +840,8 @@ export default function WorkOrdersPage() {
                   <th className="w-[16%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Description
                   </th>
-                  <th className="w-[9%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
-                    Value
+                  <th className="w-[11%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
+                    WO Value
                   </th>
                   <th className="w-[14%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Documentation
@@ -925,6 +851,12 @@ export default function WorkOrdersPage() {
                   </th>
                   <th className="w-[8%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Approval
+                  </th>
+                  <th className="w-[12%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
+                    Created By
+                  </th>
+                  <th className="w-[11%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
+                    Created At
                   </th>
                   <th className="w-[12%] px-6 py-4 text-xs font-bold uppercase tracking-wide text-slate-600">
                     Approved By
@@ -941,32 +873,57 @@ export default function WorkOrdersPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {sortedWorkOrders.map((wo) => {
+                {paginatedWorkOrders.map((wo) => {
                   const lifecycleStatus = lifecycleStatusValue(wo.status);
+                  const commercials = workOrderCommercials(wo);
+                  const vendorName = getVendorName(wo);
 
                   return (
                   <tr key={wo.id} className="transition hover:bg-[#f6f3f5]">
-                    <td className="px-6 py-5 align-top text-base font-bold text-[#00658b]">
-                      {wo.wo_number || "-"}
+                    <td className="px-6 py-5 align-top">
+                      <div className="max-w-[320px] text-base font-bold leading-6">
+                        <Link
+                          href={`/work-orders/${wo.id}`}
+                          className="text-[#00658b] hover:underline"
+                        >
+                          {wo.wo_number || "-"}
+                        </Link>
+                      </div>
                     </td>
                     <td className="px-6 py-5 align-top">
-                      <div className="text-base font-semibold text-slate-950">{getVendorName(wo)}</div>
+                      <div className="text-base font-semibold text-slate-950">{vendorName}</div>
                       <div className="mt-1 text-sm text-slate-500">{getSiteName(wo)}</div>
                     </td>
                     <td className="px-6 py-5 align-top text-base text-slate-700">
                       <p className="line-clamp-2 max-w-[280px] leading-6">{wo.description || "-"}</p>
                     </td>
-                    <td className="px-6 py-5 align-top text-base font-bold text-slate-950">
-                      {formatCurrency(wo.wo_value)}
+                    <td className="px-6 py-5 align-top">
+                      <div className="text-base font-bold text-slate-950">
+                        {formatCurrency(commercials.totalValue)}
+                      </div>
+                      <div className="mt-1 space-y-0.5 text-xs font-medium text-slate-500">
+                        <p>Basic: {formatCurrency(commercials.basicValue)}</p>
+                        <p>
+                          GST: {formatCurrency(commercials.gstAmount)} ({commercials.gstPercent}%)
+                        </p>
+                      </div>
                     </td>
                     <td className="px-6 py-5 align-top">
-                      {wo.documents && wo.documents.length > 0 ? (
+                      {(() => {
+                        const loadedDocuments = loadedDocumentsByWorkOrder[wo.id];
+                        const isLoadingDocuments = loadingDocumentsByWorkOrder[wo.id] === true;
+                        const documentCount =
+                          Number(wo.document_count ?? loadedDocuments?.length ?? 0) || 0;
+
+                        if (loadedDocuments && loadedDocuments.length > 0) {
+                          return (
                         <div className="space-y-1.5">
                           <div className="inline-flex items-center gap-1 text-sm font-semibold text-slate-700">
                             <FileText className="h-4 w-4 text-slate-400" />
-                            {wo.documents.length} file{wo.documents.length === 1 ? "" : "s"}
+                                  {loadedDocuments.length} file
+                                  {loadedDocuments.length === 1 ? "" : "s"}
                           </div>
-                          {wo.documents.map((document) => (
+                              {loadedDocuments.map((document) => (
                             <div
                               key={document.id}
                               className="flex max-w-[260px] items-center gap-2"
@@ -985,38 +942,44 @@ export default function WorkOrdersPage() {
                             </div>
                           ))}
                         </div>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-sm text-slate-400">
-                          <FileText className="h-4 w-4" />
-                          No file
-                        </span>
-                      )}
+                          );
+                        }
+
+                        if (documentCount > 0) {
+                          return (
+                            <div className="space-y-1.5">
+                              <div className="inline-flex items-center gap-1 text-sm font-semibold text-slate-700">
+                                <FileText className="h-4 w-4 text-slate-400" />
+                                {documentCount} document{documentCount === 1 ? "" : "s"}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => loadDocumentsForWorkOrder(wo.id)}
+                                disabled={isLoadingDocuments}
+                                className="text-sm font-semibold text-[#00658b] hover:underline disabled:cursor-wait disabled:text-slate-400"
+                              >
+                                {isLoadingDocuments ? "Loading documents..." : "Load documents"}
+                              </button>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <span className="inline-flex items-center gap-1 text-sm text-slate-400">
+                            <FileText className="h-4 w-4" />
+                            No documents
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="px-6 py-5 align-top">
-                      {canEdit ? (
-                        <select
-                          value={lifecycleStatus}
-                          onChange={(event) => updateLifecycleStatus(wo.id, event.target.value)}
-                          disabled={updatingStatusId === wo.id}
-                          className={`border px-2.5 py-1.5 text-sm font-semibold outline-none transition focus:ring-1 focus:ring-[#00658b] disabled:opacity-60 ${statusBadgeClass(
-                            lifecycleStatus,
-                          )}`}
-                        >
-                          {LIFECYCLE_STATUS_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span
-                          className={`inline-flex border px-2.5 py-1.5 text-sm font-semibold ${statusBadgeClass(
-                            lifecycleStatus,
-                          )}`}
-                        >
-                          {titleCase(lifecycleStatus)}
-                        </span>
-                      )}
+                      <span
+                        className={`inline-flex border px-2.5 py-1.5 text-sm font-semibold ${statusBadgeClass(
+                          lifecycleStatus,
+                        )}`}
+                      >
+                        {titleCase(lifecycleStatus)}
+                      </span>
                     </td>
                     <td className="px-6 py-5 align-top">
                       <span
@@ -1026,6 +989,19 @@ export default function WorkOrdersPage() {
                       >
                         {titleCase(wo.approval_status)}
                       </span>
+                    </td>
+                    <td className="px-6 py-5 align-top">
+                      <div className="max-w-[180px] truncate text-sm font-medium text-slate-800">
+                        {getCreatedBy(wo)}
+                      </div>
+                      {wo.created_by_name && wo.created_by_email && wo.created_by_name !== wo.created_by_email && (
+                        <div className="mt-1 max-w-[180px] truncate text-xs text-slate-500">
+                          {wo.created_by_email}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-6 py-5 align-top text-sm font-medium text-slate-700">
+                      {formatDateTime(wo.created_at)}
                     </td>
                     <td className="px-6 py-5 align-top">
                       <div className="max-w-[180px] truncate text-sm font-medium text-slate-800">
@@ -1074,6 +1050,31 @@ export default function WorkOrdersPage() {
                 })}
               </tbody>
             </table>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              <div>
+                Showing {rangeStart}–{endIndex} of {totalWorkOrders}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPageIndex((value) => Math.max(0, value - 1))}
+                  disabled={currentPageIndex <= 0}
+                  className="border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPageIndex((value) => Math.min(totalPages - 1, value + 1))
+                  }
+                  disabled={currentPageIndex >= totalPages - 1}
+                  className="border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </section>

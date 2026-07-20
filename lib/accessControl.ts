@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
+import { ACCOUNT_INACTIVE_CODE } from "@/lib/accountStatus";
 
 export type UserPermission = {
   module_code: string;
@@ -14,6 +15,7 @@ export type CurrentUserAccess = {
   organizations: string[];
   companies: string[];
   sites: string[];
+  isGlobalAccess?: boolean;
 };
 
 export async function getCurrentUserAccess(): Promise<CurrentUserAccess> {
@@ -44,9 +46,22 @@ export async function getCurrentUserAccess(): Promise<CurrentUserAccess> {
         },
       });
 
-      if (response.ok) {
-        return response.json();
+      if (response.ok) return response.json();
+
+      const payload = await response.json().catch(() => null);
+
+      if (payload?.code === ACCOUNT_INACTIVE_CODE) {
+        await supabase.auth.signOut();
       }
+
+      return {
+        user: null,
+        roleCodes: [],
+        permissions: [],
+        organizations: [],
+        companies: [],
+        sites: [],
+      };
     }
   }
 
@@ -87,7 +102,7 @@ export async function getCurrentUserAccess(): Promise<CurrentUserAccess> {
     rolePermissionRows = rolePermissions || [];
   }
 
-  if (roleCodes.includes("platform_owner") || roleCodes.includes("super_admin")) {
+  if (roleCodes.includes("platform_owner")) {
     return {
       user,
       roleCodes,
@@ -95,6 +110,7 @@ export async function getCurrentUserAccess(): Promise<CurrentUserAccess> {
       organizations: [],
       companies: [],
       sites: [],
+      isGlobalAccess: true,
     };
   }
 
@@ -122,6 +138,7 @@ export async function getCurrentUserAccess(): Promise<CurrentUserAccess> {
     sites: Array.from(
       new Set((accessRows || []).map((row) => row.site_id).filter(Boolean))
     ),
+    isGlobalAccess: false,
   };
 }
 
@@ -137,4 +154,34 @@ export function can(
         (permission.module_code === moduleCode &&
           permission.action_code === actionCode))
   );
+}
+export function isSuperUser(access: CurrentUserAccess) {
+  return hasGlobalAccess(access);
+}
+
+export function hasGlobalAccess(access: CurrentUserAccess | null | undefined) {
+  if (!access) return false;
+
+  return (
+    access.isGlobalAccess === true ||
+    access.roleCodes.includes("platform_owner") ||
+    access.permissions.some(
+      (permission) =>
+        permission.allowed === true &&
+        permission.module_code === "*" &&
+        permission.action_code === "*"
+    )
+  );
+}
+
+export function isPlatformOwner(access: CurrentUserAccess) {
+  return hasGlobalAccess(access);
+}
+
+export function isOrganizationAdmin(access: CurrentUserAccess) {
+  return access.roleCodes.includes("super_admin");
+}
+
+export function hasSiteRestriction(access: CurrentUserAccess) {
+  return !hasGlobalAccess(access) && access.sites.length > 0;
 }

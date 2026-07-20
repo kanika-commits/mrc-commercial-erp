@@ -1,45 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import {
-  ArrowLeft,
-  Building2,
-  ExternalLink,
-  FileMinus,
-  Paperclip,
-} from "lucide-react";
+import { ArrowLeft, Building2, ExternalLink, FileMinus, Paperclip } from "lucide-react";
+import AuditTrailCard from "@/components/AuditTrailCard";
 import { supabase } from "@/lib/supabase";
+import { formatIstTimestamp } from "@/lib/dateTime";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
 function formatDateTime(value: string | null | undefined) {
-  if (!value) return "-";
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "-";
-
-  return parsed.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatIstTimestamp(value);
 }
 
-function statusClass(value?: string | null) {
-  const status = String(value || "").toLowerCase();
-
-  if (status === "approved") return "border-green-200 bg-green-50 text-green-700";
-  if (status === "pending") return "border-yellow-200 bg-yellow-50 text-yellow-700";
-  if (status === "sent back") return "border-orange-200 bg-orange-50 text-orange-700";
-  if (status === "rejected") return "border-red-200 bg-red-50 text-red-700";
-
-  return "border-slate-200 bg-slate-50 text-slate-700";
+function auditName(name?: string | null, email?: string | null) {
+  return name || email || "-";
 }
 
 export default function DebitNoteDetailPage() {
@@ -51,7 +29,6 @@ export default function DebitNoteDetailPage() {
   const [company, setCompany] = useState<any>(null);
   const [site, setSite] = useState<any>(null);
   const [vendor, setVendor] = useState<any>(null);
-  const [raBill, setRaBill] = useState<any>(null);
   const [documents, setDocuments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -67,11 +44,36 @@ export default function DebitNoteDetailPage() {
 
       const { data: noteData, error: noteError } = await supabase
         .from("debit_notes")
-        .select("*")
+        .select(`
+          id,
+          organization_id,
+          work_order_id,
+          ra_bill_id,
+          vendor_id,
+          debit_note_number,
+          debit_note_date,
+          debit_note_type,
+          reason,
+          gross_amount,
+          total_amount,
+          status,
+          approval_status,
+          created_by_name,
+          created_by_email,
+          approved_by_name,
+          approved_by_email,
+          approved_at,
+          rejected_by_name,
+          rejected_by_email,
+          rejected_at,
+          rejection_reason,
+          created_at
+        `)
         .eq("id", debitNoteId)
-        .single();
+        .maybeSingle();
 
       if (noteError) throw noteError;
+      if (!noteData) throw new Error("Debit Note was not found.");
 
       setNote(noteData);
 
@@ -83,7 +85,6 @@ export default function DebitNoteDetailPage() {
           .maybeSingle();
 
         if (woError) throw woError;
-
         setWorkOrder(woData);
 
         if (woData?.company_id) {
@@ -115,20 +116,7 @@ export default function DebitNoteDetailPage() {
           .maybeSingle();
 
         if (vendorError) throw vendorError;
-
         setVendor(vendorData);
-      }
-
-      if (noteData.ra_bill_id) {
-        const { data: raData, error: raError } = await supabase
-          .from("ra_bills")
-          .select("id, ra_number, ra_date, gross_amount, net_amount, approval_status")
-          .eq("id", noteData.ra_bill_id)
-          .maybeSingle();
-
-        if (raError) throw raError;
-
-        setRaBill(raData);
       }
 
       const {
@@ -137,9 +125,7 @@ export default function DebitNoteDetailPage() {
 
       if (session?.access_token) {
         const response = await fetch(
-          `/api/debit-notes/documents?debit_note_id=${encodeURIComponent(
-            debitNoteId
-          )}`,
+          `/api/debit-notes/documents?debit_note_id=${encodeURIComponent(debitNoteId)}`,
           {
             headers: {
               Authorization: `Bearer ${session.access_token}`,
@@ -153,8 +139,6 @@ export default function DebitNoteDetailPage() {
         }
 
         setDocuments(result.documents || []);
-      } else {
-        setDocuments([]);
       }
     } catch (error: any) {
       setMessage(error.message || "Failed to load Debit Note.");
@@ -164,17 +148,16 @@ export default function DebitNoteDetailPage() {
   }
 
   function openDocument(document: any) {
-    if (!document?.signed_url) {
-      setMessage(document?.signed_url_error || "Debit Note file is not available.");
+    if (!document.signed_url) {
+      setMessage(
+        document.signed_url_error ||
+          "Unable to open Debit Note file. Signed URL was not available."
+      );
       return;
     }
 
     window.open(document.signed_url, "_blank", "noopener,noreferrer");
   }
-
-  const amount = useMemo(() => {
-    return Number(note?.total_amount || note?.gross_amount || 0);
-  }, [note]);
 
   if (loading) {
     return <p className="text-sm text-slate-500">Loading Debit Note...</p>;
@@ -188,9 +171,7 @@ export default function DebitNoteDetailPage() {
     );
   }
 
-  if (!note) {
-    return <p className="text-red-600">Debit Note not found.</p>;
-  }
+  if (!note) return null;
 
   return (
     <section className="space-y-6">
@@ -200,24 +181,12 @@ export default function DebitNoteDetailPage() {
             <FileMinus className="h-3.5 w-3.5" />
             Debit Note Detail
           </div>
-
           <h1 className="text-3xl font-bold text-slate-950">
-            Debit Note {note.debit_note_number}
+            Debit Note {note.debit_note_number || "-"}
           </h1>
-
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span
-              className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass(
-                note.approval_status
-              )}`}
-            >
-              {note.approval_status || "Pending"}
-            </span>
-
-            <span className="text-sm text-slate-500">
-              Created against WO {workOrder?.wo_number || "-"}
-            </span>
-          </div>
+          <p className="mt-2 text-sm text-slate-500">
+            Created against WO {workOrder?.wo_number || "-"}.
+          </p>
         </div>
 
         <Link
@@ -229,11 +198,10 @@ export default function DebitNoteDetailPage() {
         </Link>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <Summary title="Debit Note Amount" value={money(amount)} />
+      <div className="grid gap-4 md:grid-cols-3">
+        <Summary title="Debit Note Amount" value={money(note.total_amount || note.gross_amount)} />
         <Summary title="Type" value={note.debit_note_type || "-"} />
-        <Summary title="Approval" value={note.approval_status || "Pending"} />
-        <Summary title="Files" value={String(documents.length)} />
+        <Summary title="Approval Status" value={note.approval_status || "-"} />
       </div>
 
       <section className="rounded-2xl border bg-white p-6 shadow-sm">
@@ -243,7 +211,6 @@ export default function DebitNoteDetailPage() {
             Work Order & Vendor Details
           </h2>
         </div>
-
         <div className="grid gap-4 md:grid-cols-4">
           <Info label="Work Order" value={workOrder?.wo_number || "-"} />
           <Info label="Company" value={company?.company_name || "-"} />
@@ -254,56 +221,21 @@ export default function DebitNoteDetailPage() {
           <Info label="PAN" value={vendor?.pan || "-"} />
           <Info label="GSTIN" value={vendor?.gstin || "-"} />
         </div>
-
-        {note.work_order_id && (
-          <Link
-            href={`/work-orders/${note.work_order_id}`}
-            className="mt-5 inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium hover:bg-slate-50"
-          >
-            Open Work Order
-            <ExternalLink className="h-4 w-4" />
-          </Link>
-        )}
       </section>
-
-      {raBill && (
-        <section className="rounded-2xl border bg-white p-6 shadow-sm">
-          <h2 className="mb-4 text-xl font-semibold text-slate-950">
-            Linked RA Bill
-          </h2>
-
-          <div className="grid gap-4 md:grid-cols-4">
-            <Info label="RA Number" value={raBill.ra_number || "-"} />
-            <Info label="RA Date" value={raBill.ra_date || "-"} />
-            <Info label="RA Gross" value={money(raBill.gross_amount)} />
-            <Info label="RA Net" value={money(raBill.net_amount)} />
-          </div>
-
-          <Link
-            href={`/ra-bills/${raBill.id}`}
-            className="mt-5 inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium hover:bg-slate-50"
-          >
-            Open RA Bill
-            <ExternalLink className="h-4 w-4" />
-          </Link>
-        </section>
-      )}
 
       <section className="rounded-2xl border bg-white p-6 shadow-sm">
         <h2 className="mb-4 text-xl font-semibold text-slate-950">
           Debit Note Information
         </h2>
-
         <div className="grid gap-4 md:grid-cols-4">
           <Info label="Debit Note Number" value={note.debit_note_number || "-"} />
           <Info label="Debit Note Date" value={note.debit_note_date || "-"} />
           <Info label="Debit Note Type" value={note.debit_note_type || "-"} />
-          <Info label="Debit Note Amount" value={money(amount)} />
           <Info label="Status" value={note.status || "-"} />
           <Info label="Approval Status" value={note.approval_status || "-"} />
-          <Info label="Created By" value={note.created_by_name || note.created_by_email || "-"} />
+          <Info label="Created By" value={auditName(note.created_by_name, note.created_by_email)} />
           <Info label="Created At" value={formatDateTime(note.created_at)} />
-          <Info label="Approved By" value={note.approved_by_name || note.approved_by_email || "-"} />
+          <Info label="Approved By" value={auditName(note.approved_by_name, note.approved_by_email)} />
           <Info label="Approved At" value={formatDateTime(note.approved_at)} />
         </div>
 
@@ -312,23 +244,20 @@ export default function DebitNoteDetailPage() {
             <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
               Reason
             </p>
-            <p className="mt-2 text-sm leading-6 text-slate-700">
-              {note.reason}
-            </p>
-          </div>
-        )}
-
-        {note.rejection_reason && (
-          <div className="mt-6 rounded-2xl border border-orange-200 bg-orange-50 p-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-orange-700">
-              HO Remark / Reason
-            </p>
-            <p className="mt-2 text-sm leading-6 text-orange-800">
-              {note.rejection_reason}
-            </p>
+            <p className="mt-2 text-sm leading-6 text-slate-700">{note.reason}</p>
           </div>
         )}
       </section>
+
+      <AuditTrailCard
+        createdBy={note.created_by_name || note.created_by_email}
+        createdAt={note.created_at}
+        approvedBy={note.approved_by_name || note.approved_by_email}
+        approvedAt={note.approved_at}
+        rejectedBy={note.rejected_by_name || note.rejected_by_email}
+        rejectedAt={note.rejected_at}
+        rejectReason={note.rejection_reason}
+      />
 
       <section className="rounded-2xl border bg-white p-6 shadow-sm">
         <div className="mb-4 flex items-center gap-2">
@@ -342,24 +271,22 @@ export default function DebitNoteDetailPage() {
           <p className="text-sm text-red-600">No attachments found.</p>
         ) : (
           <div className="space-y-3">
-            {documents.map((doc) => (
+            {documents.map((document) => (
               <div
-                key={doc.id}
+                key={document.id}
                 className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white p-3"
               >
                 <div>
-                  <p className="font-medium text-slate-950">{doc.file_name}</p>
+                  <p className="font-medium text-slate-950">
+                    {document.file_name || "Attachment"}
+                  </p>
                   <p className="text-xs text-slate-500">
-                    Uploaded:{" "}
-                    {doc.uploaded_at
-                      ? new Date(doc.uploaded_at).toLocaleString()
-                      : "-"}
+                    Uploaded: {formatDateTime(document.uploaded_at)}
                   </p>
                 </div>
-
                 <button
                   type="button"
-                  onClick={() => openDocument(doc)}
+                  onClick={() => openDocument(document)}
                   className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800"
                 >
                   Open
@@ -374,13 +301,7 @@ export default function DebitNoteDetailPage() {
   );
 }
 
-function Summary({
-  title,
-  value,
-}: {
-  title: string;
-  value: string;
-}) {
+function Summary({ title, value }: { title: string; value: string }) {
   return (
     <div className="rounded-2xl border bg-white p-5 shadow-sm">
       <p className="text-xs font-medium uppercase tracking-wide text-slate-500">

@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 import { sortCompanies } from "@/lib/companyOrdering";
+import RequirePermission from "@/components/RequirePermission";
+import DeleteOrganizationButton from "@/components/DeleteOrganizationButton";
+import DeleteCompanyButton from "@/components/DeleteCompanyButton";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -104,9 +107,23 @@ export default async function OrganizationDetailPage({
           </p>
         </div>
 
-        <Link href="/organizations" className="rounded-lg border px-4 py-2">
-          Back
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <RequirePermission
+            moduleCode="organizations"
+            actionCode="delete"
+            fallback={null}
+          >
+            <DeleteOrganizationButton
+              organizationId={organization.id}
+              organizationName={organization.name}
+              redirectTo="/organizations"
+            />
+          </RequirePermission>
+
+          <Link href="/organizations" className="rounded-lg border px-4 py-2">
+            Back
+          </Link>
+        </div>
       </div>
 
       <section className="rounded-lg border bg-white p-6">
@@ -129,6 +146,7 @@ export default async function OrganizationDetailPage({
                 <th className="p-3 text-left">Company</th>
                 <th className="p-3 text-left">Code</th>
                 <th className="p-3 text-left">Status</th>
+                <th className="p-3 text-left">Action</th>
               </tr>
             </thead>
 
@@ -138,12 +156,24 @@ export default async function OrganizationDetailPage({
                   <td className="p-3">{company.company_name}</td>
                   <td className="p-3">{company.company_code || "-"}</td>
                   <td className="p-3">{company.status || "active"}</td>
+                  <td className="p-3">
+                    <RequirePermission
+                      moduleCode="companies"
+                      actionCode="delete"
+                      fallback={null}
+                    >
+                      <DeleteCompanyButton
+                        companyId={company.id}
+                        companyName={company.company_name}
+                      />
+                    </RequirePermission>
+                  </td>
                 </tr>
               ))}
 
               {companies?.length === 0 && (
                 <tr>
-                  <td colSpan={3} className="p-6 text-center text-gray-500">
+                  <td colSpan={4} className="p-6 text-center text-gray-500">
                     No companies found.
                   </td>
                 </tr>

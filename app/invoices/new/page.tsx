@@ -12,6 +12,7 @@ import {
   Upload,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import AlertMessage from "@/components/AlertMessage";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -25,7 +26,7 @@ export default function NewInvoicePage() {
   const [selectedSiteId, setSelectedSiteId] = useState("");
   const [selectedWO, setSelectedWO] = useState<any>(null);
   const [linkedVendor, setLinkedVendor] = useState<any>(null);
-  const [previousRABills, setPreviousRABills] = useState<any[]>([]);
+  const [linkedVendors, setLinkedVendors] = useState<any[]>([]);
   const [previousInvoices, setPreviousInvoices] = useState<any[]>([]);
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
 
@@ -46,49 +47,36 @@ export default function NewInvoicePage() {
     loadInitialData();
   }, []);
 
+  async function fetchWithToken(url: string) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      throw new Error("Please sign in again to load form data.");
+    }
+
+    return fetch(url, {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    });
+  }
+
   async function loadInitialData() {
-    const { data: siteData, error: siteError } = await supabase
-      .from("sites")
-      .select("id, site_name, site_code, company_id")
-      .eq("status", "active")
-      .order("site_name");
+    try {
+      const response = await fetchWithToken("/api/commercial/create-lookups");
+      const result = await response.json();
 
-    if (siteError) {
-      setMessage(siteError.message);
-      return;
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to load form data.");
+      }
+
+      setSites(result.sites || []);
+      setWorkOrders(result.work_orders || []);
+    } catch (error: any) {
+      setMessage(error.message || "Failed to load form data.");
     }
-
-    const { data: woData, error: woError } = await supabase
-      .from("work_orders")
-      .select(`
-        id,
-        wo_number,
-        wo_date,
-        wo_value,
-        company_id,
-        site_id,
-        companies (
-          id,
-          company_name,
-          company_code
-        ),
-        sites (
-          id,
-          site_name,
-          site_code
-        )
-      `)
-      .in("approval_status", ["Approved", "approved"])
-      .eq("status", "active")
-      .order("wo_number");
-
-    if (woError) {
-      setMessage(woError.message);
-      return;
-    }
-
-    setSites(siteData || []);
-    setWorkOrders(woData || []);
   }
 
   const filteredWorkOrders = useMemo(() => {
@@ -102,7 +90,7 @@ export default function NewInvoicePage() {
     setSelectedSiteId(siteId);
     setSelectedWO(null);
     setLinkedVendor(null);
-    setPreviousRABills([]);
+    setLinkedVendors([]);
     setPreviousInvoices([]);
 
     setForm((prev) => ({
@@ -119,7 +107,7 @@ export default function NewInvoicePage() {
     setMessage("");
     setSelectedWO(null);
     setLinkedVendor(null);
-    setPreviousRABills([]);
+    setLinkedVendors([]);
     setPreviousInvoices([]);
 
     if (!workOrderId) return;
@@ -154,63 +142,44 @@ export default function NewInvoicePage() {
       return;
     }
 
-    const linkedVendor = vendorResult.vendors?.[workOrderId];
+    const linkedVendors = (vendorResult.all_vendors?.[workOrderId] || [])
+      .map((row: any) => ({
+        vendor_id: row.vendor_id,
+        vendor_name: row.vendor?.vendor_name || "",
+        vendor_role: row.vendor_role || "-",
+      }))
+      .filter((row: any) => row.vendor_id);
+    const linkedVendor =
+      linkedVendors.length === 1
+        ? linkedVendors[0]
+        : vendorResult.vendors?.[workOrderId];
 
-    if (!linkedVendor?.vendor_id) {
+    if (linkedVendors.length === 0 && !linkedVendor?.vendor_id) {
       setMessage("No vendor is linked to this Work Order.");
       return;
     }
 
-    setLinkedVendor(linkedVendor);
+    setLinkedVendors(linkedVendors);
+    setLinkedVendor(linkedVendors.length === 1 ? linkedVendor : null);
 
-    const { data: raData, error: raError } = await supabase
-      .from("ra_bills")
-      .select(`
-        id,
-        ra_number,
-        ra_date,
-        gross_amount,
-        gst_amount,
-        net_amount,
-        approval_status,
-        created_at
-      `)
-      .eq("work_order_id", workOrderId)
-      .ilike("approval_status", "approved")
-      .order("created_at", { ascending: true });
+    const historyResponse = await fetchWithToken(
+      `/api/commercial/create-lookups?resource=invoice_history&work_order_id=${encodeURIComponent(
+        workOrderId
+      )}`
+    );
+    const historyResult = await historyResponse.json();
 
-    if (raError) {
-      setMessage(raError.message);
+    if (!historyResponse.ok) {
+      setMessage(historyResult.error || "Failed to load previous invoices.");
       return;
     }
 
-    const { data: invoiceData, error: invoiceError } = await supabase
-      .from("invoices")
-      .select(`
-        id,
-        invoice_number,
-        invoice_date,
-        taxable_amount,
-        gst_amount,
-        invoice_amount,
-        itc_status,
-        created_at
-      `)
-      .eq("work_order_id", workOrderId)
-      .order("created_at", { ascending: true });
-
-    if (invoiceError) {
-      setMessage(invoiceError.message);
-      return;
-    }
-
-    setPreviousRABills(raData || []);
-    setPreviousInvoices(invoiceData || []);
+    setPreviousInvoices(historyResult.invoices || []);
 
     setForm((prev) => ({
       ...prev,
       work_order_id: workOrderId,
-      vendor_id: linkedVendor.vendor_id,
+      vendor_id: linkedVendors.length === 1 ? linkedVendor.vendor_id : "",
     }));
   }
 
@@ -232,6 +201,11 @@ export default function NewInvoicePage() {
       return;
     }
 
+    if (name === "vendor_id") {
+      const vendor = linkedVendors.find((item) => item.vendor_id === value) || null;
+      setLinkedVendor(vendor);
+    }
+
     setForm((prev) => ({
       ...prev,
       [name]: value,
@@ -249,23 +223,12 @@ export default function NewInvoicePage() {
     return Math.round(taxable + gstAmount);
   }, [form.taxable_amount, gstAmount]);
 
-  const totalRABills = useMemo(() => {
-    return previousRABills.reduce(
-      (sum, bill) => sum + Number(bill.net_amount || 0),
-      0
-    );
-  }, [previousRABills]);
-
   const totalInvoices = useMemo(() => {
     return previousInvoices.reduce(
       (sum, invoice) => sum + Number(invoice.invoice_amount || 0),
       0
     );
   }, [previousInvoices]);
-
-  const totalAfterThisInvoice = totalInvoices + invoiceAmount;
-  const raVsInvoiceBalance = totalRABills - totalAfterThisInvoice;
-  const invoiceExceedsRA = totalAfterThisInvoice > totalRABills;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -282,7 +245,7 @@ export default function NewInvoicePage() {
     }
 
     if (!form.vendor_id) {
-      setMessage("Vendor could not be found for this Work Order.");
+      setMessage("Select a vendor linked to this Work Order.");
       return;
     }
 
@@ -405,11 +368,11 @@ export default function NewInvoicePage() {
         </Link>
       </div>
 
-      {message && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {message}
-        </div>
-      )}
+      <AlertMessage
+        type="error"
+        message={message}
+        onClose={() => setMessage("")}
+      />
 
       <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
         <aside className="h-fit rounded-2xl border bg-white p-5 shadow-sm lg:sticky lg:top-24">
@@ -468,7 +431,7 @@ export default function NewInvoicePage() {
               </div>
             </div>
 
-            <div className="mt-5 grid gap-4 md:grid-cols-2">
+            <div className="mt-5 grid gap-4 md:grid-cols-3">
               <Field label="Site *">
                 <select
                   value={selectedSiteId}
@@ -503,67 +466,34 @@ export default function NewInvoicePage() {
                   ))}
                 </select>
               </Field>
+
+              <Field label="Vendor *">
+                <select
+                  name="vendor_id"
+                  value={form.vendor_id}
+                  onChange={handleChange}
+                  disabled={!form.work_order_id || linkedVendors.length === 0}
+                  className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-slate-100"
+                >
+                  <option value="">
+                    {!form.work_order_id
+                      ? "Select Work Order First"
+                      : linkedVendors.length === 0
+                      ? "No linked vendors"
+                      : "Select Vendor"}
+                  </option>
+                  {linkedVendors.map((vendor) => (
+                    <option key={vendor.vendor_id} value={vendor.vendor_id}>
+                      {vendor.vendor_name} — {vendor.vendor_role}
+                    </option>
+                  ))}
+                </select>
+              </Field>
             </div>
           </section>
 
           {selectedWO && (
             <>
-              <section className="grid gap-4 md:grid-cols-4">
-                <Summary
-                  title="Site"
-                  value={selectedWO.sites?.site_name || "-"}
-                />
-                <Summary
-                  title="Company"
-                  value={selectedWO.companies?.company_name || "-"}
-                />
-                <Summary title="WO Number" value={selectedWO.wo_number || "-"} />
-                <Summary
-                  title="Vendor"
-                  value={linkedVendor?.vendor_name || "-"}
-                />
-              </section>
-
-              <section className="grid gap-4 md:grid-cols-4">
-                <Summary title="WO Value" value={money(selectedWO.wo_value)} />
-                <Summary title="Approved RA Total" value={money(totalRABills)} />
-                <Summary
-                  title="Previous Invoice Total"
-                  value={money(totalInvoices)}
-                />
-                <Summary
-                  title="RA - Invoice Balance"
-                  value={money(raVsInvoiceBalance)}
-                  warning={invoiceExceedsRA}
-                />
-              </section>
-
-              {invoiceExceedsRA && (
-                <div className="rounded-2xl border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
-                  Warning: Total invoices after this entry exceed approved RA
-                  bills by {money(Math.abs(raVsInvoiceBalance))}. You can still
-                  submit, but please verify before saving.
-                </div>
-              )}
-
-              <section className="rounded-2xl border bg-white p-6 shadow-sm">
-                <h2 className="mb-4 text-xl font-semibold text-slate-950">
-                  Approved RA Bills
-                </h2>
-
-                <HistoryTable
-                  emptyText="No approved RA bills found for this Work Order."
-                  columns={["RA No", "Date", "Gross", "GST", "Net"]}
-                  rows={previousRABills.map((bill) => [
-                    bill.ra_number || "-",
-                    bill.ra_date || "-",
-                    money(bill.gross_amount),
-                    money(bill.gst_amount),
-                    money(bill.net_amount),
-                  ])}
-                />
-              </section>
-
               <section className="rounded-2xl border bg-white p-6 shadow-sm">
                 <h2 className="mb-4 text-xl font-semibold text-slate-950">
                   Previous Invoices
@@ -606,6 +536,12 @@ export default function NewInvoicePage() {
                       Enter the tax values exactly as shown on the uploaded PDF.
                     </p>
                   </div>
+                </div>
+
+                <div className="mt-5 grid gap-3 rounded-xl border bg-slate-50 p-4 text-sm md:grid-cols-3">
+                  <CompactInfo label="Work Order" value={selectedWO.wo_number || "-"} />
+                  <CompactInfo label="Vendor" value={linkedVendor?.vendor_name || "-"} />
+                  <CompactInfo label="Previous Invoice Total" value={money(totalInvoices)} />
                 </div>
 
                 <div className="mt-5 grid gap-4 md:grid-cols-2">
@@ -790,6 +726,17 @@ function Summary({
         {title}
       </p>
       <p className="mt-2 text-lg font-bold text-slate-950">{value}</p>
+    </div>
+  );
+}
+
+function CompactInfo({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+        {label}
+      </p>
+      <p className="mt-1 truncate font-semibold text-slate-900">{value}</p>
     </div>
   );
 }

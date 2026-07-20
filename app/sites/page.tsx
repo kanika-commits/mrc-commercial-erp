@@ -2,9 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Building2, ChevronRight, Eye, Pencil, Plus, Search } from "lucide-react";
+import { Building2, ChevronRight, Eye, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
+import AlertMessage from "@/components/AlertMessage";
+import { getAllowedOrganizationIds } from "@/lib/clientOrganizationScope";
 
 type Site = {
   id: string;
@@ -61,24 +64,37 @@ function formatSiteDisplayName(siteName: string, location: string | null) {
 }
 
 export default function SitesPage() {
+  const { access, loading: accessLoading } = useAccessContext();
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
-  const [canEditSites, setCanEditSites] = useState(false);
+  const [deleteSite, setDeleteSite] = useState<Site | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const permissions = access?.permissions || [];
+  const canAddSites = can(permissions, "sites", "add");
+  const canEditSites = can(permissions, "sites", "edit");
+  const canDeleteSites = can(permissions, "sites", "delete");
 
   useEffect(() => {
-    loadSites();
-  }, []);
+    if (!accessLoading && access) {
+      loadSites();
+    }
+  }, [access, accessLoading]);
 
   async function loadSites() {
     setLoading(true);
     setMessage("");
 
-    const access = await getCurrentUserAccess();
-    setCanEditSites(can(access.permissions, "sites", "edit"));
+    const allowedOrganizationIds = getAllowedOrganizationIds(access);
 
-    const { data, error } = await supabase
+    if (allowedOrganizationIds && allowedOrganizationIds.length === 0) {
+      setSites([]);
+      setLoading(false);
+      return;
+    }
+
+    let siteQuery = supabase
       .from("sites")
       .select(
         `
@@ -91,8 +107,13 @@ export default function SitesPage() {
         status,
         created_at
       `,
-      )
-      .order("site_name", { ascending: true });
+      );
+
+    if (allowedOrganizationIds) {
+      siteQuery = siteQuery.in("organization_id", allowedOrganizationIds);
+    }
+
+    const { data, error } = await siteQuery.order("site_name", { ascending: true });
 
     if (error) {
       setMessage(error.message);
@@ -102,6 +123,41 @@ export default function SitesPage() {
 
     setSites((data || []) as Site[]);
     setLoading(false);
+  }
+
+  async function confirmDeleteSite() {
+    if (!deleteSite) return;
+
+    try {
+      setDeleting(true);
+      setMessage("");
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/sites/${deleteSite.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to delete site.");
+      }
+
+      setSites((prev) => prev.filter((site) => site.id !== deleteSite.id));
+      setDeleteSite(null);
+      setMessage("Site deleted successfully.");
+    } catch (error: any) {
+      setMessage(error.message || "Failed to delete site.");
+    } finally {
+      setDeleting(false);
+    }
   }
 
   const filteredSites = useMemo(() => {
@@ -142,21 +198,23 @@ export default function SitesPage() {
             </p>
           </div>
 
-          <Link
-            href="/sites/new"
-            className="inline-flex items-center justify-center gap-2 rounded bg-[#00658b] px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#005174]"
-          >
-            <Plus className="h-4 w-4" />
-            Add Site
-          </Link>
+          {canAddSites && (
+            <Link
+              href="/sites/new"
+              className="inline-flex items-center justify-center gap-2 rounded bg-[#00658b] px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#005174]"
+            >
+              <Plus className="h-4 w-4" />
+              Add Site
+            </Link>
+          )}
         </div>
       </section>
 
-      {message && (
-        <div className="rounded border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
-          {message}
-        </div>
-      )}
+      <AlertMessage
+        type={message.toLowerCase().includes("success") ? "success" : "error"}
+        message={message}
+        onClose={() => setMessage("")}
+      />
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end">
@@ -281,6 +339,16 @@ export default function SitesPage() {
                             <Pencil className="h-4 w-4" />
                           </Link>
                         )}
+                        {canDeleteSites && (
+                          <button
+                            type="button"
+                            onClick={() => setDeleteSite(site)}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded text-slate-500 transition hover:bg-red-50 hover:text-red-700"
+                            title="Delete site"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -290,6 +358,41 @@ export default function SitesPage() {
           </table>
         </div>
       </section>
+
+      {deleteSite && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h2 className="text-xl font-bold text-slate-950">Delete Site</h2>
+            <p className="mt-3 text-sm leading-6 text-slate-600">
+              Delete site{" "}
+              <span className="font-semibold text-slate-950">
+                {deleteSite.site_name || "-"}
+              </span>
+              ? This will hard delete the site only if it is not used in Work
+              Orders or other records.
+            </p>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setDeleteSite(null)}
+                disabled={deleting}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteSite}
+                disabled={deleting}
+                className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+              >
+                {deleting ? "Deleting..." : "Delete Site"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

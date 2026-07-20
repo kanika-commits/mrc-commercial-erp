@@ -4,6 +4,8 @@ import {
   insertDeleteAudit,
   requireDeletePermission,
 } from "@/lib/serverDeleteAudit";
+import { requirePermission } from "@/lib/serverPermissions";
+import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { createWorkOrderDriveFolder } from "@/src/lib/googleDrive";
 
 const MODULE_CODE = "work_orders";
@@ -48,9 +50,65 @@ function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
-async function fileToBase64(file: File) {
-  const buffer = Buffer.from(await file.arrayBuffer());
-  return buffer.toString("base64");
+function requireDriveFolderValue(value: unknown, label: string) {
+  const text = String(value || "").trim();
+
+  if (!text) {
+    throw new Error(`Google Drive Work Order folder response missing ${label}.`);
+  }
+
+  return text;
+}
+
+function validateWorkOrderDriveFolder(driveFolder: any) {
+  return {
+    drive_folder_id: requireDriveFolderValue(driveFolder?.folder_id, "folder_id"),
+    drive_folder_name: requireDriveFolderValue(
+      driveFolder?.folder_name,
+      "folder_name"
+    ),
+    ra_bills_folder_id: requireDriveFolderValue(
+      driveFolder?.ra_bills_folder_id,
+      "ra_bills_folder_id"
+    ),
+    invoices_folder_id: requireDriveFolderValue(
+      driveFolder?.invoices_folder_id,
+      "invoices_folder_id"
+    ),
+    debit_notes_folder_id: requireDriveFolderValue(
+      driveFolder?.debit_notes_folder_id,
+      "debit_notes_folder_id"
+    ),
+    contractor_docs_folder_id: requireDriveFolderValue(
+      driveFolder?.contractor_docs_folder_id,
+      "contractor_docs_folder_id"
+    ),
+    work_order_file_id: requireDriveFolderValue(
+      driveFolder?.work_order_file_id,
+      "work_order_file_id"
+    ),
+    work_order_file_url: requireDriveFolderValue(
+      driveFolder?.work_order_file_url,
+      "work_order_file_url"
+    ),
+    work_order_file_name:
+      String(driveFolder?.work_order_file_name || "").trim() || null,
+  };
+}
+
+async function fileToOptimizedDrivePayload(file: File) {
+  const fileBuffer = Buffer.from(await file.arrayBuffer());
+  const optimized = await optimizeUploadFile(
+    fileBuffer,
+    file.type || "application/octet-stream",
+    file.name
+  );
+
+  return {
+    fileName: optimized.fileName,
+    mimeType: optimized.mimeType,
+    base64: optimized.buffer.toString("base64"),
+  };
 }
 
 async function readDeletionReason(request: Request) {
@@ -182,6 +240,10 @@ async function cleanupWorkOrder(
 
   if (workOrderId) {
     await admin
+      .from("work_order_drive_folders")
+      .delete()
+      .eq("work_order_id", workOrderId);
+    await admin
       .from("work_order_documents")
       .delete()
       .eq("work_order_id", workOrderId);
@@ -195,13 +257,10 @@ async function cleanupWorkOrder(
 
 export async function POST(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const auth = await requirePermission(request, MODULE_CODE, "add");
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("response" in auth) {
+      return auth.response;
     }
 
     const formData = await request.formData();
@@ -210,9 +269,11 @@ export async function POST(request: Request) {
     const woNumber = String(formData.get("wo_number") || "").trim();
     const woDate = String(formData.get("wo_date") || "").trim();
     const woType = String(formData.get("wo_type") || "").trim();
+    const woValue = Number(formData.get("wo_value") || 0);
+    const gstPercent = Number(formData.get("gst_percent") || 0);
     const description = String(formData.get("description") || "").trim();
-    const vendorId = String(formData.get("primary_vendor_id") || "").trim();
-    const vendorRole = String(formData.get("primary_vendor_role") || "").trim();
+    const vendorId = String(formData.get("vendor_id") || "").trim();
+    const vendorRole = String(formData.get("vendor_role") || "").trim();
     const file = formData.get("work_order_file");
 
     if (!companyId) {
@@ -243,6 +304,20 @@ export async function POST(request: Request) {
     if (!woType) {
       return NextResponse.json(
         { error: "WO Type is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!Number.isFinite(woValue) || woValue <= 0) {
+      return NextResponse.json(
+        { error: "WO Basic Value is required." },
+        { status: 400 }
+      );
+    }
+
+    if (!Number.isFinite(gstPercent) || gstPercent < 0) {
+      return NextResponse.json(
+        { error: "GST % is required." },
         { status: 400 }
       );
     }
@@ -369,6 +444,8 @@ export async function POST(request: Request) {
           wo_number: woNumber,
           wo_date: woDate,
           wo_type: woType,
+          wo_value: woValue,
+          gst_percent: gstPercent,
           description: description || null,
           status: "active",
           approval_status: "pending",
@@ -416,14 +493,32 @@ export async function POST(request: Request) {
         throw new Error("Work Order vendor link could not be verified.");
       }
 
-      const driveFolder = await createWorkOrderDriveFolder(woNumber, {
-        fileName: file.name,
-        mimeType: file.type || "application/pdf",
-        base64: await fileToBase64(file),
-      });
+      const driveFilePayload = await fileToOptimizedDrivePayload(file);
+      const driveFolder = validateWorkOrderDriveFolder(
+        await createWorkOrderDriveFolder(woNumber, driveFilePayload)
+      );
 
-      if (!driveFolder.work_order_file_id || !driveFolder.work_order_file_url) {
-        throw new Error("Google Drive Work Order file was not created.");
+      const { error: driveFolderError } = await admin
+        .from("work_order_drive_folders")
+        .upsert(
+          {
+            organization_id: organizationId,
+            work_order_id: workOrder.id,
+            drive_folder_id: driveFolder.drive_folder_id,
+            drive_folder_name: driveFolder.drive_folder_name,
+            ra_bills_folder_id: driveFolder.ra_bills_folder_id,
+            invoices_folder_id: driveFolder.invoices_folder_id,
+            debit_notes_folder_id: driveFolder.debit_notes_folder_id,
+            contractor_docs_folder_id: driveFolder.contractor_docs_folder_id,
+            created_at: new Date().toISOString(),
+          },
+          { onConflict: "work_order_id" }
+        );
+
+      if (driveFolderError) {
+        throw new Error(
+          `Google Drive folder was created but ERP folder metadata could not be saved: ${driveFolderError.message}`
+        );
       }
 
       const { data: document, error: documentError } = await admin
@@ -431,7 +526,7 @@ export async function POST(request: Request) {
         .insert({
           organization_id: organizationId,
           work_order_id: workOrder.id,
-          file_name: driveFolder.work_order_file_name || file.name,
+          file_name: driveFolder.work_order_file_name || driveFilePayload.fileName,
           file_url: driveFolder.work_order_file_url,
           file_path: driveFolder.work_order_file_id,
           uploaded_at: new Date().toISOString(),
@@ -444,24 +539,6 @@ export async function POST(request: Request) {
       if (!document?.file_name || !document?.file_path) {
         throw new Error("Work Order file metadata was not saved.");
       }
-
-      const { error: driveFolderError } = await admin
-        .from("work_order_drive_folders")
-        .upsert(
-          {
-            organization_id: organizationId,
-            work_order_id: workOrder.id,
-            drive_folder_id: driveFolder.folder_id,
-            drive_folder_name: driveFolder.folder_name,
-            ra_bills_folder_id: driveFolder.ra_bills_folder_id,
-            invoices_folder_id: driveFolder.invoices_folder_id,
-            debit_notes_folder_id: driveFolder.debit_notes_folder_id,
-            contractor_docs_folder_id: driveFolder.contractor_docs_folder_id,
-          },
-          { onConflict: "work_order_id" }
-        );
-
-      if (driveFolderError) throw driveFolderError;
 
       return NextResponse.json({ workOrder });
     } catch (error) {

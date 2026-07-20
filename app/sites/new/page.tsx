@@ -42,16 +42,34 @@ export default function NewSitePage() {
 
       const organizationId = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
 
-      const { error } = await supabase.from("sites").insert({
-        organization_id: organizationId,
-        site_name: siteName.trim(),
-        site_code: siteCode.trim(),
-        location: location.trim() || null,
-        state: state.trim() || null,
-        status,
-      });
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (error) throw error;
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch("/api/sites", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          organization_id: organizationId,
+          site_name: siteName.trim(),
+          site_code: siteCode.trim(),
+          location: location.trim() || null,
+          state: state.trim() || null,
+          status,
+        }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to save site.");
+      }
 
       router.push("/sites");
     } catch (error: unknown) {
@@ -174,32 +192,16 @@ export default function NewSitePage() {
                     />
                   </div>
 
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-slate-600">
-                        State
-                      </label>
-                      <input
-                        value={state}
-                        onChange={(e) => setState(e.target.value)}
-                        className="w-full rounded border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-900 focus:ring-0"
-                        placeholder="State"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-slate-600">
-                        Status
-                      </label>
-                      <select
-                        value={status}
-                        onChange={(e) => setStatus(e.target.value)}
-                        className="w-full rounded border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-900 focus:ring-0"
-                      >
-                        <option value="active">active</option>
-                        <option value="inactive">inactive</option>
-                      </select>
-                    </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-600">
+                      State
+                    </label>
+                    <input
+                      value={state}
+                      onChange={(e) => setState(e.target.value)}
+                      className="w-full rounded border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-900 focus:ring-0"
+                      placeholder="State"
+                    />
                   </div>
                 </div>
               </div>

@@ -4,9 +4,12 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
+import { isOrganizationAllowed } from "@/lib/clientOrganizationScope";
 
 export default function EditCompanyPage() {
+  const { access, loading: accessLoading } = useAccessContext();
   const params = useParams();
   const router = useRouter();
   const id = params.id as string;
@@ -24,19 +27,22 @@ export default function EditCompanyPage() {
   const [accessDenied, setAccessDenied] = useState(false);
 
   useEffect(() => {
-    loadData();
-  }, [id]);
+    if (!accessLoading && access) {
+      loadData();
+    }
+  }, [access, accessLoading, id]);
 
   async function loadData() {
     setLoading(true);
     setMessage("");
     setAccessDenied(false);
 
-    const access = await getCurrentUserAccess();
+    const currentAccess = access;
+    if (!currentAccess) return;
+
     const canEditCompany =
-      access.roleCodes.includes("platform_owner") ||
-      access.roleCodes.includes("super_admin") ||
-      can(access.permissions, "companies", "edit");
+      currentAccess.roleCodes.includes("platform_owner") ||
+      can(currentAccess.permissions, "companies", "edit");
 
     if (!canEditCompany) {
       setAccessDenied(true);
@@ -59,6 +65,12 @@ export default function EditCompanyPage() {
     }
 
     if (!company) {
+      setMessage("Company was not found.");
+      setLoading(false);
+      return;
+    }
+
+    if (!isOrganizationAllowed(currentAccess, company.organization_id)) {
       setMessage("Company was not found.");
       setLoading(false);
       return;

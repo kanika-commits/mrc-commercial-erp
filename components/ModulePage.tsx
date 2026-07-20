@@ -15,8 +15,10 @@ import {
   ShieldCheck,
   Users,
 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { getCurrentUserAccess, can } from "@/lib/accessControl";
+import { useMemo } from "react";
+import { useAccessContext } from "@/components/AccessContext";
+import { can, hasGlobalAccess } from "@/lib/accessControl";
+import { DEFAULT_MODULE_NAVIGATION } from "@/lib/defaultModuleNavigation";
 
 type ModuleRow = {
   id: string;
@@ -128,35 +130,22 @@ export default function ModulePage({
   title,
   description,
 }: ModulePageProps) {
-  const [pages, setPages] = useState<ModuleRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { access, moduleNavigation, loading } = useAccessContext();
+  const pages = useMemo(() => {
+    const permissions = access?.permissions || [];
+    const globalAccess = hasGlobalAccess(access);
+    const effectiveNavigation =
+      globalAccess && (moduleNavigation.modules || []).length === 0
+        ? DEFAULT_MODULE_NAVIGATION
+        : moduleNavigation;
 
-  useEffect(() => {
-    async function loadPages() {
-      const access = await getCurrentUserAccess();
-      const response = await fetch("/api/admin/module-navigation");
-
-      if (!response.ok) {
-        setPages([]);
-        setLoading(false);
-        return;
-      }
-
-      const navigation = await response.json();
-      const data = ((navigation.modules || []) as ModuleRow[]).filter(
-        (module: ModuleRow) => module.module_group === groupCode
+    return ((effectiveNavigation.modules || []) as ModuleRow[])
+      .filter((module: ModuleRow) => module.module_group === groupCode)
+      .filter(
+        (page: ModuleRow) =>
+          globalAccess || can(permissions, page.module_code, "view"),
       );
-
-      const visiblePages = (data ?? []).filter((page: ModuleRow) =>
-        can(access.permissions, page.module_code, "view")
-      );
-
-      setPages(visiblePages);
-      setLoading(false);
-    }
-
-    loadPages();
-  }, [groupCode]);
+  }, [access, groupCode, moduleNavigation]);
 
   if (loading) {
     return <p className="text-sm text-gray-500">Loading module...</p>;

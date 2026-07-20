@@ -3,8 +3,12 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 import { sortCompanies } from "@/lib/companyOrdering";
+import { formatStatusLabel } from "@/lib/statusLabels";
+import DeleteCompanyButton from "@/components/DeleteCompanyButton";
+import { getAllowedOrganizationIds } from "@/lib/clientOrganizationScope";
 
 type Company = {
   id: string;
@@ -18,38 +22,51 @@ type Company = {
 };
 
 export default function CompaniesPage() {
+  const { access, loading: accessLoading } = useAccessContext();
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [canEditCompanies, setCanEditCompanies] = useState(false);
-  const [canDeleteCompanies, setCanDeleteCompanies] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const permissions = access?.permissions || [];
+  const roleCodes = access?.roleCodes || [];
+  const canEditCompanies =
+    roleCodes.includes("platform_owner") ||
+    can(permissions, "companies", "edit");
+  const canAddCompanies =
+    roleCodes.includes("platform_owner") ||
+    can(permissions, "companies", "add");
+  const canDeleteCompanies =
+    roleCodes.includes("platform_owner") ||
+    can(permissions, "companies", "delete");
 
   useEffect(() => {
-    loadCompanies();
-  }, []);
+    if (!accessLoading && access) {
+      loadCompanies();
+    }
+  }, [access, accessLoading]);
 
   async function loadCompanies() {
     setLoading(true);
     setMessage("");
 
-    const access = await getCurrentUserAccess();
+    const allowedOrganizationIds = getAllowedOrganizationIds(access);
 
-    setCanEditCompanies(
-      access.roleCodes.includes("platform_owner") ||
-        access.roleCodes.includes("super_admin") ||
-        can(access.permissions, "companies", "edit")
-    );
-    setCanDeleteCompanies(
-      access.roleCodes.includes("platform_owner") ||
-        access.roleCodes.includes("super_admin") ||
-        can(access.permissions, "companies", "delete")
-    );
+    if (allowedOrganizationIds && allowedOrganizationIds.length === 0) {
+      setCompanies([]);
+      setLoading(false);
+      return;
+    }
 
-    const { data, error } = await supabase
+    let companyQuery = supabase
       .from("companies")
       .select("id, organization_id, company_name, company_code, status, created_at")
       .neq("status", "deleted")
       .order("created_at", { ascending: false });
+
+    if (allowedOrganizationIds) {
+      companyQuery = companyQuery.in("organization_id", allowedOrganizationIds);
+    }
+
+    const { data, error } = await companyQuery;
 
     if (error) {
       setMessage(error.message);
@@ -92,39 +109,9 @@ export default function CompaniesPage() {
     setLoading(false);
   }
 
-  async function deleteCompany(company: Company) {
-    const ok = window.confirm(
-      `Delete company "${company.company_name}"? This is blocked automatically if linked records exist.`
-    );
-
-    if (!ok) return;
-
-    try {
-      setMessage("");
-
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session?.access_token) {
-        throw new Error("Your session expired. Please log in again.");
-      }
-
-      const response = await fetch(`/api/companies/${company.id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to delete company.");
-      }
-
-      setCompanies((prev) => prev.filter((item) => item.id !== company.id));
-      setMessage("Company deleted successfully.");
-    } catch (error: any) {
-      setMessage(error.message || "Failed to delete company.");
-    }
+  function handleCompanyDeleted(company: Company) {
+    setCompanies((prev) => prev.filter((item) => item.id !== company.id));
+    setMessage("Company deleted successfully.");
   }
 
   return (
@@ -135,9 +122,11 @@ export default function CompaniesPage() {
           <p className="text-gray-500">Manage MRC group companies.</p>
         </div>
 
-        <Link href="/companies/new" className="rounded-lg bg-blue-600 px-4 py-2 text-white">
-          Add Company
-        </Link>
+        {canAddCompanies && (
+          <Link href="/companies/new" className="rounded-lg bg-blue-600 px-4 py-2 text-white">
+            Add Company
+          </Link>
+        )}
       </div>
 
       {message && (
@@ -184,7 +173,7 @@ export default function CompaniesPage() {
                         }`
                       : "-"}
                   </td>
-                  <td className="p-3">{company.status}</td>
+                  <td className="p-3">{formatStatusLabel(company.status)}</td>
                   <td className="p-3">
                     {new Date(company.created_at).toLocaleDateString("en-IN")}
                   </td>
@@ -205,13 +194,11 @@ export default function CompaniesPage() {
                       </Link>
                       )}
                       {canDeleteCompanies && (
-                        <button
-                          type="button"
-                          onClick={() => deleteCompany(company)}
-                          className="rounded border border-red-200 px-3 py-1 text-red-700 hover:bg-red-50"
-                        >
-                          Delete
-                        </button>
+                        <DeleteCompanyButton
+                          companyId={company.id}
+                          companyName={company.company_name}
+                          onDeleted={() => handleCompanyDeleted(company)}
+                        />
                       )}
                     </div>
                   </td>

@@ -5,10 +5,13 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Save } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
+import { isOrganizationAllowed } from "@/lib/clientOrganizationScope";
 
 type Site = {
   id: string;
+  organization_id: string;
   site_name: string;
   site_code: string;
   location: string | null;
@@ -17,6 +20,7 @@ type Site = {
 };
 
 export default function EditSitePage() {
+  const { access, loading: accessLoading } = useAccessContext();
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const siteId = params.id;
@@ -37,9 +41,10 @@ export default function EditSitePage() {
       setMessage("");
       setAccessDenied(false);
 
-      const access = await getCurrentUserAccess();
+      const currentAccess = access;
+      if (!currentAccess) return;
 
-      if (!can(access.permissions, "sites", "edit")) {
+      if (!can(currentAccess.permissions, "sites", "edit")) {
         setAccessDenied(true);
         setMessage("You do not have permission to edit sites.");
         setLoading(false);
@@ -48,7 +53,7 @@ export default function EditSitePage() {
 
       const { data, error } = await supabase
         .from("sites")
-        .select("id, site_name, site_code, location, state, status")
+        .select("id, organization_id, site_name, site_code, location, state, status")
         .eq("id", siteId)
         .single();
 
@@ -59,6 +64,13 @@ export default function EditSitePage() {
       }
 
       const site = data as Site;
+
+      if (!isOrganizationAllowed(currentAccess, site.organization_id)) {
+        setMessage("Site was not found.");
+        setLoading(false);
+        return;
+      }
+
       setSiteName(site.site_name || "");
       setSiteCode(site.site_code || "");
       setLocation(site.location || "");
@@ -67,10 +79,10 @@ export default function EditSitePage() {
       setLoading(false);
     }
 
-    if (siteId) {
+    if (siteId && !accessLoading && access) {
       loadSite();
     }
-  }, [siteId]);
+  }, [access, accessLoading, siteId]);
 
   async function saveSite() {
     setMessage("");
@@ -222,19 +234,6 @@ export default function EditSitePage() {
               />
             </label>
 
-            <label className="space-y-2">
-              <span className="text-sm font-medium text-slate-600">Status</span>
-              <select
-                value={status}
-                onChange={(event) => setStatus(event.target.value)}
-                className="w-full rounded border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#00658b] focus:ring-1 focus:ring-[#00658b]"
-              >
-                <option value="active">active</option>
-                <option value="inactive">inactive</option>
-                <option value="under construction">under construction</option>
-                <option value="pending">pending</option>
-              </select>
-            </label>
           </div>
         )}
       </section>

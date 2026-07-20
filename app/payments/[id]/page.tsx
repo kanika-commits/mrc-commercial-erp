@@ -6,22 +6,15 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Building2, CreditCard, ReceiptText } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import AuditTrailCard from "@/components/AuditTrailCard";
+import { formatIstTimestamp } from "@/lib/dateTime";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
 function formatDateTime(value: string | null | undefined) {
-  if (!value) return "-";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "-";
-  return parsed.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatIstTimestamp(value);
 }
 
 function accountLabel(account: any) {
@@ -183,9 +176,9 @@ export default function PaymentDetailPage() {
       <div className="grid gap-6 lg:grid-cols-2">
         <Card icon={<CreditCard className="h-5 w-5" />} title="Payment Details">
           <Info label="Payment Date" value={payment.payment_date || "-"} />
-          <Info label="Payment Type" value={payment.payment_type || "Invoice"} />
+          <Info label="Payment Against" value={payment.payment_type || "Invoice"} />
           <Info
-            label="UTR / Reference Number"
+            label="Reference Number"
             value={payment.utr_number || payment.reference_number || "-"}
           />
           <Info label="From Account" value={accountLabel(account)} />
@@ -216,16 +209,12 @@ export default function PaymentDetailPage() {
           <Info label="Vendor" value={vendor?.vendor_name || "-"} />
         </Card>
 
-        <Card icon={<ReceiptText className="h-5 w-5" />} title="Audit">
-          <Info label="Created By" value={payment.created_by_name || "-"} />
-          <Info label="Created Email" value={payment.created_by_email || "-"} />
-          <Info label="Created At" value={formatDateTime(payment.created_at)} />
-          <Info
-            label="Created At User"
-            value={formatDateTime(payment.created_at_user)}
-          />
-        </Card>
       </div>
+
+      <AuditTrailCard
+        createdBy={payment.created_by_name || payment.created_by_email}
+        createdAt={payment.created_at_user || payment.created_at}
+      />
     </section>
   );
 }

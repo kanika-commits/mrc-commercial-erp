@@ -4,190 +4,47 @@ import Link from "next/link";
 import {
   Plus,
 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getCurrentUserAccess, can } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { useNotificationCounts } from "@/components/NotificationCountsContext";
+import { can } from "@/lib/accessControl";
 
 export default function Home() {
-  const [permissions, setPermissions] = useState<any[]>([]);
-
-  const [pendingRA, setPendingRA] = useState(0);
-  const [pendingDebitNotes, setPendingDebitNotes] = useState(0);
-  const [pendingITC, setPendingITC] = useState(0);
-  const [activeWorkOrders, setActiveWorkOrders] = useState(0);
-
-  const [, setTotalWOValue] = useState(0);
-  const [, setApprovedRAValue] = useState(0);
-  const [, setInvoiceValue] = useState(0);
-  const [, setPaymentValue] = useState(0);
-
-  const [totalVendors, setTotalVendors] = useState(0);
-  const [panAadhaarPending, setPanAadhaarPending] = useState(0);
-  const [blockedVendors, setBlockedVendors] = useState(0);
-  const [inactiveVendors, setInactiveVendors] = useState(0);
-
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    loadDashboard();
-  }, []);
-
-  async function loadDashboard() {
-    setLoading(true);
-
-    try {
-      const [
-        access,
-        pendingRARes,
-        pendingDebitRes,
-        pendingITCRes,
-        activeWORes,
-        vendorCountRes,
-        panCountRes,
-        blockedCountRes,
-        inactiveCountRes,
-        woValueRes,
-        approvedRARes,
-        invoiceValueRes,
-        paymentValueRes,
-      ] = await Promise.all([
-        getCurrentUserAccess(),
-
-        supabase
-          .from("ra_bills")
-          .select("*", { count: "exact", head: true })
-          .in("approval_status", ["pending", "Pending"]),
-
-        supabase
-          .from("debit_notes")
-          .select("*", { count: "exact", head: true })
-          .in("approval_status", ["pending", "Pending"]),
-
-       supabase
-  .from("invoices")
-  .select("*", { count: "exact", head: true })
-  .is("itc_status", null),
-
-        supabase
-          .from("work_orders")
-          .select("*", { count: "exact", head: true })
-          .eq("status", "active"),
-
-        supabase
-  .from("vendors")
-  .select("*", { count: "exact", head: true })
-  .neq("status", "deleted"),
-
-     supabase
-  .from("vendors")
-  .select("*", { count: "exact", head: true })
-  .neq("status", "deleted")
-  .neq("pan_aadhaar_link_status", "Yes"),
-
-        supabase
-          .from("vendors")
-          .select("*", { count: "exact", head: true })
-          .eq("status", "blocked"),
-
-        supabase
-          .from("vendors")
-          .select("*", { count: "exact", head: true })
-          .eq("status", "inactive"),
-
-       supabase
-  .from("work_orders")
-  .select("wo_value")
-  .eq("status", "active"),
-
-supabase
-  .from("ra_bills")
-  .select("net_amount, approval_status")
-  .eq("status", "active")
-  .in("approval_status", ["approved", "Approved"]),
-
-        supabase
-  .from("invoices")
-  .select("invoice_amount")
-  .eq("status", "active"),
-
-        supabase
-  .from("payments")
-  .select("transferred_amount, payment_amount")
-  .eq("status", "active"),
-      ]);
-
-      setPermissions(access.permissions || []);
-
-      setPendingRA(pendingRARes.count || 0);
-      setPendingDebitNotes(pendingDebitRes.count || 0);
-      setPendingITC(pendingITCRes.count || 0);
-      setActiveWorkOrders(activeWORes.count || 0);
-
-      setTotalVendors(vendorCountRes.count || 0);
-      setPanAadhaarPending(panCountRes.count || 0);
-      setBlockedVendors(blockedCountRes.count || 0);
-      setInactiveVendors(inactiveCountRes.count || 0);
-
-      setTotalWOValue(
-        (woValueRes.data || []).reduce(
-          (sum: number, item: any) => sum + Number(item.wo_value || 0),
-          0
-        )
-      );
-
-      setApprovedRAValue(
-        (approvedRARes.data || []).reduce(
-          (sum: number, item: any) => sum + Number(item.net_amount || 0),
-          0
-        )
-      );
-
-      setInvoiceValue(
-        (invoiceValueRes.data || []).reduce(
-          (sum: number, item: any) => sum + Number(item.invoice_amount || 0),
-          0
-        )
-      );
-
-      setPaymentValue(
-        (paymentValueRes.data || []).reduce(
-          (sum: number, item: any) =>
-            sum + Number(item.transferred_amount || item.payment_amount || 0),
-          0
-        )
-      );
-    } catch (error) {
-      console.error("Dashboard load failed:", error);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const { access } = useAccessContext();
+  const { counts, loading: countsLoading } = useNotificationCounts();
+  const permissions = access?.permissions || [];
+  const pendingWOApprovals = counts.pendingWorkOrders || 0;
+  const pendingRA = counts.pendingRaBills || 0;
+  const pendingDebitNotes = counts.pendingDebitNotes || 0;
+  const pendingITC = counts.pendingItcReview || 0;
+  const pendingInvoiceApprovals = counts.pendingInvoiceApprovals || 0;
+  const pendingPayments = 0;
 
   const managementCards: [string, string, string][] = [
-  ["Total Vendors", String(totalVendors || 0), "/vendors"],
-  ["PAN-Aadhaar Pending", String(panAadhaarPending || 0), "/vendors"],
-  ["Blocked Vendors", String(blockedVendors || 0), "/vendors"],
-  ["Inactive Vendors", String(inactiveVendors || 0), "/vendors"],
+  ["Total Vendors", String(counts.totalVendors || 0), "/vendors"],
+  ["PAN-Aadhaar Pending", String(counts.panAadhaarPending || 0), "/vendors"],
+  ["Blocked Vendors", String(counts.blockedVendors || 0), "/vendors"],
+  ["Inactive Vendors", String(counts.inactiveVendors || 0), "/vendors"],
 ];
 
   const metricCards: MetricCardData[] = [
     {
-      label: "Pending RA Bills",
+      label: "Pending Work Order Approvals",
+      value: String(pendingWOApprovals),
+      href: "/approvals/work-orders",
+      accent: "ink",
+      status: "Review",
+    },
+    {
+      label: "Pending RA Bill Approvals",
       value: String(pendingRA),
       href: "/approvals",
       accent: "teal",
       status: "In Progress",
     },
     {
-      label: "Active Work Orders",
-      value: String(activeWorkOrders),
-      href: "/work-orders",
-      accent: "ink",
-    },
-    {
-      label: "Pending Debit Notes",
+      label: "Pending Debit Note Approvals",
       value: String(pendingDebitNotes),
       href: "/approvals",
       accent: "ink",
@@ -199,14 +56,27 @@ supabase
       accent: "teal",
     },
     {
-      label: "Blocked Vendors",
-      value: String(blockedVendors),
-      href: "/vendors",
+      label: "Pending Invoice Approval",
+      value: String(pendingInvoiceApprovals),
+      href: "/invoices",
       accent: "ink",
+    },
+    {
+      label: "Pending Payments",
+      value: String(pendingPayments),
+      href: "/payments",
+      accent: "teal",
     },
   ];
 
   const approvalRows = [
+    {
+      id: "WO Queue",
+      subtitle: "Work Order Approvals",
+      type: "WO",
+      value: String(pendingWOApprovals),
+      href: "/approvals/work-orders",
+    },
     {
       id: "RA Queue",
       subtitle: "Running Account Bills",
@@ -230,10 +100,10 @@ supabase
     },
     {
       id: "Work Orders",
-      subtitle: "Active Contracts",
-      type: "WO",
-      value: String(activeWorkOrders),
-      href: "/work-orders",
+      subtitle: "Invoice Approval",
+      type: "Invoice",
+      value: String(pendingInvoiceApprovals),
+      href: "/invoices",
     },
   ];
 
@@ -251,14 +121,6 @@ supabase
         : "Active",
   }));
 
-  if (loading) {
-    return (
-      <div className="min-h-[60vh] bg-[#f3f6f8] p-8 text-sm font-medium text-slate-500">
-        Loading dashboard...
-      </div>
-    );
-  }
-
   return (
     <section className="min-h-screen bg-[#f3f6f8] text-[#111316]">
       <main className="mx-auto max-w-[1180px] px-5 py-9 md:px-10">
@@ -268,7 +130,9 @@ supabase
                   Dashboard Overview
                 </h1>
                 <p className="mt-2 text-lg font-medium text-slate-600">
-                  Real-time enterprise metrics for MRC Commercial ERP
+                  {countsLoading
+                    ? "Loading enterprise metrics for MRC Commercial ERP"
+                    : "Real-time enterprise metrics for MRC Commercial ERP"}
                 </p>
               </div>
 
@@ -345,7 +209,7 @@ supabase
 
               <Panel
                 title="Vendor Control"
-                badge={`${totalVendors} records`}
+                badge={`${counts.totalVendors || 0} records`}
               >
                 <div className="-mx-6 -mb-6 mt-1 overflow-hidden">
                   <table className="w-full text-left text-sm">

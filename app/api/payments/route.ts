@@ -4,6 +4,12 @@ import {
   insertDeleteAudit,
   requireDeletePermission,
 } from "@/lib/serverDeleteAudit";
+import { requirePermission } from "@/lib/serverPermissions";
+import {
+  isInOrganizationScope,
+  loadActorOrganizationScope,
+  loadOrganizationScopeForUser,
+} from "@/lib/serverOrganizationScope";
 
 const MODULE_CODE = "payments";
 const DOCUMENT_BUCKET = "payment-documents";
@@ -149,13 +155,10 @@ async function loadPaymentDocuments(
 
 export async function POST(request: Request) {
   try {
-    const auth = await requireUser(request);
+    const auth = await requirePermission(request, MODULE_CODE, "add");
 
-    if ("error" in auth) {
-      return NextResponse.json(
-        { error: auth.error },
-        { status: auth.status }
-      );
+    if ("response" in auth) {
+      return auth.response;
     }
 
     const formData = await request.formData();
@@ -168,10 +171,321 @@ export async function POST(request: Request) {
     const totalPayment = roundAmount(formData.get("total_payment"));
     const tdsAmount = roundAmount(formData.get("tds_amount"));
     const transferredAmount = roundAmount(formData.get("transferred_amount"));
-    const referenceNumber = String(
-      formData.get("reference_number") || formData.get("utr_number") || ""
-    ).trim();
+    const referenceNumber = String(formData.get("reference_number") || "").trim();
+    const utrNumber = String(formData.get("utr_number") || "").trim();
     const remarks = String(formData.get("remarks") || "").trim();
+
+    if (!invoiceId) {
+      const paymentType = String(formData.get("payment_type") || "").trim();
+      const companyId = String(formData.get("company_id") || "").trim();
+      const workOrderId = String(formData.get("work_order_id") || "").trim();
+      const vendorId = String(formData.get("vendor_id") || "").trim();
+      const toCompanyBankAccountId = String(
+        formData.get("to_company_bank_account_id") || ""
+      ).trim();
+
+      if (!paymentType) {
+        return NextResponse.json(
+          { error: "Payment Against is required." },
+          { status: 400 }
+        );
+      }
+
+      if (!paymentDate) {
+        return NextResponse.json(
+          { error: "Payment Date is required." },
+          { status: 400 }
+        );
+      }
+
+      if (!companyBankAccountId) {
+        return NextResponse.json(
+          { error: "From Account is required." },
+          { status: 400 }
+        );
+      }
+
+      if (totalPayment <= 0) {
+        return NextResponse.json(
+          { error: "Payment amount is required." },
+          { status: 400 }
+        );
+      }
+
+      if (tdsAmount < 0 || tdsAmount > totalPayment) {
+        return NextResponse.json(
+          { error: "TDS cannot exceed Total Payment." },
+          { status: 400 }
+        );
+      }
+
+      if (transferredAmount !== totalPayment - tdsAmount) {
+        return NextResponse.json(
+          { error: "Transferred Amount must equal Total Payment minus TDS." },
+          { status: 400 }
+        );
+      }
+
+      if (paymentType === "Work Order" && !workOrderId) {
+        return NextResponse.json(
+          { error: "Work Order is required." },
+          { status: 400 }
+        );
+      }
+
+      if (paymentType === "Work Order" && !vendorId) {
+        return NextResponse.json(
+          { error: "No vendor linked to selected Work Order." },
+          { status: 400 }
+        );
+      }
+
+      if (paymentType === "Purchase Order" && !vendorId) {
+        return NextResponse.json(
+          { error: "Vendor / Party is required." },
+          { status: 400 }
+        );
+      }
+
+      if (paymentType !== "Work Order" && !referenceNumber) {
+        return NextResponse.json(
+          { error: "Reference is required." },
+          { status: 400 }
+        );
+      }
+
+      if (
+        paymentType === "Internal Transfer" &&
+        toCompanyBankAccountId === companyBankAccountId
+      ) {
+        return NextResponse.json(
+          { error: "From Account and To Account cannot be same." },
+          { status: 400 }
+        );
+      }
+
+      const admin = adminClient();
+      const { data: account, error: accountError } = await admin
+        .from("company_bank_accounts")
+        .select("id, organization_id, company_id, status")
+        .eq("id", companyBankAccountId)
+        .maybeSingle();
+
+      if (accountError) throw accountError;
+
+      if (!account || String(account.status || "").toLowerCase() !== "active") {
+        return NextResponse.json(
+          { error: "Selected From Account was not found or inactive." },
+          { status: 400 }
+        );
+      }
+
+      const organizationScope = await loadActorOrganizationScope(admin, auth);
+
+      if (!isInOrganizationScope(organizationScope, account.organization_id)) {
+        return NextResponse.json(
+          { error: "You do not have access to this organization." },
+          { status: 403 }
+        );
+      }
+
+      const { data: workOrder, error: workOrderError } = workOrderId
+        ? await admin
+            .from("work_orders")
+            .select("id, organization_id, company_id, status, approval_status")
+            .eq("id", workOrderId)
+            .maybeSingle()
+        : { data: null, error: null };
+
+      if (workOrderError) throw workOrderError;
+
+      if (workOrderId && !workOrder) {
+        return NextResponse.json(
+          { error: "Selected Work Order was not found." },
+          { status: 404 }
+        );
+      }
+
+      if (workOrder) {
+        const workOrderStatus = String(workOrder.status || "")
+          .trim()
+          .toLowerCase();
+        const workOrderApprovalStatus = String(workOrder.approval_status || "")
+          .trim()
+          .toLowerCase();
+
+        if (
+          workOrderStatus !== "active" ||
+          !["pending", "approved"].includes(workOrderApprovalStatus)
+        ) {
+          return NextResponse.json(
+            { error: "This Work Order is suspended and cannot accept new transactions." },
+            { status: 400 }
+          );
+        }
+      }
+
+      if (
+        workOrder &&
+        !isInOrganizationScope(organizationScope, workOrder.organization_id)
+      ) {
+        return NextResponse.json(
+          { error: "You do not have access to this organization." },
+          { status: 403 }
+        );
+      }
+
+      const organizationId =
+        workOrder?.organization_id || account.organization_id;
+
+      if (!organizationId) {
+        return NextResponse.json(
+          { error: "Organization could not be resolved for this payment." },
+          { status: 400 }
+        );
+      }
+
+      if (!isInOrganizationScope(organizationScope, organizationId)) {
+        return NextResponse.json(
+          { error: "You do not have access to this organization." },
+          { status: 403 }
+        );
+      }
+
+      if (account.organization_id !== organizationId) {
+        return NextResponse.json(
+          { error: "Selected account is not available for this organization." },
+          { status: 403 }
+        );
+      }
+
+      if (companyId) {
+        const { data: company, error: companyError } = await admin
+          .from("companies")
+          .select("id, organization_id")
+          .eq("id", companyId)
+          .maybeSingle();
+
+        if (companyError) throw companyError;
+
+        if (!company || company.organization_id !== organizationId) {
+          return NextResponse.json(
+            { error: "Selected company is not available for this organization." },
+            { status: 403 }
+          );
+        }
+      }
+
+      if (toCompanyBankAccountId) {
+        const { data: toAccount, error: toAccountError } = await admin
+          .from("company_bank_accounts")
+          .select("id, organization_id, status")
+          .eq("id", toCompanyBankAccountId)
+          .maybeSingle();
+
+        if (toAccountError) throw toAccountError;
+
+        if (
+          !toAccount ||
+          String(toAccount.status || "").toLowerCase() !== "active" ||
+          toAccount.organization_id !== organizationId
+        ) {
+          return NextResponse.json(
+            { error: "Selected To Account is not available for this organization." },
+            { status: 403 }
+          );
+        }
+      }
+
+      if (vendorId) {
+        const { data: vendor, error: vendorError } = await admin
+          .from("vendors")
+          .select("id, organization_id")
+          .eq("id", vendorId)
+          .maybeSingle();
+
+        if (vendorError) throw vendorError;
+
+        if (!vendor) {
+          return NextResponse.json(
+            { error: "Selected vendor was not found." },
+            { status: 404 }
+          );
+        }
+
+        if (
+          !isInOrganizationScope(organizationScope, vendor.organization_id) ||
+          vendor.organization_id !== organizationId
+        ) {
+          return NextResponse.json(
+            { error: "Selected vendor is not available for this organization." },
+            { status: 403 }
+          );
+        }
+      }
+
+      const paymentNumber = String(formData.get("payment_number") || "").trim() || `PAY-${Date.now()}`;
+
+      const { data: existingPayments, error: duplicateError } = await admin
+        .from("payments")
+        .select("id, payment_number, utr_number")
+        .eq("organization_id", organizationId)
+        .eq("is_deleted", false);
+
+      if (duplicateError) throw duplicateError;
+
+      const paymentNumberDuplicate = (existingPayments || []).find(
+        (payment) =>
+          normalized(String(payment.payment_number || "")) ===
+          normalized(paymentNumber)
+      );
+
+      if (paymentNumberDuplicate) {
+        return NextResponse.json(
+          { error: "Payment number already exists." },
+          { status: 409 }
+        );
+      }
+
+      const userEmail = auth.user.email || "platform.owner@mrc.local";
+      const userName =
+        auth.user.user_metadata?.full_name ||
+        auth.user.user_metadata?.name ||
+        userEmail ||
+        "Platform Owner";
+
+      const { data: payment, error: paymentError } = await admin
+        .from("payments")
+        .insert({
+          organization_id: organizationId,
+          company_id: companyId || workOrder?.company_id || account.company_id || null,
+          work_order_id: workOrderId || null,
+          vendor_id: vendorId || null,
+          invoice_id: null,
+          payment_number: paymentNumber,
+          payment_date: paymentDate,
+          payment_type: paymentType,
+          reference_number: referenceNumber || null,
+          utr_number: utrNumber || null,
+          company_bank_account_id: companyBankAccountId,
+          total_payment: totalPayment,
+          tds_amount: tdsAmount,
+          transferred_amount: transferredAmount,
+          payment_amount: transferredAmount,
+          payment_mode: paymentMode || "Bank Transfer",
+          status: "Draft",
+          remarks: remarks || null,
+          created_by_name: userName,
+          created_by_email: userEmail,
+          created_at_user: new Date().toISOString(),
+        })
+        .select("id")
+        .single();
+
+      if (paymentError) throw paymentError;
+
+      return NextResponse.json({ id: payment.id });
+    }
 
     if (!invoiceId) {
       return NextResponse.json(
@@ -249,6 +563,42 @@ export async function POST(request: Request) {
       );
     }
 
+    const organizationScope = await loadActorOrganizationScope(admin, auth);
+
+    if (!isInOrganizationScope(organizationScope, invoice.organization_id)) {
+      return NextResponse.json(
+        { error: "You do not have access to this organization." },
+        { status: 403 }
+      );
+    }
+
+    if (companyBankAccountId) {
+      const { data: account, error: accountError } = await admin
+        .from("company_bank_accounts")
+        .select("id, organization_id, status")
+        .eq("id", companyBankAccountId)
+        .maybeSingle();
+
+      if (accountError) throw accountError;
+
+      if (!account || String(account.status || "").toLowerCase() !== "active") {
+        return NextResponse.json(
+          { error: "Selected From Account was not found or inactive." },
+          { status: 400 }
+        );
+      }
+
+      if (
+        !isInOrganizationScope(organizationScope, account.organization_id) ||
+        account.organization_id !== invoice.organization_id
+      ) {
+        return NextResponse.json(
+          { error: "Selected account is not available for this organization." },
+          { status: 403 }
+        );
+      }
+    }
+
     if (String(invoice.itc_status || "").toLowerCase() !== "claimed") {
       return NextResponse.json(
         { error: "Only invoices with ITC status Claimed can be paid." },
@@ -259,12 +609,31 @@ export async function POST(request: Request) {
     const { data: workOrder, error: workOrderError } = invoice.work_order_id
       ? await admin
           .from("work_orders")
-          .select("id, company_id")
+          .select("id, company_id, status, approval_status")
           .eq("id", invoice.work_order_id)
           .maybeSingle()
       : { data: null, error: null };
 
     if (workOrderError) throw workOrderError;
+
+    if (workOrder) {
+      const workOrderStatus = String(workOrder.status || "")
+        .trim()
+        .toLowerCase();
+      const workOrderApprovalStatus = String(workOrder.approval_status || "")
+        .trim()
+        .toLowerCase();
+
+      if (
+        workOrderStatus !== "active" ||
+        !["pending", "approved"].includes(workOrderApprovalStatus)
+      ) {
+        return NextResponse.json(
+          { error: "This Work Order is suspended and cannot accept new transactions." },
+          { status: 400 }
+        );
+      }
+    }
 
     const { data: previousPayments, error: paymentsError } = await admin
       .from("payments")
@@ -321,11 +690,11 @@ export async function POST(request: Request) {
       );
     }
 
-    if (referenceNumber) {
+    if (utrNumber) {
       const utrDuplicate = (existingPayments || []).find(
         (payment) =>
           normalized(String(payment.utr_number || "")) ===
-          normalized(referenceNumber)
+          normalized(utrNumber)
       );
 
       if (utrDuplicate) {
@@ -348,7 +717,7 @@ export async function POST(request: Request) {
         payment_date: paymentDate,
         payment_type: "Invoice",
         reference_number: referenceNumber || null,
-        utr_number: referenceNumber || null,
+        utr_number: utrNumber || null,
         company_bank_account_id: companyBankAccountId || null,
         total_payment: totalPayment,
         tds_amount: tdsAmount,
@@ -436,6 +805,18 @@ export async function DELETE(request: Request) {
       return NextResponse.json(
         { error: "Payment was not found." },
         { status: 404 }
+      );
+    }
+
+    const organizationScope = await loadOrganizationScopeForUser(
+      admin,
+      auth.user.id
+    );
+
+    if (!isInOrganizationScope(organizationScope, payment.organization_id)) {
+      return NextResponse.json(
+        { error: "You do not have access to this organization." },
+        { status: 403 }
       );
     }
 

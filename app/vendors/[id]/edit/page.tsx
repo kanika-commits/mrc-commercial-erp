@@ -4,15 +4,17 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { can, getCurrentUserAccess } from "@/lib/accessControl";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
+import AlertMessage from "@/components/AlertMessage";
 
 type VendorForm = {
   vendor_name: string;
-  vendor_type: string;
   contractor_type: string;
   status: string;
   pan: string;
-  aadhaar_cin: string;
+  aadhaar_number: string;
+  cin_number: string;
   gstin: string;
   pan_aadhaar_link_status: string;
   msme_registered: string;
@@ -86,20 +88,95 @@ const emptyGstin: GstinRow = {
   is_primary: true,
 };
 
+const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+const aadhaarRegex = /^[2-9][0-9]{11}$/;
+const cinRegex = /^[A-Z][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}$/;
+const gstRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+const mobileRegex = /^[6-9][0-9]{9}$/;
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+
+function isProprietorship(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "proprietor" || normalized === "proprietorship";
+}
+
+function isIndividual(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "individual";
+}
+
+function isPartnershipOrLlp(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "partnership" || normalized === "llp";
+}
+
+function allowsAadhaar(value: string) {
+  return isIndividual(value) || isProprietorship(value) || isPartnershipOrLlp(value);
+}
+
+function requiresAadhaar(value: string) {
+  return isIndividual(value) || isProprietorship(value);
+}
+
+function isCinContractorType(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return [
+    "company",
+    "private limited",
+    "private limited company",
+    "pvt ltd",
+    "pvt. ltd.",
+    "public limited",
+    "public limited company",
+    "limited",
+  ].includes(normalized);
+}
+
+function requiresGstin(value: string) {
+  return isProprietorship(value) || isCinContractorType(value);
+}
+
+function requiresPanAadhaarProof(value: string) {
+  return isIndividual(value) || isProprietorship(value);
+}
+
+function identityValueForContractorType(form: VendorForm) {
+  return isCinContractorType(form.contractor_type)
+    ? form.cin_number.trim().toUpperCase()
+    : form.aadhaar_number.trim();
+}
+
+function duplicateValues(values: string[]) {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+
+  values
+    .map((value) => value.trim().toUpperCase())
+    .filter(Boolean)
+    .forEach((value) => {
+      if (seen.has(value)) duplicates.add(value);
+      seen.add(value);
+    });
+
+  return duplicates;
+}
+
 export default function EditVendorPage() {
+  const { access, loading: accessLoading } = useAccessContext();
   const params = useParams();
   const router = useRouter();
   const vendorId = params.id as string;
 
   const [form, setForm] = useState<VendorForm>({
     vendor_name: "",
-    vendor_type: "Contractor",
     contractor_type: "Company",
     status: "active",
     pan: "",
-    aadhaar_cin: "",
+    aadhaar_number: "",
+    cin_number: "",
     gstin: "",
-    pan_aadhaar_link_status: "Yet to check",
+    pan_aadhaar_link_status: "",
     msme_registered: "No",
     msme_number: "",
     msme_category: "Micro",
@@ -136,9 +213,10 @@ export default function EditVendorPage() {
           throw new Error("Your session expired. Please log in again.");
         }
 
-        const access = await getCurrentUserAccess();
+        const currentAccess = access;
+        if (!currentAccess) return;
 
-        if (!can(access.permissions, "vendors", "edit")) {
+        if (!can(currentAccess.permissions, "vendors", "edit")) {
           setAccessDenied(true);
           setMessage("You do not have permission to edit vendors.");
           return;
@@ -154,17 +232,19 @@ export default function EditVendorPage() {
         }
 
         const vendor = result.vendor;
+        const contractorType = vendor.contractor_type || "Company";
+        const existingIdentity = vendor.aadhaar_cin || "";
 
         setForm({
           vendor_name: vendor.vendor_name || "",
-          vendor_type: vendor.vendor_type || "Contractor",
-          contractor_type: vendor.contractor_type || "Company",
+          contractor_type: contractorType,
           status: vendor.status || "active",
           pan: vendor.pan || "",
-          aadhaar_cin: vendor.aadhaar_cin || "",
-          gstin: vendor.gstin || "",
+          aadhaar_number: isCinContractorType(contractorType) ? "" : existingIdentity,
+          cin_number: isCinContractorType(contractorType) ? existingIdentity : "",
+          gstin: isIndividual(contractorType) ? "" : vendor.gstin || "",
           pan_aadhaar_link_status:
-            vendor.pan_aadhaar_link_status || "Yet to check",
+            requiresPanAadhaarProof(contractorType) ? "Yes" : "",
           msme_registered: vendor.msme_registered ? "Yes" : "No",
           msme_number: vendor.msme_number || "",
           msme_category: vendor.msme_category || "Micro",
@@ -228,18 +308,60 @@ export default function EditVendorPage() {
       }
     }
 
-    if (vendorId) loadVendor();
-  }, [vendorId]);
+    if (vendorId && !accessLoading && access) loadVendor();
+  }, [access, accessLoading, vendorId]);
 
   function handleChange(
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) {
     const { name, value } = e.target;
-    const finalValue = ["pan", "gstin", "aadhaar_cin", "ifsc_code"].includes(name)
+    const finalValue = ["pan", "gstin", "cin_number", "ifsc_code"].includes(name)
       ? value.toUpperCase()
       : value;
 
-    setForm((prev) => ({ ...prev, [name]: finalValue }));
+    setForm((prev) => {
+      const next = { ...prev, [name]: finalValue };
+
+      if (name === "msme_registered" && finalValue !== "Yes") {
+        next.msme_number = "";
+        next.msme_category = "";
+      }
+
+      if (name === "contractor_type") {
+        next.pan_aadhaar_link_status = requiresPanAadhaarProof(finalValue)
+          ? "Yes"
+          : "";
+
+        if (!allowsAadhaar(finalValue)) {
+          next.aadhaar_number = "";
+        }
+
+        if (!isCinContractorType(finalValue)) {
+          next.cin_number = "";
+        }
+
+        if (isIndividual(finalValue)) {
+          next.gstin = "";
+        }
+      }
+
+      return next;
+    });
+
+    if (name === "contractor_type") {
+      if (isIndividual(finalValue)) {
+        setGstins([{ ...emptyGstin }]);
+      }
+
+      setFiles((prev) => ({
+        ...prev,
+        AADHAAR_CIN: null,
+        GST_CERTIFICATE: isIndividual(finalValue) ? null : prev.GST_CERTIFICATE,
+        PAN_AADHAAR_ATTACHMENT: requiresPanAadhaarProof(finalValue)
+          ? prev.PAN_AADHAAR_ATTACHMENT
+          : null,
+      }));
+    }
   }
 
   function updateContact(index: number, field: keyof Contact, value: string | boolean) {
@@ -394,16 +516,6 @@ export default function EditVendorPage() {
     e.preventDefault();
     setMessage("");
 
-    if (!form.vendor_name.trim()) {
-      setMessage("Vendor Name is required.");
-      return;
-    }
-
-    if (form.status === "active" && !form.pan.trim()) {
-      setMessage("PAN is required when vendor status is active.");
-      return;
-    }
-
     const contactRows = contacts.filter((contact) =>
       [
         contact.contact_name,
@@ -412,13 +524,6 @@ export default function EditVendorPage() {
         contact.designation,
       ].some((value) => value.trim())
     );
-
-    for (const contact of contactRows) {
-      if (!contact.contact_name.trim() || !contact.contact_number.trim()) {
-        setMessage("Contact name and contact number are required for contact rows.");
-        return;
-      }
-    }
 
     const bankRows = bankAccounts.filter((bank) =>
       [
@@ -430,29 +535,145 @@ export default function EditVendorPage() {
       ].some((value) => value.trim())
     );
 
-    for (const bank of bankRows) {
-      if (
-        !bank.account_holder_name.trim() ||
-        !bank.account_number.trim() ||
-        !bank.ifsc_code.trim() ||
-        !bank.bank_name.trim()
-      ) {
-        setMessage(
-          "Account holder, account number, IFSC and bank name are required for bank rows."
-        );
-        return;
-      }
+    const gstinRows = isIndividual(form.contractor_type)
+      ? []
+      : gstins.filter((gstin) => gstin.gstin.trim());
+    const primaryGstin = gstinRows.find((gstin) => gstin.is_primary) || gstinRows[0];
+    const validationErrors: string[] = [];
+
+    if (!form.contractor_type.trim()) validationErrors.push("Contractor Type is required.");
+
+    if (!form.pan.trim()) {
+      validationErrors.push("PAN is required.");
+    } else if (!panRegex.test(form.pan.trim())) {
+      validationErrors.push("Invalid PAN. Example: ABCDE1234F.");
     }
 
-    const gstinRows = gstins.filter((gstin) => gstin.gstin.trim());
-    const primaryGstin = gstinRows.find((gstin) => gstin.is_primary) || gstinRows[0];
+    if (requiresAadhaar(form.contractor_type) && !form.aadhaar_number.trim()) {
+      validationErrors.push("Aadhaar Number is required.");
+    } else if (
+      allowsAadhaar(form.contractor_type) &&
+      form.aadhaar_number.trim() &&
+      !aadhaarRegex.test(form.aadhaar_number.trim())
+    ) {
+      validationErrors.push("Invalid Aadhaar. It must be 12 digits.");
+    }
+
+    if (isCinContractorType(form.contractor_type) && !form.cin_number.trim()) {
+      validationErrors.push("CIN Number is required.");
+    } else if (
+      isCinContractorType(form.contractor_type) &&
+      form.cin_number.trim() &&
+      !cinRegex.test(form.cin_number.trim())
+    ) {
+      validationErrors.push("Invalid CIN format.");
+    }
+
+    if (requiresGstin(form.contractor_type) && gstinRows.length === 0) {
+      validationErrors.push("GSTIN is required.");
+    }
+
+    const gstinDuplicates = duplicateValues(gstinRows.map((gstin) => gstin.gstin));
+    if (gstinDuplicates.size > 0) {
+      validationErrors.push("Duplicate GSTIN rows are not allowed.");
+    }
+
+    gstinRows.forEach((gstin) => {
+      const value = gstin.gstin.trim().toUpperCase();
+      if (!gstRegex.test(value)) {
+        validationErrors.push(`Invalid GSTIN format: ${value}.`);
+      } else if (form.pan && value.substring(2, 12) !== form.pan.trim().toUpperCase()) {
+        validationErrors.push(`GSTIN PAN does not match entered PAN: ${value}.`);
+      }
+    });
+
+    if (contactRows.length === 0) {
+      validationErrors.push("At least one contact is required.");
+    }
+
+    contactRows.forEach((contact) => {
+      if (!contact.contact_name.trim()) validationErrors.push("Contact name is required.");
+      if (!contact.contact_number.trim()) {
+        validationErrors.push("Contact number is required.");
+      } else if (!mobileRegex.test(contact.contact_number.trim())) {
+        validationErrors.push("Enter valid 10 digit contact mobile number.");
+      }
+      if (contact.email.trim() && !emailRegex.test(contact.email.trim())) {
+        validationErrors.push("Invalid contact email format.");
+      }
+    });
+
+    if (bankRows.length === 0) {
+      validationErrors.push("At least one bank account is required.");
+    }
+
+    const bankDuplicates = duplicateValues(bankRows.map((bank) => bank.account_number));
+    if (bankDuplicates.size > 0) {
+      validationErrors.push("Duplicate bank account numbers are not allowed.");
+    }
+
+    bankRows.forEach((bank) => {
+      if (!bank.account_holder_name.trim()) validationErrors.push("Account holder name is required.");
+      if (!bank.bank_name.trim()) validationErrors.push("Bank name is required.");
+      if (!bank.account_number.trim()) validationErrors.push("Account number is required.");
+      if (!bank.ifsc_code.trim()) {
+        validationErrors.push("IFSC code is required.");
+      } else if (!ifscRegex.test(bank.ifsc_code.trim().toUpperCase())) {
+        validationErrors.push("Invalid IFSC. Example: HDFC0001234.");
+      }
+    });
+
+    if (form.msme_registered === "Yes") {
+      if (!form.msme_number.trim()) validationErrors.push("MSME number is required.");
+      if (!form.msme_category.trim()) validationErrors.push("MSME category is required.");
+    }
+
+    const hasExistingIdentityDocument = documents.some(
+      (document) => document.document_type === "AADHAAR_CIN"
+    );
+    const needsIdentityDocument =
+      requiresAadhaar(form.contractor_type) ||
+      isCinContractorType(form.contractor_type) ||
+      (isPartnershipOrLlp(form.contractor_type) && !!form.aadhaar_number.trim());
 
     if (
-      form.pan_aadhaar_link_status === "Yes" &&
-      !documents.some((document) => document.document_type === "PAN_AADHAAR_ATTACHMENT") &&
-      !files.PAN_AADHAAR_ATTACHMENT
+      needsIdentityDocument &&
+      !files.AADHAAR_CIN &&
+      !hasExistingIdentityDocument
     ) {
-      setMessage("PAN-Aadhaar Link Proof is required when PAN is linked with Aadhaar.");
+      validationErrors.push(
+        isCinContractorType(form.contractor_type)
+          ? "CIN attachment is required."
+          : "Aadhaar attachment is required."
+      );
+    }
+
+    const hasExistingGstCertificate = documents.some(
+      (document) => document.document_type === "GST_CERTIFICATE"
+    );
+
+    if (
+      (requiresGstin(form.contractor_type) || gstinRows.length > 0) &&
+      !files.GST_CERTIFICATE &&
+      !hasExistingGstCertificate
+    ) {
+      validationErrors.push("GST certificate is required when GSTIN is entered.");
+    }
+
+    const hasExistingPanAadhaarProof = documents.some(
+      (document) => document.document_type === "PAN_AADHAAR_ATTACHMENT"
+    );
+
+    if (
+      requiresPanAadhaarProof(form.contractor_type) &&
+      !files.PAN_AADHAAR_ATTACHMENT &&
+      !hasExistingPanAadhaarProof
+    ) {
+      validationErrors.push("PAN-Aadhaar Linked Proof is required.");
+    }
+
+    if (validationErrors.length > 0) {
+      setMessage(Array.from(new Set(validationErrors)).join("\n"));
       return;
     }
 
@@ -472,16 +693,21 @@ export default function EditVendorPage() {
       payload.append(
         "vendor",
         JSON.stringify({
-          vendor_type: form.vendor_type,
           contractor_type: form.contractor_type,
           status: form.status,
           pan: form.pan,
-          aadhaar_cin: form.aadhaar_cin,
-          gstin: primaryGstin?.gstin || form.gstin,
-          pan_aadhaar_link_status: form.pan_aadhaar_link_status,
+          aadhaar_number: form.aadhaar_number,
+          cin_number: form.cin_number,
+          aadhaar_cin: identityValueForContractorType(form),
+          gstin: isIndividual(form.contractor_type)
+            ? ""
+            : primaryGstin?.gstin || form.gstin,
+          pan_aadhaar_link_status: requiresPanAadhaarProof(form.contractor_type)
+            ? "Yes"
+            : "",
           msme_registered: form.msme_registered,
-          msme_number: form.msme_number,
-          msme_category: form.msme_category,
+          msme_number: form.msme_registered === "Yes" ? form.msme_number : "",
+          msme_category: form.msme_registered === "Yes" ? form.msme_category : "",
         })
       );
       payload.append("contacts", JSON.stringify(contactRows));
@@ -540,9 +766,9 @@ export default function EditVendorPage() {
   function documentLabel(value: string | null) {
     const labels: Record<string, string> = {
       PAN: "PAN",
-      AADHAAR_CIN: "Aadhaar/CIN",
+      AADHAAR_CIN: isCinContractorType(form.contractor_type) ? "CIN" : "Aadhaar",
       GST_CERTIFICATE: "GST Certificate",
-      PAN_AADHAAR_ATTACHMENT: "PAN-Aadhaar Link Proof",
+      PAN_AADHAAR_ATTACHMENT: "PAN-Aadhaar Linked Proof",
       MSME_CERTIFICATE: "MSME Certificate",
       BANK_PROOF: "Bank Proof",
       ADDITIONAL_DOCUMENT: "Additional Document",
@@ -563,11 +789,11 @@ export default function EditVendorPage() {
       case "PAN":
         return form.pan || "-";
       case "AADHAAR_CIN":
-        return form.aadhaar_cin || "-";
+        return identityValueForContractorType(form) || "-";
       case "GST_CERTIFICATE":
         return primaryGstin || "-";
       case "PAN_AADHAAR_ATTACHMENT":
-        return [form.pan, form.pan_aadhaar_link_status].filter(Boolean).join(" / ") || "-";
+        return form.pan_aadhaar_link_status || "-";
       case "MSME_CERTIFICATE":
         return form.msme_number || "-";
       case "BANK_PROOF":
@@ -605,9 +831,6 @@ export default function EditVendorPage() {
               Edit Vendor:{" "}
               <span className="text-sky-700">{form.vendor_name || "Vendor"}</span>
             </h1>
-            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold uppercase text-emerald-700">
-              {form.status || "active"}
-            </span>
           </div>
           <p className="mt-2 text-sm text-slate-500">
             Update vendor master information, contacts, bank accounts and documents.
@@ -622,11 +845,11 @@ export default function EditVendorPage() {
         </Link>
       </div>
 
-      {message && (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {message}
-        </div>
-      )}
+      <AlertMessage
+        type="error"
+        message={message}
+        onClose={() => setMessage("")}
+      />
 
       <div className="grid grid-cols-12 gap-6">
         <section className={`${cardClass} col-span-12 border-t-4 border-t-sky-700 lg:col-span-8`}>
@@ -652,23 +875,6 @@ export default function EditVendorPage() {
             </div>
 
             <div>
-              <label className={labelClass}>Vendor Type *</label>
-              <select
-                name="vendor_type"
-                value={form.vendor_type}
-                onChange={handleChange}
-                className={inputClass}
-              >
-                <option>Contractor</option>
-                <option>Supplier</option>
-                <option>Consultant</option>
-                <option>Labour Contractor</option>
-                <option>Equipment Rental</option>
-                <option>Transporter</option>
-              </select>
-            </div>
-
-            <div>
               <label className={labelClass}>Contractor Type *</label>
               <select
                 name="contractor_type"
@@ -677,25 +883,13 @@ export default function EditVendorPage() {
                 className={inputClass}
               >
                 <option>Company</option>
-                <option>LLP</option>
+                <option>Proprietorship</option>
                 <option>Partnership</option>
-                <option>Proprietor</option>
+                <option>LLP</option>
+                <option>Individual</option>
               </select>
             </div>
 
-            <div>
-              <label className={labelClass}>Status *</label>
-              <select
-                name="status"
-                value={form.status}
-                onChange={handleChange}
-                className={inputClass}
-              >
-                <option value="active">active</option>
-                <option value="inactive">inactive</option>
-                <option value="blocked">blocked</option>
-              </select>
-            </div>
           </div>
         </section>
 
@@ -724,7 +918,8 @@ export default function EditVendorPage() {
                 name="msme_number"
                 value={form.msme_number}
                 onChange={handleChange}
-                className={inputClass}
+                disabled={form.msme_registered !== "Yes"}
+                className={`${inputClass} disabled:bg-slate-100 disabled:text-slate-400`}
                 placeholder="UDYAM-XX-00-0000000"
               />
             </div>
@@ -735,8 +930,10 @@ export default function EditVendorPage() {
                 name="msme_category"
                 value={form.msme_category}
                 onChange={handleChange}
-                className={inputClass}
+                disabled={form.msme_registered !== "Yes"}
+                className={`${inputClass} disabled:bg-slate-100 disabled:text-slate-400`}
               >
+                <option value="">Select category</option>
                 <option>Micro</option>
                 <option>Small</option>
                 <option>Medium</option>
@@ -747,10 +944,7 @@ export default function EditVendorPage() {
 
         <section className={`${cardClass} col-span-12 border-t-4 border-t-sky-700`}>
           <div className="mb-5 flex items-center justify-between border-b border-slate-100 pb-3">
-            <h2 className={sectionTitleClass}>Tax & Compliance</h2>
-            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
-              Master tax profile
-            </span>
+            <h2 className={sectionTitleClass}>Tax Details</h2>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -765,20 +959,42 @@ export default function EditVendorPage() {
             </div>
 
             <div>
-              <label className={labelClass}>Aadhaar / CIN</label>
+              <label className={labelClass}>
+                Aadhaar Number{requiresAadhaar(form.contractor_type) ? " *" : ""}
+              </label>
               <input
-                name="aadhaar_cin"
-                value={form.aadhaar_cin}
+                name="aadhaar_number"
+                value={form.aadhaar_number}
                 onChange={handleChange}
-                className={`${inputClass} uppercase`}
+                disabled={!allowsAadhaar(form.contractor_type)}
+                className={`${inputClass} disabled:bg-slate-100 disabled:text-slate-400`}
               />
             </div>
 
             <div>
-              <label className={labelClass}>Primary GSTIN</label>
+              <label className={labelClass}>
+                CIN Number{isCinContractorType(form.contractor_type) ? " *" : ""}
+              </label>
+              <input
+                name="cin_number"
+                value={form.cin_number}
+                onChange={handleChange}
+                disabled={!isCinContractorType(form.contractor_type)}
+                className={`${inputClass} uppercase disabled:bg-slate-100 disabled:text-slate-400`}
+              />
+            </div>
+
+            <div>
+              <label className={labelClass}>
+                Primary GSTIN{requiresGstin(form.contractor_type) ? " *" : ""}
+              </label>
               <input
                 name="gstin"
-                value={gstins.find((gstin) => gstin.is_primary)?.gstin || form.gstin}
+                value={
+                  isIndividual(form.contractor_type)
+                    ? ""
+                    : gstins.find((gstin) => gstin.is_primary)?.gstin || form.gstin
+                }
                 onChange={(e) => {
                   const primaryIndex = Math.max(
                     0,
@@ -789,22 +1005,34 @@ export default function EditVendorPage() {
                   setForm((prev) => ({ ...prev, gstin: normalized }));
                   updateGstin(primaryIndex, "gstin", normalized);
                 }}
-                className={`${inputClass} uppercase`}
+                disabled={isIndividual(form.contractor_type)}
+                className={`${inputClass} uppercase disabled:bg-slate-100 disabled:text-slate-400`}
               />
             </div>
 
             <div>
-              <label className={labelClass}>PAN-Aadhaar Link Status</label>
+              <label className={labelClass}>PAN-Aadhaar Linked</label>
               <select
                 name="pan_aadhaar_link_status"
                 value={form.pan_aadhaar_link_status}
                 onChange={handleChange}
-                className={inputClass}
+                disabled={requiresPanAadhaarProof(form.contractor_type)}
+                className={`${inputClass} disabled:bg-slate-100 disabled:text-slate-400`}
               >
+                <option value="">Not applicable</option>
                 <option>Yet to check</option>
                 <option>Yes</option>
                 <option>No</option>
               </select>
+              {requiresPanAadhaarProof(form.contractor_type) ? (
+                <p className="mt-1 text-xs text-slate-500">
+                  Always Yes for Individual and Proprietorship vendors.
+                </p>
+              ) : (
+                <p className="mt-1 text-xs text-slate-500">
+                  Not required for this contractor type.
+                </p>
+              )}
             </div>
           </div>
         </section>
@@ -1125,9 +1353,21 @@ export default function EditVendorPage() {
           <div className="grid gap-4 md:grid-cols-2">
             {[
               ["PAN", "PAN Copy"],
-              ["AADHAAR_CIN", "Aadhaar / CIN Copy"],
+              [
+                "AADHAAR_CIN",
+                isCinContractorType(form.contractor_type)
+                  ? "CIN Attachment"
+                  : "Aadhaar Attachment",
+              ],
               ["GST_CERTIFICATE", "GST Certificate"],
-              ["PAN_AADHAAR_ATTACHMENT", "PAN-Aadhaar Link Proof"],
+              ...(requiresPanAadhaarProof(form.contractor_type)
+                ? ([
+                    [
+                      "PAN_AADHAAR_ATTACHMENT",
+                      "PAN-Aadhaar Linked Proof",
+                    ],
+                  ] as [string, string][])
+                : []),
               ["MSME_CERTIFICATE", "MSME Certificate"],
               ["BANK_PROOF", "Cancelled Cheque / Bank Proof"],
               ["ADDITIONAL_DOCUMENT", "Additional Documents"],
