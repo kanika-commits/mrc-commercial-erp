@@ -48,8 +48,13 @@ function hasExplicitHrRouteAccess(pathname: string, access: CurrentUserAccess) {
     return hasAnyPermission(access, [
       { moduleCode: "hr_employees", actionCode: "view" },
       { moduleCode: "hr_employee_import", actionCode: "view" },
+      { moduleCode: "hr_employee_document_import", actionCode: "view" },
       { moduleCode: "reimbursements", actionCode: "view" },
     ]);
+  }
+
+  if (pathname === "/hr/employees/import-documents") {
+    return can(access.permissions, "hr_employee_document_import", "view");
   }
 
   if (pathname === "/hr/employees/import") {

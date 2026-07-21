@@ -114,6 +114,15 @@ export const DEFAULT_MODULE_NAVIGATION = {
       status: "active",
     },
     {
+      id: "default-hr-employee-document-import",
+      module_group: "hr",
+      module_code: "hr_employee_document_import",
+      module_name: "Employee Document Import",
+      route: "/hr/employees/import-documents",
+      sort_order: 3,
+      status: "active",
+    },
+    {
       id: "default-users",
       module_group: "administration",
       module_code: "users",

@@ -23,6 +23,7 @@ export default function EmployeesPage() {
   const canEdit = can(permissions, "hr_employees", "edit");
   const canDelete = can(permissions, "hr_employees", "delete");
   const canImport = can(permissions, "hr_employee_import", "view") || can(permissions, "hr_employee_import", "upload");
+  const canImportDocuments = can(permissions, "hr_employee_document_import", "view") || can(permissions, "hr_employee_document_import", "upload");
   const lookups = useHrLookups({ includeEmployees: false });
   const [employees, setEmployees] = useState<HrEmployee[]>([]);
   const [search, setSearch] = useState("");
@@ -135,6 +136,12 @@ export default function EmployeesPage() {
             <Link href="/hr/employees/import" className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50">
               <FileSpreadsheet className="h-4 w-4" />
               Import
+            </Link>
+          )}
+          {canImportDocuments && (
+            <Link href="/hr/employees/import-documents" className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50">
+              <FileSpreadsheet className="h-4 w-4" />
+              Import Documents
             </Link>
           )}
           {canAdd && (
