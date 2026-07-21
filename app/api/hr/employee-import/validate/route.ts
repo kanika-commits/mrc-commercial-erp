@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     if (!batchId) return jsonError("batch_id is required.");
 
     const admin = adminClient();
-    const batchResult = await loadBatchForActor(admin, batchId);
+    const batchResult = await loadBatchForActor(admin, batchId, auth);
     if ("response" in batchResult) return batchResult.response;
 
     const mapping = batchResult.batch.mapping || {};

@@ -2,6 +2,10 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { requirePermission, type ServerPermissionContext } from "@/lib/serverPermissions";
 import { HR_EMPLOYEE_IMPORT_MODULE } from "@/lib/hr/employeeImport";
+import {
+  applyOrganizationScope,
+  loadActorOrganizationScope,
+} from "@/lib/serverOrganizationScope";
 
 export function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -31,12 +35,22 @@ export function actorName(auth: ServerPermissionContext) {
 export async function loadBatchForActor(
   admin: ReturnType<typeof adminClient>,
   batchId: string,
+  auth: ServerPermissionContext,
 ) {
-  const { data: batch, error } = await admin
+  const organizationScope = await loadActorOrganizationScope(admin, auth);
+  let query = admin
     .from("employee_import_batches")
     .select("*")
-    .eq("id", batchId)
-    .maybeSingle();
+    .eq("id", batchId);
+
+  const scopedQuery = applyOrganizationScope(query, organizationScope);
+  if (!scopedQuery) {
+    return { response: jsonError("Import batch was not found.", 404) } as const;
+  }
+
+  query = scopedQuery;
+
+  const { data: batch, error } = await query.maybeSingle();
 
   if (error) throw error;
   if (!batch) return { response: jsonError("Import batch was not found.", 404) } as const;

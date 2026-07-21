@@ -34,6 +34,51 @@ function actionForPath(pathname: string) {
   return "view";
 }
 
+function hasAnyPermission(
+  access: CurrentUserAccess,
+  checks: Array<{ moduleCode: string; actionCode: string }>,
+) {
+  return checks.some((check) =>
+    can(access.permissions, check.moduleCode, check.actionCode),
+  );
+}
+
+function hasExplicitHrRouteAccess(pathname: string, access: CurrentUserAccess) {
+  if (pathname === "/modules/hr") {
+    return hasAnyPermission(access, [
+      { moduleCode: "hr_employees", actionCode: "view" },
+      { moduleCode: "hr_employee_import", actionCode: "view" },
+      { moduleCode: "reimbursements", actionCode: "view" },
+    ]);
+  }
+
+  if (pathname === "/hr/employees/import") {
+    return can(access.permissions, "hr_employee_import", "view");
+  }
+
+  if (
+    pathname === "/hr/employees" ||
+    pathname === "/hr/employees/new" ||
+    /^\/hr\/employees\/[^/]+(?:\/edit)?$/.test(pathname)
+  ) {
+    return can(access.permissions, "hr_employees", "view");
+  }
+
+  if (pathname === "/hr/departments" || pathname === "/hr/designations") {
+    return can(access.permissions, "hr_employees", "view");
+  }
+
+  if (
+    pathname === "/hr/reimbursements" ||
+    pathname === "/hr/reimbursements/new" ||
+    /^\/hr\/reimbursements\/[^/]+(?:\/edit)?$/.test(pathname)
+  ) {
+    return can(access.permissions, "reimbursements", "view");
+  }
+
+  return null;
+}
+
 function hasRouteAccess(
   pathname: string,
   access: CurrentUserAccess,
@@ -54,6 +99,9 @@ function hasRouteAccess(
   if (pathname.startsWith("/settings")) {
     return globalAccess;
   }
+
+  const explicitHrAccess = hasExplicitHrRouteAccess(pathname, access);
+  if (explicitHrAccess !== null) return explicitHrAccess;
 
   const matchedModule = (navigation.modules || [])
     .filter(

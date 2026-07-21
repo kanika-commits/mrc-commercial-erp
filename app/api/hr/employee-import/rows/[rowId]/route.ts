@@ -24,7 +24,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
     if (!rowId) return jsonError("row id is required.");
 
     const admin = adminClient();
-    const batchResult = await loadBatchForActor(admin, batchId);
+    const batchResult = await loadBatchForActor(admin, batchId, auth);
     if ("response" in batchResult) return batchResult.response;
     if (batchResult.batch.status === "completed") {
       return jsonError("Completed import batches cannot be changed.", 409);

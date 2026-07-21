@@ -57,7 +57,7 @@ export async function PUT(request: Request) {
     if (!batchId) return jsonError("batch_id is required.");
 
     const admin = adminClient();
-    const batchResult = await loadBatchForActor(admin, batchId);
+    const batchResult = await loadBatchForActor(admin, batchId, auth);
     if ("response" in batchResult) return batchResult.response;
     if (batchResult.batch.status === "completed") {
       return jsonError("Completed import batches cannot be remapped.", 409);
