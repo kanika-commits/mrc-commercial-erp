@@ -27,8 +27,10 @@ export default function AdminUsersPage() {
     loadData();
   }, []);
 
-  async function loadData() {
-    setMessage("");
+  async function loadData(options: { preserveMessage?: boolean } = {}) {
+    if (!options.preserveMessage) {
+      setMessage("");
+    }
 
     const {
       data: { session },
@@ -122,11 +124,13 @@ export default function AdminUsersPage() {
         throw new Error(result.error || "Failed to delete user.");
       }
 
-      setProfiles((prev) => prev.filter((profile) => profile.id !== deleteUser.id));
-      setUserRoles((prev) => prev.filter((row) => row.user_id !== deleteUser.id));
-      setAccessRows((prev) => prev.filter((row) => row.user_id !== deleteUser.id));
+      const deletedUserId = deleteUser.id;
+      setProfiles((prev) => prev.filter((profile) => profile.id !== deletedUserId));
+      setUserRoles((prev) => prev.filter((row) => row.user_id !== deletedUserId));
+      setAccessRows((prev) => prev.filter((row) => row.user_id !== deletedUserId));
       setDeleteUser(null);
       setMessage("User deleted successfully.");
+      await loadData({ preserveMessage: true });
     } catch (error: any) {
       setMessage(error.message || "Failed to delete user.");
     } finally {
