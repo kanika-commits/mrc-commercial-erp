@@ -7,6 +7,7 @@ import AlertMessage from "@/components/AlertMessage";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import type { ReimbursementClaim } from "@/types/hr";
+import HrSectionNav from "@/components/hr/HrSectionNav";
 import ReimbursementTable from "@/components/hr/ReimbursementTable";
 import { apiFetch, formatCurrency, labelize } from "@/components/hr/hrClient";
 import { useHrLookups } from "@/components/hr/useHrLookups";
@@ -94,6 +95,7 @@ export default function ReimbursementsPage() {
           </Link>
         )}
       </header>
+      <HrSectionNav />
 
       <AlertMessage type="error" message={message || lookups.error} onClose={() => setMessage("")} />
 

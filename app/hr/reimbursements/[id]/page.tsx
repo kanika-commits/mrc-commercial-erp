@@ -11,6 +11,7 @@ import type { ReimbursementClaim, ReimbursementDocument, ReimbursementHistoryRow
 import StatusBadge from "@/components/hr/StatusBadge";
 import DocumentGallery from "@/components/hr/DocumentGallery";
 import DocumentUploader from "@/components/hr/DocumentUploader";
+import HrSectionNav from "@/components/hr/HrSectionNav";
 import StatusTimeline from "@/components/hr/StatusTimeline";
 import { apiFetch, formatCurrency, formatDate, getAccessToken, labelize } from "@/components/hr/hrClient";
 import { useHrLookups } from "@/components/hr/useHrLookups";
@@ -165,6 +166,7 @@ export default function ReimbursementDetailPage() {
           <Link href="/hr/reimbursements" className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"><ArrowLeft className="h-4 w-4" />Back</Link>
         </div>
       </header>
+      <HrSectionNav />
 
       <AlertMessage type="error" message={message || lookups.error} onClose={() => setMessage("")} />
       <AlertMessage type="success" message={success} onClose={() => setSuccess("")} />

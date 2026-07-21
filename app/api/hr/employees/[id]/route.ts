@@ -6,8 +6,18 @@ import {
   isInOrganizationScope,
   loadActorOrganizationScope,
 } from "@/lib/serverOrganizationScope";
+import {
+  EMPLOYMENT_HISTORY_FIELD_LABELS,
+  EMPLOYMENT_HISTORY_FIELDS,
+  eventDateForField,
+  employmentEventLabel,
+  mapEmploymentEventType,
+  valuesDiffer,
+} from "@/lib/hr/employmentHistory";
+import { insertErpAuditLog } from "@/lib/serverAudit";
 
 const MODULE_CODE = "hr_employees";
+const PHOTO_BUCKET = "employee-photos";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -45,6 +55,100 @@ function userName(auth: ServerPermissionContext) {
     auth.user.email ||
     "HR User"
   );
+}
+
+function textValue(value: unknown) {
+  return String(value || "").trim() || null;
+}
+
+function requireText(value: unknown) {
+  return String(value || "").trim();
+}
+
+function dateValue(value: unknown) {
+  return String(value || "").trim() || null;
+}
+
+function isAfterDate(left: string, right: string) {
+  return new Date(`${left}T00:00:00Z`).getTime() > new Date(`${right}T00:00:00Z`).getTime();
+}
+
+function validateEmployeeDates(values: {
+  dateOfBirth?: string | null;
+  dateOfJoining?: string | null;
+  confirmationDate?: string | null;
+  noticePeriodFrom?: string | null;
+  noticePeriodTo?: string | null;
+  resignationDate?: string | null;
+  relievingDate?: string | null;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+
+  if (values.dateOfBirth && isAfterDate(values.dateOfBirth, today)) {
+    return "Date of birth cannot be in the future.";
+  }
+
+  if (!values.dateOfJoining) {
+    return "Joining date is required.";
+  }
+
+  const datedFields = [
+    { label: "Confirmation date", value: values.confirmationDate },
+    { label: "Notice period start date", value: values.noticePeriodFrom },
+    { label: "Resignation date", value: values.resignationDate },
+    { label: "Relieving date", value: values.relievingDate },
+  ];
+
+  for (const field of datedFields) {
+    if (field.value && isAfterDate(values.dateOfJoining, field.value)) {
+      return `${field.label} cannot be before joining date.`;
+    }
+  }
+
+  if (
+    values.noticePeriodFrom &&
+    values.noticePeriodTo &&
+    isAfterDate(values.noticePeriodFrom, values.noticePeriodTo)
+  ) {
+    return "Notice period end date cannot be before notice period start date.";
+  }
+
+  return null;
+}
+
+function employmentState(row: Record<string, any>): Record<string, string | null> {
+  return {
+    company_id: row.company_id || null,
+    site_id: row.site_id || null,
+    department_id: row.department_id || null,
+    designation_id: row.designation_id || null,
+    reporting_manager_id: row.reporting_manager_id || null,
+    employment_type: row.employment_type || null,
+    shift: row.shift || null,
+    status: row.status || null,
+    date_of_joining: row.date_of_joining || null,
+    confirmation_date: row.confirmation_date || null,
+    notice_period_from: row.notice_period_from || null,
+    notice_period_to: row.notice_period_to || null,
+    resignation_date: row.resignation_date || null,
+    date_of_exit: row.date_of_exit || null,
+    exit_remark: row.exit_remark || null,
+  };
+}
+
+async function withPhotoSignedUrl(admin: ReturnType<typeof adminClient>, employee: any) {
+  if (!employee?.photo_storage_path) {
+    return { ...employee, photo_signed_url: null };
+  }
+
+  const { data, error } = await admin.storage
+    .from(PHOTO_BUCKET)
+    .createSignedUrl(employee.photo_storage_path, 60 * 10);
+
+  return {
+    ...employee,
+    photo_signed_url: error ? null : data?.signedUrl || null,
+  };
 }
 
 async function canAccessEmployee(
@@ -143,11 +247,14 @@ async function validateCompanyAndSite(
 
     if (siteError) throw siteError;
 
-    if (
-      !site ||
-      site.organization_id !== company.organization_id ||
-      site.company_id !== companyId
-    ) {
+    if (!site || site.organization_id !== company.organization_id) {
+      return {
+        error: "Selected site is not available for this company.",
+        status: 403,
+      } as const;
+    }
+
+    if (site.company_id && site.company_id !== companyId) {
       return {
         error: "Selected site is not available for this company.",
         status: 403,
@@ -286,7 +393,7 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({ employee });
+    return NextResponse.json({ employee: await withPhotoSignedUrl(admin, employee) });
   } catch (error: any) {
     return NextResponse.json(
       { error: error.message || "Failed to load employee." },
@@ -309,7 +416,7 @@ export async function PUT(
     const admin = adminClient();
     const { data: existing, error: existingError } = await admin
       .from("hr_employees")
-      .select("id, organization_id, company_id, site_id")
+      .select("*")
       .eq("id", id)
       .neq("status", "deleted")
       .maybeSingle();
@@ -327,15 +434,22 @@ export async function PUT(
       );
     }
 
-    const companyId = String(payload.company_id || "").trim();
-    const siteId = String(payload.site_id || "").trim() || null;
-    const employeeCode = String(payload.employee_code || "").trim();
-    const employeeName = String(payload.employee_name || "").trim();
-    const departmentId = String(payload.department_id || "").trim() || null;
-    const designationId = String(payload.designation_id || "").trim() || null;
+    const companyId = requireText(payload.company_id);
+    const siteId = requireText(payload.site_id);
+    const employeeCode = requireText(payload.employee_code);
+    const employeeName = requireText(payload.employee_name);
+    const departmentId = requireText(payload.department_id);
+    const designationId = requireText(payload.designation_id);
     const reportingManagerId =
-      String(payload.reporting_manager_id || "").trim() || null;
-    const userId = String(payload.user_id || "").trim() || null;
+      textValue(payload.reporting_manager_id);
+    const userId = textValue(payload.user_id);
+    const dateOfJoining = dateValue(payload.date_of_joining);
+    const dateOfBirth = dateValue(payload.date_of_birth);
+    const confirmationDate = dateValue(payload.confirmation_date);
+    const noticePeriodFrom = dateValue(payload.notice_period_from);
+    const noticePeriodTo = dateValue(payload.notice_period_to);
+    const resignationDate = dateValue(payload.resignation_date);
+    const relievingDate = dateValue(payload.date_of_exit);
 
     if (!employeeCode) {
       return NextResponse.json({ error: "Employee code is required." }, { status: 400 });
@@ -343,6 +457,32 @@ export async function PUT(
 
     if (!employeeName) {
       return NextResponse.json({ error: "Employee name is required." }, { status: 400 });
+    }
+
+    if (!siteId) {
+      return NextResponse.json({ error: "Site is required." }, { status: 400 });
+    }
+
+    if (!departmentId) {
+      return NextResponse.json({ error: "Department is required." }, { status: 400 });
+    }
+
+    if (!designationId) {
+      return NextResponse.json({ error: "Designation is required." }, { status: 400 });
+    }
+
+    const dateError = validateEmployeeDates({
+      dateOfBirth,
+      dateOfJoining,
+      confirmationDate,
+      noticePeriodFrom,
+      noticePeriodTo,
+      resignationDate,
+      relievingDate,
+    });
+
+    if (dateError) {
+      return NextResponse.json({ error: dateError }, { status: 400 });
     }
 
     const companyResult = await validateCompanyAndSite(admin, auth, companyId, siteId);
@@ -404,31 +544,129 @@ export async function PUT(
       );
     }
 
+    const updatePayload = {
+      organization_id: companyResult.organizationId,
+      company_id: companyId,
+      site_id: siteId,
+      employee_code: employeeCode,
+      employee_name: employeeName,
+      email: textValue(payload.email),
+      phone: textValue(payload.phone),
+      personal_email: textValue(payload.personal_email),
+      personal_phone: textValue(payload.personal_phone),
+      date_of_birth: dateOfBirth,
+      gender: textValue(payload.gender),
+      nationality: textValue(payload.nationality),
+      father_name: textValue(payload.father_name),
+      mother_name: textValue(payload.mother_name),
+      spouse_name: textValue(payload.spouse_name),
+      blood_group: textValue(payload.blood_group),
+      marital_status: textValue(payload.marital_status),
+      current_address: textValue(payload.current_address),
+      permanent_address: textValue(payload.permanent_address),
+      current_address_line1: textValue(payload.current_address_line1),
+      current_address_line2: textValue(payload.current_address_line2),
+      current_address_city: textValue(payload.current_address_city),
+      current_address_state: textValue(payload.current_address_state),
+      current_address_country: textValue(payload.current_address_country),
+      current_address_pin_code: textValue(payload.current_address_pin_code),
+      permanent_address_line1: textValue(payload.permanent_address_line1),
+      permanent_address_line2: textValue(payload.permanent_address_line2),
+      permanent_address_city: textValue(payload.permanent_address_city),
+      permanent_address_state: textValue(payload.permanent_address_state),
+      permanent_address_country: textValue(payload.permanent_address_country),
+      permanent_address_pin_code: textValue(payload.permanent_address_pin_code),
+      emergency_contact_name: textValue(payload.emergency_contact_name),
+      emergency_contact_phone: textValue(payload.emergency_contact_phone),
+      emergency_contact_relationship: textValue(payload.emergency_contact_relationship),
+      remarks: textValue(payload.remarks),
+      department_id: departmentId,
+      designation_id: designationId,
+      reporting_manager_id: reportingManagerId,
+      user_id: userId,
+      date_of_joining: dateOfJoining,
+      employment_type: textValue(payload.employment_type),
+      shift: textValue(payload.shift),
+      confirmation_date: confirmationDate,
+      notice_period_from: noticePeriodFrom,
+      notice_period_to: noticePeriodTo,
+      resignation_date: resignationDate,
+      date_of_exit: relievingDate,
+      exit_remark: textValue(payload.exit_remark),
+      status: requireText(payload.status) || "active",
+      updated_by: auth.user.id,
+      updated_by_name: userName(auth),
+      updated_by_email: auth.user.email || null,
+      updated_at: new Date().toISOString(),
+    };
+
     const { error } = await admin
       .from("hr_employees")
-      .update({
-        organization_id: companyResult.organizationId,
-        company_id: companyId,
-        site_id: siteId,
-        employee_code: employeeCode,
-        employee_name: employeeName,
-        email: String(payload.email || "").trim() || null,
-        phone: String(payload.phone || "").trim() || null,
-        department_id: departmentId,
-        designation_id: designationId,
-        reporting_manager_id: reportingManagerId,
-        user_id: userId,
-        date_of_joining: payload.date_of_joining || null,
-        employment_type: payload.employment_type || null,
-        status: String(payload.status || "active").trim() || "active",
-        updated_by: auth.user.id,
-        updated_by_name: userName(auth),
-        updated_by_email: auth.user.email || null,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq("id", id);
 
     if (error) throw error;
+
+    const previousState = employmentState(existing);
+    const nextState = employmentState(updatePayload);
+    const changedFields = EMPLOYMENT_HISTORY_FIELDS.filter((field) =>
+      valuesDiffer(previousState[field], nextState[field]),
+    );
+
+    if (changedFields.length > 0) {
+      const today = new Date().toISOString().slice(0, 10);
+      const historyRows = changedFields.map((field) => {
+        const eventType = mapEmploymentEventType(field, previousState[field], nextState[field]);
+        return {
+          organization_id: companyResult.organizationId,
+          employee_id: id,
+          event_type: eventType,
+          event_date: eventDateForField(field, nextState[field], today),
+          effective_from: ["date_of_joining", "confirmation_date", "resignation_date", "date_of_exit"].includes(field)
+            ? nextState[field]
+            : today,
+          title: employmentEventLabel(eventType),
+          description: `${EMPLOYMENT_HISTORY_FIELD_LABELS[field] || field} changed.`,
+          source: "system",
+          is_manual: false,
+          previous_values: { [field]: previousState[field] },
+          new_values: { [field]: nextState[field] },
+          company_id: nextState.company_id,
+          site_id: nextState.site_id,
+          department_id: nextState.department_id,
+          designation_id: nextState.designation_id,
+          reporting_manager_id: nextState.reporting_manager_id,
+          employment_type: nextState.employment_type,
+          shift: nextState.shift,
+          employment_status: nextState.status,
+          created_by: auth.user.id,
+          created_by_name: userName(auth),
+          created_by_email: auth.user.email || null,
+        };
+      });
+
+      const { error: historyError } = await admin
+        .from("employee_employment_history")
+        .insert(historyRows);
+
+      if (historyError) throw historyError;
+    }
+
+    await insertErpAuditLog(admin, auth.user, {
+      organizationId: companyResult.organizationId,
+      companyId,
+      siteId,
+      moduleCode: "hr_employees",
+      entityType: "hr_employee",
+      recordId: id,
+      action: changedFields.length > 0 ? "employment_change" : "update",
+      description: changedFields.length > 0
+        ? `Employee employment fields changed: ${changedFields.join(", ")}.`
+        : `Employee ${employeeName} updated.`,
+      oldValues: changedFields.length > 0 ? previousState : existing,
+      newValues: changedFields.length > 0 ? nextState : updatePayload,
+      source: "system",
+    }, request);
 
     return NextResponse.json({ employee_id: id });
   } catch (error: any) {
@@ -506,6 +744,20 @@ export async function DELETE(
       .eq("id", id);
 
     if (error) throw error;
+
+    await insertErpAuditLog(admin, auth.user, {
+      organizationId: employee.organization_id,
+      companyId: employee.company_id,
+      siteId: employee.site_id,
+      moduleCode: "hr_employees",
+      entityType: "hr_employee",
+      recordId: id,
+      action: "delete",
+      description: "Employee marked as deleted.",
+      oldValues: employee,
+      newValues: { status: "deleted" },
+      source: "system",
+    }, request);
 
     return NextResponse.json({ deleted: true });
   } catch (error: any) {

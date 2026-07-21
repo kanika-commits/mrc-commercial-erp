@@ -9,6 +9,7 @@ import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import ReimbursementForm, { type ReimbursementFormValues } from "@/components/hr/ReimbursementForm";
 import DocumentUploader from "@/components/hr/DocumentUploader";
+import HrSectionNav from "@/components/hr/HrSectionNav";
 import { apiFetch, getAccessToken } from "@/components/hr/hrClient";
 import { useHrLookups } from "@/components/hr/useHrLookups";
 
@@ -77,6 +78,7 @@ export default function NewReimbursementPage() {
   return (
     <section className="space-y-6">
       <Header title="New Reimbursement" />
+      <HrSectionNav />
       <AlertMessage type="error" message={message || lookups.error} onClose={() => setMessage("")} />
       <AlertMessage type="success" message={success} onClose={() => setSuccess("")} />
       {lookups.loading && (

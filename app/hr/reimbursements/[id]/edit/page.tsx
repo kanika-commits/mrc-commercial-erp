@@ -10,6 +10,7 @@ import { can } from "@/lib/accessControl";
 import ReimbursementForm, { type ReimbursementFormValues } from "@/components/hr/ReimbursementForm";
 import DocumentGallery from "@/components/hr/DocumentGallery";
 import DocumentUploader from "@/components/hr/DocumentUploader";
+import HrSectionNav from "@/components/hr/HrSectionNav";
 import { apiFetch, getAccessToken } from "@/components/hr/hrClient";
 import { useHrLookups } from "@/components/hr/useHrLookups";
 import type { ReimbursementClaim, ReimbursementDocument } from "@/types/hr";
@@ -146,6 +147,7 @@ export default function EditReimbursementPage() {
           Back
         </Link>
       </header>
+      <HrSectionNav />
       <AlertMessage type="error" message={message || lookups.error} onClose={() => setMessage("")} />
       {lookups.loading && (
         <div className="rounded-2xl border bg-white p-4 text-sm text-slate-500 shadow-sm">

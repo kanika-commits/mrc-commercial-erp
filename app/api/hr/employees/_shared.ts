@@ -93,7 +93,7 @@ export async function resolveCurrentLinkedEmployee(
   const { data: employee, error } = await admin
     .from("hr_employees")
     .select(
-      "id, organization_id, company_id, site_id, employee_code, employee_name, email, phone, department_id, designation_id, reporting_manager_id, user_id, date_of_joining, employment_type, status",
+      "id, organization_id, company_id, site_id, employee_code, employee_name, email, phone, personal_email, personal_phone, date_of_birth, gender, nationality, father_name, mother_name, spouse_name, blood_group, marital_status, current_address, permanent_address, current_address_line1, current_address_line2, current_address_city, current_address_state, current_address_country, current_address_pin_code, permanent_address_line1, permanent_address_line2, permanent_address_city, permanent_address_state, permanent_address_country, permanent_address_pin_code, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, remarks, department_id, designation_id, reporting_manager_id, user_id, date_of_joining, employment_type, shift, confirmation_date, notice_period_from, notice_period_to, resignation_date, date_of_exit, exit_remark, status",
     )
     .eq("user_id", auth.user.id)
     .eq("status", "active")

@@ -7,6 +7,7 @@ export const PERMISSION_ACTIONS = [
   "reject",
   "upload",
   "submit",
+  "execute",
   "mark_paid",
   "export",
 ] as const;
@@ -37,6 +38,9 @@ const MODULE_ACTIONS: Record<string, PermissionAction[]> = {
   debit_notes: ["view", "add", "delete"],
 
   hr_employees: ["view", "add", "edit", "delete"],
+  hr_employee_import: ["view", "upload", "execute", "export"],
+  hr_audit: ["view"],
+  hr_salary: ["view", "add", "edit", "delete"],
   reimbursements: [
     "view",
     "add",

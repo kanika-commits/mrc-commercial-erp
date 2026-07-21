@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "re
 import Link from "next/link";
 import { ArrowLeft, BadgeCheck, Pencil, Plus, Trash2 } from "lucide-react";
 import AlertMessage from "@/components/AlertMessage";
+import HrSectionNav from "@/components/hr/HrSectionNav";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { apiFetch, labelize } from "@/components/hr/hrClient";
@@ -132,6 +133,7 @@ export default function DesignationsPage() {
           Back to HR
         </Link>
       </header>
+      <HrSectionNav />
 
       <AlertMessage type="error" message={message || lookups.error} onClose={() => setMessage("")} />
       <AlertMessage type="success" message={success} onClose={() => setSuccess("")} />
