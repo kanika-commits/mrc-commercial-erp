@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { User } from "@supabase/supabase-js";
+import { loadActiveAccountContext } from "@/lib/serverAccountAccess";
 
 export type ServerPermission = {
   module_code: string;
@@ -62,68 +63,11 @@ async function loadPermissionContext(request: Request) {
     return failure("User not found.", 401);
   }
 
-  const [{ data: userRoles, error: userRolesError }, { data: userPermissions, error: userPermissionsError }] =
-    await Promise.all([
-      admin.from("user_roles").select("role_id").eq("user_id", user.id),
-      admin
-        .from("user_permissions")
-        .select("module_code, action_code, allowed")
-        .eq("user_id", user.id),
-    ]);
+  const accountContext = await loadActiveAccountContext(admin, user);
 
-  if (userRolesError) throw userRolesError;
-  if (userPermissionsError) throw userPermissionsError;
+  if ("response" in accountContext) return accountContext;
 
-  const roleIds = (userRoles || [])
-    .map((row: { role_id: string | null }) => row.role_id)
-    .filter(Boolean);
-
-  let roleCodes: string[] = [];
-  let rolePermissions: ServerPermission[] = [];
-
-  if (roleIds.length > 0) {
-    const [{ data: roles, error: rolesError }, { data: permissions, error: permissionsError }] =
-      await Promise.all([
-        admin.from("roles").select("role_code").in("id", roleIds),
-        admin
-          .from("role_permissions")
-          .select("module_code, action_code, allowed")
-          .in("role_id", roleIds),
-      ]);
-
-    if (rolesError) throw rolesError;
-    if (permissionsError) throw permissionsError;
-
-    roleCodes = (roles || [])
-      .map((role: { role_code: string | null }) => role.role_code)
-      .filter((roleCode): roleCode is string => Boolean(roleCode));
-    rolePermissions = permissions || [];
-  }
-
-  if (roleCodes.includes("platform_owner")) {
-    return {
-      user,
-      roleCodes,
-      permissions: [{ module_code: "*", action_code: "*", allowed: true }],
-    } satisfies ServerPermissionContext;
-  }
-
-  const permissionMap = new Map<string, ServerPermission>();
-
-  [...rolePermissions, ...((userPermissions || []) as ServerPermission[])].forEach(
-    (permission) => {
-      permissionMap.set(
-        `${permission.module_code}:${permission.action_code}`,
-        permission
-      );
-    }
-  );
-
-  return {
-    user,
-    roleCodes,
-    permissions: Array.from(permissionMap.values()),
-  } satisfies ServerPermissionContext;
+  return accountContext satisfies ServerPermissionContext;
 }
 
 export async function requirePermission(

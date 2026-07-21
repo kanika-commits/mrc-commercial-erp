@@ -1,16 +1,45 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { ACCOUNT_INACTIVE_CODE, INACTIVE_ACCOUNT_MESSAGE } from "@/lib/accountStatus";
 
 export default function LoginPage() {
   const router = useRouter();
+  const emailInputRef = useRef<HTMLInputElement>(null);
+  const passwordInputRef = useRef<HTMLInputElement>(null);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const storedNotice = window.sessionStorage.getItem("auth_notice");
+
+    if (
+      params.get("account") === ACCOUNT_INACTIVE_CODE ||
+      storedNotice === INACTIVE_ACCOUNT_MESSAGE
+    ) {
+      setMessage(INACTIVE_ACCOUNT_MESSAGE);
+      window.sessionStorage.removeItem("auth_notice");
+    }
+
+    const clearInitialAutofill = () => {
+      setEmail("");
+      setPassword("");
+
+      if (emailInputRef.current) emailInputRef.current.value = "";
+      if (passwordInputRef.current) passwordInputRef.current.value = "";
+    };
+
+    clearInitialAutofill();
+    const timeout = window.setTimeout(clearInitialAutofill, 100);
+
+    return () => window.clearTimeout(timeout);
+  }, []);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -36,19 +65,22 @@ export default function LoginPage() {
 
       if (error) throw error;
 
-      const user = data.user;
+      const token = data.session?.access_token;
 
-      if (user) {
-        await supabase.from("profiles").upsert({
-          id: user.id,
-          email: user.email || email.trim(),
-          full_name:
-            user.user_metadata?.full_name ||
-            user.user_metadata?.name ||
-            user.email ||
-            email.trim(),
-          status: "active",
-        });
+      if (!token) {
+        throw new Error("Login session could not be created.");
+      }
+
+      const accessResponse = await fetch("/api/admin/bootstrap", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const accessResult = await accessResponse.json().catch(() => null);
+
+      if (!accessResponse.ok) {
+        await supabase.auth.signOut();
+        throw new Error(accessResult?.error || INACTIVE_ACCOUNT_MESSAGE);
       }
 
       router.push("/");
@@ -81,7 +113,10 @@ export default function LoginPage() {
         <div>
           <label className="mb-1 block text-sm font-medium">Email</label>
           <input
+            ref={emailInputRef}
             type="email"
+            name="email"
+            autoComplete="username"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className="w-full rounded-lg border px-3 py-2"
@@ -92,7 +127,10 @@ export default function LoginPage() {
         <div>
           <label className="mb-1 block text-sm font-medium">Password</label>
           <input
+            ref={passwordInputRef}
             type="password"
+            name="password"
+            autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className="w-full rounded-lg border px-3 py-2"

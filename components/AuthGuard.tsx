@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import AppShell from "@/components/AppShell";
 import { AccessProvider } from "@/components/AccessContext";
 import { can, hasGlobalAccess, type CurrentUserAccess } from "@/lib/accessControl";
+import { ACCOUNT_INACTIVE_CODE, INACTIVE_ACCOUNT_MESSAGE } from "@/lib/accountStatus";
 
 type ModuleNavigation = {
   groups: any[];
@@ -120,10 +121,20 @@ export default function AuthGuard({
           Authorization: `Bearer ${token}`,
         },
       });
-      const bootstrap = await response.json();
+      const bootstrap = await response.json().catch(() => null);
 
       if (!response.ok) {
-        throw new Error(bootstrap.error || "Failed to load app access.");
+        const message = bootstrap?.error || "Failed to load app access.";
+
+        if (bootstrap?.code === ACCOUNT_INACTIVE_CODE) {
+          window.sessionStorage.setItem("auth_notice", INACTIVE_ACCOUNT_MESSAGE);
+          await supabase.auth.signOut();
+          clearAccessState();
+          router.replace(`/login?account=${ACCOUNT_INACTIVE_CODE}`);
+          throw new Error(message || INACTIVE_ACCOUNT_MESSAGE);
+        }
+
+        throw new Error(message);
       }
 
       const nextAccess = bootstrap.access as CurrentUserAccess;
@@ -139,7 +150,7 @@ export default function AuthGuard({
     } finally {
       setAccessLoading(false);
     }
-  }, []);
+  }, [clearAccessState, router]);
 
   useEffect(() => {
     let cancelled = false;
@@ -186,7 +197,11 @@ export default function AuthGuard({
       if (event === "SIGNED_OUT") {
         clearAccessState();
         setAuthChecked(false);
-        router.replace("/login");
+        const inactiveAccountNotice =
+          window.sessionStorage.getItem("auth_notice") === INACTIVE_ACCOUNT_MESSAGE;
+        router.replace(
+          inactiveAccountNotice ? `/login?account=${ACCOUNT_INACTIVE_CODE}` : "/login",
+        );
         return;
       }
 
