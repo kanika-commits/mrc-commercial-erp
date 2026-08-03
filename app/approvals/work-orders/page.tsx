@@ -16,6 +16,7 @@ const WORK_ORDER_TYPE_OPTIONS = [
   "Consultant",
   "Contractor (Labour)",
   "Contractor (SITC)",
+  "Daily Wage",
   "Rental",
 ];
 

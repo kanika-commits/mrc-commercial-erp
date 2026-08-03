@@ -614,6 +614,7 @@ setFieldErrors(errors);
                       <option>Consultant</option>
                       <option>Contractor (Labour)</option>
                       <option>Contractor (SITC)</option>
+                      <option>Daily Wage</option>
                       <option>Rental</option>
                     </select>
                   </FieldShell>
