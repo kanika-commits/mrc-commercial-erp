@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { sortCompanies } from "@/lib/companyOrdering";
 import { supabase } from "@/lib/supabase";
+import LinkedEmployeeSelector from "@/components/admin/LinkedEmployeeSelector";
 
 export default function NewUserPage() {
   const router = useRouter();
@@ -13,6 +14,9 @@ export default function NewUserPage() {
   const [organizations, setOrganizations] = useState<any[]>([]);
   const [companies, setCompanies] = useState<any[]>([]);
   const [sites, setSites] = useState<any[]>([]);
+  const [employeeOptions, setEmployeeOptions] = useState<any[]>([]);
+  const [employeeSearch, setEmployeeSearch] = useState("");
+  const [linkedEmployeeId, setLinkedEmployeeId] = useState("");
 
   const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
   const [selectedOrganizationIds, setSelectedOrganizationIds] = useState<string[]>([]);
@@ -58,6 +62,7 @@ export default function NewUserPage() {
     setOrganizations(result.organizations || []);
     setCompanies(sortCompanies(result.companies || []));
     setSites(result.sites || []);
+    setEmployeeOptions(result.employeeOptions || []);
   }
 
   const filteredCompanies = useMemo(() => {
@@ -185,6 +190,10 @@ export default function NewUserPage() {
         throw new Error("Your session expired. Please log in again.");
       }
 
+      if (!linkedEmployeeId) {
+        throw new Error("Select a linked employee.");
+      }
+
       const response = await fetch("/api/admin/create-user", {
         method: "POST",
         headers: {
@@ -199,6 +208,7 @@ export default function NewUserPage() {
           organization_ids: selectedOrganizationIds,
           company_ids: selectedCompanyIds,
           site_ids: selectedSiteIds,
+          linked_employee_id: linkedEmployeeId,
         }),
       });
 
@@ -238,6 +248,16 @@ export default function NewUserPage() {
           {message}
         </div>
       )}
+
+      <LinkedEmployeeSelector
+        employees={employeeOptions}
+        value={linkedEmployeeId}
+        onChange={setLinkedEmployeeId}
+        search={employeeSearch}
+        onSearchChange={setEmployeeSearch}
+        required
+        disabled={saving}
+      />
 
       <section className="rounded-lg border bg-white p-6">
         <h2 className="mb-4 text-xl font-semibold">User Details</h2>

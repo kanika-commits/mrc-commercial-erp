@@ -24,6 +24,8 @@ const COUNT_PERMISSIONS = [
   { moduleCode: "itc_claims", actionCode: "view" },
   { moduleCode: "itc_claims", actionCode: "approve" },
   { moduleCode: "vendors", actionCode: "view" },
+  { moduleCode: "hr_attendance", actionCode: "view" },
+  { moduleCode: "labour_attendance", actionCode: "view" },
 ];
 
 function adminClient() {
@@ -100,6 +102,13 @@ function applyWorkOrderScope(query: any, workOrderIds: string[] | null, column =
   return query.in(column, workOrderIds);
 }
 
+function applyCompanySiteAssignmentScope(query: any, assignments: { companyIds: string[]; siteIds: string[] }) {
+  if (!query) return null;
+  if (assignments.siteIds.length > 0) return query.in("site_id", assignments.siteIds);
+  if (assignments.companyIds.length > 0) return query.in("company_id", assignments.companyIds);
+  return query;
+}
+
 async function runCount(query: any) {
   if (!query) return 0;
   const result = await query;
@@ -151,6 +160,8 @@ export async function GET(request: Request) {
       canAny(auth.permissions, "invoices", ["view"]) ||
       canAny(auth.permissions, "itc_claims", ["view", "approve"]);
     const canVendors = canAny(auth.permissions, "vendors", ["view"]);
+    const canEmployeeAttendance = canAny(auth.permissions, "hr_attendance", ["view", "add", "edit", "submit"]);
+    const canLabourAttendance = canAny(auth.permissions, "labour_attendance", ["view", "add", "edit", "submit"]);
 
     const pendingWorkOrdersQuery = canWorkOrders
       ? applyWorkOrderScope(
@@ -251,6 +262,45 @@ export async function GET(request: Request) {
           organizationScope
         )
       : null;
+    const employeeAttendanceSentBackQuery = canEmployeeAttendance
+      ? applyCompanySiteAssignmentScope(
+          applyOrganizationScope(
+            admin
+              .from("employee_attendance_periods")
+              .select("id", { count: "exact", head: true })
+              .eq("status", "reopened")
+              .eq("submitted_by", auth.user.id),
+            organizationScope
+          ),
+          assignments
+        )
+      : null;
+    const labourStandardSentBackQuery = canLabourAttendance
+      ? applyCompanySiteAssignmentScope(
+          applyOrganizationScope(
+            admin
+              .from("labour_attendance_periods")
+              .select("id", { count: "exact", head: true })
+              .eq("status", "reopened")
+              .eq("submitted_by", auth.user.id),
+            organizationScope
+          ),
+          assignments
+        )
+      : null;
+    const labourEngineerSentBackQuery = canLabourAttendance
+      ? applyCompanySiteAssignmentScope(
+          applyOrganizationScope(
+            admin
+              .from("labour_daily_submissions")
+              .select("id", { count: "exact", head: true })
+              .in("status", ["sent_back_by_pm", "sent_back_by_ho"])
+              .eq("submitted_by", auth.user.id),
+            organizationScope
+          ),
+          assignments
+        )
+      : null;
 
     const [
       pendingWorkOrders,
@@ -262,6 +312,9 @@ export async function GET(request: Request) {
       panAadhaarPending,
       blockedVendors,
       inactiveVendors,
+      employeeAttendanceSentBack,
+      labourStandardSentBack,
+      labourEngineerSentBack,
     ] = await Promise.all([
       runCount(pendingWorkOrdersQuery),
       runCount(pendingRaBillsQuery),
@@ -272,6 +325,9 @@ export async function GET(request: Request) {
       runCount(panAadhaarQuery),
       runCount(blockedVendorsQuery),
       runCount(inactiveVendorsQuery),
+      runCount(employeeAttendanceSentBackQuery),
+      runCount(labourStandardSentBackQuery),
+      runCount(labourEngineerSentBackQuery),
     ]);
 
     return NextResponse.json({
@@ -284,6 +340,8 @@ export async function GET(request: Request) {
       panAadhaarPending,
       blockedVendors,
       inactiveVendors,
+      employeeAttendanceSentBack,
+      labourAttendanceSentBack: labourStandardSentBack + labourEngineerSentBack,
     });
   } catch (error: any) {
     return NextResponse.json(

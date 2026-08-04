@@ -170,8 +170,14 @@
   }
   body {
     @apply bg-background text-foreground;
+    min-height: 100dvh;
+    overflow-x: hidden;
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
   }
   html {
     @apply font-sans;
+    min-height: 100%;
+    overflow-x: hidden;
   }
 }

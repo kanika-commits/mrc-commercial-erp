@@ -8,10 +8,14 @@ import { sortCompanies } from "@/lib/companyOrdering";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import AlertMessage from "@/components/AlertMessage";
+import LinkedEmployeeSelector from "@/components/admin/LinkedEmployeeSelector";
 import {
   PERMISSION_ACTIONS as actions,
   availableActionsForModule,
+  permissionActionLabel,
 } from "@/lib/permissionMatrix";
+import type { PermissionAction } from "@/lib/permissionMatrix";
+import { prepareVisiblePermissionModules } from "@/lib/permissionVisibility";
 
 export default function UserAccessPage() {
   const { access } = useAccessContext();
@@ -24,6 +28,9 @@ export default function UserAccessPage() {
   const [companies, setCompanies] = useState<any[]>([]);
   const [sites, setSites] = useState<any[]>([]);
   const [modules, setModules] = useState<any[]>([]);
+  const [employeeOptions, setEmployeeOptions] = useState<any[]>([]);
+  const [employeeSearch, setEmployeeSearch] = useState("");
+  const [linkedEmployeeId, setLinkedEmployeeId] = useState("");
 
   const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
   const [selectedOrganizationIds, setSelectedOrganizationIds] = useState<string[]>([]);
@@ -37,6 +44,7 @@ export default function UserAccessPage() {
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [savingName, setSavingName] = useState(false);
+  const [savingEmployeeLink, setSavingEmployeeLink] = useState(false);
   const [loading, setLoading] = useState(true);
   const [permissionsSaved, setPermissionsSaved] = useState(false);
   const [editFullName, setEditFullName] = useState("");
@@ -120,14 +128,9 @@ export default function UserAccessPage() {
       setCompanies(sortCompanies(result.companies || []));
       setSites(result.sites || []);
       setRolePermissions(result.rolePermissions || []);
-      setModules(
-        (result.modules || []).sort((a: any, b: any) => {
-          if (a.module_group === b.module_group) {
-            return Number(a.sort_order || 0) - Number(b.sort_order || 0);
-          }
-          return String(a.module_group).localeCompare(String(b.module_group));
-        })
-      );
+      setModules(prepareVisiblePermissionModules(result.modules || []));
+      setEmployeeOptions(result.employeeOptions || []);
+      setLinkedEmployeeId(result.linkedEmployee?.id || "");
 
       setSelectedRoleIds(
         platformOwnerRoleId
@@ -282,6 +285,44 @@ export default function UserAccessPage() {
     return inheritedPermissionMap[key(moduleCode, actionCode)] === true;
   }
 
+  function permissionModuleCode(module: any) {
+    return module.permission_module_code || module.module_code;
+  }
+
+  function availableActionsForDisplayModule(module: any): PermissionAction[] {
+    if (module.display_only && !module.permission_module_code) return [];
+    if (Array.isArray(module.visible_actions)) return module.visible_actions as PermissionAction[];
+    return availableActionsForModule(permissionModuleCode(module));
+  }
+
+  function visibleModuleCodesForSave() {
+    return Array.from(
+      new Set(
+        modules
+          .map((module) =>
+            module.display_only && !module.permission_module_code
+              ? null
+              : permissionModuleCode(module)
+          )
+          .filter(Boolean)
+      )
+    );
+  }
+
+  function visiblePermissionKeysForSave() {
+    return Array.from(
+      new Set(
+        modules.flatMap((module) => {
+          if (module.display_only && !module.permission_module_code) return [];
+          const moduleCode = permissionModuleCode(module);
+          return availableActionsForDisplayModule(module).map(
+            (action: string) => `${moduleCode}.${action}`
+          );
+        })
+      )
+    );
+  }
+
   function setPermission(moduleCode: string, actionCode: string, allowed: boolean) {
     setPermissionMap((prev) => {
       const next = { ...prev };
@@ -297,10 +338,11 @@ export default function UserAccessPage() {
     });
   }
 
-  function setRow(moduleCode: string, allowed: boolean) {
+  function setRow(module: any, allowed: boolean) {
     setPermissionMap((prev) => {
       const next = { ...prev };
-      availableActionsForModule(moduleCode).forEach((action) => {
+      const moduleCode = permissionModuleCode(module);
+      availableActionsForDisplayModule(module).forEach((action) => {
         const permissionKey = key(moduleCode, action);
         if (allowed && !inheritedPermissionMap[permissionKey]) {
           next[permissionKey] = true;
@@ -316,8 +358,9 @@ export default function UserAccessPage() {
     setPermissionMap((prev) => {
       const next = { ...prev };
       (groupedModules[groupName] || []).forEach((module) => {
-        availableActionsForModule(module.module_code).forEach((action) => {
-          const permissionKey = key(module.module_code, action);
+        const moduleCode = permissionModuleCode(module);
+        availableActionsForDisplayModule(module).forEach((action) => {
+          const permissionKey = key(moduleCode, action);
           if (allowed && !inheritedPermissionMap[permissionKey]) {
             next[permissionKey] = true;
           } else {
@@ -333,8 +376,9 @@ export default function UserAccessPage() {
     setPermissionMap((prev) => {
       const next = { ...prev };
       modules.forEach((module) => {
-        availableActionsForModule(module.module_code).forEach((action) => {
-          const permissionKey = key(module.module_code, action);
+        const moduleCode = permissionModuleCode(module);
+        availableActionsForDisplayModule(module).forEach((action) => {
+          const permissionKey = key(moduleCode, action);
           if (allowed && !inheritedPermissionMap[permissionKey]) {
             next[permissionKey] = true;
           } else {
@@ -346,8 +390,11 @@ export default function UserAccessPage() {
     });
   }
 
-  function rowChecked(moduleCode: string) {
-    return availableActionsForModule(moduleCode).every((action) =>
+  function rowChecked(module: any) {
+    const availableActions = availableActionsForDisplayModule(module);
+    if (availableActions.length === 0) return false;
+    const moduleCode = permissionModuleCode(module);
+    return availableActions.every((action) =>
       isAllowed(moduleCode, action)
     );
   }
@@ -370,14 +417,15 @@ export default function UserAccessPage() {
       const permissionRows: any[] = [];
 
       modules.forEach((module) => {
-        availableActionsForModule(module.module_code).forEach((action) => {
+        const moduleCode = permissionModuleCode(module);
+        availableActionsForDisplayModule(module).forEach((action) => {
           if (
-            isDirectOverride(module.module_code, action) &&
-            !isInherited(module.module_code, action)
+            isDirectOverride(moduleCode, action) &&
+            !isInherited(moduleCode, action)
           ) {
             permissionRows.push({
               user_id: userId,
-              module_code: module.module_code,
+              module_code: moduleCode,
               action_code: action,
               allowed: true,
             });
@@ -404,6 +452,8 @@ export default function UserAccessPage() {
           organization_ids: selectedOrganizationIds,
           company_ids: selectedCompanyIds,
           site_ids: selectedSiteIds,
+          visible_module_codes: visibleModuleCodesForSave(),
+          visible_permission_keys: visiblePermissionKeysForSave(),
           user_permissions: permissionRows,
         }),
       });
@@ -473,6 +523,44 @@ export default function UserAccessPage() {
       setMessage(error.message || "Failed to update user name.");
     } finally {
       setSavingName(false);
+    }
+  }
+
+  async function saveEmployeeLink() {
+    try {
+      setSavingEmployeeLink(true);
+      setMessage("");
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/admin/users/${userId}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          linked_employee_id: linkedEmployeeId || null,
+        }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to save linked employee.");
+      }
+
+      await loadData();
+      setMessage(linkedEmployeeId ? "Linked employee saved successfully." : "Employee link removed successfully.");
+    } catch (error: any) {
+      setMessage(error.message || "Failed to save linked employee.");
+    } finally {
+      setSavingEmployeeLink(false);
     }
   }
 
@@ -663,6 +751,30 @@ export default function UserAccessPage() {
             This updates the ERP display name only. Email and password are unchanged.
           </p>
         </section>
+      )}
+
+      {canEditUser && (
+        <div className="space-y-3">
+          <LinkedEmployeeSelector
+            employees={employeeOptions}
+            value={linkedEmployeeId}
+            onChange={setLinkedEmployeeId}
+            search={employeeSearch}
+            onSearchChange={setEmployeeSearch}
+            allowUnlink
+            disabled={savingEmployeeLink}
+          />
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={saveEmployeeLink}
+              disabled={savingEmployeeLink}
+              className="rounded bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {savingEmployeeLink ? "Saving..." : "Save Linked Employee"}
+            </button>
+          </div>
+        </div>
       )}
 
       <section className="rounded-lg border bg-white p-6">
@@ -858,8 +970,8 @@ export default function UserAccessPage() {
                     <th className="p-2 text-left">Module</th>
                     <th className="p-2 text-center">All</th>
                     {actions.map((action) => (
-                      <th key={action} className="p-2 text-center capitalize">
-                        {action}
+                      <th key={action} className="p-2 text-center">
+                        {permissionActionLabel(action)}
                       </th>
                     ))}
                   </tr>
@@ -867,17 +979,26 @@ export default function UserAccessPage() {
 
                 <tbody>
                   {items.map((module: any) => {
-                    const availableActions = availableActionsForModule(module.module_code);
+                    const availableActions = availableActionsForDisplayModule(module);
+                    const effectiveModuleCode = permissionModuleCode(module);
 
                     return (
                       <tr key={module.id} className="border-t">
-                        <td className="p-2 font-medium">{module.module_name}</td>
+                        <td className="p-2 font-medium">
+                          {module.module_name}
+                          {module.permission_note && (
+                            <div className="mt-0.5 text-xs font-normal text-slate-500">
+                              {module.permission_note}
+                            </div>
+                          )}
+                        </td>
 
                         <td className="p-2 text-center">
                           <input
                             type="checkbox"
-                            checked={rowChecked(module.module_code)}
-                            onChange={(e) => setRow(module.module_code, e.target.checked)}
+                            checked={rowChecked(module)}
+                            disabled={availableActions.length === 0}
+                            onChange={(e) => setRow(module, e.target.checked)}
                           />
                         </td>
 
@@ -887,23 +1008,23 @@ export default function UserAccessPage() {
                               <div className="flex flex-col items-center gap-1">
                                 <input
                                   type="checkbox"
-                                  checked={isAllowed(module.module_code, action)}
+                                  checked={isAllowed(effectiveModuleCode, action)}
                                   disabled={
-                                    isInherited(module.module_code, action) &&
-                                    !isDirectOverride(module.module_code, action)
+                                    isInherited(effectiveModuleCode, action) &&
+                                    !isDirectOverride(effectiveModuleCode, action)
                                   }
                                   onChange={(e) =>
-                                    setPermission(module.module_code, action, e.target.checked)
+                                    setPermission(effectiveModuleCode, action, e.target.checked)
                                   }
                                   className={
-                                    isInherited(module.module_code, action) &&
-                                    !isDirectOverride(module.module_code, action)
+                                    isInherited(effectiveModuleCode, action) &&
+                                    !isDirectOverride(effectiveModuleCode, action)
                                       ? "cursor-not-allowed accent-slate-400"
                                       : ""
                                   }
                                 />
-                                {isInherited(module.module_code, action) &&
-                                  !isDirectOverride(module.module_code, action) && (
+                                {isInherited(effectiveModuleCode, action) &&
+                                  !isDirectOverride(effectiveModuleCode, action) && (
                                     <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
                                       Role
                                     </span>

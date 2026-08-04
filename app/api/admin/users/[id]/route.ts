@@ -8,6 +8,11 @@ import {
   loadActorOrganizationScope,
   validateSubmittedUserScope,
 } from "@/lib/adminUserScope";
+import {
+  loadEmployeeLinkOptions,
+  loadLinkedEmployeeForUser,
+  setUserEmployeeLink,
+} from "@/app/api/admin/users/_employeeLinking";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -18,6 +23,68 @@ function adminClient() {
   }
 
   return createClient(supabaseUrl, serviceRoleKey);
+}
+
+function parseVisiblePermissionKeys(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return Array.from(
+    new Set(
+      value
+        .map((item) => String(item || "").trim())
+        .filter((item): item is string => item.includes("."))
+    )
+  );
+}
+
+async function deleteScopedUserPermissions(
+  supabase: ReturnType<typeof adminClient>,
+  userId: string,
+  visibleModuleCodes: string[],
+  visiblePermissionKeys: string[],
+) {
+  if (visiblePermissionKeys.length > 0) {
+    const moduleCodes = Array.from(
+      new Set(visiblePermissionKeys.map((key) => key.split(".")[0]).filter(Boolean))
+    );
+
+    if (moduleCodes.length === 0) return;
+
+    const { data: existingRows, error: existingError } = await supabase
+      .from("user_permissions")
+      .select("id, module_code, action_code")
+      .eq("user_id", userId)
+      .in("module_code", moduleCodes);
+
+    if (existingError) throw existingError;
+
+    const idsToDelete = (existingRows || [])
+      .filter((row) =>
+        visiblePermissionKeys.includes(`${row.module_code}.${row.action_code}`)
+      )
+      .map((row) => row.id)
+      .filter(Boolean);
+
+    if (idsToDelete.length > 0) {
+      const { error } = await supabase
+        .from("user_permissions")
+        .delete()
+        .in("id", idsToDelete);
+      if (error) throw error;
+    }
+
+    return;
+  }
+
+  const deletePermissionsQuery = supabase
+    .from("user_permissions")
+    .delete()
+    .eq("user_id", userId);
+  const { error } = visibleModuleCodes.length > 0
+    ? await deletePermissionsQuery.in("module_code", visibleModuleCodes)
+    : await deletePermissionsQuery;
+
+  if (error) throw error;
 }
 
 async function requireUserPermission(request: Request, actionCode: "delete") {
@@ -163,6 +230,8 @@ export async function GET(
       userRoles,
       accessRows,
       userPermissions,
+      linkedEmployee,
+      employeeOptions,
     ] = await Promise.all([
       supabase
         .from("profiles")
@@ -196,6 +265,8 @@ export async function GET(
         .from("user_permissions")
         .select("module_code, action_code, allowed")
         .eq("user_id", id),
+      loadLinkedEmployeeForUser(supabase, id, actorOrganizationIds),
+      loadEmployeeLinkOptions(supabase, actorOrganizationIds, id),
     ]);
 
     for (const result of [
@@ -234,6 +305,8 @@ export async function GET(
       accessRows: accessRows.data || [],
       userPermissions: userPermissions.data || [],
       rolePermissions: rolePermissions.data || [],
+      linkedEmployee,
+      employeeOptions,
     });
   } catch (error: any) {
     return NextResponse.json(
@@ -286,6 +359,9 @@ export async function PUT(
       company_ids,
       site_ids,
       user_permissions,
+      visible_module_codes,
+      visible_permission_keys,
+      linked_employee_id,
     } = body;
     const hasNameUpdate = Object.prototype.hasOwnProperty.call(body, "full_name");
     const hasAccessUpdate =
@@ -294,6 +370,7 @@ export async function PUT(
       Object.prototype.hasOwnProperty.call(body, "company_ids") ||
       Object.prototype.hasOwnProperty.call(body, "site_ids") ||
       Object.prototype.hasOwnProperty.call(body, "user_permissions");
+    const hasLinkUpdate = Object.prototype.hasOwnProperty.call(body, "linked_employee_id");
 
     const trimmedFullName = hasNameUpdate ? String(full_name || "").trim() : null;
 
@@ -304,7 +381,7 @@ export async function PUT(
       );
     }
 
-    if (!hasNameUpdate && !hasAccessUpdate) {
+    if (!hasNameUpdate && !hasAccessUpdate && !hasLinkUpdate) {
       return NextResponse.json(
         { error: "No user changes were provided." },
         { status: 400 }
@@ -433,12 +510,51 @@ export async function PUT(
       if (updateProfileError) throw updateProfileError;
 
       if (!hasAccessUpdate) {
+        if (hasLinkUpdate) {
+          const linkResult = await setUserEmployeeLink(supabase, request, permission, {
+            userId: id,
+            employeeId: linked_employee_id,
+            actorOrganizationIds,
+          });
+
+          if ("error" in linkResult) {
+            return NextResponse.json(
+              { error: linkResult.error },
+              { status: linkResult.status }
+            );
+          }
+        }
+
         return NextResponse.json({
           user_id: id,
           full_name: trimmedFullName,
           profile_updated: true,
+          linked_employee_id: hasLinkUpdate ? linked_employee_id || null : undefined,
         });
       }
+    }
+
+    if (hasLinkUpdate && !hasAccessUpdate) {
+      const linkResult = await setUserEmployeeLink(supabase, request, permission, {
+        userId: id,
+        employeeId: linked_employee_id,
+        actorOrganizationIds,
+      });
+
+      if ("error" in linkResult) {
+        return NextResponse.json(
+          { error: linkResult.error },
+          { status: linkResult.status }
+        );
+      }
+
+      const savedLink = linkResult as { linked_employee_id: string | null; link_changed: boolean };
+
+      return NextResponse.json({
+        user_id: id,
+        linked_employee_id: savedLink.linked_employee_id,
+        link_changed: savedLink.link_changed,
+      });
     }
 
     const { data: selectedSites, error: siteError } = site_ids?.length
@@ -512,11 +628,27 @@ export async function PUT(
       (row) => `${row.user_id}.${row.organization_id || ""}.${row.company_id || ""}.${row.site_id || ""}`
     );
 
+    const visibleModuleCodes: string[] = Array.isArray(visible_module_codes)
+      ? Array.from(
+          new Set(
+            visible_module_codes
+              .map((moduleCode: any) => String(moduleCode || "").trim())
+              .filter((moduleCode: string) => Boolean(moduleCode))
+          )
+        )
+      : [];
+    const visiblePermissionKeys = parseVisiblePermissionKeys(visible_permission_keys);
+
     const permissionRows = uniqueRows<PermissionRow>(
       (user_permissions || [])
         .filter(
           (permission: any) =>
             permission.allowed === true &&
+            (visiblePermissionKeys.length > 0
+              ? visiblePermissionKeys.includes(`${String(permission.module_code || "")}.${String(permission.action_code || "")}`)
+              : visibleModuleCodes.length > 0
+                ? visibleModuleCodes.includes(String(permission.module_code || ""))
+                : true) &&
             isValidPermissionAction(
               String(permission.module_code || ""),
               String(permission.action_code || ""),
@@ -559,12 +691,7 @@ export async function PUT(
       if (insertAccessError) throw insertAccessError;
     }
 
-    const { error: deletePermissionsError } = await supabase
-      .from("user_permissions")
-      .delete()
-      .eq("user_id", id);
-
-    if (deletePermissionsError) throw deletePermissionsError;
+    await deleteScopedUserPermissions(supabase, id, visibleModuleCodes, visiblePermissionKeys);
 
     if (permissionRows.length > 0) {
       const { error: insertPermissionsError } = await supabase
@@ -574,11 +701,28 @@ export async function PUT(
       if (insertPermissionsError) throw insertPermissionsError;
     }
 
+    let linkResult: any = null;
+    if (hasLinkUpdate) {
+      linkResult = await setUserEmployeeLink(supabase, request, permission, {
+        userId: id,
+        employeeId: linked_employee_id,
+        actorOrganizationIds,
+      });
+
+      if ("error" in linkResult) {
+        return NextResponse.json(
+          { error: linkResult.error },
+          { status: linkResult.status }
+        );
+      }
+    }
+
     return NextResponse.json({
       user_id: id,
       roles_saved: roleRows.length,
       access_saved: accessRows.length,
       permissions_saved: permissionRows.length,
+      linked_employee_id: linkResult?.linked_employee_id,
     });
   } catch (error: any) {
     return NextResponse.json(

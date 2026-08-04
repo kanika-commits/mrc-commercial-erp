@@ -8,7 +8,7 @@ import {
   resolveWriteOrganizationId,
 } from "@/lib/serverOrganizationScope";
 
-const MODULE_CODE = "hr_employees";
+const MODULE_CODE = "hr_designations";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -23,17 +23,21 @@ function adminClient() {
 
 export async function GET(request: Request) {
   try {
-    const auth = await requirePermission(request, MODULE_CODE, "view");
+    const { searchParams } = new URL(request.url);
+    const purpose = searchParams.get("purpose")?.trim();
+    let auth = await requirePermission(request, MODULE_CODE, "view");
+    if ("response" in auth && purpose === "employee_lookup") {
+      auth = await requirePermission(request, "hr_employees", "view");
+    }
 
     if ("response" in auth) return auth.response;
 
-    const { searchParams } = new URL(request.url);
     const departmentId = searchParams.get("department_id")?.trim();
     const admin = adminClient();
     const organizationScope = await loadActorOrganizationScope(admin, auth);
     let query = admin
       .from("hr_designations")
-      .select("id, organization_id, department_id, designation_name, designation_code, status, created_at, updated_at")
+      .select(purpose === "employee_lookup" ? "id, organization_id, department_id, designation_name, status" : "id, organization_id, department_id, designation_name, designation_code, status, created_at, updated_at")
       .neq("status", "deleted")
       .order("designation_name", { ascending: true });
 

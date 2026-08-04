@@ -18,12 +18,21 @@ export type ImportMasterData = {
   sites: any[];
   departments: any[];
   designations: any[];
+  employees?: any[];
 };
+
+export type EmployeeImportFinalStatus =
+  | "imported_successfully"
+  | "already_exists"
+  | "validation_failed"
+  | "import_failed"
+  | "ready";
 
 export type ParsedWorkbookRow = {
   sheetName: string;
   rowNumber: number;
   raw: Record<string, string>;
+  rawSourceColumns?: Record<string, number>;
 };
 
 export type ImportMapping = Record<string, any>;
@@ -33,6 +42,8 @@ export type ImportMasterMappings = {
   sites?: ImportMasterMappingGroup;
   departments?: ImportMasterMappingGroup;
   designations?: ImportMasterMappingGroup;
+  reporting_managers?: ImportMasterMappingGroup;
+  employees?: ImportMasterMappingGroup;
 };
 
 export const MASTER_MAPPING_KEY = "__master_mappings";
@@ -40,19 +51,19 @@ export const MASTER_MAPPING_KEY = "__master_mappings";
 export type EmployeeImportColumn = {
   field: string;
   label: string;
-  category: "employee" | "personal" | "employment" | "compliance" | "bank" | "salary" | "legacy";
+  category: "employee" | "personal" | "employment" | "compliance" | "bank" | "salary" | "document" | "legacy";
   aliases: string[];
   preserveOnly?: boolean;
 };
 
 export const EMPLOYEE_IMPORT_COLUMNS: EmployeeImportColumn[] = [
   { field: "source_serial_no", label: "SrNo", category: "legacy", aliases: ["srno", "sr no", "serial no"], preserveOnly: true },
-  { field: "employee_code", label: "Employee Code", category: "employee", aliases: ["employee code", "employee no.", "employee no", "emp code"] },
+  { field: "employee_code", label: "Legacy Employee Code", category: "legacy", aliases: ["employee code", "employee no.", "employee no", "emp code"], preserveOnly: true },
   { field: "employee_title", label: "Employee Title", category: "personal", aliases: ["employee title", "title"] },
   { field: "work_id", label: "Work ID", category: "legacy", aliases: ["work id"], preserveOnly: true },
-  { field: "employee_name", label: "Employee Name", category: "employee", aliases: ["employee name", "name"] },
+  { field: "employee_name", label: "Employee Name", category: "employee", aliases: ["employee name", "full name", "name"] },
   { field: "company_name", label: "Company Name", category: "employment", aliases: ["company name", "company"] },
-  { field: "site_name", label: "Branch/Site Name", category: "employment", aliases: ["branch name", "site name", "site", "branch"] },
+  { field: "site_name", label: "Branch/Site Name", category: "employment", aliases: ["branch/site name", "branch site name", "branch name", "site name", "site", "branch"] },
   { field: "department_name", label: "Department Name", category: "employment", aliases: ["department name", "department"] },
   { field: "designation_name", label: "Designation Name", category: "employment", aliases: ["designation name", "designation"] },
   { field: "shift", label: "Shift", category: "employment", aliases: ["shift name", "shift"] },
@@ -64,12 +75,22 @@ export const EMPLOYEE_IMPORT_COLUMNS: EmployeeImportColumn[] = [
   { field: "blood_group", label: "Blood Group", category: "personal", aliases: ["blood group"] },
   { field: "marital_status", label: "Marital Status", category: "personal", aliases: ["marriage status", "marital status"] },
   { field: "marriage_anniversary", label: "Marriage Anniversary", category: "personal", aliases: ["marriage anniversary"] },
-  { field: "current_address_line1", label: "Local Address", category: "personal", aliases: ["local address"] },
-  { field: "current_address_city", label: "Local City", category: "personal", aliases: ["local city"] },
-  { field: "personal_phone", label: "Local Mobile No", category: "employee", aliases: ["local mobile no", "mobile", "personal phone", "personal number"] },
+  { field: "email", label: "Official Email", category: "employee", aliases: ["official email", "work email", "email"] },
+  { field: "phone", label: "Primary Mobile", category: "employee", aliases: ["primary mobile", "official mobile", "phone"] },
+  { field: "current_address_line1", label: "Local Address", category: "personal", aliases: ["local address", "current address line 1"] },
+  { field: "current_address_line2", label: "Current Address Line 2", category: "personal", aliases: ["current address line 2"] },
+  { field: "current_address_city", label: "Local City", category: "personal", aliases: ["local city", "current city"] },
+  { field: "current_address_state", label: "Current State", category: "personal", aliases: ["current state"] },
+  { field: "current_address_country", label: "Current Country", category: "personal", aliases: ["current country"] },
+  { field: "current_address_pin_code", label: "Current PIN Code", category: "personal", aliases: ["current pin code", "current pincode"] },
+  { field: "personal_phone", label: "Local Mobile No", category: "employee", aliases: ["local mobile no", "mobile", "personal mobile", "personal phone", "personal number"] },
   { field: "personal_email", label: "Local Email ID", category: "employee", aliases: ["local email id", "personal email"] },
-  { field: "permanent_address_line1", label: "Permanent Address", category: "personal", aliases: ["permanet address", "permanent address"] },
+  { field: "permanent_address_line1", label: "Permanent Address", category: "personal", aliases: ["permanet address", "permanent address", "permanent address line 1"] },
+  { field: "permanent_address_line2", label: "Permanent Address Line 2", category: "personal", aliases: ["permanent address line 2"] },
   { field: "permanent_address_city", label: "Permanent City", category: "personal", aliases: ["permanet city", "permanent city"] },
+  { field: "permanent_address_state", label: "Permanent State", category: "personal", aliases: ["permanent state"] },
+  { field: "permanent_address_country", label: "Permanent Country", category: "personal", aliases: ["permanent country"] },
+  { field: "permanent_address_pin_code", label: "Permanent PIN Code", category: "personal", aliases: ["permanent pin code", "permanent pincode"] },
   { field: "permanent_mobile_no", label: "Permanent Mobile No", category: "legacy", aliases: ["permanet mobile no", "permanent mobile no"], preserveOnly: true },
   { field: "permanent_email_id", label: "Permanent Email ID", category: "legacy", aliases: ["permanet email id", "permanent email id"], preserveOnly: true },
   { field: "interview_date", label: "Interview Date", category: "legacy", aliases: ["interview date"], preserveOnly: true },
@@ -124,7 +145,21 @@ export const EMPLOYEE_IMPORT_COLUMNS: EmployeeImportColumn[] = [
   { field: "notice_period_from", label: "Notice From", category: "employment", aliases: ["notice from"] },
   { field: "notice_period_to", label: "Notice To", category: "employment", aliases: ["notice to"] },
   { field: "exit_remark", label: "Resign Remark", category: "employment", aliases: ["resign remark"] },
-  { field: "remarks", label: "Employee Remark", category: "employee", aliases: ["emp remark"] },
+  { field: "remarks", label: "Employee Remark", category: "employee", aliases: ["employee remark", "emp remark"] },
+  { field: "employee_photo_drive_url", label: "Employee Photo Drive Link", category: "document", aliases: ["employee photo drive link", "photo drive link"] },
+  { field: "aadhaar_front_drive_url", label: "Aadhaar Front Drive Link", category: "document", aliases: ["aadhaar front drive link", "aadhar front drive link"] },
+  { field: "aadhaar_back_drive_url", label: "Aadhaar Back Drive Link", category: "document", aliases: ["aadhaar back drive link", "aadhar back drive link"] },
+  { field: "aadhaar_combined_drive_url", label: "Combined Aadhaar Drive Link", category: "document", aliases: ["combined aadhaar drive link", "combined aadhar drive link", "aadhaar card drive link"] },
+  { field: "pan_drive_url", label: "PAN Drive Link", category: "document", aliases: ["pan drive link", "pan card drive link"] },
+  { field: "bank_proof_drive_url", label: "Bank Proof Drive Link", category: "document", aliases: ["bank proof drive link", "bank drive link"] },
+  { field: "resume_drive_url", label: "Resume Drive Link", category: "document", aliases: ["resume drive link"] },
+  { field: "offer_letter_drive_url", label: "Offer Letter Drive Link", category: "document", aliases: ["offer letter drive link"] },
+  { field: "appointment_letter_drive_url", label: "Appointment Letter Drive Link", category: "document", aliases: ["appointment letter drive link"] },
+  { field: "experience_letter_drive_url", label: "Experience Letter Drive Link", category: "document", aliases: ["experience letter drive link", "experience certificate drive link"] },
+  { field: "education_certificate_drive_url", label: "Education Certificate Drive Link", category: "document", aliases: ["education certificate drive link", "educational certificate drive link"] },
+  { field: "medical_certificate_drive_url", label: "Medical Certificate Drive Link", category: "document", aliases: ["medical certificate drive link"] },
+  { field: "police_verification_drive_url", label: "Police Verification Drive Link", category: "document", aliases: ["police verification drive link"] },
+  { field: "other_document_drive_url", label: "Other Document Drive Link", category: "document", aliases: ["other document drive link", "other drive link"] },
   { field: "legacy_remark", label: "Remark", category: "legacy", aliases: ["remark"], preserveOnly: true },
 ];
 
@@ -179,7 +214,24 @@ const DEFAULT_MAPPING: ImportMapping = {
   "pf": "pf_number",
 };
 
-const REQUIRED_FIELDS = ["employee_code", "employee_name", "site_name", "department_name", "designation_name"];
+export const EMPLOYEE_IMPORT_DOCUMENT_FIELDS = [
+  { field: "employee_photo_drive_url", label: "Employee Photo Drive Link", documentType: "Employee Photo" },
+  { field: "aadhaar_front_drive_url", label: "Aadhaar Front Drive Link", documentType: "Aadhaar Card", metadata: { side: "front" } },
+  { field: "aadhaar_back_drive_url", label: "Aadhaar Back Drive Link", documentType: "Aadhaar Card", metadata: { side: "back" } },
+  { field: "aadhaar_combined_drive_url", label: "Combined Aadhaar Drive Link", documentType: "Aadhaar Card", metadata: { side: "combined" } },
+  { field: "pan_drive_url", label: "PAN Drive Link", documentType: "PAN Card" },
+  { field: "bank_proof_drive_url", label: "Bank Proof Drive Link", documentType: "Bank Proof" },
+  { field: "resume_drive_url", label: "Resume Drive Link", documentType: "Resume" },
+  { field: "offer_letter_drive_url", label: "Offer Letter Drive Link", documentType: "Offer Letter" },
+  { field: "appointment_letter_drive_url", label: "Appointment Letter Drive Link", documentType: "Appointment Letter" },
+  { field: "experience_letter_drive_url", label: "Experience Letter Drive Link", documentType: "Experience Letter" },
+  { field: "education_certificate_drive_url", label: "Education Certificate Drive Link", documentType: "Educational Certificate" },
+  { field: "medical_certificate_drive_url", label: "Medical Certificate Drive Link", documentType: "Medical Certificate" },
+  { field: "police_verification_drive_url", label: "Police Verification Drive Link", documentType: "Police Verification" },
+  { field: "other_document_drive_url", label: "Other Document Drive Link", documentType: "Other" },
+] as const;
+
+const REQUIRED_FIELDS = ["employee_name", "company_name", "site_name", "department_name", "designation_name", "date_of_joining"];
 const DATE_FIELDS = new Set([
   "date_of_joining",
   "date_of_birth",
@@ -417,15 +469,16 @@ function columnIndex(cellRef: string) {
 }
 
 function parseSheetRows(xml: string, sharedStrings: string[]) {
-  const rows: { rowNumber: number; values: string[] }[] = [];
+  const rows: { rowNumber: number; values: string[]; cellsByColumn: Record<number, string> }[] = [];
   const rowRegex = /<row\b([^>]*)>([\s\S]*?)<\/row>/g;
-  const cellRegex = /<c\b([^>]*)>([\s\S]*?)<\/c>/g;
+  const cellRegex = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
   let rowMatch: RegExpExecArray | null;
 
   while ((rowMatch = rowRegex.exec(xml))) {
     const rowAttrs = rowMatch[1] || "";
     const rowNumber = Number(rowAttrs.match(/\br="(\d+)"/)?.[1] || rows.length + 1);
     const cells: string[] = [];
+    const cellsByColumn: Record<number, string> = {};
     let cellMatch: RegExpExecArray | null;
     cellRegex.lastIndex = 0;
 
@@ -440,13 +493,14 @@ function parseSheetRows(xml: string, sharedStrings: string[]) {
       let text = "";
 
       if (inlineText !== undefined) text = xmlDecode(inlineText);
-      else if (type === "s" && value !== undefined) text = sharedStrings[Number(value)] || "";
+      else if (type === "s" && value !== undefined) text = sharedStrings[Number(value)] ?? "";
       else if (value !== undefined) text = xmlDecode(value);
 
-      cells[index] = String(text || "").trim();
+      cells[index] = String(text ?? "").trim();
+      cellsByColumn[index] = cells[index];
     }
 
-    if (cells.some(Boolean)) rows.push({ rowNumber, values: cells });
+    if (cells.some(Boolean)) rows.push({ rowNumber, values: cells, cellsByColumn });
   }
 
   return rows;
@@ -458,7 +512,7 @@ function looksLikeHeader(values: string[]) {
   return hits >= 3 && normalized.some((value) => ["employee no.", "employee no", "employee code", "name", "employee name"].includes(value));
 }
 
-export function parseEmployeeWorkbook(buffer: Buffer): { rows: ParsedWorkbookRow[]; headers: string[]; sheetName: string } {
+export function parseEmployeeWorkbook(buffer: Buffer): { rows: ParsedWorkbookRow[]; headers: string[]; sheetName: string; headerColumns: Record<string, number> } {
   const entries = readZipEntries(buffer);
   const sharedStrings = parseSharedStrings(readXml(entries, "xl/sharedStrings.xml"));
   const rels = parseRelationships(readXml(entries, "xl/_rels/workbook.xml.rels"));
@@ -469,22 +523,56 @@ export function parseEmployeeWorkbook(buffer: Buffer): { rows: ParsedWorkbookRow
     const headerRowIndex = sheetRows.findIndex((row) => looksLikeHeader(row.values));
     if (headerRowIndex === -1) continue;
 
-    const headers = sheetRows[headerRowIndex].values.map((value) => String(value || "").trim());
+    const headerEntries = Object.entries(sheetRows[headerRowIndex].cellsByColumn)
+      .map(([column, value]) => ({
+        columnIndex: Number(column),
+        header: String(value ?? "").trim(),
+      }))
+      .filter((entry) => entry.header)
+      .sort((a, b) => a.columnIndex - b.columnIndex);
+    const headers = headerEntries.map((entry) => entry.header);
+    const headerColumns = Object.fromEntries(headerEntries.map((entry) => [entry.header, entry.columnIndex + 1]));
     const rows = sheetRows
       .slice(headerRowIndex + 1)
       .map((row) => {
         const raw: Record<string, string> = {};
-        headers.forEach((header, index) => {
-          if (header) raw[header] = String(row.values[index] || "").trim();
+        const rawSourceColumns: Record<string, number> = {};
+        headerEntries.forEach(({ header, columnIndex }) => {
+          raw[header] = String(row.cellsByColumn[columnIndex] ?? "").trim();
+          rawSourceColumns[header] = columnIndex + 1;
         });
-        return { sheetName: sheet.name, rowNumber: row.rowNumber, raw };
+        return { sheetName: sheet.name, rowNumber: row.rowNumber, raw, rawSourceColumns };
       })
       .filter((row) => Object.values(row.raw).some(Boolean));
 
-    return { rows, headers: headers.filter(Boolean), sheetName: sheet.name };
+    return { rows, headers, sheetName: sheet.name, headerColumns };
   }
 
   throw new Error("No employee sheet with recognizable headers was found.");
+}
+
+export function assertEmployeeWorkbookColumnIntegrity(parsed: {
+  headers: string[];
+  headerColumns?: Record<string, number>;
+  rows: ParsedWorkbookRow[];
+}) {
+  const headerColumns = parsed.headerColumns || {};
+  const missingHeaderColumns = parsed.headers.filter((header) => !Number.isInteger(headerColumns[header]) || headerColumns[header] < 1);
+  if (missingHeaderColumns.length > 0) {
+    throw new Error(`Employee import workbook column alignment could not be verified for: ${missingHeaderColumns.join(", ")}.`);
+  }
+
+  for (const row of parsed.rows) {
+    const sourceColumns = row.rawSourceColumns || {};
+    for (const header of parsed.headers) {
+      if (!(header in row.raw)) {
+        throw new Error(`Employee import row ${row.rowNumber} is missing the "${header}" column.`);
+      }
+      if (sourceColumns[header] !== headerColumns[header]) {
+        throw new Error(`Employee import row ${row.rowNumber} has an unsafe column alignment for "${header}".`);
+      }
+    }
+  }
 }
 
 function excelSerialToDate(value: string) {
@@ -557,13 +645,22 @@ function normalizeDate(value: unknown) {
 
 export function mappingFromHeaders(headers: string[], overrides: ImportMapping = {}) {
   const mapping: ImportMapping = {};
+  if (overrides[MASTER_MAPPING_KEY]) {
+    mapping[MASTER_MAPPING_KEY] = overrides[MASTER_MAPPING_KEY];
+  }
   for (const header of headers) {
     const normalized = normalizedHeaderName(header);
+    const canonicalTarget = FIELD_BY_ALIAS.get(normalized)?.field || DEFAULT_MAPPING[normalized] || "";
+    const savedTarget = overrides[header] || overrides[normalized] || "";
+    const safeSavedTarget =
+      typeof savedTarget === "string" &&
+      (!canonicalTarget || savedTarget === canonicalTarget) &&
+      (savedTarget !== "reporting_manager_name" || ["reporting manager", "reporting employee name", "reporting manager name"].includes(normalized))
+        ? savedTarget
+        : "";
     mapping[header] =
-      overrides[header] ||
-      overrides[normalized] ||
-      FIELD_BY_ALIAS.get(normalized)?.field ||
-      DEFAULT_MAPPING[normalized] ||
+      safeSavedTarget ||
+      canonicalTarget ||
       "";
   }
   return mapping;
@@ -611,20 +708,41 @@ export function applyMasterMappingsToNormalized(
   const next = { ...normalized };
 
   const company = findById(masters.companies, masterMappings.companies?.[masterMappingKey(next.company_name)]);
-  if (company) next.company_name = company.company_name;
+  if (company) {
+    next.company_id = company.id;
+    next.company_name = company.company_name;
+  }
 
   const site = findById(masters.sites, masterMappings.sites?.[masterMappingKey(next.site_name)]);
   if (site) {
+    next.site_id = site.id;
     next.site_name = site.site_name;
     const siteCompany = findById(masters.companies, site.company_id);
-    if (siteCompany && !company) next.company_name = siteCompany.company_name;
+    if (siteCompany && !company) {
+      next.company_id = siteCompany.id;
+      next.company_name = siteCompany.company_name;
+    }
   }
 
   const department = findById(masters.departments, masterMappings.departments?.[masterMappingKey(next.department_name)]);
-  if (department) next.department_name = department.department_name;
+  if (department) {
+    next.department_id = department.id;
+    next.department_name = department.department_name;
+  }
 
   const designation = findById(masters.designations, masterMappings.designations?.[masterMappingKey(next.designation_name)]);
-  if (designation) next.designation_name = designation.designation_name;
+  if (designation) {
+    next.designation_id = designation.id;
+    next.designation_name = designation.designation_name;
+  }
+
+  const manager =
+    findById(masters.employees || [], masterMappings.reporting_managers?.[masterMappingKey(next.reporting_manager_name)]) ||
+    findById(masters.employees || [], masterMappings.employees?.[masterMappingKey(next.reporting_manager_name)]);
+  if (manager) {
+    next.reporting_manager_id = manager.id;
+    next.reporting_manager_name = manager.employee_name;
+  }
 
   return next;
 }
@@ -652,32 +770,45 @@ export function isImportableEmployeeRow(raw: Record<string, string>, mapping: Im
 
 export async function loadImportMasterData(admin: ServiceClient, auth: ServerPermissionContext): Promise<ImportMasterData> {
   const organizationScope = await loadActorOrganizationScope(admin, auth);
+  const accountCompanyIds = Array.isArray((auth as any).companies) ? (auth as any).companies.filter(Boolean) : [];
+  const accountSiteIds = Array.isArray((auth as any).sites) ? (auth as any).sites.filter(Boolean) : [];
   const companyQuery = admin.from("companies").select("id, organization_id, company_name, company_code, status").order("company_name");
   const siteQuery = admin.from("sites").select("id, organization_id, company_id, site_name, site_code, status").order("site_name");
   const departmentQuery = admin.from("hr_departments").select("id, organization_id, department_name, department_code, status").order("department_name");
   const designationQuery = admin.from("hr_designations").select("id, organization_id, department_id, designation_name, designation_code, status").order("designation_name");
+  const employeeQuery = admin.from("hr_employees").select("id, organization_id, employee_code, employee_name, status").order("employee_name");
 
   const scopedCompanyQuery = isGlobalScope(organizationScope) ? companyQuery : companyQuery.in("organization_id", organizationScope);
   const scopedSiteQuery = isGlobalScope(organizationScope) ? siteQuery : siteQuery.in("organization_id", organizationScope);
   const scopedDepartmentQuery = isGlobalScope(organizationScope) ? departmentQuery : departmentQuery.in("organization_id", organizationScope);
   const scopedDesignationQuery = isGlobalScope(organizationScope) ? designationQuery : designationQuery.in("organization_id", organizationScope);
+  const scopedEmployeeQuery = isGlobalScope(organizationScope) ? employeeQuery : employeeQuery.in("organization_id", organizationScope);
 
-  const [companies, sites, departments, designations] = await Promise.all([
+  const [companies, sites, departments, designations, employees] = await Promise.all([
     scopedCompanyQuery,
     scopedSiteQuery,
     scopedDepartmentQuery,
     scopedDesignationQuery,
+    scopedEmployeeQuery,
   ]);
 
-  for (const result of [companies, sites, departments, designations]) {
+  for (const result of [companies, sites, departments, designations, employees]) {
     if (result.error) throw result.error;
   }
 
+  const activeCompanies = (companies.data || []).filter((row: any) => row.status === "active");
+  const activeSites = (sites.data || []).filter((row: any) => row.status === "active");
+
   return {
-    companies: (companies.data || []).filter((row: any) => row.status !== "deleted"),
-    sites: (sites.data || []).filter((row: any) => row.status !== "deleted"),
-    departments: (departments.data || []).filter((row: any) => row.status !== "deleted"),
-    designations: (designations.data || []).filter((row: any) => row.status !== "deleted"),
+    companies: accountCompanyIds.length > 0
+      ? activeCompanies.filter((row: any) => accountCompanyIds.includes(row.id))
+      : activeCompanies,
+    sites: accountSiteIds.length > 0
+      ? activeSites.filter((row: any) => accountSiteIds.includes(row.id))
+      : activeSites,
+    departments: (departments.data || []).filter((row: any) => row.status === "active"),
+    designations: (designations.data || []).filter((row: any) => row.status === "active"),
+    employees: (employees.data || []).filter((row: any) => row.status !== "deleted"),
   };
 }
 
@@ -703,6 +834,7 @@ export function validateNormalizedRow(
     site_id: null,
     department_id: null,
     designation_id: null,
+    reporting_manager_id: null,
   };
 
   for (const field of REQUIRED_FIELDS) {
@@ -721,23 +853,25 @@ export function validateNormalizedRow(
     errors.push("Date of birth cannot be after joining date.");
   }
 
-  const siteLookup = findUnique(masters.sites, normalized.site_name, ["site_name"], ["site_code"]);
+  const mappedSite = findById(masters.sites, normalized.site_id);
+  const siteLookup = mappedSite ? { match: mappedSite, ambiguous: false } : findUnique(masters.sites, normalized.site_name, ["site_name"], ["site_code"]);
   if (siteLookup.ambiguous) errors.push(`Site "${normalized.site_name}" matches multiple sites.`);
-  if (!siteLookup.match) errors.push(`Site "${normalized.site_name || "-"}" was not found.`);
+  else if (!siteLookup.match) errors.push(`Site "${normalized.site_name || "-"}" was not found.`);
   if (siteLookup.match) {
     matches.site_id = siteLookup.match.id;
-    matches.company_id = siteLookup.match.company_id || null;
+    normalized.site_id = siteLookup.match.id;
+    normalized.site_name = siteLookup.match.site_name;
   }
 
   if (normalized.company_name) {
-    const companyLookup = findUnique(masters.companies, normalized.company_name, ["company_name"], ["company_code"]);
+    const mappedCompany = findById(masters.companies, normalized.company_id);
+    const companyLookup = mappedCompany ? { match: mappedCompany, ambiguous: false } : findUnique(masters.companies, normalized.company_name, ["company_name"], ["company_code"]);
     if (companyLookup.ambiguous) errors.push(`Company "${normalized.company_name}" matches multiple companies.`);
-    if (!companyLookup.match) errors.push(`Company "${normalized.company_name}" was not found.`);
+    else if (!companyLookup.match) errors.push(`Company "${normalized.company_name}" was not found.`);
     if (companyLookup.match) {
-      if (matches.company_id && companyLookup.match.id !== matches.company_id) {
-        errors.push("Selected site belongs to a different company.");
-      }
       matches.company_id = companyLookup.match.id;
+      normalized.company_id = companyLookup.match.id;
+      normalized.company_name = companyLookup.match.company_name;
     }
   }
 
@@ -745,15 +879,37 @@ export function validateNormalizedRow(
     warnings.push("Company could not be resolved from the row; it will be derived from the matched site if available.");
   }
 
-  const departmentLookup = findUnique(masters.departments, normalized.department_name, ["department_name"], ["department_code"]);
+  const mappedDepartment = findById(masters.departments, normalized.department_id);
+  const departmentLookup = mappedDepartment ? { match: mappedDepartment, ambiguous: false } : findUnique(masters.departments, normalized.department_name, ["department_name"], ["department_code"]);
   if (departmentLookup.ambiguous) errors.push(`Department "${normalized.department_name}" matches multiple departments.`);
-  if (!departmentLookup.match) errors.push(`Department "${normalized.department_name || "-"}" was not found.`);
-  if (departmentLookup.match) matches.department_id = departmentLookup.match.id;
+  else if (!departmentLookup.match) errors.push(`Department "${normalized.department_name || "-"}" was not found.`);
+  if (departmentLookup.match) {
+    matches.department_id = departmentLookup.match.id;
+    normalized.department_id = departmentLookup.match.id;
+    normalized.department_name = departmentLookup.match.department_name;
+  }
 
-  const designationLookup = findUnique(masters.designations, normalized.designation_name, ["designation_name"], ["designation_code"]);
+  const mappedDesignation = findById(masters.designations, normalized.designation_id);
+  const designationLookup = mappedDesignation ? { match: mappedDesignation, ambiguous: false } : findUnique(masters.designations, normalized.designation_name, ["designation_name"], ["designation_code"]);
   if (designationLookup.ambiguous) errors.push(`Designation "${normalized.designation_name}" matches multiple designations.`);
-  if (!designationLookup.match) errors.push(`Designation "${normalized.designation_name || "-"}" was not found.`);
-  if (designationLookup.match) matches.designation_id = designationLookup.match.id;
+  else if (!designationLookup.match) errors.push(`Designation "${normalized.designation_name || "-"}" was not found.`);
+  if (designationLookup.match) {
+    matches.designation_id = designationLookup.match.id;
+    normalized.designation_id = designationLookup.match.id;
+    normalized.designation_name = designationLookup.match.designation_name;
+  }
+
+  if (normalized.reporting_manager_name && masters.employees?.length) {
+    const mappedManager = findById(masters.employees, normalized.reporting_manager_id);
+    const managerLookup = mappedManager ? { match: mappedManager, ambiguous: false } : findUnique(masters.employees, normalized.reporting_manager_name, ["employee_name"], ["employee_code"]);
+    if (managerLookup.ambiguous) errors.push(`Reporting Manager "${normalized.reporting_manager_name}" matches multiple employees.`);
+    else if (!managerLookup.match) errors.push(`Reporting Manager "${normalized.reporting_manager_name}" was not found.`);
+    if (managerLookup.match) {
+      matches.reporting_manager_id = managerLookup.match.id;
+      normalized.reporting_manager_id = managerLookup.match.id;
+      normalized.reporting_manager_name = managerLookup.match.employee_name;
+    }
+  }
 
   for (const field of SALARY_AMOUNT_FIELDS) {
     if (normalized[field] !== null && normalized[field] !== undefined && normalized[field] !== "") {
@@ -779,7 +935,7 @@ export function summarizeRows(rows: { validation_status?: string; import_status?
   return rows.reduce(
     (summary, row) => {
       summary.total += 1;
-      if (row.validation_status === "valid" || row.validation_status === "warning") summary.ready += 1;
+      if ((row.validation_status === "valid" || row.validation_status === "warning") && row.import_status === "pending") summary.ready += 1;
       if (row.validation_status === "invalid") summary.invalid += 1;
       if (row.import_status === "imported") summary.imported += 1;
       if (row.import_status === "failed") summary.failed += 1;
@@ -788,6 +944,68 @@ export function summarizeRows(rows: { validation_status?: string; import_status?
     },
     { total: 0, ready: 0, invalid: 0, imported: 0, failed: 0, skipped: 0 },
   );
+}
+
+export function employeeImportReason(row: {
+  errors?: string[] | null;
+  warnings?: string[] | null;
+  import_result?: Record<string, any> | null;
+  validation_status?: string | null;
+  import_status?: string | null;
+}) {
+  const errors = (row.errors || []).filter(Boolean);
+  if (errors.length > 0) return errors.join("; ");
+  if (row.import_result?.message) return String(row.import_result.message);
+  const warnings = (row.warnings || []).filter(Boolean);
+  if (warnings.length > 0) return warnings.join("; ");
+  if (row.import_status === "imported") return "Imported successfully.";
+  if (row.import_status === "skipped") return "Employee already exists.";
+  if (row.import_status === "pending" && row.validation_status === "invalid") return "Validation failed.";
+  if (row.import_status === "pending") return "Ready to import.";
+  return "No result recorded.";
+}
+
+export function employeeImportFinalStatus(row: {
+  validation_status?: string | null;
+  import_status?: string | null;
+}): EmployeeImportFinalStatus {
+  if (row.import_status === "imported") return "imported_successfully";
+  if (row.import_status === "skipped") return "already_exists";
+  if (row.import_status === "failed") return "import_failed";
+  if (row.validation_status === "invalid") return "validation_failed";
+  return "ready";
+}
+
+export function isEmployeeImportReady(row: { validation_status?: string | null; import_status?: string | null }) {
+  return ["valid", "warning"].includes(String(row.validation_status || "")) && row.import_status === "pending";
+}
+
+export function applyExistingEmployeeStatus(
+  row: Record<string, any>,
+  existingEmployeeByCode: Map<string, any>,
+) {
+  if (row.import_status === "imported") return row;
+  const code = normalizeLookup(row.normalized_data?.employee_code);
+  if (!code || row.validation_status === "invalid") return row;
+  const existing = existingEmployeeByCode.get(code);
+  if (!existing) return row;
+  const message = "Employee Code already exists.";
+  return {
+    ...row,
+    import_status: "skipped",
+    imported_employee_id: existing.id,
+    import_result: {
+      status: "skipped",
+      employeeId: existing.id,
+      message,
+    },
+    errors: row.errors || [],
+    warnings: row.warnings || [],
+  };
+}
+
+export function generatedEmployeeCodeFromResult(row: { normalized_data?: Record<string, any> | null; import_result?: Record<string, any> | null }) {
+  return row.import_result?.employeeCode || row.import_result?.employee_code || row.normalized_data?.employee_code || "";
 }
 
 export function buildImportComplianceRows(normalized: Record<string, any>) {
@@ -874,6 +1092,7 @@ export function rowPayloadForInsert(
     mapping_status: validation.mappingStatus,
     validation_status: validation.validationStatus,
     import_status: "pending",
+    import_result: {},
     errors: validation.errors,
     warnings: validation.warnings,
     matched_company_id: validation.matches.company_id,
@@ -929,30 +1148,17 @@ export async function executeImportRow(
   request: Request,
 ) {
   const normalized = row.normalized_data || {};
-  const employeeCode = textValue(normalized.employee_code);
   const employeeName = textValue(normalized.employee_name);
   const actor = importedBy(auth);
 
-  if (!employeeCode || !employeeName) {
-    throw new Error("Employee code and name are required.");
+  if (!employeeName) {
+    throw new Error("Employee name is required.");
   }
 
-  const { data: duplicate, error: duplicateError } = await admin
-    .from("hr_employees")
-    .select("id")
-    .eq("organization_id", row.organization_id)
-    .ilike("employee_code", employeeCode)
-    .neq("status", "deleted")
-    .maybeSingle();
-
-  if (duplicateError) throw duplicateError;
-  if (duplicate) {
-    return {
-      status: "skipped",
-      employeeId: duplicate.id,
-      message: "Employee code already exists; row skipped idempotently.",
-    };
-  }
+  const { data: generatedCode, error: codeError } = await admin.rpc("next_employee_code");
+  if (codeError) throw codeError;
+  const employeeCode = textValue(generatedCode);
+  if (!employeeCode) throw new Error("Employee code could not be generated.");
 
   const employeeInsert = {
     organization_id: row.organization_id,
@@ -1005,7 +1211,7 @@ export async function executeImportRow(
       employment_type: employee.employment_type,
       employment_status: employee.status,
       source_system: "head_office_workbook",
-      source_record_id: String(row.source_row_number),
+      source_record_id: `${batch.id}:${row.source_row_number}`,
       import_batch_id: batch.id,
       created_by: auth.user.id,
       created_by_name: actor.name,
@@ -1020,7 +1226,7 @@ export async function executeImportRow(
       effective_to: null,
       source: "import",
       source_system: "head_office_workbook",
-      source_record_id: String(row.source_row_number),
+      source_record_id: `${batch.id}:${row.source_row_number}`,
       import_batch_id: batch.id,
       previous_values: null,
       created_by: auth.user.id,
@@ -1070,7 +1276,7 @@ export async function executeImportRow(
       importBatchId: batch.id,
     }, request);
 
-    return { status: "imported", employeeId: employee.id, message: "Employee imported." };
+    return { status: "imported", employeeId: employee.id, employeeCode: employee.employee_code, message: `Employee imported. Employee Code: ${employee.employee_code}` };
   } catch (error) {
     await admin.from("hr_employees").delete().eq("id", employee.id);
     throw error;

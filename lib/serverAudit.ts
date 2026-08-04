@@ -24,6 +24,9 @@ export type ErpAuditAction =
   | "document_delete"
   | "photo_upload"
   | "photo_replace"
+  | "erp_profile_linked"
+  | "erp_profile_unlinked"
+  | "erp_profile_changed"
   | "manual_event"
   | "other";
 

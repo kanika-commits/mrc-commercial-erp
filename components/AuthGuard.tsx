@@ -47,13 +47,37 @@ function hasExplicitHrRouteAccess(pathname: string, access: CurrentUserAccess) {
   if (pathname === "/modules/hr") {
     return hasAnyPermission(access, [
       { moduleCode: "hr_employees", actionCode: "view" },
+      { moduleCode: "hr_attendance", actionCode: "view" },
+      { moduleCode: "hr_employee_attendance_policy", actionCode: "view" },
       { moduleCode: "hr_employee_import", actionCode: "view" },
+      { moduleCode: "hr_employee_document_import", actionCode: "view" },
       { moduleCode: "reimbursements", actionCode: "view" },
     ]);
   }
 
+  if (pathname === "/hr/employees/import-documents") {
+    return can(access.permissions, "hr_employee_document_import", "view");
+  }
+
   if (pathname === "/hr/employees/import") {
     return can(access.permissions, "hr_employee_import", "view");
+  }
+
+  if (
+    pathname === "/hr/attendance" ||
+    pathname === "/hr/attendance/daily" ||
+    pathname === "/hr/attendance/monthly" ||
+    /^\/hr\/attendance\/periods\/[^/]+$/.test(pathname)
+  ) {
+    return can(access.permissions, "hr_attendance", "view");
+  }
+
+  if (pathname === "/settings/policies/employee-attendance") {
+    return can(access.permissions, "hr_employee_attendance_policy", "view");
+  }
+
+  if (pathname === "/hr/attendance-approval") {
+    return can(access.permissions, "hr_attendance_approval", "view");
   }
 
   if (
@@ -65,7 +89,11 @@ function hasExplicitHrRouteAccess(pathname: string, access: CurrentUserAccess) {
   }
 
   if (pathname === "/hr/departments" || pathname === "/hr/designations") {
-    return can(access.permissions, "hr_employees", "view");
+    return can(
+      access.permissions,
+      pathname === "/hr/departments" ? "hr_departments" : "hr_designations",
+      "view",
+    );
   }
 
   if (
@@ -74,6 +102,110 @@ function hasExplicitHrRouteAccess(pathname: string, access: CurrentUserAccess) {
     /^\/hr\/reimbursements\/[^/]+(?:\/edit)?$/.test(pathname)
   ) {
     return can(access.permissions, "reimbursements", "view");
+  }
+
+  return null;
+}
+
+function hasExplicitLabourRouteAccess(pathname: string, access: CurrentUserAccess) {
+  if (pathname === "/labour") {
+    return hasAnyPermission(access, [
+      { moduleCode: "labour_workers", actionCode: "view" },
+      { moduleCode: "labour_workers", actionCode: "import" },
+      { moduleCode: "labour_contractors", actionCode: "view" },
+      { moduleCode: "labour_import", actionCode: "view" },
+      { moduleCode: "labour_trades", actionCode: "view" },
+      { moduleCode: "labour_site_in", actionCode: "view" },
+      { moduleCode: "labour_engineer_daily", actionCode: "view" },
+      { moduleCode: "labour_attendance", actionCode: "view" },
+      { moduleCode: "labour_attendance_import", actionCode: "view" },
+      { moduleCode: "labour_manpower_work_orders", actionCode: "view" },
+      { moduleCode: "labour_work_logs", actionCode: "view" },
+      { moduleCode: "labour_daily_submission", actionCode: "view" },
+      { moduleCode: "labour_muster_configuration", actionCode: "view" },
+      { moduleCode: "labour_attendance_policy", actionCode: "view" },
+      { moduleCode: "labour_wages", actionCode: "view" },
+      { moduleCode: "labour_advances", actionCode: "view" },
+    ]);
+  }
+
+  if (pathname === "/labour/workers/import") {
+    return can(access.permissions, "labour_workers", "import");
+  }
+
+  if (pathname === "/labour/attendance/import") {
+    return can(access.permissions, "labour_attendance_import", "view");
+  }
+
+  if (
+    pathname === "/labour/workers" ||
+    pathname === "/labour/workers/new" ||
+    /^\/labour\/workers\/[^/]+(?:\/edit)?$/.test(pathname)
+  ) {
+    return can(access.permissions, "labour_workers", "view");
+  }
+
+  if (
+    pathname === "/labour/contractors" ||
+    /^\/labour\/contractors\/[^/]+(?:\/edit)?$/.test(pathname)
+  ) {
+    return can(access.permissions, "labour_contractors", "view");
+  }
+
+  if (pathname === "/labour/trades") {
+    return can(access.permissions, "labour_trades", "view");
+  }
+
+  if (pathname === "/labour/site-in") {
+    return can(access.permissions, "labour_site_in", "view");
+  }
+
+  if (pathname === "/labour/engineer-daily") {
+    return can(access.permissions, "labour_engineer_daily", "view");
+  }
+
+  if (pathname === "/labour/teams") {
+    return can(access.permissions, "labour_engineer_groups", "view");
+  }
+
+  if (pathname === "/labour/attendance/daily" || pathname === "/labour/attendance/register" || pathname === "/labour/muster") {
+    return can(access.permissions, "labour_attendance", "view");
+  }
+
+  if (
+    pathname === "/labour/manpower-work-orders" ||
+    pathname === "/labour/manpower-work-orders/new" ||
+    /^\/labour\/manpower-work-orders\/[^/]+(?:\/edit)?$/.test(pathname)
+  ) {
+    return can(access.permissions, "labour_manpower_work_orders", "view");
+  }
+
+  if (pathname === "/labour/work-logs") {
+    return can(access.permissions, "labour_work_logs", "view");
+  }
+
+  if (pathname === "/labour/approvals") {
+    return can(access.permissions, "labour_daily_submission", "view") || can(access.permissions, "labour_attendance", "view");
+  }
+
+  if (pathname === "/labour/configuration") {
+    return can(access.permissions, "labour_muster_configuration", "view");
+  }
+
+  if (pathname === "/labour/dashboard") {
+    return can(access.permissions, "labour_attendance", "view");
+  }
+
+  if (pathname === "/labour/settings") {
+    return can(access.permissions, "labour_attendance_policy", "view");
+  }
+
+  if (pathname === "/labour/wages" || /^\/labour\/wages\/[^/]+$/.test(pathname)) {
+    return can(access.permissions, "labour_wages", "view");
+  }
+
+  if (pathname === "/labour/advances") {
+    return can(access.permissions, "labour_advances", "view");
   }
 
   return null;
@@ -94,7 +226,15 @@ function hasRouteAccess(
     return can(access.permissions, "dashboard", "view");
   }
 
+  if (pathname === "/reports" || pathname.startsWith("/reports/")) {
+    return can(access.permissions, "reports", "view");
+  }
+
   if (pathname === "/settings" || pathname === "/settings/password") return true;
+
+  if (pathname === "/settings/policies/employee-attendance") {
+    return can(access.permissions, "hr_employee_attendance_policy", "view");
+  }
 
   if (pathname.startsWith("/settings")) {
     return globalAccess;
@@ -102,6 +242,9 @@ function hasRouteAccess(
 
   const explicitHrAccess = hasExplicitHrRouteAccess(pathname, access);
   if (explicitHrAccess !== null) return explicitHrAccess;
+
+  const explicitLabourAccess = hasExplicitLabourRouteAccess(pathname, access);
+  if (explicitLabourAccess !== null) return explicitLabourAccess;
 
   const matchedModule = (navigation.modules || [])
     .filter(

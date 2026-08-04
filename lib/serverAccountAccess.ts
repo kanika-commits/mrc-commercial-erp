@@ -184,6 +184,41 @@ export async function loadActiveAccountContext(
     permissionMap.set(`${permission.module_code}:${permission.action_code}`, permission);
   });
 
+  const addPermission = (moduleCode: string, actionCode: string) => {
+    permissionMap.set(`${moduleCode}:${actionCode}`, {
+      module_code: moduleCode,
+      action_code: actionCode,
+      allowed: true,
+    });
+  };
+
+  const [pmAssignmentsResult, hoAssignmentResult] = await Promise.all([
+    admin
+      .from("labour_site_configurations")
+      .select("id")
+      .eq("pm_user_id", user.id)
+      .eq("status", "active")
+      .limit(1),
+    admin
+      .from("labour_organization_configurations")
+      .select("id")
+      .eq("ho_hr_user_id", user.id)
+      .eq("status", "active")
+      .limit(1),
+  ]);
+  if (pmAssignmentsResult.error && pmAssignmentsResult.error.code !== "42P01") throw pmAssignmentsResult.error;
+  if (hoAssignmentResult.error && hoAssignmentResult.error.code !== "42P01") throw hoAssignmentResult.error;
+  if ((pmAssignmentsResult.data || []).length > 0) {
+    addPermission("labour_daily_submission", "view");
+    addPermission("labour_daily_submission", "pm_approve");
+    addPermission("labour_daily_submission", "pm_send_back");
+  }
+  if ((hoAssignmentResult.data || []).length > 0) {
+    addPermission("labour_daily_submission", "view");
+    addPermission("labour_daily_submission", "ho_approve");
+    addPermission("labour_daily_submission", "ho_send_back");
+  }
+
   return {
     user,
     roleCodes,

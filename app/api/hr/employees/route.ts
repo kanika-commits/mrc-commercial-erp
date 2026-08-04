@@ -207,12 +207,6 @@ async function validateCompanyAndSite(
       } as const;
     }
 
-    if (site.company_id && site.company_id !== companyId) {
-      return {
-        error: "Selected site is not available for this company.",
-        status: 403,
-      } as const;
-    }
   }
 
   return {
@@ -369,7 +363,6 @@ export async function POST(request: Request) {
     const admin = adminClient();
     const companyId = requireText(payload.company_id);
     const siteId = requireText(payload.site_id);
-    const employeeCode = requireText(payload.employee_code);
     const employeeName = requireText(payload.employee_name);
     const email = textValue(payload.email);
     const phone = textValue(payload.phone);
@@ -387,10 +380,6 @@ export async function POST(request: Request) {
     const noticePeriodTo = dateValue(payload.notice_period_to);
     const resignationDate = dateValue(payload.resignation_date);
     const relievingDate = dateValue(payload.date_of_exit);
-
-    if (!employeeCode) {
-      return NextResponse.json({ error: "Employee code is required." }, { status: 400 });
-    }
 
     if (!employeeName) {
       return NextResponse.json({ error: "Employee name is required." }, { status: 400 });
@@ -443,23 +432,10 @@ export async function POST(request: Request) {
       );
     }
 
-    const { data: duplicate, error: duplicateError } = await admin
-      .from("hr_employees")
-      .select("id")
-      .eq("organization_id", companyResult.organizationId)
-      .ilike("employee_code", employeeCode)
-      .neq("status", "deleted")
-      .limit(1)
-      .maybeSingle();
-
-    if (duplicateError) throw duplicateError;
-
-    if (duplicate) {
-      return NextResponse.json(
-        { error: "Employee code already exists for this organization." },
-        { status: 409 }
-      );
-    }
+    const { data: generatedCode, error: codeError } = await admin.rpc("next_employee_code");
+    if (codeError) throw codeError;
+    const employeeCode = requireText(generatedCode);
+    if (!employeeCode) throw new Error("Employee code could not be generated.");
 
     const { data, error } = await admin
       .from("hr_employees")
@@ -576,7 +552,7 @@ export async function POST(request: Request) {
       throw historyError;
     }
 
-    return NextResponse.json({ employee_id: data.id });
+    return NextResponse.json({ employee_id: data.id, employee_code: data.employee_code });
   } catch (error: any) {
     return NextResponse.json(
       { error: error.message || "Failed to create employee." },

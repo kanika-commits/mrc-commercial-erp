@@ -1,0 +1,303 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { ArrowLeft, Save, Send } from "lucide-react";
+import AlertMessage from "@/components/AlertMessage";
+import HrSectionNav from "@/components/hr/HrSectionNav";
+import { apiFetch, formatDate } from "@/components/hr/hrClient";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
+import { ATTENDANCE_STATUS_LABELS, EMPLOYEE_STANDARD_WORKING_HOURS, PHASE1_ATTENDANCE_STATUSES, currentIndiaDate } from "@/lib/hr/attendance";
+
+type RowState = {
+  employee_id: string;
+  status: string;
+};
+
+export default function DailyAttendancePage() {
+  const { access } = useAccessContext();
+  const permissions = access?.permissions || [];
+  const canView = can(permissions, "hr_attendance", "view");
+  const canEdit = can(permissions, "hr_attendance", "add") || can(permissions, "hr_attendance", "edit");
+  const canSubmit = can(permissions, "hr_attendance", "submit");
+  const isAdminRecovery = Boolean(access?.roleCodes.includes("platform_owner") || access?.roleCodes.includes("super_admin"));
+  const today = currentIndiaDate();
+  const [lookups, setLookups] = useState<{ companies: any[]; sites: any[]; error: string }>({ companies: [], sites: [], error: "" });
+  const [companyId, setCompanyId] = useState("");
+  const [siteId, setSiteId] = useState("");
+  const [date, setDate] = useState(today);
+  const [rows, setRows] = useState<any[]>([]);
+  const [period, setPeriod] = useState<any>(null);
+  const [policy, setPolicy] = useState<any>(null);
+  const [dayLock, setDayLock] = useState<any>(null);
+  const [draft, setDraft] = useState<Record<string, RowState>>({});
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const visibleSites = useMemo(
+    () => companyId ? lookups.sites.filter((site) => site.scope_company_id === companyId) : lookups.sites,
+    [companyId, lookups.sites],
+  );
+  const isPast = date < today;
+  const isFuture = date > today;
+  const sentBack = period?.status === "reopened";
+  const readOnlyReason = useMemo(() => {
+    if (!canEdit) return "You do not have permission to edit attendance.";
+    if (isFuture) return "Future attendance cannot be created or edited.";
+    if (dayLock) return "This attendance day is locked.";
+    if (["submitted", "level_1_approved", "level_2_approved", "finalized", "cancelled"].includes(period?.status)) return "This attendance period is read-only.";
+    if (isPast && !isAdminRecovery) return "Past attendance is read-only for this user.";
+    return "";
+  }, [canEdit, dayLock, isAdminRecovery, isFuture, isPast, period?.status]);
+  const editable = canEdit && !readOnlyReason;
+
+  useEffect(() => {
+    let active = true;
+    apiFetch("/api/hr/attendance/lookups")
+      .then((payload) => {
+        if (!active) return;
+        setLookups({ companies: payload.companies || [], sites: payload.sites || [], error: "" });
+      })
+      .catch((error: any) => {
+        if (!active) return;
+        setLookups({ companies: [], sites: [], error: error.message || "Failed to load attendance lookups." });
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function load() {
+    if (!companyId || !siteId || !date) {
+      setMessage("Select company, site and date.");
+      return;
+    }
+    setLoading(true);
+    setMessage("");
+    setSuccess("");
+    try {
+      const result = await apiFetch(`/api/hr/attendance/daily?company_id=${companyId}&site_id=${siteId}&date=${date}`);
+      setRows(result.attendance || []);
+      setPeriod(result.period || null);
+      setPolicy(result.policy || null);
+      setDayLock(result.day_lock || null);
+      const nextDraft: Record<string, RowState> = {};
+      for (const item of result.attendance || []) {
+        nextDraft[item.employee.id] = {
+          employee_id: item.employee.id,
+          status: item.attendance?.status || "present",
+        };
+      }
+      setDraft(nextDraft);
+    } catch (error: any) {
+      setMessage(error.message || "Failed to load daily attendance.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function updateRow(employeeId: string, patch: Partial<RowState>) {
+    setDraft((prev) => ({
+      ...prev,
+      [employeeId]: { ...(prev[employeeId] || { employee_id: employeeId, status: "present" }), ...patch },
+    }));
+  }
+
+  function markAllPresent() {
+    const next = { ...draft };
+    for (const item of rows) {
+      next[item.employee.id] = { ...(next[item.employee.id] || { employee_id: item.employee.id }), status: "present" };
+    }
+    setDraft(next);
+  }
+
+  async function save(options: { silent?: boolean } = {}) {
+    if (!editable) return null;
+    const reason = isPast ? window.prompt("Enter reason for backdated attendance correction:") : "";
+    if (isPast && !reason?.trim()) {
+      setMessage("Backdated attendance reason is required.");
+      return null;
+    }
+    setSaving(true);
+    if (!options.silent) {
+      setMessage("");
+      setSuccess("");
+    }
+    try {
+      const attendance = Object.values(draft);
+      const result = await apiFetch("/api/hr/attendance/daily", {
+        method: "PUT",
+        body: JSON.stringify({ company_id: companyId, site_id: siteId, date, attendance, backdated_reason: reason }),
+      });
+      if (!options.silent) setSuccess(`Draft saved for ${result.saved || 0} attendance rows.`);
+      await load();
+      return result;
+    } catch (error: any) {
+      setMessage(error.message || "Failed to save attendance.");
+      return null;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitAttendance() {
+    if (!editable || !canSubmit) return;
+    const saved = await save({ silent: true });
+    if (!saved) return;
+    const periodId = saved.period?.id || period?.id;
+    if (!periodId) {
+      setMessage("Attendance period could not be resolved for submission.");
+      return;
+    }
+    setSaving(true);
+    setMessage("");
+    setSuccess("");
+    try {
+      const result = await apiFetch(`/api/hr/attendance/periods/${periodId}/submit`, { method: "POST" });
+      setPeriod(result.period || period || null);
+      setSuccess(sentBack ? "Attendance resubmitted for approval." : "Attendance submitted for approval.");
+      await load();
+    } catch (error: any) {
+      setMessage(error.message || "Failed to submit attendance.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!canView) {
+    return <div className="rounded-2xl border bg-white p-8 text-sm text-slate-500 shadow-sm">Attendance is not available for your permissions.</div>;
+  }
+
+  return (
+    <section className="space-y-6">
+      <header className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-950">Mark Attendance</h1>
+          <p className="text-sm text-slate-500">Enter salaried staff attendance by company, site and date.</p>
+        </div>
+        <Link href="/hr/attendance" className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50">
+          <ArrowLeft className="h-4 w-4" />
+          Back
+        </Link>
+      </header>
+      <HrSectionNav />
+      <AlertMessage type="error" message={message || lookups.error} onClose={() => setMessage("")} />
+      <AlertMessage type="success" message={success} onClose={() => setSuccess("")} />
+
+      <section className="rounded-2xl border bg-white p-4 shadow-sm">
+        <div className="grid gap-3 md:grid-cols-4">
+          <Select label="Company" value={companyId} onChange={(value) => { setCompanyId(value); setSiteId(""); }} options={lookups.companies} />
+          <Select label="Site" value={siteId} onChange={setSiteId} options={visibleSites} />
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Date</span>
+            <input type="date" value={date} max={today} onChange={(event) => setDate(event.target.value)} className="h-10 w-full rounded-xl border px-3 text-sm" />
+          </label>
+          <div className="flex items-end gap-2">
+            <button type="button" onClick={load} disabled={loading} className="h-10 rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white disabled:opacity-60">
+              {loading ? "Loading..." : "Load Attendance"}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {period && (
+        <div className="grid gap-3 md:grid-cols-5">
+          <Summary label="Employees" value={rows.length} />
+          <Summary label="Period" value={sentBack ? "Sent Back" : period.status || "draft"} />
+          <Summary label="Date" value={formatDate(date)} />
+          <Summary label="Working Day" value={`${policy?.standard_working_hours || EMPLOYEE_STANDARD_WORKING_HOURS} hrs`} />
+          <Summary label="Lock" value={dayLock ? "Locked" : "Open"} />
+        </div>
+      )}
+
+      {sentBack && (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 shadow-sm">
+          <p className="text-base font-bold">Attendance Sent Back</p>
+          <div className="mt-2 grid gap-1 md:grid-cols-2">
+            <p><span className="font-semibold">Reason:</span> {period.send_back_reason || "No reason recorded."}</p>
+            <p><span className="font-semibold">Sent Back By:</span> {period.reopened_by_name || period.reopened_by_email || "-"}</p>
+            <p><span className="font-semibold">Sent Back At:</span> {period.reopened_at ? new Date(period.reopened_at).toLocaleString("en-IN") : "-"}</p>
+            <p><span className="font-semibold">Previously Submitted:</span> {period.submitted_at ? new Date(period.submitted_at).toLocaleString("en-IN") : "-"}</p>
+          </div>
+          <p className="mt-2 font-semibold">Correct the attendance and resubmit it for approval.</p>
+        </section>
+      )}
+
+      {period && (period.submitted_at || period.send_back_reason) && (
+        <section className="rounded-2xl border bg-white p-4 text-sm text-slate-600 shadow-sm">
+          <p className="font-bold text-slate-950">Attendance Activity</p>
+          <div className="mt-2 grid gap-1 md:grid-cols-2">
+            {period.submitted_at && <p><span className="font-semibold text-slate-800">{sentBack ? "Previously Submitted:" : "Submitted:"}</span> {period.submitted_by_name || period.submitted_by_email || "-"} · {new Date(period.submitted_at).toLocaleString("en-IN")}</p>}
+            {period.send_back_reason && <p><span className="font-semibold text-slate-800">Latest Send Back:</span> {period.send_back_reason}</p>}
+          </div>
+        </section>
+      )}
+
+      {readOnlyReason && rows.length > 0 && <AlertMessage type="warning" message={readOnlyReason} />}
+
+      <section className="overflow-x-auto rounded-2xl border bg-white shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+          <div>
+            <h2 className="font-semibold text-slate-950">Mark Attendance</h2>
+            <p className="text-sm text-slate-500">Employees without saved attendance appear as Present until saved.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {editable && <button type="button" onClick={markAllPresent} className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-slate-50">Mark All Present</button>}
+            {editable && <button type="button" onClick={() => save()} disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"><Save className="h-4 w-4" />{saving ? "Saving..." : "Save Draft"}</button>}
+            {editable && canSubmit && <button type="button" onClick={submitAttendance} disabled={saving || rows.length === 0} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"><Send className="h-4 w-4" />{sentBack ? "Resubmit Attendance" : "Submit Attendance"}</button>}
+          </div>
+        </div>
+        <table className="min-w-[760px] w-full text-left text-sm">
+          <thead className="border-b bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
+            <tr>
+              <th className="px-4 py-3">S. No.</th>
+              <th className="px-3 py-3">Employee</th>
+              <th className="px-3 py-3">Department</th>
+              <th className="px-3 py-3">Designation</th>
+              <th className="px-3 py-3">Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {rows.length === 0 ? (
+              <tr><td colSpan={5} className="px-4 py-10 text-center text-slate-500">No employees loaded.</td></tr>
+            ) : rows.map((item, index) => {
+              const current = draft[item.employee.id] || { employee_id: item.employee.id, status: "present" };
+              return (
+                <tr key={item.employee.id}>
+                  <td className="px-4 py-3 text-slate-500">{index + 1}</td>
+                  <td className="px-3 py-3 font-medium text-slate-950">{item.employee.employee_name}</td>
+                  <td className="px-3 py-3 text-slate-600">{item.employee.department_name || "-"}</td>
+                  <td className="px-3 py-3 text-slate-600">{item.employee.designation_name || "-"}</td>
+                  <td className="px-3 py-3">
+                    <select disabled={!editable} value={current.status} onChange={(event) => updateRow(item.employee.id, { status: event.target.value })} className="h-9 rounded-xl border px-3 text-sm disabled:bg-slate-50">
+                      {PHASE1_ATTENDANCE_STATUSES.map((status) => <option key={status} value={status}>{ATTENDANCE_STATUS_LABELS[status]}</option>)}
+                    </select>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </section>
+    </section>
+  );
+}
+
+function Select({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: { id: string; label: string }[] }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-xl border px-3 text-sm">
+        <option value="">Select {label}</option>
+        {options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+      </select>
+    </label>
+  );
+}
+
+function Summary({ label, value }: { label: string; value: string | number }) {
+  return <div className="rounded-2xl border bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 text-xl font-bold text-slate-950">{value}</p></div>;
+}

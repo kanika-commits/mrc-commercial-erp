@@ -65,6 +65,15 @@ function requireText(value: unknown) {
   return String(value || "").trim();
 }
 
+function profileAuditValue(profile?: any | null) {
+  if (!profile) return null;
+  return {
+    id: profile.id || null,
+    email: profile.email || null,
+    status: profile.status || null,
+  };
+}
+
 function dateValue(value: unknown) {
   return String(value || "").trim() || null;
 }
@@ -254,12 +263,6 @@ async function validateCompanyAndSite(
       } as const;
     }
 
-    if (site.company_id && site.company_id !== companyId) {
-      return {
-        error: "Selected site is not available for this company.",
-        status: 403,
-      } as const;
-    }
   }
 
   return { organizationId: company.organization_id as string };
@@ -326,9 +329,23 @@ async function validateLinkedUser(
   admin: ReturnType<typeof adminClient>,
   organizationId: string,
   currentEmployeeId: string,
+  currentUserId: string | null | undefined,
   userId?: string | null,
 ) {
   if (!userId) return null;
+  if (userId === currentUserId) return null;
+
+  const { data: profile, error: profileError } = await admin
+    .from("profiles")
+    .select("id, email, full_name, status")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (profileError) throw profileError;
+
+  if (!profile || profile.status !== "active") {
+    return { error: "Selected ERP profile is not active.", status: 403 } as const;
+  }
 
   const { data: accessRow, error: accessError } = await admin
     .from("user_access_assignments")
@@ -356,10 +373,22 @@ async function validateLinkedUser(
   if (duplicateError) throw duplicateError;
 
   if (duplicate) {
-    return { error: "Selected ERP user is already linked to another employee.", status: 409 } as const;
+    return { error: "This ERP profile is already linked to another employee.", status: 409 } as const;
   }
 
   return null;
+}
+
+async function loadProfileForAudit(admin: ReturnType<typeof adminClient>, userId?: string | null) {
+  if (!userId) return null;
+  const { data, error } = await admin
+    .from("profiles")
+    .select("id, email, status")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data || null;
 }
 
 export async function GET(
@@ -436,7 +465,7 @@ export async function PUT(
 
     const companyId = requireText(payload.company_id);
     const siteId = requireText(payload.site_id);
-    const employeeCode = requireText(payload.employee_code);
+    const employeeCode = requireText(existing.employee_code);
     const employeeName = requireText(payload.employee_name);
     const departmentId = requireText(payload.department_id);
     const designationId = requireText(payload.designation_id);
@@ -450,10 +479,6 @@ export async function PUT(
     const noticePeriodTo = dateValue(payload.notice_period_to);
     const resignationDate = dateValue(payload.resignation_date);
     const relievingDate = dateValue(payload.date_of_exit);
-
-    if (!employeeCode) {
-      return NextResponse.json({ error: "Employee code is required." }, { status: 400 });
-    }
 
     if (!employeeName) {
       return NextResponse.json({ error: "Employee name is required." }, { status: 400 });
@@ -515,6 +540,7 @@ export async function PUT(
       admin,
       companyResult.organizationId,
       id,
+      existing.user_id,
       userId,
     );
 
@@ -525,30 +551,11 @@ export async function PUT(
       );
     }
 
-    const { data: duplicate, error: duplicateError } = await admin
-      .from("hr_employees")
-      .select("id")
-      .eq("organization_id", companyResult.organizationId)
-      .ilike("employee_code", employeeCode)
-      .neq("id", id)
-      .neq("status", "deleted")
-      .limit(1)
-      .maybeSingle();
-
-    if (duplicateError) throw duplicateError;
-
-    if (duplicate) {
-      return NextResponse.json(
-        { error: "Employee code already exists for this organization." },
-        { status: 409 }
-      );
-    }
-
     const updatePayload = {
       organization_id: companyResult.organizationId,
       company_id: companyId,
       site_id: siteId,
-      employee_code: employeeCode,
+      employee_code: existing.employee_code,
       employee_name: employeeName,
       email: textValue(payload.email),
       phone: textValue(payload.phone),
@@ -652,6 +659,14 @@ export async function PUT(
       if (historyError) throw historyError;
     }
 
+    const profileLinkChanged = (existing.user_id || null) !== (userId || null);
+    const [previousProfile, nextProfile] = profileLinkChanged
+      ? await Promise.all([
+          loadProfileForAudit(admin, existing.user_id),
+          loadProfileForAudit(admin, userId),
+        ])
+      : [null, null];
+
     await insertErpAuditLog(admin, auth.user, {
       organizationId: companyResult.organizationId,
       companyId,
@@ -667,6 +682,39 @@ export async function PUT(
       newValues: changedFields.length > 0 ? nextState : updatePayload,
       source: "system",
     }, request);
+
+    if (profileLinkChanged) {
+      const action = existing.user_id && userId
+        ? "erp_profile_changed"
+        : userId
+          ? "erp_profile_linked"
+          : "erp_profile_unlinked";
+      await insertErpAuditLog(admin, auth.user, {
+        organizationId: companyResult.organizationId,
+        companyId,
+        siteId,
+        moduleCode: "hr_employees",
+        entityType: "hr_employee",
+        recordId: id,
+        action,
+        description: userId
+          ? `Employee ${employeeCode} linked to ERP profile ${nextProfile?.email || userId}.`
+          : `Employee ${employeeCode} unlinked from ERP profile ${previousProfile?.email || existing.user_id}.`,
+        oldValues: {
+          employee_id: id,
+          employee_code: existing.employee_code,
+          employee_name: existing.employee_name,
+          profile: profileAuditValue(previousProfile),
+        },
+        newValues: {
+          employee_id: id,
+          employee_code: employeeCode,
+          employee_name: employeeName,
+          profile: profileAuditValue(nextProfile),
+        },
+        source: "system",
+      }, request);
+    }
 
     return NextResponse.json({ employee_id: id });
   } catch (error: any) {

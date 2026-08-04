@@ -14,6 +14,68 @@ function adminClient() {
   return createClient(supabaseUrl, serviceRoleKey);
 }
 
+function parseVisiblePermissionKeys(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return Array.from(
+    new Set(
+      value
+        .map((item) => String(item || "").trim())
+        .filter((item): item is string => item.includes("."))
+    )
+  );
+}
+
+async function deleteScopedRolePermissions(
+  admin: ReturnType<typeof adminClient>,
+  roleId: string,
+  visibleModuleCodes: string[],
+  visiblePermissionKeys: string[],
+) {
+  if (visiblePermissionKeys.length > 0) {
+    const moduleCodes = Array.from(
+      new Set(visiblePermissionKeys.map((key) => key.split(".")[0]).filter(Boolean))
+    );
+
+    if (moduleCodes.length === 0) return;
+
+    const { data: existingRows, error: existingError } = await admin
+      .from("role_permissions")
+      .select("id, module_code, action_code")
+      .eq("role_id", roleId)
+      .in("module_code", moduleCodes);
+
+    if (existingError) throw existingError;
+
+    const idsToDelete = (existingRows || [])
+      .filter((row) =>
+        visiblePermissionKeys.includes(`${row.module_code}.${row.action_code}`)
+      )
+      .map((row) => row.id)
+      .filter(Boolean);
+
+    if (idsToDelete.length > 0) {
+      const { error } = await admin
+        .from("role_permissions")
+        .delete()
+        .in("id", idsToDelete);
+      if (error) throw error;
+    }
+
+    return;
+  }
+
+  const deleteQuery = admin
+    .from("role_permissions")
+    .delete()
+    .eq("role_id", roleId);
+  const { error } = visibleModuleCodes.length > 0
+    ? await deleteQuery.in("module_code", visibleModuleCodes)
+    : await deleteQuery;
+
+  if (error) throw error;
+}
+
 export async function PUT(request: Request) {
   try {
     const permission = await requireAnyPermission(request, [
@@ -30,6 +92,16 @@ export async function PUT(request: Request) {
     const permissions = Array.isArray(payload.permissions)
       ? payload.permissions
       : [];
+    const visibleModuleCodes: string[] = Array.isArray(payload.visible_module_codes)
+      ? Array.from(
+          new Set(
+            payload.visible_module_codes
+              .map((moduleCode: any) => String(moduleCode || "").trim())
+              .filter((moduleCode: string) => Boolean(moduleCode))
+          )
+        )
+      : [];
+    const visiblePermissionKeys = parseVisiblePermissionKeys(payload.visible_permission_keys);
 
     if (!roleId) {
       return NextResponse.json(
@@ -39,12 +111,7 @@ export async function PUT(request: Request) {
     }
 
     const admin = adminClient();
-    const { error: deleteError } = await admin
-      .from("role_permissions")
-      .delete()
-      .eq("role_id", roleId);
-
-    if (deleteError) throw deleteError;
+    await deleteScopedRolePermissions(admin, roleId, visibleModuleCodes, visiblePermissionKeys);
 
     const uniqueRows = new Map<string, any>();
 
@@ -52,6 +119,11 @@ export async function PUT(request: Request) {
       .filter(
         (item: any) =>
           item.allowed === true &&
+          (visiblePermissionKeys.length > 0
+            ? visiblePermissionKeys.includes(`${String(item.module_code || "")}.${String(item.action_code || "")}`)
+            : visibleModuleCodes.length > 0
+              ? visibleModuleCodes.includes(String(item.module_code || ""))
+              : true) &&
           isValidPermissionAction(
             String(item.module_code || ""),
             String(item.action_code || ""),

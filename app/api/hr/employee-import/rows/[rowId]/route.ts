@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  applyExistingEmployeeStatus,
   loadImportMasterData,
   summarizeRows,
   validateNormalizedRow,
@@ -62,21 +63,38 @@ export async function PUT(request: Request, { params }: RouteParams) {
     const masters = await loadImportMasterData(admin, auth);
     const validation = validateNormalizedRow(normalized, masters, batchResult.batch.mapping || {});
     const mergedWarnings = [...validation.warnings, ...warnings.filter((warning) => !validation.warnings.includes(warning))];
+    const existingEmployeeByCode = new Map(
+      (masters.employees || [])
+        .filter((employee: any) => employee.organization_id === batchResult.batch.organization_id)
+        .map((employee: any) => [
+          String(employee.employee_code || "")
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, " ")
+            .replace(/\s+/g, " ")
+            .trim(),
+          employee,
+        ]),
+    );
+    const nextValues = applyExistingEmployeeStatus({
+      normalized_data: validation.normalized || normalized,
+      mapping_status: validation.mappingStatus,
+      validation_status: validation.errors.length > 0 ? "invalid" : mergedWarnings.length > 0 ? "warning" : "valid",
+      import_status: "pending",
+      imported_employee_id: null,
+      import_result: row.import_result || {},
+      errors: validation.errors,
+      warnings: mergedWarnings,
+      matched_company_id: validation.matches.company_id,
+      matched_site_id: validation.matches.site_id,
+      matched_department_id: validation.matches.department_id,
+      matched_designation_id: validation.matches.designation_id,
+      updated_at: new Date().toISOString(),
+    }, existingEmployeeByCode);
 
     const { data: updatedRow, error: updateError } = await admin
       .from("employee_import_rows")
-      .update({
-        normalized_data: validation.normalized || normalized,
-        mapping_status: validation.mappingStatus,
-        validation_status: validation.errors.length > 0 ? "invalid" : mergedWarnings.length > 0 ? "warning" : "valid",
-        errors: validation.errors,
-        warnings: mergedWarnings,
-        matched_company_id: validation.matches.company_id,
-        matched_site_id: validation.matches.site_id,
-        matched_department_id: validation.matches.department_id,
-        matched_designation_id: validation.matches.designation_id,
-        updated_at: new Date().toISOString(),
-      })
+      .update(nextValues)
       .eq("id", rowId)
       .select("*")
       .single();

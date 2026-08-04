@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sortCompanies } from "@/lib/companyOrdering";
 import { requireAnyPermission } from "@/lib/serverPermissions";
+import { loadActorOrganizationScope } from "@/lib/adminUserScope";
+import { loadEmployeeLinkOptions } from "@/app/api/admin/users/_employeeLinking";
 
 export async function GET(request: Request) {
   try {
@@ -23,27 +25,34 @@ export async function GET(request: Request) {
 
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-    const [roles, organizations, companies, sites] = await Promise.all([
+    const actorOrganizationIds = await loadActorOrganizationScope(supabase, permission);
+
+    const organizationsQuery = supabase
+      .from("organizations")
+      .select("id, name, code")
+      .eq("status", "active")
+      .order("name");
+    const companiesQuery = supabase
+      .from("companies")
+      .select("id, organization_id, company_name, company_code")
+      .eq("status", "active")
+      .order("company_name");
+    const sitesQuery = supabase
+      .from("sites")
+      .select("id, company_id, site_name, site_code")
+      .eq("status", "active")
+      .order("site_name");
+
+    const [roles, organizations, companies, sites, employeeOptions] = await Promise.all([
       supabase
         .from("roles")
         .select("id, role_name, role_code")
         .eq("status", "active")
         .order("role_name"),
-      supabase
-        .from("organizations")
-        .select("id, name, code")
-        .eq("status", "active")
-        .order("name"),
-      supabase
-        .from("companies")
-        .select("id, organization_id, company_name, company_code")
-        .eq("status", "active")
-        .order("company_name"),
-      supabase
-        .from("sites")
-        .select("id, company_id, site_name, site_code")
-        .eq("status", "active")
-        .order("site_name"),
+      actorOrganizationIds ? organizationsQuery.in("id", actorOrganizationIds) : organizationsQuery,
+      actorOrganizationIds ? companiesQuery.in("organization_id", actorOrganizationIds) : companiesQuery,
+      actorOrganizationIds ? sitesQuery.in("organization_id", actorOrganizationIds) : sitesQuery,
+      loadEmployeeLinkOptions(supabase, actorOrganizationIds),
     ]);
 
     for (const result of [roles, organizations, companies, sites]) {
@@ -55,6 +64,7 @@ export async function GET(request: Request) {
       organizations: organizations.data || [],
       companies: sortCompanies(companies.data || []),
       sites: sites.data || [],
+      employeeOptions,
     });
   } catch (error: any) {
     return NextResponse.json(

@@ -6,7 +6,10 @@ import { supabase } from "@/lib/supabase";
 import {
   PERMISSION_ACTIONS as actions,
   availableActionsForModule,
+  permissionActionLabel,
 } from "@/lib/permissionMatrix";
+import type { PermissionAction } from "@/lib/permissionMatrix";
+import { prepareVisiblePermissionModules } from "@/lib/permissionVisibility";
 
 export default function PermissionsPage() {
   const searchParams = useSearchParams();
@@ -31,7 +34,7 @@ export default function PermissionsPage() {
 
     const { data: moduleData, error: moduleError } = await supabase
       .from("erp_modules")
-      .select("id, module_group, module_code, module_name, sort_order")
+      .select("id, module_group, module_code, module_name, sort_order, status")
       .eq("status", "active");
 
     if (moduleError) {
@@ -41,15 +44,7 @@ export default function PermissionsPage() {
 
     setRoles(roleData || []);
 
-    setModules(
-      (moduleData || []).sort((a: any, b: any) => {
-        if (a.module_group === b.module_group) {
-          return Number(a.sort_order || 0) - Number(b.sort_order || 0);
-        }
-
-        return String(a.module_group).localeCompare(String(b.module_group));
-      })
-    );
+    setModules(prepareVisiblePermissionModules(moduleData || []));
 
     const roleId = searchParams.get("role_id");
 
@@ -94,6 +89,44 @@ export default function PermissionsPage() {
 
   function permissionKey(moduleCode: string, actionCode: string) {
     return `${moduleCode}.${actionCode}`;
+  }
+
+  function permissionModuleCode(module: any) {
+    return module.permission_module_code || module.module_code;
+  }
+
+  function availableActionsForDisplayModule(module: any): PermissionAction[] {
+    if (module.display_only && !module.permission_module_code) return [];
+    if (Array.isArray(module.visible_actions)) return module.visible_actions as PermissionAction[];
+    return availableActionsForModule(permissionModuleCode(module));
+  }
+
+  function visibleModuleCodesForSave() {
+    return Array.from(
+      new Set(
+        modules
+          .map((module) =>
+            module.display_only && !module.permission_module_code
+              ? null
+              : permissionModuleCode(module)
+          )
+          .filter(Boolean)
+      )
+    );
+  }
+
+  function visiblePermissionKeysForSave() {
+    return Array.from(
+      new Set(
+        modules.flatMap((module) => {
+          if (module.display_only && !module.permission_module_code) return [];
+          const moduleCode = permissionModuleCode(module);
+          return availableActionsForDisplayModule(module).map(
+            (action: string) => `${moduleCode}.${action}`
+          );
+        })
+      )
+    );
   }
 
   function isAllowed(moduleCode: string, actionCode: string) {
@@ -147,11 +180,14 @@ export default function PermissionsPage() {
   function setAllPermissions(allowed: boolean) {
     if (!selectedRoleId) return;
 
-    let next: any[] = [];
+    const visibleModuleCodes = new Set(visibleModuleCodesForSave());
+    let next: any[] = permissions.filter(
+      (permission) => !visibleModuleCodes.has(permission.module_code)
+    );
 
     modules.forEach((module) => {
-      availableActionsForModule(module.module_code).forEach((action) => {
-        next = setPermission(next, module.module_code, action, allowed);
+      availableActionsForDisplayModule(module).forEach((action) => {
+        next = setPermission(next, permissionModuleCode(module), action, allowed);
       });
     });
 
@@ -165,8 +201,8 @@ export default function PermissionsPage() {
       let next = [...prev];
 
       (groupedModules[groupName] || []).forEach((module) => {
-        availableActionsForModule(module.module_code).forEach((action) => {
-          next = setPermission(next, module.module_code, action, allowed);
+        availableActionsForDisplayModule(module).forEach((action) => {
+          next = setPermission(next, permissionModuleCode(module), action, allowed);
         });
       });
 
@@ -174,23 +210,25 @@ export default function PermissionsPage() {
     });
   }
 
-  function setRowPermissions(moduleCode: string, allowed: boolean) {
+  function setRowPermissions(module: any, allowed: boolean) {
     if (!selectedRoleId) return;
 
     setPermissions((prev) => {
       let next = [...prev];
 
-      availableActionsForModule(moduleCode).forEach((action) => {
-        next = setPermission(next, moduleCode, action, allowed);
+      availableActionsForDisplayModule(module).forEach((action) => {
+        next = setPermission(next, permissionModuleCode(module), action, allowed);
       });
 
       return next;
     });
   }
 
-  function isRowAllChecked(moduleCode: string) {
-    return availableActionsForModule(moduleCode).every((action) =>
-      isAllowed(moduleCode, action)
+  function isRowAllChecked(module: any) {
+    const availableActions = availableActionsForDisplayModule(module);
+    if (availableActions.length === 0) return false;
+    return availableActions.every((action) =>
+      isAllowed(permissionModuleCode(module), action)
     );
   }
 
@@ -220,6 +258,8 @@ export default function PermissionsPage() {
         },
         body: JSON.stringify({
           role_id: selectedRoleId,
+          visible_module_codes: visibleModuleCodesForSave(),
+          visible_permission_keys: visiblePermissionKeysForSave(),
           permissions,
         }),
       });
@@ -336,9 +376,9 @@ export default function PermissionsPage() {
                         {actions.map((action) => (
                           <th
                             key={action}
-                            className="p-2 text-center capitalize"
+                            className="p-2 text-center"
                           >
-                            {action}
+                            {permissionActionLabel(action)}
                           </th>
                         ))}
                       </tr>
@@ -346,21 +386,28 @@ export default function PermissionsPage() {
 
                     <tbody>
                       {items.map((module) => {
-                        const availableActions = availableActionsForModule(module.module_code);
+                        const availableActions = availableActionsForDisplayModule(module);
+                        const effectiveModuleCode = permissionModuleCode(module);
 
                         return (
                           <tr key={module.id} className="border-t">
                             <td className="p-2 font-medium">
                               {module.module_name}
+                              {module.permission_note && (
+                                <div className="mt-0.5 text-xs font-normal text-slate-500">
+                                  {module.permission_note}
+                                </div>
+                              )}
                             </td>
 
                             <td className="p-2 text-center">
                               <input
                                 type="checkbox"
-                                checked={isRowAllChecked(module.module_code)}
+                                checked={isRowAllChecked(module)}
+                                disabled={availableActions.length === 0}
                                 onChange={(e) =>
                                   setRowPermissions(
-                                    module.module_code,
+                                    module,
                                     e.target.checked
                                   )
                                 }
@@ -372,13 +419,10 @@ export default function PermissionsPage() {
                                 {availableActions.includes(action) ? (
                                   <input
                                     type="checkbox"
-                                    checked={isAllowed(
-                                      module.module_code,
-                                      action
-                                    )}
+                                    checked={isAllowed(effectiveModuleCode, action)}
                                     onChange={() =>
                                       togglePermission(
-                                        module.module_code,
+                                        effectiveModuleCode,
                                         action
                                       )
                                     }

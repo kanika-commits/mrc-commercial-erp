@@ -13,6 +13,7 @@ export default function NewEmployeePage() {
   const lookups = useHrLookups();
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [success, setSuccess] = useState("");
   const [selectedPhoto, setSelectedPhoto] = useState<File | null>(null);
 
   async function uploadPhoto(employeeId: string, file: File) {
@@ -30,6 +31,7 @@ export default function NewEmployeePage() {
 
   async function save(values: any) {
     setMessage("");
+    setSuccess("");
     setSaving(true);
     try {
       const result = await apiFetch("/api/hr/employees", {
@@ -45,7 +47,8 @@ export default function NewEmployeePage() {
       if (selectedPhoto) {
         await uploadPhoto(result.employee_id, selectedPhoto);
       }
-      router.push(`/hr/employees/${result.employee_id}`);
+      setSuccess(`Employee created successfully. Generated Employee Code: ${result.employee_code || "-"}`);
+      window.setTimeout(() => router.push(`/hr/employees/${result.employee_id}`), 900);
     } catch (error: any) {
       setMessage(error.message || "Failed to create employee.");
     } finally {
@@ -57,6 +60,7 @@ export default function NewEmployeePage() {
     <section className="space-y-6">
       <HrSectionNav />
       <AlertMessage type="error" message={message || lookups.error} onClose={() => setMessage("")} />
+      <AlertMessage type="success" message={success} onClose={() => setSuccess("")} />
       {lookups.loading && (
         <div className="rounded-2xl border bg-white p-4 text-sm text-slate-500 shadow-sm">
           Loading dropdown options...

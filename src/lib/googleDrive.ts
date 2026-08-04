@@ -30,6 +30,31 @@ export type DriveSubfolderResponse = {
   folder_name: string;
 };
 
+export type DriveFileDownloadResponse = {
+  success: boolean;
+  file_id: string;
+  file_name: string;
+  mime_type: string;
+  size_bytes: number;
+  base64: string;
+};
+
+export type DriveFolderFile = {
+  file_id: string;
+  file_url: string;
+  file_name: string;
+  mime_type: string;
+  size_bytes: number;
+};
+
+export type DriveFolderListResponse = {
+  success: boolean;
+  folder_id: string;
+  folder_url: string;
+  folder_name: string;
+  files: DriveFolderFile[];
+};
+
 type DriveFileUploadInput = {
   targetFolderId: string;
   fileName: string;
@@ -42,11 +67,30 @@ type DriveSubfolderInput = {
   folderName: string;
 };
 
+type DriveFileDownloadInput = {
+  fileId: string;
+  maxSizeBytes?: number;
+};
+
+type DriveFolderListInput = {
+  folderId: string;
+};
+
 function driveEndpoint() {
   const endpoint = process.env.GOOGLE_DRIVE_WORK_ORDER_WEB_APP_URL;
 
   if (!endpoint) {
     throw new Error("Missing GOOGLE_DRIVE_WORK_ORDER_WEB_APP_URL.");
+  }
+
+  return endpoint;
+}
+
+function driveDownloadEndpoint() {
+  const endpoint = process.env.GOOGLE_DRIVE_DOWNLOAD_WEB_APP_URL;
+
+  if (!endpoint) {
+    throw new Error("Missing GOOGLE_DRIVE_DOWNLOAD_WEB_APP_URL.");
   }
 
   return endpoint;
@@ -297,4 +341,136 @@ export async function createDriveSubfolder(input: DriveSubfolderInput) {
     folder_id: result.folder_id || result.subfolder_id || result.id,
     folder_name: result.folder_name || result.subfolder_name || input.folderName,
   } as DriveSubfolderResponse;
+}
+
+export async function downloadDriveFile(input: DriveFileDownloadInput) {
+  const response = await fetch(driveDownloadEndpoint(), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      action: "download_file",
+      file_id: input.fileId,
+      max_size_bytes: input.maxSizeBytes,
+    }),
+  });
+
+  const result = await response.json().catch(() => null);
+
+  if (!response.ok || !result?.success) {
+    throw new Error(result?.error || "Failed to download Google Drive file.");
+  }
+
+  const file = {
+    ...result,
+    file_id: firstString(result?.file_id, result?.fileId, input.fileId),
+    file_name: firstString(result?.file_name, result?.fileName, result?.name),
+    mime_type: firstString(result?.mime_type, result?.mimeType, result?.content_type),
+    size_bytes: Number(result?.size_bytes || result?.sizeBytes || result?.size || 0),
+    base64: firstString(result?.base64, result?.file_base64, result?.data),
+  } as DriveFileDownloadResponse;
+
+  if (!file.file_id || !file.file_name || !file.mime_type || !file.base64) {
+    throw new Error("Google Drive download response was missing required file metadata.");
+  }
+
+  return file;
+}
+
+export function extractGoogleDriveFolderId(value: unknown) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const patterns = [
+    /drive\.google\.com\/drive\/folders\/([A-Za-z0-9_-]+)/i,
+    /drive\.google\.com\/folderview\?id=([A-Za-z0-9_-]+)/i,
+    /[?&]id=([A-Za-z0-9_-]+)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  return /^[A-Za-z0-9_-]{10,}$/.test(text) ? text : "";
+}
+
+export function extractGoogleDriveFileId(value: unknown) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+
+  try {
+    const url = new URL(text);
+    const host = url.hostname.toLowerCase();
+    if (!host.endsWith("google.com") && !host.endsWith("googleusercontent.com")) return "";
+    const pathMatch = url.pathname.match(/\/(?:file\/d|document\/d|spreadsheets\/d|presentation\/d)\/([^/?#]+)/i);
+    const id = pathMatch?.[1] || url.searchParams.get("id") || "";
+    return /^[A-Za-z0-9_-]{10,}$/.test(id) ? id : "";
+  } catch {
+    const pathMatch = text.match(/(?:file\/d\/|[?&]id=)([A-Za-z0-9_-]{10,})/);
+    return pathMatch?.[1] || "";
+  }
+}
+
+export function googleDriveFolderUrl(folderId: string) {
+  return `https://drive.google.com/drive/folders/${folderId}`;
+}
+
+export function googleDriveFileUrl(fileId: string) {
+  return `https://drive.google.com/file/d/${fileId}/view`;
+}
+
+function normalizeDriveFolderFiles(result: any) {
+  const files = Array.isArray(result?.files)
+    ? result.files
+    : Array.isArray(result?.items)
+      ? result.items
+      : Array.isArray(result?.children)
+        ? result.children
+        : [];
+  return files.map((file: any) => {
+    const fileId = firstString(file?.file_id, file?.fileId, file?.id);
+    return {
+      file_id: fileId,
+      file_url: firstString(file?.file_url, file?.fileUrl, file?.url, fileId ? googleDriveFileUrl(fileId) : ""),
+      file_name: firstString(file?.file_name, file?.fileName, file?.name, file?.title),
+      mime_type: firstString(file?.mime_type, file?.mimeType, file?.content_type),
+      size_bytes: Number(file?.size_bytes || file?.sizeBytes || file?.size || 0),
+    };
+  }).filter((file: DriveFolderFile) => file.file_id && file.file_name);
+}
+
+export async function listDriveFolderFiles(input: DriveFolderListInput) {
+  const response = await fetch(driveDownloadEndpoint(), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      action: "list_folder_files",
+      folder_id: input.folderId,
+    }),
+  });
+
+  const result = await response.json().catch(() => null);
+
+  if (!response.ok || !result?.success) {
+    const message = firstString(result?.error, result?.message);
+    if (/unsupported action/i.test(message)) {
+      throw new Error("ConstructIQ could not access this folder. Share it with the configured Drive integration and try again. The configured Drive integration must support folder file listing.");
+    }
+    throw new Error(result?.error || "Failed to list Google Drive folder files.");
+  }
+
+  const folder = {
+    ...result,
+    folder_id: firstString(result?.folder_id, result?.folderId, input.folderId),
+    folder_url: firstString(result?.folder_url, result?.folderUrl, result?.url, googleDriveFolderUrl(input.folderId)),
+    folder_name: firstString(result?.folder_name, result?.folderName, result?.name),
+    files: normalizeDriveFolderFiles(result),
+  } as DriveFolderListResponse;
+
+  if (!folder.folder_id) {
+    throw new Error("Google Drive folder response was missing folder metadata.");
+  }
+
+  return folder;
 }
