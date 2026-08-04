@@ -137,7 +137,7 @@ export default function AdministrationPage() {
   if (loading) {
     return (
       <section className="min-h-[60vh] bg-[#f6f3f5] px-6 py-8 text-sm font-medium text-slate-500 md:px-10">
-        Loading administration...
+        Loading admin...
       </section>
     );
   }
@@ -147,7 +147,7 @@ export default function AdministrationPage() {
       <div className="mx-auto max-w-[1500px] space-y-8">
         <header className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight text-black md:text-[28px] md:leading-9">
-            Admin &amp; Settings
+            Admin
           </h1>
           <p className="max-w-2xl text-sm leading-5 text-slate-600">
             Manage organizations, users, roles and permissions.
@@ -156,7 +156,7 @@ export default function AdministrationPage() {
 
         <section className="space-y-4">
           <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-            Administration Directory
+            Admin Directory
           </h2>
 
           {visibleCards.length === 0 ? (

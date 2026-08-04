@@ -25,10 +25,10 @@ const groupOrder = [
   "Dashboard",
   "Project Management",
   "Purchase",
-  "Accounts / Finance",
+  "Accounts/Finance",
   "Human Resources",
   "Settings",
-  "Administration",
+  "Admin",
 ];
 
 function presentationFor(moduleCode: string) {
@@ -59,19 +59,19 @@ export function presentVisiblePermissionModule<T extends PermissionModuleRow>(mo
   const groupName =
     group === "project_management" ? "Project Management" :
     group === "purchase" ? "Purchase" :
-    group === "accounts" ? "Accounts / Finance" :
+    group === "accounts" ? "Accounts/Finance" :
     group === "hr" ? "Human Resources" :
     group === "settings" ? "Settings" :
-    group === "administration" ? "Administration" :
+    group === "administration" ? "Admin" :
     group === "dashboard" ? "Dashboard" :
-    String(module.module_group || "Administration");
+    String(module.module_group || "Admin");
 
   return {
     ...module,
     module_group: groupName,
     module_name: presentation?.title || module.module_name || moduleCode,
     sort_order: presentation?.sortOrder ?? Number(module.sort_order || 0),
-    permission_note: null,
+    permission_note: moduleCode === "hr_employee_import" ? "Bulk employee import and execution." : null,
     technical_group: module.module_group || null,
   };
 }

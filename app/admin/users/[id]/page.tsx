@@ -11,6 +11,7 @@ import AlertMessage from "@/components/AlertMessage";
 import {
   PERMISSION_ACTIONS as actions,
   availableActionsForModule,
+  permissionActionLabel,
 } from "@/lib/permissionMatrix";
 import { prepareVisiblePermissionModules } from "@/lib/permissionVisibility";
 
@@ -861,8 +862,8 @@ export default function UserAccessPage() {
                     <th className="p-2 text-left">Module</th>
                     <th className="p-2 text-center">All</th>
                     {actions.map((action) => (
-                      <th key={action} className="p-2 text-center capitalize">
-                        {action}
+                      <th key={action} className="p-2 text-center">
+                        {permissionActionLabel(action)}
                       </th>
                     ))}
                   </tr>
@@ -874,7 +875,14 @@ export default function UserAccessPage() {
 
                     return (
                       <tr key={module.id} className="border-t">
-                        <td className="p-2 font-medium">{module.module_name}</td>
+                        <td className="p-2 font-medium">
+                          {module.module_name}
+                          {module.permission_note && (
+                            <div className="mt-0.5 text-xs font-normal text-slate-500">
+                              {module.permission_note}
+                            </div>
+                          )}
+                        </td>
 
                         <td className="p-2 text-center">
                           <input

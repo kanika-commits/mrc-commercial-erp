@@ -34,9 +34,9 @@ import { supabase } from "@/lib/supabase";
 const sidebarGroupMeta = {
   project_management: { label: "Project Management", href: "/modules/project-management", icon: FileText },
   purchase: { label: "Purchase", href: "/modules/purchase", icon: ShoppingCart },
-  accounts: { label: "Accounts / Finance", href: "/modules/accounts", icon: Building2 },
+  accounts: { label: "Accounts/Finance", href: "/modules/accounts", icon: Building2 },
   settings: { label: "Settings", href: "/modules/settings", icon: Settings },
-  administration: { label: "Administration", href: "/modules/administration", icon: Settings },
+  administration: { label: "Admin", href: "/modules/administration", icon: Settings },
   hr: { label: "Human Resources", href: "/modules/hr", icon: UsersRound },
 } as const;
 
@@ -206,11 +206,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       ),
       nested(
         "module-accounts",
-        "Accounts / Finance",
+        "Accounts/Finance",
         [
           releasedLeaf("invoices"),
-          releasedLeaf("itc_claims"),
           releasedLeaf("payments"),
+          releasedLeaf("itc_claims"),
         ],
         "/modules/accounts",
         Building2,
@@ -244,7 +244,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       ),
       nested(
         "module-administration",
-        "Administration",
+        "Admin",
         [
           releasedLeaf("organizations"),
           releasedLeaf("users"),

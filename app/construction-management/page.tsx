@@ -10,7 +10,6 @@ const cards = [
   { title: "Invoices", href: "/invoices", description: "Vendor invoices and ITC tracking." },
   { title: "Payments", href: "/payments", description: "Payment entries and UTR records." },
   { title: "Debit Notes", href: "/debit-notes", description: "Debit notes against vendors." },
-  { title: "Reports", href: "/reports", description: "Commercial reports." },
 ];
 
 export default function ConstructionManagementPage() {

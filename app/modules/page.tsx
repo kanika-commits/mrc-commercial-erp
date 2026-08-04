@@ -7,7 +7,6 @@ import {
   Building2,
   FilePlus2,
   FileText,
-  Package,
   Settings,
   ShoppingCart,
   UserPlus,
@@ -57,7 +56,7 @@ const moduleCards = [
     meta: "Analytics Ready",
   },
   {
-    title: "Administration",
+    title: "Admin",
     href: "/modules/administration",
     description: "Users, roles, permissions and organization setup.",
     checkModules: ["users", "roles", "permissions", "organizations"],

@@ -27,10 +27,10 @@ const expectedGroupOrder = [
   "Dashboard",
   "Project Management",
   "Purchase",
-  "Accounts / Finance",
+  "Accounts/Finance",
   "Human Resources",
   "Settings",
-  "Administration",
+  "Admin",
 ];
 const groupOrderIndex = visibility.indexOf(`const groupOrder = [`);
 let previousIndex = groupOrderIndex;
@@ -57,9 +57,9 @@ const expectedMappings = [
   ["ra_approval", "Project Management"],
   ["work_orders", "Purchase"],
   ["wo_approval", "Purchase"],
-  ["invoices", "Accounts / Finance"],
-  ["itc_claims", "Accounts / Finance"],
-  ["payments", "Accounts / Finance"],
+  ["invoices", "Accounts/Finance"],
+  ["payments", "Accounts/Finance"],
+  ["itc_claims", "Accounts/Finance"],
   ["hr_employees", "Human Resources"],
   ["hr_employee_import", "Human Resources"],
   ["reimbursements", "Human Resources"],
@@ -69,10 +69,10 @@ const expectedMappings = [
   ["company_bank_accounts", "Settings"],
   ["hr_departments", "Settings"],
   ["hr_designations", "Settings"],
-  ["organizations", "Administration"],
-  ["users", "Administration"],
-  ["roles", "Administration"],
-  ["permissions", "Administration"],
+  ["organizations", "Admin"],
+  ["users", "Admin"],
+  ["roles", "Admin"],
+  ["permissions", "Admin"],
 ];
 for (const [moduleCode, groupLabel] of expectedMappings) {
   const moduleIndex = registry.indexOf(`code: \"${moduleCode}\"`);
@@ -90,6 +90,12 @@ for (const token of ["prepareVisiblePermissionModules", "visible_permission_keys
 
 if (!userEditPage.includes("prepareVisiblePermissionModules(result.modules || [])")) {
   throw new Error("User edit permission matrix must use friendly Release 1 permission grouping.");
+}
+
+for (const token of ["permissionActionLabel(action)", "permission_note"]) {
+  if (!page.includes(token) && !userEditPage.includes(token)) {
+    throw new Error(`Permission presentation must preserve ${token}.`);
+  }
 }
 
 if (!userEditPage.includes("visible_permission_keys: visiblePermissionKeysForSave()")) {

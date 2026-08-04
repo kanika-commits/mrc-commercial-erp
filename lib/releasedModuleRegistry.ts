@@ -33,10 +33,10 @@ export const RELEASED_GROUPS: ReleasedModuleGroupItem[] = [
   { code: "dashboard", title: "Dashboard", route: "/", sortOrder: 1, sidebar: true, launcher: false },
   { code: "project_management", title: "Project Management", route: "/modules/project-management", sortOrder: 10, sidebar: true, launcher: true },
   { code: "purchase", title: "Purchase", route: "/modules/purchase", sortOrder: 20, sidebar: true, launcher: true },
-  { code: "accounts", title: "Accounts / Finance", route: "/modules/accounts", sortOrder: 30, sidebar: true, launcher: true },
+  { code: "accounts", title: "Accounts/Finance", route: "/modules/accounts", sortOrder: 30, sidebar: true, launcher: true },
   { code: "hr", title: "Human Resources", route: "/modules/hr", sortOrder: 40, sidebar: true, launcher: true },
   { code: "settings", title: "Settings", route: "/modules/settings", sortOrder: 50, sidebar: true, launcher: true },
-  { code: "administration", title: "Administration", route: "/modules/administration", sortOrder: 60, sidebar: true, launcher: true },
+  { code: "administration", title: "Admin", route: "/modules/administration", sortOrder: 60, sidebar: true, launcher: true },
 ];
 
 export const RELEASED_MODULES: ReleasedModuleItem[] = [
@@ -44,14 +44,14 @@ export const RELEASED_MODULES: ReleasedModuleItem[] = [
 
   { code: "ra_bills", title: "RA Bills", route: "/ra-bills", group: "project_management", permissionModule: "ra_bills", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 10 },
   { code: "debit_notes", title: "Debit Notes", route: "/debit-notes", group: "project_management", permissionModule: "debit_notes", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 20 },
-  { code: "ra_approval", title: "Commercial Approvals", route: "/approvals", group: "project_management", permissionModule: "ra_approval", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 30 },
+  { code: "ra_approval", title: "Approvals", route: "/approvals", group: "project_management", permissionModule: "ra_approval", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 30 },
 
   { code: "work_orders", title: "Work Orders", route: "/work-orders", group: "purchase", permissionModule: "work_orders", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 10 },
   { code: "wo_approval", title: "Work Order Approval", route: "/approvals/work-orders", group: "purchase", permissionModule: "wo_approval", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 20 },
 
   { code: "invoices", title: "Invoices", route: "/invoices", group: "accounts", permissionModule: "invoices", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 10 },
-  { code: "itc_claims", title: "ITC Review", route: "/invoices/itc", group: "accounts", permissionModule: "itc_claims", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 20 },
-  { code: "payments", title: "Payments", route: "/payments", group: "accounts", permissionModule: "payments", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 30 },
+  { code: "payments", title: "Payments", route: "/payments", group: "accounts", permissionModule: "payments", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 20 },
+  { code: "itc_claims", title: "ITC Review", route: "/invoices/itc", group: "accounts", permissionModule: "itc_claims", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 30 },
 
   { code: "hr_employees", title: "Employee Registration", route: "/hr/employees", group: "hr", permissionModule: "hr_employees", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 10 },
   { code: "hr_employee_import", title: "Employee Import", route: "/hr/employees/import", group: "hr", permissionModule: "hr_employee_import", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 20 },

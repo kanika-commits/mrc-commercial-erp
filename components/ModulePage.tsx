@@ -174,12 +174,12 @@ export default function ModulePage({
   }
 
   return (
-    <section className="space-y-6">
-      <div className="rounded-3xl border bg-white p-6 shadow-sm">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+    <section className="space-y-5">
+      <div className="rounded-2xl border bg-white p-5 shadow-sm">
+        <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
           Module
         </p>
-        <h1 className="text-3xl font-bold text-slate-950">{title}</h1>
+        <h1 className="text-2xl font-bold text-slate-950">{title}</h1>
         <p className="mt-1 text-sm text-slate-500">{description}</p>
       </div>
 
@@ -187,46 +187,89 @@ export default function ModulePage({
         <div className="rounded-2xl border bg-white p-6 text-sm text-slate-500 shadow-sm">
           No accessible pages found in this module.
         </div>
+      ) : groupCode === "settings" ? (
+        <SettingsSections pages={pages} />
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {pages.map((page) => {
-            const meta = pageMeta[page.module_code] ?? {
-              icon: FileText,
-              className: "from-slate-50 to-white border-slate-200 text-slate-700",
-              description: "Open module page.",
-            };
-
-            const Icon = meta.icon;
-
-            return (
-              <Link key={page.id} href={page.route}>
-                <div
-                  className={`group h-40 rounded-2xl border bg-gradient-to-br p-5 shadow-sm transition-all hover:-translate-y-1 hover:shadow-xl ${meta.className}`}
-                >
-                  <div className="flex h-full flex-col justify-between">
-                    <div className="flex items-center justify-between">
-                      <div className="rounded-2xl bg-white/80 p-3 shadow-sm">
-                        <Icon className="h-6 w-6" />
-                      </div>
-
-                      <ArrowRight className="h-4 w-4 opacity-40 transition group-hover:translate-x-1 group-hover:opacity-100" />
-                    </div>
-
-                    <div>
-                      <h2 className="text-base font-bold text-slate-950">
-                        {page.module_name}
-                      </h2>
-                      <p className="mt-1 text-xs leading-5 text-slate-500">
-                        {meta.description}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </Link>
-            );
-          })}
-        </div>
+        <CompactPageGrid pages={pages} />
       )}
     </section>
+  );
+}
+
+function CompactPageGrid({ pages }: { pages: ModuleRow[] }) {
+  return (
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      {pages.map((page) => (
+        <ModulePageCard key={page.id} page={page} />
+      ))}
+    </div>
+  );
+}
+
+function SettingsSections({ pages }: { pages: ModuleRow[] }) {
+  const sections = [
+    {
+      title: "Masters",
+      codes: ["companies", "vendors", "sites", "hr_departments", "hr_designations", "company_bank_accounts"],
+    },
+  ];
+
+  return (
+    <div className="space-y-5">
+      {sections.map((section) => {
+        const sectionPages = pages.filter((page) => section.codes.includes(page.module_code));
+        if (sectionPages.length === 0) return null;
+
+        return (
+          <section key={section.title} className="space-y-3">
+            <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+              {section.title}
+            </h2>
+            <CompactPageGrid pages={sectionPages} />
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function ModulePageCard({ page }: { page: ModuleRow }) {
+  const metaKey =
+    page.route === "/hr/departments"
+      ? "hr_departments"
+      : page.route === "/hr/designations"
+        ? "hr_designations"
+        : page.module_code;
+  const meta = pageMeta[metaKey] ?? {
+    icon: FileText,
+    className: "from-slate-50 to-white border-slate-200 text-slate-700",
+    description: "Open module page.",
+  };
+
+  const Icon = meta.icon;
+
+  return (
+    <Link key={page.id} href={page.route}>
+      <div
+        className={`group rounded-xl border bg-gradient-to-br p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${meta.className}`}
+      >
+        <div className="flex items-start gap-3">
+          <div className="rounded-xl bg-white/80 p-2 shadow-sm">
+            <Icon className="h-5 w-5" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start justify-between gap-2">
+              <h2 className="text-sm font-bold leading-5 text-slate-950">
+                {page.module_name}
+              </h2>
+              <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 opacity-40 transition group-hover:translate-x-1 group-hover:opacity-100" />
+            </div>
+            <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">
+              {meta.description}
+            </p>
+          </div>
+        </div>
+      </div>
+    </Link>
   );
 }
