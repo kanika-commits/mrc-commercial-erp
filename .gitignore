@@ -43,4 +43,13 @@ next-env.d.ts
 # Import artifacts
 import-data/
 reports/
+!app/reports/
+!app/reports/**
+!app/api/reports/
+!app/api/reports/**
+!lib/reports/
+!lib/reports/**
 scripts/__pycache__/
+
+# Generated local outputs
+outputs/

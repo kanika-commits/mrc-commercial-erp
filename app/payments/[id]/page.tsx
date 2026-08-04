@@ -17,8 +17,12 @@ function formatDateTime(value: string | null | undefined) {
   return formatIstTimestamp(value);
 }
 
-function accountLabel(account: any) {
-  if (!account) return "-";
+function accountLabel(account: any, paymentNumber?: string | null) {
+  if (!account) {
+    return String(paymentNumber || "").startsWith("HIST-PAY-")
+      ? "Historical account not available"
+      : "Account not recorded";
+  }
   const last4 = account.account_number ? account.account_number.slice(-4) : "----";
   return `${account.bank_name || "Bank"} | ${last4}`;
 }
@@ -56,6 +60,7 @@ export default function PaymentDetailPage() {
       if (!paymentData) throw new Error("Payment was not found.");
 
       setPayment(paymentData);
+      setAccount(null);
 
       if (paymentData.invoice_id) {
         const { data: invoiceData } = await supabase
@@ -181,7 +186,7 @@ export default function PaymentDetailPage() {
             label="Reference Number"
             value={payment.utr_number || payment.reference_number || "-"}
           />
-          <Info label="From Account" value={accountLabel(account)} />
+          <Info label="From Account" value={accountLabel(account, payment.payment_number)} />
           <Info label="Status" value={payment.status || "-"} />
           <Info label="Remarks" value={payment.remarks || "-"} />
         </Card>

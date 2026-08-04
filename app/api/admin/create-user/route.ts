@@ -6,6 +6,10 @@ import {
   loadActorOrganizationScope,
   validateSubmittedUserScope,
 } from "@/lib/adminUserScope";
+import {
+  setUserEmployeeLink,
+  validateEmployeeCanLinkToUser,
+} from "@/app/api/admin/users/_employeeLinking";
 
 type RoleRow = {
   user_id: string;
@@ -45,6 +49,7 @@ export async function POST(request: Request) {
       organization_ids,
       company_ids,
       site_ids,
+      linked_employee_id,
     } = body;
 
     if (!full_name || !email || !password) {
@@ -64,6 +69,13 @@ export async function POST(request: Request) {
     if (!organization_ids?.length) {
       return NextResponse.json(
         { error: "Select at least one organization." },
+        { status: 400 }
+      );
+    }
+
+    if (!linked_employee_id) {
+      return NextResponse.json(
+        { error: "Linked Employee is required." },
         { status: 400 }
       );
     }
@@ -156,6 +168,19 @@ export async function POST(request: Request) {
 
     if (!user) {
       throw new Error("User was not created.");
+    }
+
+    const employeeValidation = await validateEmployeeCanLinkToUser(adminSupabase, {
+      employeeId: linked_employee_id,
+      userId: user.id,
+      actorOrganizationIds,
+    });
+
+    if ("error" in employeeValidation) {
+      return NextResponse.json(
+        { error: employeeValidation.error },
+        { status: employeeValidation.status }
+      );
     }
 
     const { error: profileError } = await adminSupabase
@@ -267,7 +292,26 @@ export async function POST(request: Request) {
       if (accessError) throw accessError;
     }
 
-    return NextResponse.json({ user_id: user.id });
+    const linkResult = await setUserEmployeeLink(adminSupabase, request, permission, {
+      userId: user.id,
+      employeeId: linked_employee_id,
+      actorOrganizationIds,
+      requireEmployee: true,
+    });
+
+    if ("error" in linkResult) {
+      return NextResponse.json(
+        { error: linkResult.error },
+        { status: linkResult.status }
+      );
+    }
+
+    const savedLink = linkResult as { linked_employee_id: string | null };
+
+    return NextResponse.json({
+      user_id: user.id,
+      linked_employee_id: savedLink.linked_employee_id,
+    });
   } catch (error: any) {
     return NextResponse.json(
       { error: error.message || "Failed to create user." },

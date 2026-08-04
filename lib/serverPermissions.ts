@@ -35,7 +35,7 @@ function failure(message: string, status: number) {
   } as const;
 }
 
-async function loadPermissionContext(request: Request) {
+export async function loadPermissionContext(request: Request) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -68,6 +68,14 @@ async function loadPermissionContext(request: Request) {
   if ("response" in accountContext) return accountContext;
 
   return accountContext satisfies ServerPermissionContext;
+}
+
+export function hasServerPermission(
+  context: Pick<ServerPermissionContext, "permissions">,
+  moduleCode: string,
+  actionCode: string
+) {
+  return hasPermission(context.permissions, moduleCode, actionCode);
 }
 
 export async function requirePermission(

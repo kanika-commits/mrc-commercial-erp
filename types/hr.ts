@@ -79,6 +79,7 @@ export type HrEmployeeUserOption = {
   full_name?: string | null;
   status?: string | null;
   linked_employee_id?: string | null;
+  role_summary?: string | null;
 };
 
 export type EmployeeDocument = {

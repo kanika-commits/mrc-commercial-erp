@@ -25,9 +25,9 @@ const emptyForm: FormState = {
 export default function DepartmentsPage() {
   const { access } = useAccessContext();
   const permissions = access?.permissions || [];
-  const canAdd = can(permissions, "hr_employees", "add");
-  const canEdit = can(permissions, "hr_employees", "edit");
-  const canDelete = can(permissions, "hr_employees", "delete");
+  const canAdd = can(permissions, "hr_departments", "add");
+  const canEdit = can(permissions, "hr_departments", "edit");
+  const canDelete = can(permissions, "hr_departments", "delete");
   const [departments, setDepartments] = useState<HrDepartment[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [editing, setEditing] = useState<HrDepartment | null>(null);

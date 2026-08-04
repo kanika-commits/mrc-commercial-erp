@@ -1,4 +1,223 @@
-export const DEFAULT_MODULE_NAVIGATION = {
+const approvedNavigationModuleNames: Record<string, string> = {
+  hr_employees: "Employee Registration",
+  reimbursements: "Reimbursement",
+  hr_attendance: "Attendance",
+  work_orders: "Work Order",
+  wo_approval: "Work Order Approval",
+  ra_bills: "RA Bills",
+  debit_notes: "Debit Notes",
+  ra_approval: "RA Bills & Debit Note Approvals",
+  invoices: "Invoices",
+  itc_claims: "ITC Review",
+  payments: "Payments",
+  hr_designations: "Designation",
+  hr_departments: "Departments",
+  hr_employee_attendance_policy: "Employee Attendance Policy",
+  companies: "Companies",
+  vendors: "Vendors",
+  sites: "Sites",
+  labour_trades: "Labour categories",
+  company_bank_accounts: "Bank Accounts",
+  labour_attendance_policy: "Labour Attendance Policy",
+  organizations: "Organizations",
+  users: "Users",
+  roles: "Roles",
+  permissions: "Permissions",
+  labour_workers: "Labour Registration",
+  labour_site_in: "Site-In",
+  labour_engineer_daily: "Engineer Daily Labour",
+  labour_attendance: "Attendance",
+  labour_work_logs: "Daily Work",
+  labour_daily_submission: "Labour Approval",
+  labour_muster_configuration: "Labour Attendance Policy",
+};
+
+const approvedNavigationRoutes: Record<string, string> = {
+  "/hr/employees": "hr",
+  "/hr/reimbursements": "hr",
+  "/hr/attendance/daily": "hr",
+  "/labour/workers": "hr",
+  "/labour/site-in": "hr",
+  "/labour/engineer-daily": "hr",
+  "/labour/attendance/daily": "hr",
+  "/labour/work-logs": "hr",
+  "/labour/approvals": "hr",
+  "/work-orders": "purchase",
+  "/approvals/work-orders": "purchase",
+  "/ra-bills": "project_management",
+  "/debit-notes": "project_management",
+  "/approvals": "project_management",
+  "/invoices": "accounts",
+  "/invoices/itc": "accounts",
+  "/payments": "accounts",
+  "/hr/designations": "settings",
+  "/hr/departments": "settings",
+  "/settings/policies/employee-attendance": "settings",
+  "/companies": "settings",
+  "/vendors": "settings",
+  "/sites": "settings",
+  "/labour/trades": "settings",
+  "/company-bank-accounts": "settings",
+  "/labour/configuration": "settings",
+  "/labour/settings": "settings",
+  "/settings/password": "settings",
+  "/organizations": "administration",
+  "/admin/users": "administration",
+  "/admin/roles": "administration",
+  "/admin/permissions": "administration",
+};
+
+const approvedGroups = [
+  {
+    id: "approved-project-management",
+    module_code: "project_management",
+    module_name: "Project Management",
+    route: "/modules/project-management",
+    sort_order: 10,
+    status: "active",
+  },
+  {
+    id: "approved-store-management",
+    module_code: "store_management",
+    module_name: "Store Management",
+    route: "/modules/store-management",
+    sort_order: 20,
+    status: "active",
+  },
+  {
+    id: "approved-human-resources",
+    module_code: "hr",
+    module_name: "Human Resources",
+    route: "/modules/hr",
+    sort_order: 30,
+    status: "active",
+  },
+  {
+    id: "approved-purchase",
+    module_code: "purchase",
+    module_name: "Purchase",
+    route: "/modules/purchase",
+    sort_order: 40,
+    status: "active",
+  },
+  {
+    id: "approved-accounts-finance",
+    module_code: "accounts",
+    module_name: "Accounts/Finance",
+    route: "/modules/accounts",
+    sort_order: 50,
+    status: "active",
+  },
+  {
+    id: "approved-settings",
+    module_code: "settings",
+    module_name: "Settings",
+    route: "/modules/settings",
+    sort_order: 60,
+    status: "active",
+  },
+  {
+    id: "approved-admin",
+    module_code: "administration",
+    module_name: "Admin",
+    route: "/modules/administration",
+    sort_order: 70,
+    status: "active",
+  },
+  {
+    id: "approved-reports",
+    module_code: "reports",
+    module_name: "Reports",
+    route: "/modules/reports",
+    sort_order: 80,
+    status: "active",
+  },
+  {
+    id: "approved-support",
+    module_code: "support",
+    module_name: "Support",
+    route: "/modules/support",
+    sort_order: 90,
+    status: "active",
+  },
+];
+
+const approvedNavigationFallbackModules = [
+  {
+    id: "approved-hr-designations",
+    module_group: "settings",
+    module_code: "hr_designations",
+    module_name: "Designation",
+    route: "/hr/designations",
+    sort_order: 10,
+    status: "active",
+  },
+  {
+    id: "approved-hr-departments",
+    module_group: "settings",
+    module_code: "hr_departments",
+    module_name: "Departments",
+    route: "/hr/departments",
+    sort_order: 11,
+    status: "active",
+  },
+  {
+    id: "approved-change-password",
+    module_group: "settings",
+    module_code: "settings_password",
+    module_name: "Change password",
+    route: "/settings/password",
+    sort_order: 12,
+    status: "active",
+  },
+];
+
+function approvedModuleGroup(module: {
+  module_group?: string | null;
+  module_code?: string | null;
+  route?: string | null;
+}) {
+  if (module.route && approvedNavigationRoutes[module.route]) return approvedNavigationRoutes[module.route];
+  if (module.module_code === "reports") return "reports";
+  return null;
+}
+
+function alignModuleToApprovedStructure<T extends {
+  module_group?: string | null;
+  module_code?: string | null;
+  module_name?: string | null;
+  route?: string | null;
+  sort_order?: number | null;
+}>(module: T): T | null {
+  const moduleGroup = approvedModuleGroup(module);
+  if (!moduleGroup) return null;
+  return {
+    ...module,
+    module_group: moduleGroup,
+    module_name: module.module_code && approvedNavigationModuleNames[module.module_code]
+      ? approvedNavigationModuleNames[module.module_code]
+      : module.module_name,
+  };
+}
+
+export function filterVisibleModuleNavigation<T extends { groups: any[]; modules: any[] }>(
+  navigation: T,
+): T {
+  const modules = (navigation.modules || [])
+    .map(alignModuleToApprovedStructure)
+    .filter(Boolean) as T["modules"];
+  const moduleKeys = new Set(modules.map((module: any) => `${module.module_code || ""}::${module.route || ""}`));
+  const fallbackModules = approvedNavigationFallbackModules.filter(
+    (module) => !moduleKeys.has(`${module.module_code}::${module.route}`),
+  );
+  return {
+    ...navigation,
+    groups: approvedGroups,
+    modules: [...modules, ...fallbackModules] as T["modules"],
+  };
+}
+
+export const DEFAULT_MODULE_NAVIGATION = filterVisibleModuleNavigation({
   groups: [
     {
       id: "default-dashboard",
@@ -8,46 +227,7 @@ export const DEFAULT_MODULE_NAVIGATION = {
       sort_order: 1,
       status: "active",
     },
-    {
-      id: "default-administration",
-      module_code: "administration",
-      module_name: "Admin & Settings",
-      route: "/modules/administration",
-      sort_order: 10,
-      status: "active",
-    },
-    {
-      id: "default-master-setup",
-      module_code: "master_setup",
-      module_name: "Master Setup",
-      route: "/modules/master-setup",
-      sort_order: 20,
-      status: "active",
-    },
-    {
-      id: "default-contract-management",
-      module_code: "contract_management",
-      module_name: "Contract Management",
-      route: "/modules/contract-management",
-      sort_order: 30,
-      status: "active",
-    },
-    {
-      id: "default-reports",
-      module_code: "reports",
-      module_name: "Reports",
-      route: "/modules/reports",
-      sort_order: 50,
-      status: "active",
-    },
-    {
-      id: "default-hr",
-      module_code: "hr",
-      module_name: "HR",
-      route: "/modules/hr",
-      sort_order: 50,
-      status: "active",
-    },
+    ...approvedGroups,
   ],
   modules: [
     {
@@ -70,7 +250,7 @@ export const DEFAULT_MODULE_NAVIGATION = {
     },
     {
       id: "default-work-orders",
-      module_group: "contract_management",
+      module_group: "purchase",
       module_code: "work_orders",
       module_name: "Work Orders",
       route: "/work-orders",
@@ -81,14 +261,14 @@ export const DEFAULT_MODULE_NAVIGATION = {
       id: "default-hr-employees",
       module_group: "hr",
       module_code: "hr_employees",
-      module_name: "Employee Master",
+      module_name: "Employee Registration",
       route: "/hr/employees",
       sort_order: 1,
       status: "active",
     },
     {
       id: "default-companies",
-      module_group: "master_setup",
+      module_group: "settings",
       module_code: "companies",
       module_name: "Companies",
       route: "/companies",
@@ -114,12 +294,21 @@ export const DEFAULT_MODULE_NAVIGATION = {
       status: "active",
     },
     {
+      id: "default-hr-attendance",
+      module_group: "hr",
+      module_code: "hr_attendance",
+      module_name: "Mark Attendance",
+      route: "/hr/attendance/daily",
+      sort_order: 3,
+      status: "active",
+    },
+    {
       id: "default-hr-employee-document-import",
       module_group: "hr",
       module_code: "hr_employee_document_import",
       module_name: "Employee Document Import",
       route: "/hr/employees/import-documents",
-      sort_order: 3,
+      sort_order: 4,
       status: "active",
     },
     {
@@ -133,7 +322,7 @@ export const DEFAULT_MODULE_NAVIGATION = {
     },
     {
       id: "default-sites",
-      module_group: "master_setup",
+      module_group: "settings",
       module_code: "sites",
       module_name: "Sites",
       route: "/sites",
@@ -142,7 +331,7 @@ export const DEFAULT_MODULE_NAVIGATION = {
     },
     {
       id: "default-wo-approval",
-      module_group: "contract_management",
+      module_group: "purchase",
       module_code: "wo_approval",
       module_name: "Work Order Approvals",
       route: "/approvals/work-orders",
@@ -151,7 +340,7 @@ export const DEFAULT_MODULE_NAVIGATION = {
     },
     {
       id: "default-ra-bills",
-      module_group: "contract_management",
+      module_group: "project_management",
       module_code: "ra_bills",
       module_name: "RA Bills",
       route: "/ra-bills",
@@ -160,7 +349,7 @@ export const DEFAULT_MODULE_NAVIGATION = {
     },
     {
       id: "default-vendors",
-      module_group: "master_setup",
+      module_group: "settings",
       module_code: "vendors",
       module_name: "Vendors",
       route: "/vendors",
@@ -178,9 +367,9 @@ export const DEFAULT_MODULE_NAVIGATION = {
     },
     {
       id: "default-company-bank-accounts",
-      module_group: "master_setup",
+      module_group: "settings",
       module_code: "company_bank_accounts",
-      module_name: "Company Bank Accounts",
+      module_name: "Bank Accounts",
       route: "/company-bank-accounts",
       sort_order: 4,
       status: "active",
@@ -196,16 +385,16 @@ export const DEFAULT_MODULE_NAVIGATION = {
     },
     {
       id: "default-ra-approval",
-      module_group: "contract_management",
+      module_group: "project_management",
       module_code: "ra_approval",
-      module_name: "Commercial Approvals",
+      module_name: "RA Bills & Debit Note Approvals",
       route: "/approvals",
       sort_order: 4,
       status: "active",
     },
     {
       id: "default-invoices",
-      module_group: "contract_management",
+      module_group: "accounts",
       module_code: "invoices",
       module_name: "Invoices",
       route: "/invoices",
@@ -214,7 +403,7 @@ export const DEFAULT_MODULE_NAVIGATION = {
     },
     {
       id: "default-itc-claims",
-      module_group: "contract_management",
+      module_group: "accounts",
       module_code: "itc_claims",
       module_name: "ITC Review",
       route: "/invoices/itc",
@@ -223,7 +412,7 @@ export const DEFAULT_MODULE_NAVIGATION = {
     },
     {
       id: "default-payments",
-      module_group: "contract_management",
+      module_group: "accounts",
       module_code: "payments",
       module_name: "Payments",
       route: "/payments",
@@ -232,12 +421,111 @@ export const DEFAULT_MODULE_NAVIGATION = {
     },
     {
       id: "default-debit-notes",
-      module_group: "contract_management",
+      module_group: "project_management",
       module_code: "debit_notes",
       module_name: "Debit Notes",
       route: "/debit-notes",
       sort_order: 8,
       status: "active",
     },
+    {
+      id: "default-labour-workers",
+      module_group: "hr",
+      module_code: "labour_workers",
+      module_name: "Labour Registration",
+      route: "/labour/workers",
+      sort_order: 1,
+      status: "active",
+    },
+    {
+      id: "default-labour-trades",
+      module_group: "settings",
+      module_code: "labour_trades",
+      module_name: "Labour categories",
+      route: "/labour/trades",
+      sort_order: 3,
+      status: "active",
+    },
+    {
+      id: "default-labour-site-in",
+      module_group: "hr",
+      module_code: "labour_site_in",
+      module_name: "Site-In",
+      route: "/labour/site-in",
+      sort_order: 3.5,
+      status: "active",
+    },
+    {
+      id: "default-labour-engineer-daily",
+      module_group: "hr",
+      module_code: "labour_engineer_daily",
+      module_name: "Engineer Daily Labour",
+      route: "/labour/engineer-daily",
+      sort_order: 3.75,
+      status: "active",
+    },
+    {
+      id: "default-labour-approval",
+      module_group: "hr",
+      module_code: "labour_daily_submission",
+      module_name: "Labour Approval",
+      route: "/labour/approvals",
+      sort_order: 4.5,
+      status: "active",
+    },
+    {
+      id: "default-labour-configuration",
+      module_group: "settings",
+      module_code: "labour_muster_configuration",
+      module_name: "Labour Attendance Policy",
+      route: "/labour/configuration",
+      sort_order: 9,
+      status: "active",
+    },
+    {
+      id: "default-labour-settings",
+      module_group: "settings",
+      module_code: "labour_attendance_policy",
+      module_name: "Labour Attendance Policy",
+      route: "/labour/settings",
+      sort_order: 9,
+      status: "active",
+    },
+    {
+      id: "default-employee-attendance-policy",
+      module_group: "settings",
+      module_code: "hr_employee_attendance_policy",
+      module_name: "Employee Attendance Policy",
+      route: "/settings/policies/employee-attendance",
+      sort_order: 9,
+      status: "active",
+    },
+    {
+      id: "default-hr-designations",
+      module_group: "settings",
+      module_code: "hr_designations",
+      module_name: "Designation",
+      route: "/hr/designations",
+      sort_order: 10,
+      status: "active",
+    },
+    {
+      id: "default-hr-departments",
+      module_group: "settings",
+      module_code: "hr_departments",
+      module_name: "Departments",
+      route: "/hr/departments",
+      sort_order: 11,
+      status: "active",
+    },
+    {
+      id: "default-change-password",
+      module_group: "settings",
+      module_code: "settings_password",
+      module_name: "Change password",
+      route: "/settings/password",
+      sort_order: 12,
+      status: "active",
+    },
   ],
-};
+});

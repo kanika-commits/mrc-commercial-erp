@@ -243,6 +243,13 @@ export default function EmployeeForm({
   const selectedDepartment = departments.find((department) => department.id === form.department_id)?.department_name || null;
   const selectedDesignation = designations.find((designation) => designation.id === form.designation_id)?.designation_name || null;
   const selectedManager = managers.find((manager) => manager.id === form.reporting_manager_id);
+  const [erpProfileSearch, setErpProfileSearch] = useState("");
+  const selectedErpProfile = erpUsers?.find((user) => user.id === form.user_id) || null;
+  const filteredErpUsers = (erpUsers || []).filter((user) => {
+    const query = erpProfileSearch.trim().toLowerCase();
+    if (!query) return true;
+    return [user.full_name, user.email].some((value) => String(value || "").toLowerCase().includes(query));
+  });
   const tabs = [
     { id: "basic", label: "Basic Information" },
     { id: "employment", label: "Employment" },
@@ -304,8 +311,14 @@ export default function EmployeeForm({
             />
             <SectionCard title="Basic Information" description="Employee core identity and contact details.">
               <div className="grid gap-4 md:grid-cols-2">
-                <Field label="Employee Code *">
-                  <input name="employee_code" value={form.employee_code} onChange={handleChange} className={inputClass} />
+                <Field label="Employee Code">
+                  {mode === "create" ? (
+                    <div className="flex h-10 items-center rounded-xl border bg-slate-50 px-3 text-sm text-slate-500">
+                      Employee Code will be generated automatically.
+                    </div>
+                  ) : (
+                    <input name="employee_code" value={form.employee_code} readOnly className={`${inputClass} bg-slate-50 text-slate-600`} />
+                  )}
                 </Field>
                 <Field label="Employee Name *">
                   <input name="employee_name" value={form.employee_name} onChange={handleChange} className={inputClass} />
@@ -419,32 +432,72 @@ export default function EmployeeForm({
                     ))}
                 </select>
               </Field>
-              {erpUsers && (
-                <Field label="Link ERP User">
-                  <select name="user_id" value={form.user_id} onChange={handleChange} className={inputClass}>
-                    <option value="">No ERP user linked</option>
-                    {erpUsers.map((user) => {
-                      const isLinkedElsewhere = Boolean(
-                        user.linked_employee_id && user.linked_employee_id !== initialEmployee?.id,
-                      );
-
-                      return (
-                        <option key={user.id} value={user.id} disabled={isLinkedElsewhere}>
-                          {user.email || user.full_name || user.id}
-                          {user.full_name ? ` - ${user.full_name}` : ""}
-                          {isLinkedElsewhere ? " (already linked)" : ""}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </Field>
-              )}
             </div>
             <div className="mt-4">
               <Field label="Exit Remark">
                 <textarea name="exit_remark" value={form.exit_remark} onChange={handleChange} className={textareaClass} />
               </Field>
             </div>
+            {mode === "edit" && erpUsers && (
+              <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-950">ERP Login</h3>
+                    <p className="mt-1 text-xs text-slate-500">Link this employee to an existing active ERP profile.</p>
+                  </div>
+                  <span className={`rounded-full px-3 py-1 text-xs font-semibold ${form.user_id ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>
+                    {form.user_id ? "Linked" : "Not Linked"}
+                  </span>
+                </div>
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  <Field label="Search ERP Profile">
+                    <input
+                      value={erpProfileSearch}
+                      onChange={(event) => setErpProfileSearch(event.target.value)}
+                      className={inputClass}
+                      placeholder="Search by name or email"
+                    />
+                  </Field>
+                  <Field label="ERP Profile">
+                    <select name="user_id" value={form.user_id} onChange={handleChange} className={inputClass}>
+                      <option value="">No ERP profile linked</option>
+                      {filteredErpUsers.map((user) => {
+                        const isCurrentLink = user.id === initialEmployee?.user_id;
+                        const isLinkedElsewhere = Boolean(
+                          user.linked_employee_id && user.linked_employee_id !== initialEmployee?.id,
+                        );
+                        const isInactive = user.status !== "active";
+                        const disabled = !isCurrentLink && (isLinkedElsewhere || isInactive);
+
+                        return (
+                          <option key={user.id} value={user.id} disabled={disabled}>
+                            {user.full_name || user.email || user.id}
+                            {user.email ? ` (${user.email})` : ""}
+                            {isLinkedElsewhere ? " - Already linked to another employee" : ""}
+                            {isInactive ? " - Inactive" : ""}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </Field>
+                </div>
+                <div className="mt-4 grid gap-4 md:grid-cols-3">
+                  <ReadOnlyItem label="Profile Name" value={selectedErpProfile?.full_name || "-"} />
+                  <ReadOnlyItem label="Profile Email" value={selectedErpProfile?.email || "-"} />
+                  <ReadOnlyItem label="Profile Status" value={selectedErpProfile?.status || "-"} />
+                  <ReadOnlyItem label="Current Roles" value={selectedErpProfile?.role_summary || "-"} />
+                </div>
+                {form.user_id && (
+                  <button
+                    type="button"
+                    onClick={() => setForm((prev) => ({ ...prev, user_id: "" }))}
+                    className="mt-4 rounded-lg border border-rose-200 bg-white px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50"
+                  >
+                    Unlink ERP Profile
+                  </button>
+                )}
+              </div>
+            )}
             {selectedManager && (
               <p className="mt-4 text-sm text-slate-500">
                 Reporting to {selectedManager.employee_name} ({selectedManager.employee_code}).

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, CheckCircle2, FileSpreadsheet, Play, RefreshCw, Upload } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Download, FileSpreadsheet, Play, RefreshCw, Upload } from "lucide-react";
 import AlertMessage from "@/components/AlertMessage";
 import HrSectionNav from "@/components/hr/HrSectionNav";
 import { apiFetch, formatDate, getAccessToken, labelize } from "@/components/hr/hrClient";
@@ -35,12 +35,14 @@ type ImportRow = {
   import_status: string;
   errors: string[];
   warnings: string[];
+  import_result?: Record<string, any> | null;
+  final_status?: string;
+  reason?: string;
 };
 
 const FIELD_OPTIONS = [
   ["", "Do not import"],
   ["source_serial_no", "SrNo"],
-  ["employee_code", "Employee Code"],
   ["employee_title", "Employee Title"],
   ["work_id", "Work ID"],
   ["employee_name", "Employee Name"],
@@ -119,15 +121,29 @@ const FIELD_OPTIONS = [
   ["notice_period_to", "Notice To"],
   ["exit_remark", "Resign Remark"],
   ["remarks", "Employee Remark"],
+  ["employee_photo_drive_url", "Employee Photo Drive Link"],
+  ["aadhaar_front_drive_url", "Aadhaar Front Drive Link"],
+  ["aadhaar_back_drive_url", "Aadhaar Back Drive Link"],
+  ["aadhaar_combined_drive_url", "Combined Aadhaar Drive Link"],
+  ["pan_drive_url", "PAN Drive Link"],
+  ["bank_proof_drive_url", "Bank Proof Drive Link"],
+  ["resume_drive_url", "Resume Drive Link"],
+  ["offer_letter_drive_url", "Offer Letter Drive Link"],
+  ["appointment_letter_drive_url", "Appointment Letter Drive Link"],
+  ["experience_letter_drive_url", "Experience Letter Drive Link"],
+  ["education_certificate_drive_url", "Education Certificate Drive Link"],
+  ["medical_certificate_drive_url", "Medical Certificate Drive Link"],
+  ["police_verification_drive_url", "Police Verification Drive Link"],
+  ["other_document_drive_url", "Other Document Drive Link"],
   ["legacy_remark", "Remark"],
 ];
 
 const MASTER_MAPPING_KEY = "__master_mappings";
 
 function statusClass(status: string) {
-  if (["ready", "valid", "imported", "completed"].includes(status)) return "bg-emerald-50 text-emerald-700";
-  if (["invalid", "failed", "completed_with_errors"].includes(status)) return "bg-red-50 text-red-700";
-  if (["warning", "validated"].includes(status)) return "bg-amber-50 text-amber-700";
+  if (["ready", "valid", "imported", "completed", "imported_successfully"].includes(status)) return "bg-emerald-50 text-emerald-700";
+  if (["invalid", "failed", "completed_with_errors", "validation_failed", "import_failed"].includes(status)) return "bg-red-50 text-red-700";
+  if (["warning", "validated", "already_exists", "skipped"].includes(status)) return "bg-amber-50 text-amber-700";
   return "bg-slate-100 text-slate-700";
 }
 
@@ -147,10 +163,38 @@ export default function EmployeeImportPage() {
   const [message, setMessage] = useState("");
   const [success, setSuccess] = useState("");
   const [dobEdits, setDobEdits] = useState<Record<string, string>>({});
+  const [mappingDirty, setMappingDirty] = useState(false);
+  const [importSummary, setImportSummary] = useState<Record<string, number> | null>(null);
+  const [importReportRows, setImportReportRows] = useState<ImportRow[] | null>(null);
+  const [importProgress, setImportProgress] = useState("");
 
   const headers = useMemo(() => Object.keys(mapping).filter((header) => header !== MASTER_MAPPING_KEY), [mapping]);
   const summary = batch?.summary || {};
-  const canRunImport = Boolean(batch && canExecute && summary.invalid === 0 && rows.some((row) => row.import_status === "pending"));
+  const readyImportRows = useMemo(
+    () => rows.filter((row) => isReadyForImport(row)),
+    [rows],
+  );
+  const readyImportRowCount = rows.length > 0 ? readyImportRows.length : Number(summary.ready || 0);
+  const importInProgress = loading || batch?.status === "executing";
+  const executeDisabledReason = !batch
+    ? "Upload and validate a workbook first."
+    : !canExecute
+      ? "You do not have permission to execute employee imports."
+      : mappingDirty
+          ? "Save mapping changes before importing."
+          : importInProgress
+            ? "Batch is currently importing."
+            : readyImportRowCount <= 0
+              ? "No Ready rows are available to import."
+              : "";
+  const canRunImport = Boolean(batch && canExecute && !mappingDirty && !importInProgress && readyImportRowCount > 0);
+  const notImportedRows = useMemo(
+    () => (importReportRows || rows).filter((row) => row.import_status !== "imported"),
+    [importReportRows, rows],
+  );
+  const shouldShowImportSummary = Boolean(importSummary || (batch && ["completed", "completed_with_errors"].includes(batch.status)));
+  const importCompleted = Boolean(batch && shouldShowImportSummary);
+  const displayedRows = importCompleted ? (importReportRows || rows) : rows;
   const sourceMasterValues = useMemo(() => ({
     companies: uniqueValues(rows.map((row) => row.normalized_data?.company_name)),
     sites: uniqueValues(rows.map((row) => row.normalized_data?.site_name)),
@@ -167,10 +211,18 @@ export default function EmployeeImportPage() {
     setMasters(result.masters || { companies: [], sites: [], departments: [], designations: [] });
     setTotal(Number(result.total || 0));
     setMapping(result.batch?.mapping || {});
+    setMappingDirty(false);
+  }
+
+  async function loadImportReport(batchId: string) {
+    const result = await apiFetch(`/api/hr/employee-import/report?batch_id=${batchId}`);
+    setImportSummary(result.summary || null);
+    setImportReportRows(result.rows || []);
   }
 
   function updateMasterMapping(group: string, sourceValue: string, targetId: string) {
     const sourceKey = masterMappingKey(sourceValue);
+    setMappingDirty(true);
     setMapping((prev) => {
       const previousMasters = ((prev[MASTER_MAPPING_KEY] || {}) as Record<string, Record<string, string>>);
       const groupMappings = { ...(previousMasters[group] || {}) };
@@ -195,6 +247,9 @@ export default function EmployeeImportPage() {
     setLoading(true);
     setMessage("");
     setSuccess("");
+    setImportProgress("");
+    setImportSummary(null);
+    setImportReportRows(null);
 
     try {
       const token = await getAccessToken();
@@ -209,6 +264,7 @@ export default function EmployeeImportPage() {
       if (!response.ok) throw new Error(result.error || "Workbook upload failed.");
       setBatch(result.batch);
       setMapping(result.batch?.mapping || {});
+      setMappingDirty(false);
       setSuccess(`Parsed ${result.parsed_rows || 0} rows from ${result.batch?.source_sheet_name || "workbook"}.`);
       await loadPreview(result.batch.id);
     } catch (error: any) {
@@ -223,12 +279,14 @@ export default function EmployeeImportPage() {
     setLoading(true);
     setMessage("");
     setSuccess("");
+    setImportProgress("");
     try {
       const result = await apiFetch("/api/hr/employee-import/mapping", {
         method: "PUT",
         body: JSON.stringify({ batch_id: batch.id, mapping }),
       });
       setBatch(result.batch);
+      setMappingDirty(false);
       setSuccess("Mapping saved and rows revalidated.");
       await loadPreview(batch.id);
     } catch (error: any) {
@@ -249,6 +307,7 @@ export default function EmployeeImportPage() {
         body: JSON.stringify({ batch_id: batch.id }),
       });
       setBatch(result.batch);
+      setMappingDirty(false);
       setSuccess("Import batch revalidated against current HR masters.");
       await loadPreview(batch.id);
     } catch (error: any) {
@@ -260,22 +319,53 @@ export default function EmployeeImportPage() {
 
   async function executeBatch() {
     if (!batch) return;
-    if (!window.confirm("Import all valid rows from this batch? This cannot be undone from this screen.")) return;
+    if (!window.confirm(`Import ${readyImportRowCount} ready employee${readyImportRowCount === 1 ? "" : "s"} from this batch? This cannot be undone from this screen.`)) return;
     setLoading(true);
     setMessage("");
     setSuccess("");
+    setImportProgress(`Importing 0 / ${readyImportRowCount} employees...`);
     try {
       const result = await apiFetch("/api/hr/employee-import/execute", {
         method: "POST",
         body: JSON.stringify({ batch_id: batch.id }),
       });
       setBatch(result.batch);
-      setSuccess(`Import finished. Imported: ${result.summary?.imported || 0}, failed: ${result.summary?.failed || 0}.`);
+      setImportSummary(result.summary || null);
+      setImportProgress(`${result.summary?.imported || 0} / ${readyImportRowCount} imported.`);
+      const generatedCodes = (result.results || []).map((row: any) => row.employeeCode || row.employee_code).filter(Boolean);
+      setSuccess(`Import finished. Imported Successfully: ${result.summary?.imported || 0}, Already Exists: ${result.summary?.skipped || 0}, Validation Failed: ${result.summary?.invalid || 0}, Import Failed: ${result.summary?.failed || 0}.${generatedCodes.length ? ` Generated Employee Codes: ${generatedCodes.slice(0, 8).join(", ")}${generatedCodes.length > 8 ? ", ..." : ""}.` : ""}`);
       await loadPreview(batch.id);
+      await loadImportReport(batch.id);
     } catch (error: any) {
       setMessage(error.message || "Failed to execute import.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function downloadRemainingWorkbook() {
+    if (!batch) return;
+    try {
+      setMessage("");
+      const token = await getAccessToken();
+      const response = await fetch(`/api/hr/employee-import/remaining?batch_id=${batch.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || "Failed to download remaining employees workbook.");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "Download Remaining Employees.xlsx";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error: any) {
+      setMessage(error.message || "Failed to download remaining employees workbook.");
     }
   }
 
@@ -333,23 +423,30 @@ export default function EmployeeImportPage() {
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.28em] text-sky-600">Employee Import</p>
-          <h1 className="text-3xl font-bold text-slate-950">Head Office Employee Import</h1>
-          <p className="text-sm text-slate-500">Upload the approved workbook, review mappings, validate rows and import only after the preview is clean.</p>
+          <h1 className="text-3xl font-bold text-slate-950">Unified Employee Import</h1>
+          <p className="text-sm text-slate-500">Upload the official workbook with employee details and direct Google Drive document links in the same row.</p>
         </div>
-        <Link href="/hr/employees" className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50">
-          <ArrowLeft className="h-4 w-4" />
-          Back to Employees
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <a href="/templates/ConstructIQ_Employee_Import_Template.xlsx" className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50">
+            <Download className="h-4 w-4" />
+            Download Official Template
+          </a>
+          <Link href="/hr/employees" className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50">
+            <ArrowLeft className="h-4 w-4" />
+            Back to Employees
+          </Link>
+        </div>
       </header>
 
       <HrSectionNav />
       <AlertMessage type="error" message={message} onClose={() => setMessage("")} />
       <AlertMessage type="success" message={success} onClose={() => setSuccess("")} />
 
+      {!importCompleted && (
       <section className="rounded-2xl border bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-0 flex-1">
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Head Office Workbook</label>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Completed Employee Import Workbook</label>
             <input
               type="file"
               accept=".xlsx,.xlsm"
@@ -372,17 +469,19 @@ export default function EmployeeImportPage() {
           )}
         </div>
       </section>
+      )}
 
-      {batch && (
+      {batch && !importCompleted && (
         <section className="grid gap-4 lg:grid-cols-4">
           <Summary label="Batch" value={batch.source_file_name} detail={batch.source_sheet_name || "-"} />
           <Summary label="Status" value={labelize(batch.status)} detail={formatDate(batch.created_at)} />
           <Summary label="Rows" value={String(summary.total || total || 0)} detail={`${summary.ready || 0} ready`} />
           <Summary label="Issues" value={String(summary.invalid || 0)} detail={`${summary.failed || 0} failed imports`} />
+          <Summary label="Documents" value={String(summary.documents_found || 0)} detail={`${summary.document_errors || 0} document errors`} />
         </section>
       )}
 
-      {batch && headers.length > 0 && (
+      {batch && !importCompleted && headers.length > 0 && (
         <section className="rounded-2xl border bg-white shadow-sm">
           <div className="border-b p-5">
             <h2 className="text-lg font-bold text-slate-950">Master Mapping Review</h2>
@@ -394,7 +493,10 @@ export default function EmployeeImportPage() {
                 <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">{header}</span>
                 <select
                   value={mapping[header] || ""}
-                  onChange={(event) => setMapping((prev) => ({ ...prev, [header]: event.target.value }))}
+                  onChange={(event) => {
+                    setMappingDirty(true);
+                    setMapping((prev) => ({ ...prev, [header]: event.target.value }));
+                  }}
                   disabled={!canUpload || loading}
                   className="h-10 w-full rounded-xl border bg-white px-3 text-sm"
                 >
@@ -419,16 +521,55 @@ export default function EmployeeImportPage() {
               </>
             )}
             {canExecute && (
-              <button type="button" onClick={executeBatch} disabled={loading || !canRunImport} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
-                <Play className="h-4 w-4" />
-                Execute Import
-              </button>
+              <div className="text-right">
+                <button type="button" onClick={executeBatch} disabled={!canRunImport} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+                  <Play className="h-4 w-4" />
+                  {readyImportRowCount > 0 ? `Import ${readyImportRowCount} Employee${readyImportRowCount === 1 ? "" : "s"}` : "Execute Import"}
+                </button>
+                {!canRunImport && executeDisabledReason && (
+                  <p className="mt-1 max-w-xs text-xs text-slate-500">{executeDisabledReason}</p>
+                )}
+              </div>
             )}
           </div>
         </section>
       )}
 
-      {batch && (
+      {importProgress && !importCompleted && (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm font-semibold text-sky-800">
+          {importProgress}
+        </div>
+      )}
+
+      {batch && shouldShowImportSummary && (
+        <section className="rounded-2xl border bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b p-5">
+            <div>
+              <h2 className="text-lg font-bold text-slate-950">Import Summary</h2>
+              <p className="text-sm text-slate-500">Every row ends in Imported Successfully, Already Exists, Validation Failed or Import Failed.</p>
+            </div>
+            {notImportedRows.length > 0 && (
+              <button
+                type="button"
+                onClick={downloadRemainingWorkbook}
+                className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
+              >
+                <Download className="h-4 w-4" />
+                Download Remaining Employees.xlsx
+              </button>
+            )}
+          </div>
+          <div className="grid gap-4 p-5 md:grid-cols-2 xl:grid-cols-5">
+            <Summary label="Total Rows" value={String((importSummary || summary).total || total || 0)} detail="Rows staged from workbook" />
+            <Summary label="Imported Successfully" value={String((importSummary || summary).imported || 0)} detail="Employee records created" />
+            <Summary label="Already Exists" value={String((importSummary || summary).skipped || 0)} detail="Skipped idempotently" />
+            <Summary label="Validation Failed" value={String((importSummary || summary).invalid || 0)} detail="Not imported" />
+            <Summary label="Import Failed" value={String((importSummary || summary).failed || 0)} detail="Ready row failures" />
+          </div>
+        </section>
+      )}
+
+      {batch && !importCompleted && (
         <section className="rounded-2xl border bg-white shadow-sm">
           <div className="border-b p-5">
             <h2 className="text-lg font-bold text-slate-950">ERP Master Value Mapping</h2>
@@ -488,83 +629,118 @@ export default function EmployeeImportPage() {
           <div className="flex items-center gap-3 border-b p-5">
             <FileSpreadsheet className="h-5 w-5 text-slate-500" />
             <div>
-              <h2 className="text-lg font-bold text-slate-950">Preview Rows</h2>
-              <p className="text-sm text-slate-500">Showing the first 100 staged rows. Invalid rows must be resolved before execution.</p>
+              <h2 className="text-lg font-bold text-slate-950">{importCompleted ? "Import Results" : "Preview Rows"}</h2>
+              <p className="text-sm text-slate-500">
+                {importCompleted
+                  ? "Final status for every staged employee row."
+                  : "Showing the first 100 staged rows. Ready rows can be imported while invalid rows remain for correction."}
+              </p>
             </div>
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
               <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="px-4 py-3">Row</th>
-                  <th className="px-4 py-3">Employee</th>
-                  <th className="px-4 py-3">Assignment</th>
-                  <th className="px-4 py-3">Validation</th>
-                  <th className="px-4 py-3">Import</th>
-                  <th className="px-4 py-3">Issues</th>
-                </tr>
+                {importCompleted ? (
+                  <tr>
+                    <th className="px-4 py-3">Generated Employee Code</th>
+                    <th className="px-4 py-3">Employee Name</th>
+                    <th className="px-4 py-3">Company</th>
+                    <th className="px-4 py-3">Site</th>
+                    <th className="px-4 py-3">Final Status</th>
+                    <th className="px-4 py-3">Reason</th>
+                  </tr>
+                ) : (
+                  <tr>
+                    <th className="px-4 py-3">Row</th>
+                    <th className="px-4 py-3">Employee Code</th>
+                    <th className="px-4 py-3">Employee Name</th>
+                    <th className="px-4 py-3">Company / Site</th>
+                    <th className="px-4 py-3">Department / Designation</th>
+                    <th className="px-4 py-3">Reporting Manager</th>
+                    <th className="px-4 py-3">Documents</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3">Import</th>
+                    <th className="px-4 py-3">Issues</th>
+                  </tr>
+                )}
               </thead>
               <tbody className="divide-y">
-                {rows.map((row) => (
-                  <tr key={row.id}>
-                    <td className="px-4 py-3 font-mono text-xs">{row.source_row_number}</td>
-                    <td className="px-4 py-3">
-                      <p className="font-semibold text-slate-950">{row.normalized_data?.employee_name || "-"}</p>
-                      <p className="text-xs text-slate-500">{row.normalized_data?.employee_code || "-"}</p>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-slate-600">
-                      <p>{row.normalized_data?.site_name || "-"}</p>
-                      <p>{row.normalized_data?.department_name || "-"} / {row.normalized_data?.designation_name || "-"}</p>
-                    </td>
-                    <td className="px-4 py-3"><Badge value={row.validation_status} /></td>
-                    <td className="px-4 py-3"><Badge value={row.import_status} /></td>
-                    <td className="px-4 py-3 text-xs">
-                      {[...(row.errors || []), ...(row.warnings || [])].length === 0 ? (
-                        <span className="text-slate-400">-</span>
-                      ) : (
-                        <div className="space-y-3">
-                          <ul className="list-disc space-y-1 pl-4 text-slate-600">
-                            {[...(row.errors || []), ...(row.warnings || [])].map((issue, index) => <li key={`${row.id}-${index}`}>{issue}</li>)}
-                          </ul>
-                          {canUpload && (row.errors || []).some((issue) => /date of birth/i.test(issue)) && (
-                            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-900">
-                              <p className="font-semibold">DOB correction required</p>
-                              <p className="mt-1 text-[11px]">Original workbook value is preserved in raw data. Correct the normalized DOB or clear it with acknowledgement before import.</p>
-                              <div className="mt-2 flex flex-wrap items-center gap-2">
-                                <input
-                                  type="date"
-                                  value={dobEdits[row.id] ?? row.normalized_data?.date_of_birth ?? ""}
-                                  onChange={(event) => setDobEdits((prev) => ({ ...prev, [row.id]: event.target.value }))}
-                                  disabled={loading}
-                                  className="h-9 rounded-lg border bg-white px-2 text-xs text-slate-900"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => saveDobCorrection(row)}
-                                  disabled={loading}
-                                  className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-                                >
-                                  Save DOB
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => saveDobCorrection(row, true)}
-                                  disabled={loading}
-                                  className="rounded-lg border bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50"
-                                >
-                                  Clear with warning
-                                </button>
+                {displayedRows.map((row) => (
+                  importCompleted ? (
+                    <tr key={row.id}>
+                      <td className="px-4 py-3 font-mono text-xs">{row.import_result?.employeeCode || row.import_result?.employee_code || row.normalized_data?.employee_code || "-"}</td>
+                      <td className="px-4 py-3 font-semibold text-slate-950">{row.normalized_data?.employee_name || "-"}</td>
+                      <td className="px-4 py-3 text-xs text-slate-600">{row.normalized_data?.company_name || "-"}</td>
+                      <td className="px-4 py-3 text-xs text-slate-600">{row.normalized_data?.site_name || "-"}</td>
+                      <td className="px-4 py-3"><Badge value={finalRowStatus(row)} /></td>
+                      <td className="px-4 py-3 text-xs text-slate-600">{rowFailureReason(row)}</td>
+                    </tr>
+                  ) : (
+                    <tr key={row.id}>
+                      <td className="px-4 py-3 font-mono text-xs">{row.source_row_number}</td>
+                      <td className="px-4 py-3 text-xs text-slate-500">Generated automatically</td>
+                      <td className="px-4 py-3 font-semibold text-slate-950">{row.normalized_data?.employee_name || "-"}</td>
+                      <td className="px-4 py-3 text-xs text-slate-600">
+                        <p>{row.normalized_data?.company_name || "-"}</p>
+                        <p>{row.normalized_data?.site_name || "-"}</p>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-slate-600">
+                        <p>{row.normalized_data?.department_name || "-"} / {row.normalized_data?.designation_name || "-"}</p>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-slate-600">{row.normalized_data?.reporting_manager_name || "-"}</td>
+                      <td className="px-4 py-3 text-xs text-slate-600">{row.normalized_data?.documents_found || 0}/{row.normalized_data?.documents_expected || 0}</td>
+                      <td className="px-4 py-3"><Badge value={row.validation_status} /></td>
+                      <td className="px-4 py-3"><Badge value={finalRowStatus(row)} /></td>
+                      <td className="px-4 py-3 text-xs">
+                        {[...(row.errors || []), ...(row.warnings || [])].length === 0 ? (
+                          <span className="text-slate-400">-</span>
+                        ) : (
+                          <div className="space-y-3">
+                            <ul className="list-disc space-y-1 pl-4 text-slate-600">
+                              {[...(row.errors || []), ...(row.warnings || [])].map((issue, index) => <li key={`${row.id}-${index}`}>{issue}</li>)}
+                            </ul>
+                            {canUpload && (row.errors || []).some((issue) => /date of birth/i.test(issue)) && (
+                              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                                <p className="font-semibold">DOB correction required</p>
+                                <p className="mt-1 text-[11px]">Original workbook value is preserved in raw data. Correct the normalized DOB or clear it with acknowledgement before import.</p>
+                                <div className="mt-2 flex flex-wrap items-center gap-2">
+                                  <input
+                                    type="date"
+                                    value={dobEdits[row.id] ?? row.normalized_data?.date_of_birth ?? ""}
+                                    onChange={(event) => setDobEdits((prev) => ({ ...prev, [row.id]: event.target.value }))}
+                                    disabled={loading}
+                                    className="h-9 rounded-lg border bg-white px-2 text-xs text-slate-900"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => saveDobCorrection(row)}
+                                    disabled={loading}
+                                    className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                                  >
+                                    Save DOB
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => saveDobCorrection(row, true)}
+                                    disabled={loading}
+                                    className="rounded-lg border bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                                  >
+                                    Clear with warning
+                                  </button>
+                                </div>
                               </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </td>
-                  </tr>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )
                 ))}
-                {rows.length === 0 && (
+                {displayedRows.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-sm text-slate-500">Upload a workbook to preview employee rows.</td>
+                    <td colSpan={importCompleted ? 6 : 10} className="px-4 py-8 text-center text-sm text-slate-500">
+                      {importCompleted ? "No import result rows were returned." : "Upload a workbook to preview employee rows."}
+                    </td>
                   </tr>
                 )}
               </tbody>
@@ -615,6 +791,86 @@ function uniqueValues(values: unknown[]) {
         .filter(Boolean)
     )
   ).sort((a, b) => a.localeCompare(b));
+}
+
+function isReadyForImport(row: ImportRow) {
+  return ["valid", "warning"].includes(row.validation_status) && row.import_status === "pending";
+}
+
+function rowFailureReason(row: ImportRow) {
+  const issues = [...(row.errors || []), ...(row.warnings || [])].filter(Boolean);
+  if (issues.length > 0) return issues.join("; ");
+  if (row.reason) return row.reason;
+  if (row.import_result?.message) return String(row.import_result.message);
+  if (row.import_status === "skipped") return "Employee already exists.";
+  if (row.import_status === "pending" && row.validation_status === "invalid") return "Row has validation issues.";
+  if (row.import_status === "pending") return "Row was not selected for this import run.";
+  return "Not imported.";
+}
+
+function finalRowStatus(row: ImportRow) {
+  if (row.final_status) return row.final_status;
+  if (row.import_status === "imported") return "imported_successfully";
+  if (row.import_status === "skipped") return "already_exists";
+  if (row.import_status === "failed") return "import_failed";
+  if (row.validation_status === "invalid") return "validation_failed";
+  return row.import_status || row.validation_status || "not_imported";
+}
+
+function suggestedAction(row: ImportRow, reason: string) {
+  const text = reason.toLowerCase();
+  if (row.import_status === "skipped" || text.includes("already exists")) return "No action needed unless the existing employee needs manual review.";
+  if (text.includes("drive") || text.includes("document")) return "Check the Drive link and file access, then revalidate.";
+  if (text.includes("company") || text.includes("site") || text.includes("department") || text.includes("designation")) return "Correct the master value or mapping, then save mapping and revalidate.";
+  if (text.includes("date of birth") || text.includes("dob")) return "Correct the DOB or clear it with acknowledgement, then revalidate.";
+  return "Correct the row value in the workbook or mapping, then revalidate/import again.";
+}
+
+function escapeReportCell(value: unknown) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function downloadNotImportedReport(rows: ImportRow[]) {
+  const headers = [
+    "Excel Row",
+    "Generated Employee Code",
+    "Employee Name",
+    "Company",
+    "Site",
+    "Final Status",
+    "Exact Reason",
+    "Suggested Action",
+  ];
+  const body = rows.map((row) => {
+    const reason = rowFailureReason(row);
+    return [
+      row.source_row_number,
+      row.import_result?.employeeCode || row.import_result?.employee_code || row.normalized_data?.employee_code || "",
+      row.normalized_data?.employee_name || "",
+      row.normalized_data?.company_name || "",
+      row.normalized_data?.site_name || "",
+      labelize(finalRowStatus(row)),
+      reason,
+      suggestedAction(row, reason),
+    ];
+  });
+  const tableRows = [headers, ...body]
+    .map((cells) => `<tr>${cells.map((cell) => `<td>${escapeReportCell(cell)}</td>`).join("")}</tr>`)
+    .join("");
+  const html = `<html><head><meta charset="utf-8" /></head><body><table>${tableRows}</table></body></html>`;
+  const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "Employee_Import_Not_Imported_Report.xls";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function MasterMappingGroup({

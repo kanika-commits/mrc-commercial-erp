@@ -12,6 +12,8 @@ export type NotificationCounts = {
   panAadhaarPending: number;
   blockedVendors: number;
   inactiveVendors: number;
+  employeeAttendanceSentBack: number;
+  labourAttendanceSentBack: number;
 };
 
 export const EMPTY_NOTIFICATION_COUNTS: NotificationCounts = {
@@ -24,6 +26,8 @@ export const EMPTY_NOTIFICATION_COUNTS: NotificationCounts = {
   panAadhaarPending: 0,
   blockedVendors: 0,
   inactiveVendors: 0,
+  employeeAttendanceSentBack: 0,
+  labourAttendanceSentBack: 0,
 };
 
 type NotificationCountsContextValue = {

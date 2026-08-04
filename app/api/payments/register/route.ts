@@ -229,8 +229,12 @@ function applyPaymentFilters(
   return next;
 }
 
-function accountLabel(account: any) {
-  if (!account) return "-";
+function accountLabel(account: any, paymentNumber?: string | null) {
+  if (!account) {
+    return String(paymentNumber || "").startsWith("HIST-PAY-")
+      ? "Historical account not available"
+      : "Account not recorded";
+  }
   const accountNumber = account.account_number ? String(account.account_number) : "";
   const last4 = accountNumber ? accountNumber.slice(-4) : "----";
   return `${account.bank_name || "Bank"} • ****${last4}`;
@@ -302,7 +306,7 @@ async function enrichRows(admin: ReturnType<typeof adminClient>, payments: any[]
       wo_number: workOrder?.wo_number || null,
       invoice_number: invoice?.invoice_number || null,
       vendor_name: vendorName || null,
-      account_name: accountLabel(account),
+      account_name: accountLabel(account, payment.payment_number),
       reference,
       party,
     };

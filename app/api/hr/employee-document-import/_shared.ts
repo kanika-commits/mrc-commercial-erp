@@ -86,7 +86,7 @@ export async function validateSelectedSite(
   if (!isInOrganizationScope(organizationScope, company.organization_id)) {
     return { error: "Selected company is not available for this organization.", status: 403 } as const;
   }
-  if (site.organization_id !== company.organization_id || site.company_id !== companyId) {
+  if (site.organization_id !== company.organization_id) {
     return { error: "Selected site is not available for this company.", status: 403 } as const;
   }
 

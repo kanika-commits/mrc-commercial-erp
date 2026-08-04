@@ -273,6 +273,69 @@ function changedVendorValues(oldRow: any, newRow: any) {
   return { changedFields, oldValues, newValues };
 }
 
+function primaryGstin(vendor: any, gstins: any[]) {
+  return (
+    String(vendor?.gstin || "").trim() ||
+    String(gstins.find((gstin) => gstin.is_primary)?.gstin || "").trim() ||
+    String(gstins.find((gstin) => gstin.gstin)?.gstin || "").trim() ||
+    null
+  );
+}
+
+function primaryBankAccount(bankAccounts: any[]) {
+  return bankAccounts.find((account) => account.is_primary) || bankAccounts[0] || null;
+}
+
+function documentNumberForType(
+  documentType: string | null,
+  vendor: any,
+  gstins: any[],
+  bankAccounts: any[]
+) {
+  const documentTypeCode = String(documentType || "").trim();
+  const primaryBank = primaryBankAccount(bankAccounts);
+
+  switch (documentTypeCode) {
+    case "PAN":
+      return vendor?.pan || null;
+    case "AADHAAR_CIN":
+      return vendor?.aadhaar_cin || null;
+    case "GST_CERTIFICATE":
+      return primaryGstin(vendor, gstins);
+    case "PAN_AADHAAR_ATTACHMENT":
+      return vendor?.pan_aadhaar_link_status || null;
+    case "MSME_CERTIFICATE":
+      return vendor?.msme_number || null;
+    case "BANK_PROOF":
+      return primaryBank?.account_number || null;
+    default:
+      return null;
+  }
+}
+
+function hydrateVendorDetailResponse(vendor: any, documents: any[], gstins: any[], bankAccounts: any[]) {
+  const documentNumberByType = new Map(
+    documents
+      .filter((document) => document.document_type && document.document_number)
+      .map((document) => [document.document_type, document.document_number])
+  );
+  const hydratedVendor = {
+    ...vendor,
+    pan: vendor?.pan || documentNumberByType.get("PAN") || null,
+    aadhaar_cin: vendor?.aadhaar_cin || documentNumberByType.get("AADHAAR_CIN") || null,
+    gstin: primaryGstin(vendor, gstins),
+  };
+
+  const hydratedDocuments = documents.map((document) => ({
+    ...document,
+    document_number:
+      document.document_number ||
+      documentNumberForType(document.document_type, hydratedVendor, gstins, bankAccounts),
+  }));
+
+  return { vendor: hydratedVendor, documents: hydratedDocuments };
+}
+
 function actorName(user: any) {
   return (
     user?.user_metadata?.full_name ||
@@ -708,12 +771,18 @@ export async function GET(
       ...workOrder,
       amount_due: amountDueByWorkOrder.get(workOrder.id) || 0,
     }));
+    const hydrated = hydrateVendorDetailResponse(
+      vendor.data,
+      documents.data || [],
+      gstins.data || [],
+      bankAccounts.data || []
+    );
 
     return NextResponse.json({
-      vendor: vendor.data,
+      vendor: hydrated.vendor,
       contacts: contacts.data || [],
       bankAccounts: bankAccounts.data || [],
-      documents: documents.data || [],
+      documents: hydrated.documents,
       gstins: gstins.data || [],
       workOrders: workOrdersWithAmountDue,
     });
