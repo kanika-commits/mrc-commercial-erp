@@ -10,7 +10,7 @@ import {
   ChevronDown,
   FileText,
   Home,
-  LayoutGrid,
+  LifeBuoy,
   Menu,
   Package,
   PanelLeftClose,
@@ -45,18 +45,6 @@ import {
 } from "@/lib/labour/attendanceSystemContext";
 import { supabase } from "@/lib/supabase";
 
-const sidebarGroupMeta = {
-  project_management: { label: "Project Management", href: "/modules/project-management", icon: FileText },
-  store_management: { label: "Store Management", href: "/modules/store-management", icon: Package },
-  purchase: { label: "Purchase", href: "/modules/purchase", icon: ShoppingCart },
-  accounts: { label: "Accounts/Finance", href: "/modules/accounts", icon: Building2 },
-  settings: { label: "Settings", href: "/modules/settings", icon: Settings },
-  reports: { label: "Reports", href: "/modules/reports", icon: BarChart3 },
-  administration: { label: "Admin", href: "/modules/administration", icon: Settings },
-  hr: { label: "Human Resources", href: "/modules/hr", icon: UsersRound },
-  support: { label: "Support", href: "/modules/support", icon: Bell },
-} as const;
-
 type SidebarLeaf = {
   type: "leaf";
   label: string;
@@ -81,12 +69,19 @@ type SidebarNestedGroup = {
 };
 
 type SidebarTopGroup = {
-  id: keyof typeof sidebarGroupMeta | "dashboard" | "modules";
+  id: string;
   label: string;
   href: string;
   icon: typeof Home;
   children?: SidebarNode[];
+  activeChildren?: Array<SidebarNode | SidebarTopGroup>;
   superOnly?: boolean;
+};
+
+type SidebarSection = {
+  id: string;
+  label: string;
+  items: SidebarTopGroup[];
 };
 
 const notificationLinks = [
@@ -207,7 +202,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     [globalAccess],
   );
 
-  const sidebarTree = useMemo<SidebarTopGroup[]>(() => {
+  const sidebarSections = useMemo<SidebarSection[]>(() => {
     const compact = <T,>(items: Array<T | null>) => items.filter(Boolean) as T[];
     const nested = (
       id: string,
@@ -220,9 +215,31 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       if (visibleChildren.length === 0) return null;
       return { type: "group", id, label, href, icon, children: visibleChildren };
     };
+    const topNested = (
+      id: string,
+      label: string,
+      children: Array<SidebarNode | null>,
+      href: string,
+      icon: typeof Home,
+    ): SidebarTopGroup | null => {
+      const group = nested(id, label, children, href, icon);
+      if (!group) return null;
+      return { id: group.id, label: group.label, href, icon, children: group.children };
+    };
+    const topLeaf = (
+      id: string,
+      label: string,
+      moduleCode: string,
+      href: string,
+      icon: typeof Home,
+    ): SidebarTopGroup | null => {
+      const leaf = navLeaf(label, moduleCode, href);
+      if (!leaf) return null;
+      return { id, label: leaf.label, href: leaf.href, icon };
+    };
 
-    const moduleGroups = compact<SidebarNestedGroup>([
-      nested(
+    const mainModuleGroups = compact<SidebarTopGroup>([
+      topNested(
         "module-project-management",
         "Project Management",
         [
@@ -233,14 +250,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         "/modules/project-management",
         FileText,
       ),
-      nested(
+      topNested(
         "module-store-management",
         "Store Management",
         [placeholder("Store Management will be configured later.")],
         "/modules/store-management",
         Package,
       ),
-      nested(
+      topNested(
         "module-hr",
         "Human Resources",
         [
@@ -261,7 +278,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         "/modules/hr",
         UsersRound,
       ),
-      nested(
+      topNested(
         "module-purchase",
         "Purchase",
         [
@@ -271,7 +288,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         "/modules/purchase",
         ShoppingCart,
       ),
-      nested(
+      topNested(
         "module-accounts",
         "Accounts / Finance",
         [
@@ -282,78 +299,80 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         "/modules/accounts",
         Building2,
       ),
-      nested(
-        "module-settings",
-        "Settings",
-        [
-          nested("settings-masters", "Masters", [
-            navLeaf("Companies", "companies", "/companies"),
-            navLeaf("Vendors", "vendors", "/vendors"),
-            navLeaf("Sites", "sites", "/sites"),
-            navLeaf("Departments", "hr_departments", "/hr/departments"),
-            navLeaf("Designations", "hr_designations", "/hr/designations"),
-            navLeaf("Labour Categories", "labour_trades", "/labour/trades"),
-            navLeaf("Bank Accounts", "company_bank_accounts", "/company-bank-accounts"),
-          ]),
-          nested("settings-policies", "Policies", [
-            navLeaf("Employee Attendance Policy", "hr_employee_attendance_policy", "/settings/policies/employee-attendance"),
-            navLeaf("Labour Attendance Policy", "labour_muster_configuration", "/labour/configuration"),
-          ]),
-          navLeaf("Change Password", "settings_password", "/settings/password"),
-        ],
-        "/modules/settings",
-        Settings,
-      ),
-      nested(
-        "module-administration",
-        "Admin",
-        [
-          navLeaf("Organizations", "organizations", "/organizations"),
-          navLeaf("Users", "users", "/admin/users"),
-          navLeaf("Roles", "roles", "/admin/roles"),
-          navLeaf("Permissions", "permissions", "/admin/permissions"),
-        ],
-        "/modules/administration",
-        Settings,
-      ),
-      nested(
+    ]);
+
+    const administrationItems = compact<SidebarTopGroup>([
+      topLeaf("administration-organizations", "Organizations", "organizations", "/organizations", Building2),
+      topLeaf("administration-users", "Users", "users", "/admin/users", UsersRound),
+      topLeaf("administration-roles", "Roles", "roles", "/admin/roles", Settings),
+      topLeaf("administration-permissions", "Permissions", "permissions", "/admin/permissions", Settings),
+    ]);
+
+    const settingsChildren = compact<SidebarNode>([
+      nested("settings-masters", "Masters", [
+        navLeaf("Companies", "companies", "/companies"),
+        navLeaf("Vendors", "vendors", "/vendors"),
+        navLeaf("Sites", "sites", "/sites"),
+        navLeaf("Departments", "hr_departments", "/hr/departments"),
+        navLeaf("Designations", "hr_designations", "/hr/designations"),
+        navLeaf("Labour Categories", "labour_trades", "/labour/trades"),
+        navLeaf("Bank Accounts", "company_bank_accounts", "/company-bank-accounts"),
+      ]),
+      nested("settings-policies", "Policies", [
+        navLeaf("Employee Attendance Policy", "hr_employee_attendance_policy", "/settings/policies/employee-attendance"),
+        navLeaf("Labour Attendance Policy", "labour_muster_configuration", "/labour/configuration"),
+      ]),
+      navLeaf("Change Password", "settings_password", "/settings/password"),
+    ]);
+
+    const systemItems = compact<SidebarTopGroup>([
+      topNested(
         "module-reports",
         "Reports",
         [navLeaf("Reports", "reports", "/reports")],
         "/modules/reports",
         BarChart3,
       ),
-      nested(
-        "module-support",
-        "Support",
-        [placeholder("Support will be configured later.")],
-        "/modules/support",
-        Bell,
-      ),
+      settingsChildren.length > 0 ? { id: "module-settings", label: "Settings", href: "/modules/settings", icon: Settings, activeChildren: settingsChildren } : null,
+      administrationItems.length > 0 ? { id: "module-administration", label: "Admin", href: "/modules/administration", icon: Settings, activeChildren: administrationItems } : null,
     ]);
 
-    const topGroups: SidebarTopGroup[] = compact([
+    const mainItems: SidebarTopGroup[] = compact([
       globalAccess || canViewModule("dashboard")
         ? { id: "dashboard", label: "Dashboard", href: dashboardHref, icon: Home }
         : null,
-      moduleGroups.length > 0 || globalAccess
-        ? { id: "modules", label: "Modules", href: "/modules", icon: LayoutGrid, children: moduleGroups }
-        : null,
+      ...mainModuleGroups,
     ]);
 
-    return topGroups.filter((group) => {
-      if (group.id === "dashboard") return true;
-      return globalAccess || (group.children || []).length > 0;
-    });
+    return compact<SidebarSection>([
+      mainItems.length > 0 ? { id: "main", label: "MAIN", items: mainItems } : null,
+      administrationItems.length > 0 ? { id: "administration", label: "ADMINISTRATION", items: administrationItems } : null,
+      systemItems.length > 0 ? { id: "system", label: "SYSTEM", items: systemItems } : null,
+    ]);
   }, [canViewAnyMusterModule, canViewLabourApprovalPage, canViewModule, dashboardHref, globalAccess, navLeaf, placeholder, showEngineerLabourWorkflow, showLabourWorkspace, showStandardLabourWorkflow]);
+
+  const sidebarTree = useMemo(
+    () => sidebarSections.flatMap((section) => section.items),
+    [sidebarSections],
+  );
 
   const activeTopGroup = useMemo(() => {
     const findActiveLeaf = (
-      children: Array<SidebarLeaf | SidebarNestedGroup | SidebarPlaceholder> | undefined,
+      children: Array<SidebarNode | SidebarTopGroup> | undefined,
     ): { top: string | null; nested: string[] } | null => {
       if (!children) return null;
 
       for (const child of children) {
+        if (!("type" in child)) {
+          if (isActiveHref(pathname, child.href)) {
+            return { top: null, nested: [] };
+          }
+          const nestedActive = findActiveLeaf(child.children) || findActiveLeaf(child.activeChildren);
+          if (nestedActive) {
+            return { top: null, nested: [child.id, ...nestedActive.nested] };
+          }
+          continue;
+        }
         if (child.type === "leaf" && pathname.startsWith(child.href)) {
           return { top: null, nested: [] };
         }
@@ -372,18 +391,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     };
 
     for (const group of sidebarTree) {
-      const groupHrefActive =
-        group.id === "modules"
-          ? pathname === "/modules"
-          : group.href === "/"
-            ? pathname === "/"
-            : pathname.startsWith(group.href);
+      const groupHrefActive = group.href === "/" ? pathname === "/" : pathname.startsWith(group.href);
 
       if (groupHrefActive) {
         return { id: group.id, nested: [] };
       }
 
-      const childActive = findActiveLeaf(group.children);
+      const childActive = findActiveLeaf(group.children) || findActiveLeaf(group.activeChildren);
       if (childActive) {
         return { id: group.id, nested: childActive.nested };
       }
@@ -596,11 +610,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   const sidebarContent = (
-    <>
-      <div className={`mb-7 flex items-center gap-2 ${compactSidebar ? "justify-center px-0" : "justify-between px-2"}`}>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className={`mb-7 flex items-center gap-2 ${compactSidebar ? "justify-center px-0" : "px-2"}`}>
         <Link
           href={dashboardHref}
-          className={`min-w-0 ${compactSidebar ? "grid h-11 w-11 place-items-center rounded-xl bg-white/10" : "block"}`}
+          className={`min-w-0 ${compactSidebar ? "grid h-11 w-11 place-items-center rounded-xl bg-[#2563eb] shadow-lg shadow-blue-950/30" : "block"}`}
           onClick={() => setMobileSidebarOpen(false)}
           title={compactSidebar ? "ConstructIQ" : undefined}
         >
@@ -608,60 +622,91 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <span className="text-lg font-bold tracking-tight">C</span>
           ) : (
             <>
-              <h1 className="text-2xl font-bold tracking-tight">ConstructIQ</h1>
-              <p className="mt-2 text-sm font-medium text-white/50">
+              <h1 className="text-2xl font-bold tracking-tight text-white">ConstructIQ</h1>
+              <p className="mt-1 text-sm font-medium text-slate-400">
                 Enterprise ERP
               </p>
             </>
           )}
         </Link>
-        <button
-          type="button"
-          onClick={toggleSidebarCollapsed}
-          className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg text-white/60 transition hover:bg-white/10 hover:text-white lg:flex"
-          aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-          title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-        >
-          {sidebarCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
-        </button>
       </div>
 
-      <nav className="space-y-1">
+      <nav className="min-h-0 flex-1 space-y-6 overflow-y-auto overflow-x-hidden pr-1">
         {accessLoading && sidebarTree.length === 0
           ? Array.from({ length: 4 }).map((_, index) => (
               <div
                 key={index}
-                className="h-13 animate-pulse rounded-md bg-white/10"
+                className="h-11 animate-pulse rounded-lg bg-white/10"
               />
             ))
-          : sidebarTree.map((group) => (
-              <SidebarTopItem
-                key={group.id}
-                group={group}
-                pathname={pathname}
-                expandedTopGroup={expandedTopGroup}
-                expandedNestedGroups={expandedNestedGroups}
-                compact={compactSidebar}
-                onToggleTop={(groupId) =>
-                  setExpandedTopGroup((current) => (current === groupId ? null : groupId))
-                }
-                onToggleNested={(groupId) =>
-                  setExpandedNestedGroups((current) => {
-                    const next = new Set(current);
-                    if (next.has(groupId)) {
-                      next.delete(groupId);
-                    } else {
-                      next.add(groupId);
+          : sidebarSections.map((section) => (
+              <div key={section.id} className="space-y-1.5">
+                {!compactSidebar && (
+                  <p className="px-2 pb-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                    {section.label}
+                  </p>
+                )}
+                {section.items.map((group) => (
+                  <SidebarTopItem
+                    key={group.id}
+                    group={group}
+                    pathname={pathname}
+                    expandedTopGroup={expandedTopGroup}
+                    expandedNestedGroups={expandedNestedGroups}
+                    compact={compactSidebar}
+                    onToggleTop={(groupId) =>
+                      setExpandedTopGroup((current) => (current === groupId ? null : groupId))
                     }
-                    persistExpandedGroups(next);
-                    return next;
-                  })
-                }
-                onNavigate={() => setMobileSidebarOpen(false)}
-              />
+                    onToggleNested={(groupId) =>
+                      setExpandedNestedGroups((current) => {
+                        const next = new Set(current);
+                        if (next.has(groupId)) {
+                          next.delete(groupId);
+                        } else {
+                          next.add(groupId);
+                        }
+                        persistExpandedGroups(next);
+                        return next;
+                      })
+                    }
+                    onNavigate={() => setMobileSidebarOpen(false)}
+                  />
+                ))}
+              </div>
             ))}
       </nav>
-    </>
+
+      <div className={`mt-5 border-t border-white/10 pt-4 ${compactSidebar ? "space-y-3" : "space-y-4"}`}>
+        <div
+          className={`rounded-xl bg-white/[0.06] text-slate-300 shadow-inner shadow-white/[0.02] ${compactSidebar ? "grid h-11 place-items-center" : "px-3 py-3"}`}
+          title={compactSidebar ? "Need Help? Contact Support" : undefined}
+        >
+          {compactSidebar ? (
+            <LifeBuoy className="h-5 w-5" />
+          ) : (
+            <div className="flex items-center gap-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[#1d4ed8]/25 text-blue-200">
+                <LifeBuoy className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-white">Need Help?</p>
+                <p className="text-xs font-medium text-slate-400">Contact Support</p>
+              </div>
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={toggleSidebarCollapsed}
+          className={`hidden h-10 w-full shrink-0 items-center rounded-lg text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-white lg:flex ${compactSidebar ? "justify-center px-0" : "justify-between px-3"}`}
+          aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          {!compactSidebar && <span>Collapse</span>}
+          {sidebarCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
+        </button>
+      </div>
+    </div>
   );
 
   return (
@@ -678,7 +723,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       <aside
         id="mobile-navigation"
-        className={`fixed left-0 top-0 z-50 flex h-[100dvh] w-[min(82vw,280px)] flex-col overflow-y-auto bg-black px-4 py-6 text-white transition-[width,transform] duration-200 ease-out lg:z-40 lg:h-screen lg:translate-x-0 lg:px-4 lg:py-8 ${
+        className={`fixed left-0 top-0 z-50 flex h-[100dvh] w-[min(82vw,280px)] flex-col overflow-y-auto bg-[#07111f] px-4 py-6 text-white shadow-2xl shadow-slate-950/30 transition-[width,transform] duration-200 ease-out lg:z-40 lg:h-screen lg:translate-x-0 lg:px-4 lg:py-8 ${
           sidebarCollapsed ? "lg:w-[72px]" : "lg:w-[240px]"
         } ${
           mobileSidebarOpen ? "translate-x-0" : "-translate-x-full"
@@ -822,19 +867,17 @@ function SidebarTopItem({
 }) {
   const Icon = group.icon;
   const hasChildren = (group.children || []).length > 0;
-  const topChildrenAlwaysVisible = group.id === "modules";
-  const expanded = topChildrenAlwaysVisible || expandedTopGroup === group.id;
+  const expanded = expandedTopGroup === group.id;
   const active =
-    (group.id === "modules" ? pathname === "/modules" : isActiveHref(pathname, group.href)) ||
-    hasActiveChild(group.children, pathname);
-  const showDivider = group.id === "settings";
+    isActiveHref(pathname, group.href) ||
+    hasActiveChild(group.children, pathname) ||
+    hasActiveChild(group.activeChildren, pathname);
 
   return (
     <div>
-      {showDivider && <div className="my-4 border-t border-white/10" />}
       <div
-        className={`flex min-h-11 items-center rounded-md text-[13px] font-bold transition ${compact ? "justify-center" : ""} ${
-          active ? "bg-[#7bc8ef] text-[#07516c]" : "text-white/65 hover:bg-white/10 hover:text-white"
+        className={`flex min-h-11 items-center rounded-lg text-[13px] font-bold transition-colors duration-200 ${compact ? "justify-center" : ""} ${
+          active ? "bg-[#2563eb] text-white shadow-sm shadow-blue-950/30" : "text-slate-300 hover:bg-white/[0.08] hover:text-white"
         }`}
         title={compact ? group.label : undefined}
       >
@@ -843,16 +886,16 @@ function SidebarTopItem({
             <Link
               href={group.href}
               onClick={onNavigate}
-              className={`flex min-h-11 min-w-0 items-center gap-2.5 px-2.5 ${topChildrenAlwaysVisible ? "rounded-md" : "rounded-l-md"} ${compact ? "justify-center px-0" : "flex-1"}`}
+              className={`flex min-h-11 min-w-0 items-center gap-2.5 px-2.5 ${compact ? "justify-center px-0" : "flex-1 rounded-l-lg"}`}
             >
-              <Icon className="h-5 w-5 shrink-0" />
+              <Icon className={`h-5 w-5 shrink-0 ${active ? "text-white" : "text-slate-400"}`} />
               {!compact && <span className="min-w-0 flex-1 whitespace-normal leading-4">{group.label}</span>}
             </Link>
-            {!compact && !topChildrenAlwaysVisible && (
+            {!compact && (
               <button
                 type="button"
                 onClick={() => onToggleTop(String(group.id))}
-                className="flex min-h-11 w-9 shrink-0 items-center justify-center rounded-r-md"
+                className="flex min-h-11 w-9 shrink-0 items-center justify-center rounded-r-lg"
                 aria-label={`${expanded ? "Collapse" : "Expand"} ${group.label}`}
                 aria-expanded={expanded}
               >
@@ -864,16 +907,22 @@ function SidebarTopItem({
           <Link
             href={group.href}
             onClick={onNavigate}
-            className={`flex min-h-11 min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 ${compact ? "justify-center px-0" : ""}`}
+            className={`flex min-h-11 min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 ${compact ? "justify-center px-0" : ""}`}
           >
-            <Icon className="h-5 w-5 shrink-0" />
+            <Icon className={`h-5 w-5 shrink-0 ${active ? "text-white" : "text-slate-400"}`} />
             {!compact && <span className="min-w-0 whitespace-normal leading-4">{group.label}</span>}
           </Link>
         )}
       </div>
 
-      {hasChildren && expanded && !compact && (
-        <div className="ml-4 mt-1 space-y-1 border-l border-white/10 pl-3">
+      {hasChildren && !compact && (
+        <div
+          className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${
+            expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+          }`}
+        >
+          <div className="ml-4 mt-1 min-h-0 overflow-hidden border-l border-white/10 pl-3">
+            <div className="space-y-1 py-1">
           {group.children?.map((child) => (
             <SidebarChildItem
               key={`${child.type}-${child.label}`}
@@ -885,6 +934,8 @@ function SidebarTopItem({
               onNavigate={onNavigate}
             />
           ))}
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -908,7 +959,7 @@ function SidebarChildItem({
 }) {
   if (child.type === "placeholder") {
     return (
-      <div className="rounded-md px-2 py-2 text-xs font-semibold leading-4 text-white/35">
+      <div className="rounded-lg px-2 py-2 text-xs font-semibold leading-4 text-slate-500">
         {child.label}
       </div>
     );
@@ -920,8 +971,8 @@ function SidebarChildItem({
       <Link
         href={child.href}
         onClick={onNavigate}
-        className={`block rounded-md px-2 py-2 text-xs font-semibold leading-4 transition ${
-          active ? "bg-white/15 text-white" : "text-white/55 hover:bg-white/10 hover:text-white"
+        className={`block rounded-lg px-2 py-2 text-xs font-semibold leading-4 transition-colors duration-200 ${
+          active ? "bg-blue-500/20 text-blue-100" : "text-slate-400 hover:bg-white/[0.08] hover:text-white"
         }`}
       >
         {child.label}
@@ -936,15 +987,15 @@ function SidebarChildItem({
   return (
     <div>
       <div
-        className={`flex min-h-9 items-center rounded-md text-xs font-bold leading-4 transition ${
-          active ? "bg-white/15 text-white" : "text-white/60 hover:bg-white/10 hover:text-white"
+        className={`flex min-h-9 items-center rounded-lg text-xs font-bold leading-4 transition-colors duration-200 ${
+          active ? "bg-blue-500/20 text-blue-100" : "text-slate-400 hover:bg-white/[0.08] hover:text-white"
         }`}
       >
         {child.href ? (
           <Link
             href={child.href}
             onClick={onNavigate}
-            className="flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-l-md px-2"
+            className="flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-l-lg px-2"
           >
             {Icon && <Icon className="h-3.5 w-3.5 shrink-0" />}
             <span className="min-w-0 flex-1">{child.label}</span>
@@ -953,7 +1004,7 @@ function SidebarChildItem({
           <button
             type="button"
             onClick={() => onToggleNested(child.id)}
-            className="flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-l-md px-2 text-left"
+            className="flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-l-lg px-2 text-left"
             aria-expanded={expanded}
           >
             {Icon && <Icon className="h-3.5 w-3.5 shrink-0" />}
@@ -963,37 +1014,46 @@ function SidebarChildItem({
         <button
           type="button"
           onClick={() => onToggleNested(child.id)}
-          className="flex min-h-9 w-8 shrink-0 items-center justify-center rounded-r-md"
+          className="flex min-h-9 w-8 shrink-0 items-center justify-center rounded-r-lg"
           aria-label={`${expanded ? "Collapse" : "Expand"} ${child.label}`}
           aria-expanded={expanded}
         >
           <ChevronDown className={`h-3.5 w-3.5 transition ${expanded ? "rotate-180" : ""}`} />
         </button>
       </div>
-      {expanded && (
-        <div className="ml-3 mt-1 space-y-1 border-l border-white/10 pl-2">
-          {child.children.map((nestedChild) => (
-            <SidebarChildItem
-              key={`${nestedChild.type}-${nestedChild.label}`}
-              child={nestedChild}
-              pathname={pathname}
-              expandedNestedGroups={expandedNestedGroups}
-              compact={compact}
-              onToggleNested={onToggleNested}
-              onNavigate={onNavigate}
-            />
-          ))}
+      <div
+        className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${
+          expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+        }`}
+      >
+        <div className="ml-3 mt-1 min-h-0 overflow-hidden border-l border-white/10 pl-2">
+          <div className="space-y-1 py-1">
+            {child.children.map((nestedChild) => (
+              <SidebarChildItem
+                key={`${nestedChild.type}-${nestedChild.label}`}
+                child={nestedChild}
+                pathname={pathname}
+                expandedNestedGroups={expandedNestedGroups}
+                compact={compact}
+                onToggleNested={onToggleNested}
+                onNavigate={onNavigate}
+              />
+            ))}
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
 
 function hasActiveChild(
-  children: Array<SidebarLeaf | SidebarNestedGroup | SidebarPlaceholder> | undefined,
+  children: Array<SidebarNode | SidebarTopGroup> | undefined,
   pathname: string,
 ): boolean {
   return (children || []).some((child) => {
+    if (!("type" in child)) {
+      return isActiveHref(pathname, child.href) || hasActiveChild(child.children, pathname) || hasActiveChild(child.activeChildren, pathname);
+    }
     if (child.type === "leaf") return isActiveHref(pathname, child.href);
     if (child.type === "group") return (child.href ? isActiveHref(pathname, child.href) : false) || hasActiveChild(child.children, pathname);
     return false;
