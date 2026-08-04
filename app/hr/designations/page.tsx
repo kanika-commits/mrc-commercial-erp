@@ -28,9 +28,9 @@ const emptyForm: FormState = {
 export default function DesignationsPage() {
   const { access } = useAccessContext();
   const permissions = access?.permissions || [];
-  const canAdd = can(permissions, "hr_employees", "add");
-  const canEdit = can(permissions, "hr_employees", "edit");
-  const canDelete = can(permissions, "hr_employees", "delete");
+  const canAdd = can(permissions, "hr_designations", "add");
+  const canEdit = can(permissions, "hr_designations", "edit");
+  const canDelete = can(permissions, "hr_designations", "delete");
   const lookups = useHrLookups({ includeEmployees: false });
   const [designations, setDesignations] = useState<HrDesignation[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);

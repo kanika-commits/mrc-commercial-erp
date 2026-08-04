@@ -9,6 +9,78 @@ import {
   validateSubmittedUserScope,
 } from "@/lib/adminUserScope";
 
+function parseVisiblePermissionKeys(value: unknown) {
+  if (!Array.isArray(value)) {
+    return {
+      error: "visible_permission_keys is required for user permission updates.",
+      keys: [] as string[],
+    };
+  }
+
+  const keys: string[] = [];
+  for (const item of value) {
+    const permissionKey = String(item || "").trim();
+    const parts = permissionKey.split(":");
+    if (
+      parts.length !== 2 ||
+      !parts[0]?.trim() ||
+      !parts[1]?.trim() ||
+      !isValidPermissionAction(parts[0].trim(), parts[1].trim())
+    ) {
+      return {
+        error: "visible_permission_keys contains an invalid permission key.",
+        keys: [] as string[],
+      };
+    }
+    keys.push(`${parts[0].trim()}:${parts[1].trim()}`);
+  }
+
+  const dedupedKeys = Array.from(new Set(keys));
+  if (dedupedKeys.length === 0) {
+    return {
+      error: "visible_permission_keys is required for user permission updates.",
+      keys: [] as string[],
+    };
+  }
+
+  return { error: null, keys: dedupedKeys };
+}
+
+async function deleteVisibleUserPermissions(
+  supabase: ReturnType<typeof adminClient>,
+  userId: string,
+  visiblePermissionKeys: string[],
+) {
+  if (visiblePermissionKeys.length === 0) return;
+
+  const moduleCodes = Array.from(
+    new Set(visiblePermissionKeys.map((key) => key.split(":")[0]).filter(Boolean)),
+  );
+  if (moduleCodes.length === 0) return;
+
+  const { data, error } = await supabase
+    .from("user_permissions")
+    .select("id, module_code, action_code")
+    .eq("user_id", userId)
+    .in("module_code", moduleCodes);
+
+  if (error) throw error;
+
+  const idsToDelete = (data || [])
+    .filter((row) => visiblePermissionKeys.includes(`${row.module_code}:${row.action_code}`))
+    .map((row) => row.id)
+    .filter(Boolean);
+
+  if (idsToDelete.length === 0) return;
+
+  const { error: deleteError } = await supabase
+    .from("user_permissions")
+    .delete()
+    .in("id", idsToDelete);
+
+  if (deleteError) throw deleteError;
+}
+
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -286,6 +358,7 @@ export async function PUT(
       company_ids,
       site_ids,
       user_permissions,
+      visible_permission_keys,
     } = body;
     const hasNameUpdate = Object.prototype.hasOwnProperty.call(body, "full_name");
     const hasAccessUpdate =
@@ -294,6 +367,7 @@ export async function PUT(
       Object.prototype.hasOwnProperty.call(body, "company_ids") ||
       Object.prototype.hasOwnProperty.call(body, "site_ids") ||
       Object.prototype.hasOwnProperty.call(body, "user_permissions");
+    const hasPermissionUpdate = Object.prototype.hasOwnProperty.call(body, "user_permissions");
 
     const trimmedFullName = hasNameUpdate ? String(full_name || "").trim() : null;
 
@@ -512,22 +586,52 @@ export async function PUT(
       (row) => `${row.user_id}.${row.organization_id || ""}.${row.company_id || ""}.${row.site_id || ""}`
     );
 
+    const parsedVisiblePermissionKeys = hasPermissionUpdate
+      ? parseVisiblePermissionKeys(visible_permission_keys)
+      : { error: null, keys: [] as string[] };
+    if (parsedVisiblePermissionKeys.error) {
+      return NextResponse.json(
+        { error: parsedVisiblePermissionKeys.error },
+        { status: 400 },
+      );
+    }
+
+    if (hasPermissionUpdate && !Array.isArray(user_permissions)) {
+      return NextResponse.json(
+        { error: "user_permissions must be an array." },
+        { status: 400 },
+      );
+    }
+
+    const visiblePermissionKeys = parsedVisiblePermissionKeys.keys;
+    const visiblePermissionKeySet = new Set(visiblePermissionKeys);
+    const submittedPermissionRows = user_permissions || [];
+    for (const permission of submittedPermissionRows) {
+      const moduleCode = String(permission?.module_code || "").trim();
+      const actionCode = String(permission?.action_code || "").trim();
+      const permissionKey = `${moduleCode}:${actionCode}`;
+
+      if (
+        permission?.allowed !== true ||
+        !moduleCode ||
+        !actionCode ||
+        !isValidPermissionAction(moduleCode, actionCode) ||
+        !visiblePermissionKeySet.has(permissionKey)
+      ) {
+        return NextResponse.json(
+          { error: "user_permissions contains an invalid or non-visible permission row." },
+          { status: 400 },
+        );
+      }
+    }
+
     const permissionRows = uniqueRows<PermissionRow>(
-      (user_permissions || [])
-        .filter(
-          (permission: any) =>
-            permission.allowed === true &&
-            isValidPermissionAction(
-              String(permission.module_code || ""),
-              String(permission.action_code || ""),
-            ),
-        )
-        .map((permission: any) => ({
-          user_id: id,
-          module_code: permission.module_code,
-          action_code: permission.action_code,
-          allowed: true,
-        })),
+      submittedPermissionRows.map((permission: any) => ({
+        user_id: id,
+        module_code: String(permission.module_code || "").trim(),
+        action_code: String(permission.action_code || "").trim(),
+        allowed: true,
+      })),
       (row) => `${row.user_id}.${row.module_code}.${row.action_code}`
     );
 
@@ -559,14 +663,11 @@ export async function PUT(
       if (insertAccessError) throw insertAccessError;
     }
 
-    const { error: deletePermissionsError } = await supabase
-      .from("user_permissions")
-      .delete()
-      .eq("user_id", id);
+    if (hasPermissionUpdate) {
+      await deleteVisibleUserPermissions(supabase, id, visiblePermissionKeys);
+    }
 
-    if (deletePermissionsError) throw deletePermissionsError;
-
-    if (permissionRows.length > 0) {
+    if (hasPermissionUpdate && permissionRows.length > 0) {
       const { error: insertPermissionsError } = await supabase
         .from("user_permissions")
         .insert(permissionRows);

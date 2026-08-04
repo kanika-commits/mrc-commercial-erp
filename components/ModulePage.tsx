@@ -19,6 +19,7 @@ import { useMemo } from "react";
 import { useAccessContext } from "@/components/AccessContext";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
 import { DEFAULT_MODULE_NAVIGATION } from "@/lib/defaultModuleNavigation";
+import { listReleasedLauncherPages, type ReleasedModuleGroup } from "@/lib/releasedModuleRegistry";
 
 type ModuleRow = {
   id: string;
@@ -118,6 +119,21 @@ const pageMeta: Record<
     className: "from-red-50 to-white border-red-100 text-red-700",
     description: "Create and manage debit notes.",
   },
+  hr_departments: {
+    icon: Building2,
+    className: "from-sky-50 to-white border-sky-100 text-sky-700",
+    description: "Maintain department master records.",
+  },
+  hr_designations: {
+    icon: Users,
+    className: "from-indigo-50 to-white border-indigo-100 text-indigo-700",
+    description: "Maintain designation master records.",
+  },
+  company_bank_accounts: {
+    icon: Landmark,
+    className: "from-blue-50 to-white border-blue-100 text-blue-700",
+    description: "Maintain company bank account details.",
+  },
   reports: {
     icon: BarChart3,
     className: "from-violet-50 to-white border-violet-100 text-violet-700",
@@ -139,12 +155,18 @@ export default function ModulePage({
         ? DEFAULT_MODULE_NAVIGATION
         : moduleNavigation;
 
+    const releasedCodes = new Set(
+      listReleasedLauncherPages(groupCode as ReleasedModuleGroup).map((module) => module.code),
+    );
+
     return ((effectiveNavigation.modules || []) as ModuleRow[])
       .filter((module: ModuleRow) => module.module_group === groupCode)
+      .filter((module: ModuleRow) => releasedCodes.has(module.module_code))
       .filter(
         (page: ModuleRow) =>
           globalAccess || can(permissions, page.module_code, "view"),
-      );
+      )
+      .sort((first, second) => Number(first.sort_order || 0) - Number(second.sort_order || 0));
   }, [access, groupCode, moduleNavigation]);
 
   if (loading) {

@@ -8,7 +8,7 @@ import {
   resolveWriteOrganizationId,
 } from "@/lib/serverOrganizationScope";
 
-const MODULE_CODE = "hr_employees";
+const MODULE_CODE = "hr_designations";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;

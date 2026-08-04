@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { loadActiveAccountContext } from "@/lib/serverAccountAccess";
+import { filterVisibleModuleNavigation } from "@/lib/defaultModuleNavigation";
+import { applyCanonicalModuleGroupNames } from "@/lib/moduleDisplayNames";
 
 type Permission = {
   module_code: string;
@@ -68,10 +70,10 @@ export async function GET(request: Request) {
             if (groups.error) throw groups.error;
             if (modules.error) throw modules.error;
 
-            const value = {
-              groups: groups.data || [],
+            const value = filterVisibleModuleNavigation({
+              groups: applyCanonicalModuleGroupNames(groups.data || []),
               modules: modules.data || [],
-            };
+            });
 
             if (value.groups.length > 0 || value.modules.length > 0) {
               moduleNavigationCache = {

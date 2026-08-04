@@ -4,8 +4,8 @@ export default function AccountsPage() {
   return (
     <ModulePage
       groupCode="accounts"
-      title="Accounts"
-      description="Accounts and finance workflows."
+      title="Accounts / Finance"
+      description="Invoices, ITC review and payment workflows."
     />
   );
 }

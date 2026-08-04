@@ -1,234 +1,122 @@
-export const DEFAULT_MODULE_NAVIGATION = {
-  groups: [
-    {
-      id: "default-dashboard",
-      module_code: "dashboard",
-      module_name: "Dashboard",
-      route: "/",
-      sort_order: 1,
-      status: "active",
-    },
-    {
-      id: "default-administration",
-      module_code: "administration",
-      module_name: "Admin & Settings",
-      route: "/modules/administration",
-      sort_order: 10,
-      status: "active",
-    },
-    {
-      id: "default-master-setup",
-      module_code: "master_setup",
-      module_name: "Master Setup",
-      route: "/modules/master-setup",
-      sort_order: 20,
-      status: "active",
-    },
-    {
-      id: "default-contract-management",
-      module_code: "contract_management",
-      module_name: "Contract Management",
-      route: "/modules/contract-management",
-      sort_order: 30,
-      status: "active",
-    },
-    {
-      id: "default-reports",
-      module_code: "reports",
-      module_name: "Reports",
-      route: "/modules/reports",
-      sort_order: 50,
-      status: "active",
-    },
-    {
-      id: "default-hr",
-      module_code: "hr",
-      module_name: "HR",
-      route: "/modules/hr",
-      sort_order: 50,
-      status: "active",
-    },
-  ],
-  modules: [
-    {
-      id: "default-dashboard-module",
-      module_group: "dashboard",
-      module_code: "dashboard",
-      module_name: "Dashboard",
-      route: "/",
-      sort_order: 1,
-      status: "active",
-    },
-    {
-      id: "default-reports-module",
-      module_group: "reports",
-      module_code: "reports",
-      module_name: "Reports",
-      route: "/reports",
-      sort_order: 1,
-      status: "active",
-    },
-    {
-      id: "default-work-orders",
-      module_group: "contract_management",
-      module_code: "work_orders",
-      module_name: "Work Orders",
-      route: "/work-orders",
-      sort_order: 1,
-      status: "active",
-    },
-    {
-      id: "default-hr-employees",
-      module_group: "hr",
-      module_code: "hr_employees",
-      module_name: "Employee Master",
-      route: "/hr/employees",
-      sort_order: 1,
-      status: "active",
-    },
-    {
-      id: "default-companies",
-      module_group: "master_setup",
-      module_code: "companies",
-      module_name: "Companies",
-      route: "/companies",
-      sort_order: 1,
-      status: "active",
-    },
-    {
-      id: "default-organizations",
-      module_group: "administration",
-      module_code: "organizations",
-      module_name: "Organizations",
-      route: "/organizations",
-      sort_order: 1,
-      status: "active",
-    },
-    {
-      id: "default-reimbursements",
-      module_group: "hr",
-      module_code: "reimbursements",
-      module_name: "Reimbursements",
-      route: "/hr/reimbursements",
-      sort_order: 2,
-      status: "active",
-    },
-    {
-      id: "default-users",
-      module_group: "administration",
-      module_code: "users",
-      module_name: "Users",
-      route: "/admin/users",
-      sort_order: 2,
-      status: "active",
-    },
-    {
-      id: "default-sites",
-      module_group: "master_setup",
-      module_code: "sites",
-      module_name: "Sites",
-      route: "/sites",
-      sort_order: 2,
-      status: "active",
-    },
-    {
-      id: "default-wo-approval",
-      module_group: "contract_management",
-      module_code: "wo_approval",
-      module_name: "Work Order Approvals",
-      route: "/approvals/work-orders",
-      sort_order: 2,
-      status: "active",
-    },
-    {
-      id: "default-ra-bills",
-      module_group: "contract_management",
-      module_code: "ra_bills",
-      module_name: "RA Bills",
-      route: "/ra-bills",
-      sort_order: 3,
-      status: "active",
-    },
-    {
-      id: "default-vendors",
-      module_group: "master_setup",
-      module_code: "vendors",
-      module_name: "Vendors",
-      route: "/vendors",
-      sort_order: 3,
-      status: "active",
-    },
-    {
-      id: "default-roles",
-      module_group: "administration",
-      module_code: "roles",
-      module_name: "Roles",
-      route: "/admin/roles",
-      sort_order: 3,
-      status: "active",
-    },
-    {
-      id: "default-company-bank-accounts",
-      module_group: "master_setup",
-      module_code: "company_bank_accounts",
-      module_name: "Company Bank Accounts",
-      route: "/company-bank-accounts",
-      sort_order: 4,
-      status: "active",
-    },
-    {
-      id: "default-permissions",
-      module_group: "administration",
-      module_code: "permissions",
-      module_name: "Permissions",
-      route: "/admin/permissions",
-      sort_order: 4,
-      status: "active",
-    },
-    {
-      id: "default-ra-approval",
-      module_group: "contract_management",
-      module_code: "ra_approval",
-      module_name: "Commercial Approvals",
-      route: "/approvals",
-      sort_order: 4,
-      status: "active",
-    },
-    {
-      id: "default-invoices",
-      module_group: "contract_management",
-      module_code: "invoices",
-      module_name: "Invoices",
-      route: "/invoices",
-      sort_order: 5,
-      status: "active",
-    },
-    {
-      id: "default-itc-claims",
-      module_group: "contract_management",
-      module_code: "itc_claims",
-      module_name: "ITC Review",
-      route: "/invoices/itc",
-      sort_order: 6,
-      status: "active",
-    },
-    {
-      id: "default-payments",
-      module_group: "contract_management",
-      module_code: "payments",
-      module_name: "Payments",
-      route: "/payments",
-      sort_order: 7,
-      status: "active",
-    },
-    {
-      id: "default-debit-notes",
-      module_group: "contract_management",
-      module_code: "debit_notes",
-      module_name: "Debit Notes",
-      route: "/debit-notes",
-      sort_order: 8,
-      status: "active",
-    },
-  ],
+import {
+  RELEASED_GROUPS,
+  RELEASED_MODULES,
+  getReleasedGroup,
+  isReleasedModuleCode,
+  normalizeReleasedGroupName,
+} from "@/lib/releasedModuleRegistry";
+
+type NavigationGroup = {
+  id: string;
+  module_code: string;
+  module_name: string;
+  route: string;
+  sort_order: number;
+  status: string;
 };
+
+type NavigationModule = {
+  id: string;
+  module_group: string;
+  module_code: string;
+  module_name: string;
+  route: string;
+  sort_order: number;
+  status: string;
+};
+
+export type ModuleNavigation = {
+  groups: NavigationGroup[];
+  modules: NavigationModule[];
+};
+
+function releasedGroupRow(group: (typeof RELEASED_GROUPS)[number]): NavigationGroup {
+  return {
+    id: `released-${group.code}`,
+    module_code: group.code,
+    module_name: group.title,
+    route: group.route,
+    sort_order: group.sortOrder,
+    status: "active",
+  };
+}
+
+function releasedModuleRow(module: (typeof RELEASED_MODULES)[number]): NavigationModule {
+  return {
+    id: `released-${module.code}`,
+    module_group: module.group,
+    module_code: module.code,
+    module_name: module.title,
+    route: module.route,
+    sort_order: module.sortOrder,
+    status: "active",
+  };
+}
+
+function normalizeModule(module: any): NavigationModule | null {
+  const moduleCode = String(module?.module_code || "").trim();
+  if (!isReleasedModuleCode(moduleCode)) return null;
+
+  const released = RELEASED_MODULES.find(
+    (item) => item.code === moduleCode || item.permissionModule === moduleCode,
+  );
+  if (!released) return null;
+
+  return {
+    id: module.id || `released-${released.code}`,
+    module_group: released.group,
+    module_code: released.code,
+    module_name: released.title,
+    route: released.route,
+    sort_order: released.sortOrder,
+    status: "active",
+  };
+}
+
+function normalizeGroup(group: any): NavigationGroup | null {
+  const groupCode = String(group?.module_code || "").trim();
+  const released = getReleasedGroup(groupCode);
+  if (!released) return null;
+
+  return {
+    id: group.id || `released-${released.code}`,
+    module_code: released.code,
+    module_name: normalizeReleasedGroupName(released.code, group.module_name),
+    route: released.route,
+    sort_order: released.sortOrder,
+    status: "active",
+  };
+}
+
+export function filterVisibleModuleNavigation<T extends { groups: any[]; modules: any[] }>(
+  navigation: T,
+): ModuleNavigation {
+  const groupMap = new Map<string, NavigationGroup>();
+  const moduleMap = new Map<string, NavigationModule>();
+
+  RELEASED_GROUPS.forEach((group) => groupMap.set(group.code, releasedGroupRow(group)));
+  RELEASED_MODULES.forEach((module) => moduleMap.set(module.code, releasedModuleRow(module)));
+
+  (navigation.groups || []).forEach((group) => {
+    const normalized = normalizeGroup(group);
+    if (normalized) groupMap.set(normalized.module_code, normalized);
+  });
+
+  (navigation.modules || []).forEach((module) => {
+    const normalized = normalizeModule(module);
+    if (normalized) moduleMap.set(normalized.module_code, normalized);
+  });
+
+  return {
+    groups: Array.from(groupMap.values()).sort((first, second) => first.sort_order - second.sort_order),
+    modules: Array.from(moduleMap.values()).sort((first, second) => {
+      if (first.module_group === second.module_group) return first.sort_order - second.sort_order;
+      return first.module_group.localeCompare(second.module_group);
+    }),
+  };
+}
+
+export const DEFAULT_MODULE_NAVIGATION = filterVisibleModuleNavigation({
+  groups: [],
+  modules: [],
+});

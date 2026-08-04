@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { filterVisibleModuleNavigation } from "@/lib/defaultModuleNavigation";
+import { applyCanonicalModuleGroupNames } from "@/lib/moduleDisplayNames";
 
 export async function GET() {
   try {
@@ -28,10 +30,10 @@ export async function GET() {
     if (groups.error) throw groups.error;
     if (modules.error) throw modules.error;
 
-    return NextResponse.json({
-      groups: groups.data || [],
+    return NextResponse.json(filterVisibleModuleNavigation({
+      groups: applyCanonicalModuleGroupNames(groups.data || []),
       modules: modules.data || [],
-    });
+    }));
   } catch (error: any) {
     return NextResponse.json(
       { error: error.message || "Failed to load module navigation." },

@@ -8,6 +8,12 @@ import AppShell from "@/components/AppShell";
 import { AccessProvider } from "@/components/AccessContext";
 import { can, hasGlobalAccess, type CurrentUserAccess } from "@/lib/accessControl";
 import { ACCOUNT_INACTIVE_CODE, INACTIVE_ACCOUNT_MESSAGE } from "@/lib/accountStatus";
+import {
+  RELEASED_COMPATIBILITY_LAUNCHER_ROUTES,
+  findReleasedRoute,
+  getCompatibilityLauncherGroups,
+  isExplicitlyUnreleasedRoute,
+} from "@/lib/releasedModuleRegistry";
 
 type ModuleNavigation = {
   groups: any[];
@@ -34,51 +40,6 @@ function actionForPath(pathname: string) {
   return "view";
 }
 
-function hasAnyPermission(
-  access: CurrentUserAccess,
-  checks: Array<{ moduleCode: string; actionCode: string }>,
-) {
-  return checks.some((check) =>
-    can(access.permissions, check.moduleCode, check.actionCode),
-  );
-}
-
-function hasExplicitHrRouteAccess(pathname: string, access: CurrentUserAccess) {
-  if (pathname === "/modules/hr") {
-    return hasAnyPermission(access, [
-      { moduleCode: "hr_employees", actionCode: "view" },
-      { moduleCode: "hr_employee_import", actionCode: "view" },
-      { moduleCode: "reimbursements", actionCode: "view" },
-    ]);
-  }
-
-  if (pathname === "/hr/employees/import") {
-    return can(access.permissions, "hr_employee_import", "view");
-  }
-
-  if (
-    pathname === "/hr/employees" ||
-    pathname === "/hr/employees/new" ||
-    /^\/hr\/employees\/[^/]+(?:\/edit)?$/.test(pathname)
-  ) {
-    return can(access.permissions, "hr_employees", "view");
-  }
-
-  if (pathname === "/hr/departments" || pathname === "/hr/designations") {
-    return can(access.permissions, "hr_employees", "view");
-  }
-
-  if (
-    pathname === "/hr/reimbursements" ||
-    pathname === "/hr/reimbursements/new" ||
-    /^\/hr\/reimbursements\/[^/]+(?:\/edit)?$/.test(pathname)
-  ) {
-    return can(access.permissions, "reimbursements", "view");
-  }
-
-  return null;
-}
-
 function hasRouteAccess(
   pathname: string,
   access: CurrentUserAccess,
@@ -88,20 +49,30 @@ function hasRouteAccess(
 
   const globalAccess = hasGlobalAccess(access);
 
+  if (isExplicitlyUnreleasedRoute(pathname)) return false;
+
   if (globalAccess) return true;
 
-  if (pathname === "/") {
-    return can(access.permissions, "dashboard", "view");
+  if (RELEASED_COMPATIBILITY_LAUNCHER_ROUTES.has(pathname)) {
+    if (pathname === "/modules/reports") return can(access.permissions, "reports", "view");
+    if (pathname === "/modules") return true;
+
+    const mappedGroups = getCompatibilityLauncherGroups(pathname);
+    if (mappedGroups.length === 0) return false;
+
+    return (navigation.modules || []).some(
+      (module: any) =>
+        mappedGroups.includes(module.module_group) &&
+        can(access.permissions, module.module_code, "view"),
+    );
   }
 
-  if (pathname === "/settings" || pathname === "/settings/password") return true;
+  if (pathname === "/settings" || pathname === "/settings/appearance" || pathname === "/settings/password") return true;
 
-  if (pathname.startsWith("/settings")) {
-    return globalAccess;
+  const releasedRoute = findReleasedRoute(pathname);
+  if (releasedRoute) {
+    return can(access.permissions, releasedRoute.permissionModule, actionForPath(pathname));
   }
-
-  const explicitHrAccess = hasExplicitHrRouteAccess(pathname, access);
-  if (explicitHrAccess !== null) return explicitHrAccess;
 
   const matchedModule = (navigation.modules || [])
     .filter(

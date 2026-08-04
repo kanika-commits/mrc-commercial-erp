@@ -38,6 +38,8 @@ const MODULE_ACTIONS: Record<string, PermissionAction[]> = {
   debit_notes: ["view", "add", "delete"],
 
   hr_employees: ["view", "add", "edit", "delete"],
+  hr_departments: ["view", "add", "edit", "delete"],
+  hr_designations: ["view", "add", "edit", "delete"],
   hr_employee_import: ["view", "upload", "execute", "export"],
   hr_audit: ["view"],
   hr_salary: ["view", "add", "edit", "delete"],
@@ -53,6 +55,24 @@ const MODULE_ACTIONS: Record<string, PermissionAction[]> = {
     "mark_paid",
   ],
 };
+
+const ACTION_LABELS: Record<string, string> = {
+  view: "View",
+  add: "Add",
+  edit: "Edit",
+  delete: "Delete",
+  approve: "Approve",
+  reject: "Reject",
+  upload: "Upload",
+  submit: "Submit",
+  execute: "Execute",
+  mark_paid: "Mark Paid",
+  export: "Export",
+};
+
+export function permissionActionLabel(actionCode: string) {
+  return ACTION_LABELS[actionCode] || actionCode;
+}
 
 export function availableActionsForModule(moduleCode: string): PermissionAction[] {
   return MODULE_ACTIONS[moduleCode] || ["view"];

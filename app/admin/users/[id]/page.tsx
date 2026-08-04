@@ -12,6 +12,7 @@ import {
   PERMISSION_ACTIONS as actions,
   availableActionsForModule,
 } from "@/lib/permissionMatrix";
+import { prepareVisiblePermissionModules } from "@/lib/permissionVisibility";
 
 export default function UserAccessPage() {
   const { access } = useAccessContext();
@@ -63,7 +64,7 @@ export default function UserAccessPage() {
   }, [userId]);
 
   function key(moduleCode: string, actionCode: string) {
-    return `${moduleCode}.${actionCode}`;
+    return `${moduleCode}:${actionCode}`;
   }
 
   async function loadData() {
@@ -120,14 +121,7 @@ export default function UserAccessPage() {
       setCompanies(sortCompanies(result.companies || []));
       setSites(result.sites || []);
       setRolePermissions(result.rolePermissions || []);
-      setModules(
-        (result.modules || []).sort((a: any, b: any) => {
-          if (a.module_group === b.module_group) {
-            return Number(a.sort_order || 0) - Number(b.sort_order || 0);
-          }
-          return String(a.module_group).localeCompare(String(b.module_group));
-        })
-      );
+      setModules(prepareVisiblePermissionModules(result.modules || []));
 
       setSelectedRoleIds(
         platformOwnerRoleId
@@ -352,6 +346,14 @@ export default function UserAccessPage() {
     );
   }
 
+  function visiblePermissionKeysForSave() {
+    return modules.flatMap((module) =>
+      availableActionsForModule(module.module_code).map((action) =>
+        key(module.module_code, action)
+      )
+    );
+  }
+
   async function saveAccess() {
     try {
       setSaving(true);
@@ -405,6 +407,7 @@ export default function UserAccessPage() {
           company_ids: selectedCompanyIds,
           site_ids: selectedSiteIds,
           user_permissions: permissionRows,
+          visible_permission_keys: visiblePermissionKeysForSave(),
         }),
       });
 
