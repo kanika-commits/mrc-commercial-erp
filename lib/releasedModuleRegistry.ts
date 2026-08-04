@@ -56,14 +56,13 @@ export const RELEASED_MODULES: ReleasedModuleItem[] = [
   { code: "hr_employees", title: "Employee Registration", route: "/hr/employees", group: "hr", permissionModule: "hr_employees", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 10 },
   { code: "hr_employee_import", title: "Employee Import", route: "/hr/employees/import", group: "hr", permissionModule: "hr_employee_import", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 20 },
   { code: "reimbursements", title: "Reimbursements", route: "/hr/reimbursements", group: "hr", permissionModule: "reimbursements", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 30 },
+  { code: "hr_departments", title: "Departments", route: "/hr/departments", group: "hr", permissionModule: "hr_departments", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 40 },
+  { code: "hr_designations", title: "Designations", route: "/hr/designations", group: "hr", permissionModule: "hr_designations", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 50 },
 
   { code: "companies", title: "Companies", route: "/companies", group: "settings", permissionModule: "companies", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 10 },
   { code: "sites", title: "Sites", route: "/sites", group: "settings", permissionModule: "sites", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 20 },
   { code: "vendors", title: "Vendors", route: "/vendors", group: "settings", permissionModule: "vendors", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 30 },
   { code: "company_bank_accounts", title: "Bank Accounts", route: "/company-bank-accounts", group: "settings", permissionModule: "company_bank_accounts", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 40 },
-  { code: "hr_departments", title: "Departments", route: "/hr/departments", group: "settings", permissionModule: "hr_departments", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 50 },
-  { code: "hr_designations", title: "Designations", route: "/hr/designations", group: "settings", permissionModule: "hr_designations", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 60 },
-
   { code: "organizations", title: "Organizations", route: "/organizations", group: "administration", permissionModule: "organizations", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 10 },
   { code: "users", title: "Users", route: "/admin/users", group: "administration", permissionModule: "users", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 20 },
   { code: "roles", title: "Roles", route: "/admin/roles", group: "administration", permissionModule: "roles", requiredAction: "view", sidebar: true, launcher: true, permissionMatrix: true, sortOrder: 30 },

@@ -8,6 +8,7 @@ import { sortCompanies } from "@/lib/companyOrdering";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import AlertMessage from "@/components/AlertMessage";
+import LinkedEmployeeSelector from "@/components/admin/LinkedEmployeeSelector";
 import {
   PERMISSION_ACTIONS as actions,
   availableActionsForModule,
@@ -26,6 +27,9 @@ export default function UserAccessPage() {
   const [companies, setCompanies] = useState<any[]>([]);
   const [sites, setSites] = useState<any[]>([]);
   const [modules, setModules] = useState<any[]>([]);
+  const [employeeOptions, setEmployeeOptions] = useState<any[]>([]);
+  const [employeeSearch, setEmployeeSearch] = useState("");
+  const [linkedEmployeeId, setLinkedEmployeeId] = useState("");
 
   const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
   const [selectedOrganizationIds, setSelectedOrganizationIds] = useState<string[]>([]);
@@ -39,6 +43,7 @@ export default function UserAccessPage() {
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [savingName, setSavingName] = useState(false);
+  const [savingEmployeeLink, setSavingEmployeeLink] = useState(false);
   const [loading, setLoading] = useState(true);
   const [permissionsSaved, setPermissionsSaved] = useState(false);
   const [editFullName, setEditFullName] = useState("");
@@ -123,6 +128,8 @@ export default function UserAccessPage() {
       setSites(result.sites || []);
       setRolePermissions(result.rolePermissions || []);
       setModules(prepareVisiblePermissionModules(result.modules || []));
+      setEmployeeOptions(result.employeeOptions || []);
+      setLinkedEmployeeId(result.linkedEmployee?.id || "");
 
       setSelectedRoleIds(
         platformOwnerRoleId
@@ -480,6 +487,44 @@ export default function UserAccessPage() {
     }
   }
 
+  async function saveEmployeeLink() {
+    try {
+      setSavingEmployeeLink(true);
+      setMessage("");
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/admin/users/${userId}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          linked_employee_id: linkedEmployeeId || null,
+        }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to save linked employee.");
+      }
+
+      await loadData();
+      setMessage(linkedEmployeeId ? "Linked employee saved successfully." : "Employee link removed successfully.");
+    } catch (error: any) {
+      setMessage(error.message || "Failed to save linked employee.");
+    } finally {
+      setSavingEmployeeLink(false);
+    }
+  }
+
   async function deleteUser() {
     try {
       setDeleting(true);
@@ -667,6 +712,30 @@ export default function UserAccessPage() {
             This updates the ERP display name only. Email and password are unchanged.
           </p>
         </section>
+      )}
+
+      {canEditUser && (
+        <div className="space-y-3">
+          <LinkedEmployeeSelector
+            employees={employeeOptions}
+            value={linkedEmployeeId}
+            onChange={setLinkedEmployeeId}
+            search={employeeSearch}
+            onSearchChange={setEmployeeSearch}
+            allowUnlink
+            disabled={savingEmployeeLink}
+          />
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={saveEmployeeLink}
+              disabled={savingEmployeeLink}
+              className="rounded bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {savingEmployeeLink ? "Saving..." : "Save Linked Employee"}
+            </button>
+          </div>
+        </div>
       )}
 
       <section className="rounded-lg border bg-white p-6">

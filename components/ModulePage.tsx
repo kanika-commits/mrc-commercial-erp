@@ -210,7 +210,7 @@ function SettingsSections({ pages }: { pages: ModuleRow[] }) {
   const sections = [
     {
       title: "Masters",
-      codes: ["companies", "vendors", "sites", "hr_departments", "hr_designations", "company_bank_accounts"],
+      codes: ["companies", "vendors", "sites", "company_bank_accounts"],
     },
   ];
 

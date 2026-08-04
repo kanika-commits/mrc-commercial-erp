@@ -222,6 +222,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           releasedLeaf("hr_employees"),
           releasedLeaf("hr_employee_import"),
           releasedLeaf("reimbursements"),
+          releasedLeaf("hr_departments"),
+          releasedLeaf("hr_designations"),
         ],
         "/modules/hr",
         UsersRound,
@@ -235,25 +237,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             releasedLeaf("sites"),
             releasedLeaf("vendors"),
             releasedLeaf("company_bank_accounts"),
-            releasedLeaf("hr_departments"),
-            releasedLeaf("hr_designations"),
           ]),
         ],
         "/modules/settings",
         Settings,
       ),
-      nested(
-        "module-administration",
-        "Admin",
-        [
-          releasedLeaf("organizations"),
-          releasedLeaf("users"),
-          releasedLeaf("roles"),
-          releasedLeaf("permissions"),
-        ],
-        "/modules/administration",
-        Settings,
-      ),
+    ]);
+
+    const adminChildren = compact<SidebarNode>([
+      releasedLeaf("organizations"),
+      releasedLeaf("users"),
+      releasedLeaf("roles"),
+      releasedLeaf("permissions"),
     ]);
 
     const topGroups: SidebarTopGroup[] = compact([
@@ -262,6 +257,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         : null,
       moduleGroups.length > 0 || globalAccess
         ? { id: "modules", label: "Modules", href: "/modules", icon: LayoutGrid, children: moduleGroups }
+        : null,
+      adminChildren.length > 0 || globalAccess
+        ? { id: "administration", label: "Admin", href: "/modules/administration", icon: Settings, children: adminChildren }
         : null,
     ]);
 

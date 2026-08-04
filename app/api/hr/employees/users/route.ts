@@ -53,15 +53,20 @@ export async function GET(request: Request) {
       new Set((accessRows || []).map((row) => row.user_id).filter(Boolean)),
     ) as string[];
 
+    if (employee.user_id && !userIds.includes(employee.user_id)) {
+      userIds.push(employee.user_id);
+    }
+
     if (userIds.length === 0) {
       return NextResponse.json({ users: [] });
     }
 
-    const [profiles, linkedEmployees] = await Promise.all([
+    const [profiles, linkedEmployees, userRoles, roles] = await Promise.all([
       admin
         .from("profiles")
         .select("id, email, full_name, status")
         .in("id", userIds)
+        .or(`status.eq.active,id.eq.${employee.user_id || "00000000-0000-0000-0000-000000000000"}`)
         .order("email", { ascending: true }),
       admin
         .from("hr_employees")
@@ -69,10 +74,20 @@ export async function GET(request: Request) {
         .eq("organization_id", employee.organization_id)
         .neq("status", "deleted")
         .not("user_id", "is", null),
+      admin
+        .from("user_roles")
+        .select("user_id, role_id")
+        .in("user_id", userIds),
+      admin
+        .from("roles")
+        .select("id, role_name, role_code")
+        .order("role_name"),
     ]);
 
     if (profiles.error) throw profiles.error;
     if (linkedEmployees.error) throw linkedEmployees.error;
+    if (userRoles.error) throw userRoles.error;
+    if (roles.error) throw roles.error;
 
     const linkedEmployeeByUserId = new Map(
       (linkedEmployees.data || [])
@@ -80,10 +95,23 @@ export async function GET(request: Request) {
         .map((row) => [row.user_id as string, row.id as string]),
     );
 
+    const roleSummaryByUserId = new Map<string, string>();
+    const roleById = new Map(
+      (roles.data || []).map((role: any) => [role.id, role]),
+    );
+    for (const row of userRoles.data || []) {
+      const role = roleById.get(row.role_id);
+      const label = role?.role_name || role?.role_code;
+      if (!label) continue;
+      const current = roleSummaryByUserId.get(row.user_id) || "";
+      roleSummaryByUserId.set(row.user_id, current ? `${current}, ${label}` : label);
+    }
+
     return NextResponse.json({
       users: (profiles.data || []).map((profile) => ({
         ...profile,
         linked_employee_id: linkedEmployeeByUserId.get(profile.id) || null,
+        role_summary: roleSummaryByUserId.get(profile.id) || null,
       })),
     });
   } catch (error: any) {

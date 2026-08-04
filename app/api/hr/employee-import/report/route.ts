@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { summarizeRows } from "@/lib/hr/employeeImport";
+import { employeeImportFinalStatus, employeeImportReason, summarizeRows } from "@/lib/hr/employeeImport";
 import { adminClient, jsonError, loadBatchForActor, requireImportPermission } from "../_shared";
 
 export async function GET(request: Request) {
@@ -16,7 +16,7 @@ export async function GET(request: Request) {
 
     const { data, error } = await admin
       .from("employee_import_rows")
-      .select("source_row_number, normalized_data, validation_status, import_status, errors, warnings, imported_employee_id, import_result")
+      .select("id, source_row_number, raw_data, normalized_data, validation_status, import_status, errors, warnings, imported_employee_id, import_result")
       .eq("batch_id", batchId)
       .order("source_row_number");
 
@@ -25,7 +25,11 @@ export async function GET(request: Request) {
     return NextResponse.json({
       batch: batchResult.batch,
       summary: summarizeRows(data || []),
-      rows: data || [],
+      rows: (data || []).map((row: any) => ({
+        ...row,
+        final_status: employeeImportFinalStatus(row),
+        reason: employeeImportReason(row),
+      })),
     });
   } catch (error: any) {
     return jsonError(error.message || "Failed to load import report.", 500);

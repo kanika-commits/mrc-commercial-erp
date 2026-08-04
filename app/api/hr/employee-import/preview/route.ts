@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { adminClient, jsonError, loadBatchForActor, requireImportPermission } from "../_shared";
-import { loadImportMasterData } from "@/lib/hr/employeeImport";
+import { loadImportMasterData, summarizeRows } from "@/lib/hr/employeeImport";
 
 export async function GET(request: Request) {
   try {
@@ -30,8 +30,23 @@ export async function GET(request: Request) {
 
     if (error) throw error;
 
+    const { data: summaryRows, error: summaryError } = await admin
+      .from("employee_import_rows")
+      .select("validation_status, import_status")
+      .eq("batch_id", batchId);
+
+    if (summaryError) throw summaryError;
+
+    const currentSummary = {
+      ...(batchResult.batch.summary || {}),
+      ...summarizeRows(summaryRows || []),
+    };
+
     return NextResponse.json({
-      batch: batchResult.batch,
+      batch: {
+        ...batchResult.batch,
+        summary: currentSummary,
+      },
       rows: data || [],
       masters,
       total: count || 0,

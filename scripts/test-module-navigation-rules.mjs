@@ -73,6 +73,23 @@ for (const token of ["Approvals", "Accounts/Finance", "Admin"]) {
   }
 }
 
+
+const hrOrder = [
+  appShell.indexOf('releasedLeaf("hr_employees")'),
+  appShell.indexOf('releasedLeaf("hr_employee_import")'),
+  appShell.indexOf('releasedLeaf("reimbursements")'),
+  appShell.indexOf('releasedLeaf("hr_departments")'),
+  appShell.indexOf('releasedLeaf("hr_designations")'),
+];
+if (hrOrder.some((index) => index === -1) || !hrOrder.every((value, index, values) => index === 0 || values[index - 1] < value)) {
+  throw new Error("Human Resources sidebar children must include Employee Registration, Employee Import, Reimbursements, Departments and Designations in order.");
+}
+
+const settingsSection = appShell.slice(appShell.indexOf('nested("settings-masters"'), appShell.indexOf('"/modules/settings"'));
+if (settingsSection.includes('hr_departments') || settingsSection.includes('hr_designations')) {
+  throw new Error("Settings Masters sidebar section must not contain HR Departments or Designations in Phase 4.");
+}
+
 const accountsOrder = [
   appShell.indexOf('releasedLeaf("invoices")'),
   appShell.indexOf('releasedLeaf("payments")'),
@@ -104,14 +121,14 @@ for (const token of [
   "module-hr",
   "module-settings",
   "settings-masters",
-  "module-administration",
+  `id: "administration"`,
 ]) {
   if (!appShell.includes(token)) {
     throw new Error(`AppShell must preserve preferred nested sidebar structure with ${token}.`);
   }
 }
 
-for (const forbidden of ["settings-policies", "module-store-management", "module-support", "module-reports"]) {
+for (const forbidden of ["settings-policies", "module-store-management", "module-support", "module-reports", "module-administration"]) {
   if (appShell.includes(forbidden)) {
     throw new Error(`AppShell must not expose unreleased nested sidebar group ${forbidden}.`);
   }

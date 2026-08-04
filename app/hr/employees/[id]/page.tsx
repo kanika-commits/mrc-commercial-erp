@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Pencil } from "lucide-react";
+import { Copy, Pencil } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import AlertMessage from "@/components/AlertMessage";
@@ -181,6 +181,16 @@ export default function EmployeeDetailPage() {
     }
   }
 
+  async function copyEmployeeCode() {
+    if (!employee?.employee_code) return;
+    try {
+      await navigator.clipboard.writeText(employee.employee_code);
+      setMessage("");
+    } catch {
+      setMessage("Could not copy Employee Code.");
+    }
+  }
+
   function addUploadedDocuments(nextDocuments: EmployeeDocument[]) {
     const nextTypes = new Set(nextDocuments.map((document) => document.document_type));
     setDocuments((prev) =>
@@ -248,7 +258,17 @@ export default function EmployeeDetailPage() {
           {activeTab === "basic" && (
             <SectionCard title="Basic Information" description="Read-only employee identity and contact details.">
               <div className="grid gap-5 md:grid-cols-3">
-                <Info label="Employee Code" value={employee.employee_code} />
+                <Info
+                  label="Employee Code"
+                  value={
+                    <span className="inline-flex items-center gap-2">
+                      {employee.employee_code}
+                      <button type="button" onClick={copyEmployeeCode} aria-label="Copy Employee Code" className="rounded-md border p-1 text-slate-500 hover:bg-slate-50">
+                        <Copy className="h-3.5 w-3.5" />
+                      </button>
+                    </span>
+                  }
+                />
                 <Info label="Employee Name" value={employee.employee_name} />
                 <Info label="Status" value={<StatusBadge status={employee.status} />} />
                 <Info label="Official Email" value={employee.email || "-"} />
@@ -281,11 +301,14 @@ export default function EmployeeDetailPage() {
                 </div>
               </SectionCard>
 
-              <SectionCard title="ERP Access" description="Linked ERP user account, if available.">
+              <SectionCard title="ERP Login" description="Linked ERP profile, if available.">
                 {linkedUser ? (
                   <div className="grid gap-5 md:grid-cols-3">
-                    <Info label="Linked User Email" value={linkedUser.email || "-"} />
-                    <Info label="Linked Status" value={<StatusBadge status={linkedUser.status || "active"} />} />
+                    <Info label="Link Status" value="Linked" />
+                    <Info label="Profile Name" value={linkedUser.full_name || "-"} />
+                    <Info label="Profile Email" value={linkedUser.email || "-"} />
+                    <Info label="Profile Status" value={<StatusBadge status={linkedUser.status || "active"} />} />
+                    <Info label="Current Roles" value={linkedUser.role_summary || "-"} />
                     {canViewUsers && (
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">User</p>
@@ -298,7 +321,11 @@ export default function EmployeeDetailPage() {
                     )}
                   </div>
                 ) : (
-                  <p className="text-sm text-slate-500">No ERP user linked.</p>
+                  <div className="grid gap-5 md:grid-cols-3">
+                    <Info label="Link Status" value="Not Linked" />
+                    <Info label="Profile Email" value="-" />
+                    <Info label="Profile Status" value="-" />
+                  </div>
                 )}
               </SectionCard>
             </div>

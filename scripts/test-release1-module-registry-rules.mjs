@@ -48,6 +48,14 @@ for (const item of required) {
   }
 }
 
+
+for (const [code, group] of [["hr_departments", "hr"], ["hr_designations", "hr"]]) {
+  const pattern = new RegExp(`code: "${code}"[^\n]+group: "${group}"`);
+  if (!pattern.test(registry)) {
+    throw new Error(`${code} must be released under Human Resources.`);
+  }
+}
+
 for (const item of forbidden) {
   if (item.startsWith("/") || item === "\"/reports\"") continue;
   if (registry.includes(item)) {

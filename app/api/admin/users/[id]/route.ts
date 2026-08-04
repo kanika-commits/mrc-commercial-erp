@@ -8,6 +8,11 @@ import {
   loadActorOrganizationScope,
   validateSubmittedUserScope,
 } from "@/lib/adminUserScope";
+import {
+  loadEmployeeLinkOptions,
+  loadLinkedEmployeeForUser,
+  setUserEmployeeLink,
+} from "@/app/api/admin/users/_employeeLinking";
 
 function parseVisiblePermissionKeys(value: unknown) {
   if (!Array.isArray(value)) {
@@ -235,6 +240,8 @@ export async function GET(
       userRoles,
       accessRows,
       userPermissions,
+      linkedEmployee,
+      employeeOptions,
     ] = await Promise.all([
       supabase
         .from("profiles")
@@ -268,6 +275,8 @@ export async function GET(
         .from("user_permissions")
         .select("module_code, action_code, allowed")
         .eq("user_id", id),
+      loadLinkedEmployeeForUser(supabase, id, actorOrganizationIds),
+      loadEmployeeLinkOptions(supabase, actorOrganizationIds, id),
     ]);
 
     for (const result of [
@@ -306,6 +315,8 @@ export async function GET(
       accessRows: accessRows.data || [],
       userPermissions: userPermissions.data || [],
       rolePermissions: rolePermissions.data || [],
+      linkedEmployee,
+      employeeOptions,
     });
   } catch (error: any) {
     return NextResponse.json(
@@ -359,6 +370,7 @@ export async function PUT(
       site_ids,
       user_permissions,
       visible_permission_keys,
+      linked_employee_id,
     } = body;
     const hasNameUpdate = Object.prototype.hasOwnProperty.call(body, "full_name");
     const hasAccessUpdate =
@@ -368,6 +380,7 @@ export async function PUT(
       Object.prototype.hasOwnProperty.call(body, "site_ids") ||
       Object.prototype.hasOwnProperty.call(body, "user_permissions");
     const hasPermissionUpdate = Object.prototype.hasOwnProperty.call(body, "user_permissions");
+    const hasLinkUpdate = Object.prototype.hasOwnProperty.call(body, "linked_employee_id");
 
     const trimmedFullName = hasNameUpdate ? String(full_name || "").trim() : null;
 
@@ -378,7 +391,7 @@ export async function PUT(
       );
     }
 
-    if (!hasNameUpdate && !hasAccessUpdate) {
+    if (!hasNameUpdate && !hasAccessUpdate && !hasLinkUpdate) {
       return NextResponse.json(
         { error: "No user changes were provided." },
         { status: 400 }
@@ -507,12 +520,51 @@ export async function PUT(
       if (updateProfileError) throw updateProfileError;
 
       if (!hasAccessUpdate) {
+        if (hasLinkUpdate) {
+          const linkResult = await setUserEmployeeLink(supabase, request, permission, {
+            userId: id,
+            employeeId: linked_employee_id,
+            actorOrganizationIds,
+          });
+
+          if ("error" in linkResult) {
+            return NextResponse.json(
+              { error: linkResult.error },
+              { status: linkResult.status }
+            );
+          }
+        }
+
         return NextResponse.json({
           user_id: id,
           full_name: trimmedFullName,
           profile_updated: true,
+          linked_employee_id: hasLinkUpdate ? linked_employee_id || null : undefined,
         });
       }
+    }
+
+    if (hasLinkUpdate && !hasAccessUpdate) {
+      const linkResult = await setUserEmployeeLink(supabase, request, permission, {
+        userId: id,
+        employeeId: linked_employee_id,
+        actorOrganizationIds,
+      });
+
+      if ("error" in linkResult) {
+        return NextResponse.json(
+          { error: linkResult.error },
+          { status: linkResult.status }
+        );
+      }
+
+      const savedLink = linkResult as { linked_employee_id: string | null; link_changed: boolean };
+
+      return NextResponse.json({
+        user_id: id,
+        linked_employee_id: savedLink.linked_employee_id,
+        link_changed: savedLink.link_changed,
+      });
     }
 
     const { data: selectedSites, error: siteError } = site_ids?.length

@@ -43,9 +43,14 @@ for (const [label, source, moduleCode] of [
   if (!source.includes(`const MODULE_CODE = "${moduleCode}";`)) {
     throw new Error(`${label} must enforce ${moduleCode}.`);
   }
-  for (const action of ["view", "add", "edit", "delete"]) {
+  for (const action of ["add", "edit", "delete"]) {
     if (source.includes(`requirePermission(request, "hr_employees", "${action}")`)) {
       throw new Error(`${label} must not silently fall back to hr_employees:${action}.`);
+    }
+  }
+  if (source.includes('requirePermission(request, "hr_employees", "view")')) {
+    if (!label.includes("list API") || !source.includes('purpose === "employee_lookup"')) {
+      throw new Error(`${label} must not silently fall back to hr_employees:view outside the employee lookup purpose.`);
     }
   }
 }

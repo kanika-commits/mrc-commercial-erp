@@ -79,8 +79,8 @@ export function useHrLookups(options: HrLookupOptions = {}) {
         await Promise.all([
           companyQuery,
           siteQuery,
-          apiFetchWithToken("/api/hr/departments", token),
-          apiFetchWithToken("/api/hr/designations", token),
+          apiFetchWithToken("/api/hr/departments?purpose=employee_lookup", token),
+          apiFetchWithToken("/api/hr/designations?purpose=employee_lookup", token),
           includeEmployees
             ? apiFetchWithToken("/api/hr/employees?lookup=1&status=active", token)
             : Promise.resolve({ employees: [] }),

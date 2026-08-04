@@ -22,7 +22,12 @@ function adminClient() {
 
 export async function GET(request: Request) {
   try {
-    const auth = await requirePermission(request, MODULE_CODE, "view");
+    const { searchParams } = new URL(request.url);
+    const purpose = searchParams.get("purpose")?.trim();
+    let auth = await requirePermission(request, MODULE_CODE, "view");
+    if ("response" in auth && purpose === "employee_lookup") {
+      auth = await requirePermission(request, "hr_employees", "view");
+    }
 
     if ("response" in auth) return auth.response;
 
@@ -30,7 +35,7 @@ export async function GET(request: Request) {
     const organizationScope = await loadActorOrganizationScope(admin, auth);
     let query = admin
       .from("hr_departments")
-      .select("id, organization_id, department_name, department_code, status, created_at, updated_at")
+      .select(purpose === "employee_lookup" ? "id, organization_id, department_name, status" : "id, organization_id, department_name, department_code, status, created_at, updated_at")
       .neq("status", "deleted")
       .order("department_name", { ascending: true });
 
