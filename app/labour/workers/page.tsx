@@ -329,20 +329,13 @@ export default function LabourWorkersPage() {
 
   async function changeWorkerStatus(worker: any, status: string) {
     if (!status || status === worker.status) return;
-    const reason = window.prompt(
-      status === "inactive"
-        ? "Mark this labourer Inactive? This does not delete history or deployments. Add a short reason."
-        : "Mark this labourer Active? This changes only the worker master status, not deployment. Add a short reason.",
-      "",
-    );
-    if (reason === null) return;
     setError("");
     setSuccess("");
     try {
       const response = await fetch(`/api/labour/workers/${worker.id}`, {
         method: "PUT",
         headers: { Authorization: `Bearer ${await token()}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ status_only: true, status, reason }),
+        body: JSON.stringify({ status_only: true, status }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
