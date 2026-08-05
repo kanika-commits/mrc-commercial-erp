@@ -43,16 +43,26 @@ function hasAnyPermission(
   );
 }
 
-function hasExplicitHrRouteAccess(pathname: string, access: CurrentUserAccess) {
+function hasAccessibleModuleInGroup(
+  access: CurrentUserAccess,
+  navigation: ModuleNavigation,
+  groupCode: string,
+) {
+  return (navigation.modules || []).some(
+    (module: any) =>
+      module.module_group === groupCode &&
+      module.module_code &&
+      can(access.permissions, module.module_code, "view"),
+  );
+}
+
+function hasExplicitHrRouteAccess(
+  pathname: string,
+  access: CurrentUserAccess,
+  navigation: ModuleNavigation,
+) {
   if (pathname === "/modules/hr") {
-    return hasAnyPermission(access, [
-      { moduleCode: "hr_employees", actionCode: "view" },
-      { moduleCode: "hr_attendance", actionCode: "view" },
-      { moduleCode: "hr_employee_attendance_policy", actionCode: "view" },
-      { moduleCode: "hr_employee_import", actionCode: "view" },
-      { moduleCode: "hr_employee_document_import", actionCode: "view" },
-      { moduleCode: "reimbursements", actionCode: "view" },
-    ]);
+    return hasAccessibleModuleInGroup(access, navigation, "hr");
   }
 
   if (pathname === "/hr/employees/import-documents") {
@@ -240,7 +250,7 @@ function hasRouteAccess(
     return globalAccess;
   }
 
-  const explicitHrAccess = hasExplicitHrRouteAccess(pathname, access);
+  const explicitHrAccess = hasExplicitHrRouteAccess(pathname, access, navigation);
   if (explicitHrAccess !== null) return explicitHrAccess;
 
   const explicitLabourAccess = hasExplicitLabourRouteAccess(pathname, access);

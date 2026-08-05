@@ -74,6 +74,9 @@ export function useHrLookups(options: HrLookupOptions = {}) {
         companyQuery = companyQuery.in("organization_id", allowedOrganizationIds);
         siteQuery = siteQuery.in("organization_id", allowedOrganizationIds);
       }
+      if (access.sites.length > 0) {
+        siteQuery = siteQuery.in("id", access.sites);
+      }
 
       const [companyResult, siteResult, departmentResult, designationResult, employeeResult] =
         await Promise.all([

@@ -161,6 +161,7 @@ export default function HrLauncherPage() {
   });
   const directHrModules = visiblePrimaryModules.filter((card) => directHrModuleCodes.has(card.moduleCode));
   const musterModules = visiblePrimaryModules.filter((card) => musterModuleCodes.has(card.moduleCode));
+  const visiblePlannedModules = global ? plannedModules : [];
 
   useEffect(() => subscribeSelectedLabourContext(setLabourContext), []);
   useEffect(() => subscribeLabourWorkspaceSummary(setLabourWorkspace), []);
@@ -200,17 +201,19 @@ export default function HrLauncherPage() {
             {musterModules.length > 0 && (
               <CompactModuleSection title="Muster" cards={musterModules} />
             )}
-            <section>
-              <div className="mb-4">
-                <h2 className="text-lg font-semibold text-slate-950">Planned HR Areas</h2>
-                <p className="mt-1 text-sm text-slate-500">Approved HR structure items without active workflows yet.</p>
-              </div>
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {plannedModules.map((card) => (
-                  <PlannedModuleCard key={card.title} card={card} />
-                ))}
-              </div>
-            </section>
+            {visiblePlannedModules.length > 0 && (
+              <section>
+                <div className="mb-4">
+                  <h2 className="text-lg font-semibold text-slate-950">Planned HR Areas</h2>
+                  <p className="mt-1 text-sm text-slate-500">Approved HR structure items without active workflows yet.</p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {visiblePlannedModules.map((card) => (
+                    <PlannedModuleCard key={card.title} card={card} />
+                  ))}
+                </div>
+              </section>
+            )}
           </>
         )}
       </div>
