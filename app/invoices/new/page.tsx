@@ -18,6 +18,12 @@ function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
+function workOrderLabel(workOrder: any) {
+  const number = workOrder?.wo_number || "-";
+  const type = String(workOrder?.wo_type || "").trim();
+  return type ? `${number} — ${type}` : number;
+}
+
 export default function NewInvoicePage() {
   const router = useRouter();
 
@@ -461,7 +467,7 @@ export default function NewInvoicePage() {
                   </option>
                   {filteredWorkOrders.map((wo) => (
                     <option key={wo.id} value={wo.id}>
-                      {wo.wo_number}
+                      {workOrderLabel(wo)}
                     </option>
                   ))}
                 </select>

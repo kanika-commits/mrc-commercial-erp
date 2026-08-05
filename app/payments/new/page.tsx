@@ -218,7 +218,9 @@ export default function NewPaymentPage() {
   }
 
   function workOrderLabel(workOrder: any) {
-    return workOrder.wo_number || "-";
+    const number = workOrder?.wo_number || "-";
+    const type = String(workOrder?.wo_type || "").trim();
+    return type ? `${number} — ${type}` : number;
   }
 
   function invoiceLabel(invoice: any) {

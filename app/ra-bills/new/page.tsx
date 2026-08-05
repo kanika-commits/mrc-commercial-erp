@@ -11,6 +11,12 @@ function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
+function workOrderLabel(workOrder: any) {
+  const number = workOrder?.wo_number || "-";
+  const type = String(workOrder?.wo_type || "").trim();
+  return type ? `${number} — ${type}` : number;
+}
+
 export default function NewRABillPage() {
   const router = useRouter();
 
@@ -407,7 +413,7 @@ export default function NewRABillPage() {
 
               {filteredWorkOrders.map((wo) => (
                 <option key={wo.id} value={wo.id}>
-                  {wo.wo_number}
+                  {workOrderLabel(wo)}
                 </option>
               ))}
             </select>

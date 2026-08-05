@@ -72,6 +72,7 @@ async function loadScopedWorkOrders(
       `
         id,
         wo_number,
+        wo_type,
         wo_date,
         wo_value,
         company_id,
