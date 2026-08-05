@@ -105,6 +105,13 @@ export function currentIndiaDate(now = new Date()) {
   return formatter.format(now);
 }
 
+export function previousDate(dateText: string) {
+  const [year, month, day] = dateText.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
 export function compareDates(left: string, right: string) {
   if (left < right) return -1;
   if (left > right) return 1;
@@ -131,14 +138,18 @@ export function isAfterEmployeeAttendanceLockCutoff(values: { attendanceDate: st
 }
 
 export function requiresBackdatedReason(attendanceDate: string, isAdminRecovery: boolean, today = currentIndiaDate()) {
-  return isAdminRecovery && compareDates(attendanceDate, today) < 0;
+  return isAdminRecovery && compareDates(attendanceDate, previousDate(today)) < 0;
 }
 
 export function canEditAttendanceDate(attendanceDate: string, isAdminRecovery: boolean, reason?: string | null, today = currentIndiaDate()) {
   const comparison = compareDates(attendanceDate, today);
   if (comparison > 0) return { allowed: false, error: "Future attendance cannot be created or edited." };
   if (comparison === 0) return { allowed: true, backdated: false };
-  if (!isAdminRecovery) return { allowed: false, error: "Past attendance is read-only for this user." };
+  const olderThanYesterday = compareDates(attendanceDate, previousDate(today)) < 0;
+  if (!isAdminRecovery && olderThanYesterday) {
+    return { allowed: false, error: "Attendance can be edited only for today or yesterday." };
+  }
+  if (!olderThanYesterday) return { allowed: true, backdated: false };
   if (!String(reason || "").trim()) return { allowed: false, error: "Backdated attendance reason is required." };
   return { allowed: true, backdated: true };
 }

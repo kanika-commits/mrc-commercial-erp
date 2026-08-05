@@ -8,7 +8,7 @@ import HrSectionNav from "@/components/hr/HrSectionNav";
 import { apiFetch, formatDate } from "@/components/hr/hrClient";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
-import { ATTENDANCE_STATUS_LABELS, EMPLOYEE_STANDARD_WORKING_HOURS, PHASE1_ATTENDANCE_STATUSES, currentIndiaDate } from "@/lib/hr/attendance";
+import { ATTENDANCE_STATUS_LABELS, EMPLOYEE_STANDARD_WORKING_HOURS, PHASE1_ATTENDANCE_STATUSES, currentIndiaDate, previousDate } from "@/lib/hr/attendance";
 
 type RowState = {
   employee_id: string;
@@ -36,6 +36,8 @@ export default function DailyAttendancePage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [success, setSuccess] = useState("");
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [unsavedAction, setUnsavedAction] = useState<null | (() => void)>(null);
 
   const visibleSites = useMemo(
     () => companyId ? lookups.sites.filter((site) => site.scope_company_id === companyId) : lookups.sites,
@@ -43,15 +45,17 @@ export default function DailyAttendancePage() {
   );
   const isPast = date < today;
   const isFuture = date > today;
+  const earliestNormalEditDate = previousDate(today);
+  const isOlderThanYesterday = date < earliestNormalEditDate;
   const sentBack = period?.status === "reopened";
   const readOnlyReason = useMemo(() => {
     if (!canEdit) return "You do not have permission to edit attendance.";
     if (isFuture) return "Future attendance cannot be created or edited.";
     if (dayLock) return "This attendance day is locked.";
     if (["submitted", "level_1_approved", "level_2_approved", "finalized", "cancelled"].includes(period?.status)) return "This attendance period is read-only.";
-    if (isPast && !isAdminRecovery) return "Past attendance is read-only for this user.";
+    if (isOlderThanYesterday && !isAdminRecovery) return "Attendance can be edited only for today or yesterday.";
     return "";
-  }, [canEdit, dayLock, isAdminRecovery, isFuture, isPast, period?.status]);
+  }, [canEdit, dayLock, isAdminRecovery, isFuture, isOlderThanYesterday, period?.status]);
   const editable = canEdit && !readOnlyReason;
 
   useEffect(() => {
@@ -70,9 +74,13 @@ export default function DailyAttendancePage() {
     };
   }, []);
 
-  async function load() {
+  async function load(options: { skipDirtyGuard?: boolean } = {}) {
     if (!companyId || !siteId || !date) {
       setMessage("Select company, site and date.");
+      return;
+    }
+    if (!options.skipDirtyGuard && hasUnsavedChanges) {
+      setUnsavedAction(() => () => load({ skipDirtyGuard: true }));
       return;
     }
     setLoading(true);
@@ -92,6 +100,7 @@ export default function DailyAttendancePage() {
         };
       }
       setDraft(nextDraft);
+      setHasUnsavedChanges(false);
     } catch (error: any) {
       setMessage(error.message || "Failed to load daily attendance.");
     } finally {
@@ -104,6 +113,7 @@ export default function DailyAttendancePage() {
       ...prev,
       [employeeId]: { ...(prev[employeeId] || { employee_id: employeeId, status: "present" }), ...patch },
     }));
+    setHasUnsavedChanges(true);
   }
 
   function markAllPresent() {
@@ -112,12 +122,50 @@ export default function DailyAttendancePage() {
       next[item.employee.id] = { ...(next[item.employee.id] || { employee_id: item.employee.id }), status: "present" };
     }
     setDraft(next);
+    setHasUnsavedChanges(true);
+  }
+
+  function updateAttendanceContext(update: () => void) {
+    const action = () => {
+      setRows([]);
+      setPeriod(null);
+      setPolicy(null);
+      setDayLock(null);
+      setDraft({});
+      setHasUnsavedChanges(false);
+      update();
+    };
+    if (hasUnsavedChanges) {
+      setUnsavedAction(() => action);
+      return;
+    }
+    action();
+  }
+
+  async function saveDraftAndContinue() {
+    if (!unsavedAction || saving) return;
+    const saved = await save();
+    if (!saved) return;
+    const action = unsavedAction;
+    setUnsavedAction(null);
+    action();
+  }
+
+  function continueWithoutSaving() {
+    if (!unsavedAction) return;
+    const action = unsavedAction;
+    setHasUnsavedChanges(false);
+    setMessage("");
+    setSuccess("");
+    setUnsavedAction(null);
+    action();
   }
 
   async function save(options: { silent?: boolean } = {}) {
     if (!editable) return null;
-    const reason = isPast ? window.prompt("Enter reason for backdated attendance correction:") : "";
-    if (isPast && !reason?.trim()) {
+    const requiresReason = isOlderThanYesterday && isAdminRecovery;
+    const reason = requiresReason ? window.prompt("Enter reason for backdated attendance correction:") : "";
+    if (requiresReason && !reason?.trim()) {
       setMessage("Backdated attendance reason is required.");
       return null;
     }
@@ -133,7 +181,7 @@ export default function DailyAttendancePage() {
         body: JSON.stringify({ company_id: companyId, site_id: siteId, date, attendance, backdated_reason: reason }),
       });
       if (!options.silent) setSuccess(`Draft saved for ${result.saved || 0} attendance rows.`);
-      await load();
+      await load({ skipDirtyGuard: true });
       return result;
     } catch (error: any) {
       setMessage(error.message || "Failed to save attendance.");
@@ -159,7 +207,7 @@ export default function DailyAttendancePage() {
       const result = await apiFetch(`/api/hr/attendance/periods/${periodId}/submit`, { method: "POST" });
       setPeriod(result.period || period || null);
       setSuccess(sentBack ? "Attendance resubmitted for approval." : "Attendance submitted for approval.");
-      await load();
+      await load({ skipDirtyGuard: true });
     } catch (error: any) {
       setMessage(error.message || "Failed to submit attendance.");
     } finally {
@@ -189,14 +237,14 @@ export default function DailyAttendancePage() {
 
       <section className="rounded-2xl border bg-white p-4 shadow-sm">
         <div className="grid gap-3 md:grid-cols-4">
-          <Select label="Company" value={companyId} onChange={(value) => { setCompanyId(value); setSiteId(""); }} options={lookups.companies} />
-          <Select label="Site" value={siteId} onChange={setSiteId} options={visibleSites} />
+          <Select label="Company" value={companyId} disabled={loading || saving} onChange={(value) => updateAttendanceContext(() => { setCompanyId(value); setSiteId(""); })} options={lookups.companies} />
+          <Select label="Site" value={siteId} disabled={loading || saving} onChange={(value) => updateAttendanceContext(() => setSiteId(value))} options={visibleSites} />
           <label className="block">
             <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Date</span>
-            <input type="date" value={date} max={today} onChange={(event) => setDate(event.target.value)} className="h-10 w-full rounded-xl border px-3 text-sm" />
+            <input type="date" value={date} min={isAdminRecovery ? undefined : earliestNormalEditDate} max={today} disabled={loading || saving} onChange={(event) => updateAttendanceContext(() => setDate(event.target.value))} className="h-10 w-full rounded-xl border px-3 text-sm disabled:bg-slate-100" />
           </label>
           <div className="flex items-end gap-2">
-            <button type="button" onClick={load} disabled={loading} className="h-10 rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white disabled:opacity-60">
+            <button type="button" onClick={() => load()} disabled={loading || saving} className="h-10 rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white disabled:opacity-60">
               {loading ? "Loading..." : "Load Attendance"}
             </button>
           </div>
@@ -282,15 +330,33 @@ export default function DailyAttendancePage() {
           </tbody>
         </table>
       </section>
+
+      {unsavedAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-lg rounded-xl bg-white p-5 shadow-xl">
+            <h2 className="text-lg font-semibold text-slate-950">Unsaved Attendance Changes</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Changing filters will replace the currently loaded attendance rows. Save this draft first, continue without saving, or cancel.
+            </p>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button type="button" onClick={() => setUnsavedAction(null)} disabled={saving} className="rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-60">Cancel</button>
+              <button type="button" onClick={continueWithoutSaving} disabled={saving} className="rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-60">Continue Without Saving</button>
+              <button type="button" onClick={saveDraftAndContinue} disabled={saving} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                {saving ? "Saving..." : "Save Draft & Continue"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
 
-function Select({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: { id: string; label: string }[] }) {
+function Select({ label, value, onChange, options, disabled }: { label: string; value: string; onChange: (value: string) => void; options: { id: string; label: string }[]; disabled?: boolean }) {
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-xl border px-3 text-sm">
+      <select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-xl border px-3 text-sm disabled:bg-slate-100">
         <option value="">Select {label}</option>
         {options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
       </select>

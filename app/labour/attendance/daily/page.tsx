@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
 import { useAccessContext } from "@/components/AccessContext";
 import { clearSelectedLabourContext, labourContextFromLookup, readSelectedLabourContext, resolveSingleLabourSiteId, selectedLabourContextIsValid, selectedLabourSiteIsValid, subscribeLabourWorkspaceSummary, type LabourWorkspaceSummary, writeSelectedLabourContext } from "@/lib/labour/attendanceSystemContext";
+import { previousDate, todayInIst } from "@/lib/labour/operations";
 
 const statuses = [
   ["present", "Present"],
@@ -21,7 +22,7 @@ function attendanceSystemMessage(system: any) {
 }
 
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  return todayInIst();
 }
 
 function formatTime(value?: string | null) {
@@ -79,6 +80,9 @@ export default function LabourDailyAttendancePage() {
   const { access } = useAccessContext();
   const permissions = access?.permissions || [];
   const global = hasGlobalAccess(access);
+  const canRecoverOlderAttendance = global || Boolean(access?.roleCodes?.includes("super_admin"));
+  const todayDate = today();
+  const earliestNormalEditDate = previousDate(todayDate);
   const canAddAttendance = global || can(permissions, "labour_attendance", "add");
   const canEditAttendance = global || can(permissions, "labour_attendance", "edit");
   const canSave = canAddAttendance || canEditAttendance;
@@ -105,10 +109,17 @@ export default function LabourDailyAttendancePage() {
   const [restoringContext, setRestoringContext] = useState(true);
   const [unlockDialogOpen, setUnlockDialogOpen] = useState(false);
   const [unlockReason, setUnlockReason] = useState("");
+  const [unsavedAction, setUnsavedAction] = useState<null | (() => void)>(null);
   const lookupAbortRef = useRef<AbortController | null>(null);
   const lookupRequestRef = useRef(0);
 
   const filteredSites = useMemo(() => lookups.sites || [], [lookups.sites]);
+  const displayedRows = useMemo(
+    () => filters.contractor_profile_id
+      ? rows.filter((row) => row.contractor?.id === filters.contractor_profile_id)
+      : rows,
+    [filters.contractor_profile_id, rows],
+  );
   const otErrors = useMemo(() => Object.fromEntries(
     rows
       .map((row) => [row.labour_worker_id, otValidationMessage(row.ot_hours)])
@@ -174,7 +185,10 @@ export default function LabourDailyAttendancePage() {
 
   async function loadRows(options: { skipDirtyConfirm?: boolean } = {}) {
     if (rowLoading) return;
-    if (!options.skipDirtyConfirm && hasUnsavedChanges && !window.confirm("Reload attendance and discard unsaved local edits?")) return;
+    if (!options.skipDirtyConfirm && hasUnsavedChanges) {
+      setUnsavedAction(() => () => loadRows({ skipDirtyConfirm: true }));
+      return;
+    }
     if (!filters.company_id) return setMessage("Select a company.");
     if (!filters.site_id) return setMessage("Select a site.");
     if (!filters.attendance_date) return setMessage("Select an attendance date.");
@@ -189,15 +203,12 @@ export default function LabourDailyAttendancePage() {
       params.set("company_id", filters.company_id);
       params.set("site_id", filters.site_id);
       params.set("attendance_date", filters.attendance_date);
-      if (filters.contractor_profile_id) params.set("contractor_profile_id", filters.contractor_profile_id);
       const response = await fetch(`/api/labour/attendance/daily?${params}`, { headers: { Authorization: `Bearer ${await token()}` } });
       const payload = await response.json();
       if (!response.ok) return setMessage(payload.error || "Could not load attendance.");
       const nextRows = payload.rows || [];
       setRows(nextRows);
-      setMessage(nextRows.length ? "" : filters.contractor_profile_id
-        ? "No eligible labourers found under the selected Contractor for this Site/date."
-        : "No eligible deployed labourers found for this Site/date.");
+      setMessage(nextRows.length ? "" : "No eligible deployed labourers found for this Site/date.");
       setPeriod(payload.period || null);
       setDayLock(payload.day_lock || null);
       setReadOnlyReason(payload.read_only_reason || "");
@@ -216,8 +227,7 @@ export default function LabourDailyAttendancePage() {
     setDirty((current) => ({ ...current, [workerId]: true }));
   }
 
-  function updateFilters(patch: Partial<typeof filters>, options: { clearContractors?: boolean } = {}) {
-    if (hasUnsavedChanges && !window.confirm("Changing filters will clear unsaved attendance edits. Continue?")) return;
+  function applyFilterChange(patch: Partial<typeof filters>, options: { clearContractors?: boolean } = {}) {
     if ("company_id" in patch || "site_id" in patch) clearSelectedLabourContext();
     setRows([]);
     setPeriod(null);
@@ -230,6 +240,44 @@ export default function LabourDailyAttendancePage() {
       setLookups((current: any) => ({ ...current, contractors: [], attendance_system: null }));
     }
     setFilters((current) => ({ ...current, ...patch }));
+  }
+
+  function updateFilters(patch: Partial<typeof filters>, options: { clearContractors?: boolean } = {}) {
+    if ("contractor_profile_id" in patch && Object.keys(patch).length === 1) {
+      setFilters((current) => ({ ...current, contractor_profile_id: patch.contractor_profile_id || "" }));
+      return;
+    }
+    const action = () => applyFilterChange(patch, options);
+    if (hasUnsavedChanges) {
+      setUnsavedAction(() => action);
+      return;
+    }
+    action();
+  }
+
+  async function saveDraftAndContinue() {
+    if (!unsavedAction || saving || submitting) return;
+    setSaving(true);
+    try {
+      const ok = await persistRows("draft");
+      if (!ok) return;
+      const action = unsavedAction;
+      setUnsavedAction(null);
+      action();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function continueWithoutSaving() {
+    if (!unsavedAction) return;
+    const action = unsavedAction;
+    setDirty({});
+    setMessage("");
+    setSubmitSuccessMessage("");
+    setSubmitted(false);
+    setUnsavedAction(null);
+    action();
   }
 
   function updateShiftStatus(workerId: string, shift: "first" | "second", status: "present" | "absent") {
@@ -254,20 +302,21 @@ export default function LabourDailyAttendancePage() {
   }
 
   function batchStatus(status: string) {
-    if (!rows.length || readOnly || !canSave) return;
+    if (!displayedRows.length || readOnly || !canSave) return;
     if (standardBlocked) return;
-    const savedRows = rows.some((row) => row.attendance);
-    const newRows = rows.some((row) => !row.attendance);
+    const visibleWorkerIds = new Set(displayedRows.map((row) => row.labour_worker_id));
+    const savedRows = displayedRows.some((row) => row.attendance);
+    const newRows = displayedRows.some((row) => !row.attendance);
     if (savedRows && !canEditAttendance) return setMessage("You do not have permission to edit labour attendance.");
     if (newRows && !canAddAttendance) return setMessage("You do not have permission to add labour attendance.");
     if (savedRows && !window.confirm("This will change the visible attendance rows. Continue?")) return;
-    if (status === "present" && rows.some((row) => row.attendance?.first_half_present === false || row.attendance?.second_half_present === false) && !canOverride) {
+    if (status === "present" && displayedRows.some((row) => row.attendance?.first_half_present === false || row.attendance?.second_half_present === false) && !canOverride) {
       setMessage("Mark All Present would change saved Absent shifts back to Present. Attendance override permission is required.");
       return;
     }
     setMessage("");
     setSubmitted(false);
-    setRows((current) => current.map((row) => ({
+    setRows((current) => current.map((row) => visibleWorkerIds.has(row.labour_worker_id) ? {
       ...row,
       first_shift_status: status,
       second_shift_status: status,
@@ -275,16 +324,17 @@ export default function LabourDailyAttendancePage() {
       bonus_hours: status === "present" ? row.bonus_hours ?? "" : "",
       first_shift_override_reason: "",
       second_shift_override_reason: "",
-    })));
-    setDirty(Object.fromEntries(rows.map((row) => [row.labour_worker_id, true])));
+    } : row));
+    setDirty((current) => ({ ...current, ...Object.fromEntries(displayedRows.map((row) => [row.labour_worker_id, true])) }));
   }
 
   function clearChanges() {
-    if (!rows.length || readOnly || !canSave) return;
+    if (!displayedRows.length || readOnly || !canSave) return;
     if (standardBlocked) return;
-    if (rows.some((row) => row.attendance) && !canEditAttendance) return setMessage("You do not have permission to edit labour attendance.");
+    const visibleWorkerIds = new Set(displayedRows.map((row) => row.labour_worker_id));
+    if (displayedRows.some((row) => row.attendance) && !canEditAttendance) return setMessage("You do not have permission to edit labour attendance.");
     if (!window.confirm("Reset visible rows to a blank draft state?")) return;
-    setRows((current) => current.map((row) => ({
+    setRows((current) => current.map((row) => visibleWorkerIds.has(row.labour_worker_id) ? {
       ...row,
       first_shift_status: null,
       second_shift_status: null,
@@ -292,8 +342,8 @@ export default function LabourDailyAttendancePage() {
       bonus_hours: "",
       first_shift_override_reason: "",
       second_shift_override_reason: "",
-    })));
-    setDirty(Object.fromEntries(rows.map((row) => [row.labour_worker_id, true])));
+    } : row));
+    setDirty((current) => ({ ...current, ...Object.fromEntries(displayedRows.map((row) => [row.labour_worker_id, true])) }));
     setMessage("");
     setSubmitted(false);
   }
@@ -370,7 +420,7 @@ export default function LabourDailyAttendancePage() {
     }
     setSubmitSuccessMessage("");
     setMessage("");
-    const backdated = filters.attendance_date < today();
+    const backdated = filters.attendance_date < previousDate(today());
     const backdated_reason = backdated ? prompt("Reason for backdated attendance change") : "";
     if (backdated && !backdated_reason) return false;
     try {
@@ -378,7 +428,9 @@ export default function LabourDailyAttendancePage() {
         method: "POST",
         headers: { "content-type": "application/json", Authorization: `Bearer ${await token()}` },
         body: JSON.stringify({
-          ...filters,
+          company_id: filters.company_id,
+          site_id: filters.site_id,
+          attendance_date: filters.attendance_date,
           backdated_reason,
           mode,
           rows: changed.map(({ labour_worker_id, first_shift_status, second_shift_status, ot_hours, remarks, first_shift_override_reason, second_shift_override_reason }) => {
@@ -466,7 +518,6 @@ export default function LabourDailyAttendancePage() {
         company_id: filters.company_id,
         site_id: filters.site_id,
         attendance_date: filters.attendance_date,
-        contractor_profile_id: filters.contractor_profile_id || null,
       }),
     });
     const payload = await response.json();
@@ -488,7 +539,6 @@ export default function LabourDailyAttendancePage() {
         company_id: filters.company_id,
         site_id: filters.site_id,
         attendance_date: filters.attendance_date,
-        contractor_profile_id: filters.contractor_profile_id || null,
         reason,
       }),
     });
@@ -643,7 +693,7 @@ export default function LabourDailyAttendancePage() {
           </label>
           <label className="text-xs font-bold uppercase tracking-wide text-slate-500">
             Attendance Date
-            <input disabled={filtersDisabled} type="date" value={filters.attendance_date} onChange={(e) => {
+            <input disabled={filtersDisabled} type="date" value={filters.attendance_date} min={canRecoverOlderAttendance ? undefined : earliestNormalEditDate} max={todayDate} onChange={(e) => {
               updateFilters({ attendance_date: e.target.value, contractor_profile_id: "" }, { clearContractors: true });
             }} className="mt-1 h-11 w-full rounded-lg border px-3 text-sm font-normal normal-case tracking-normal text-slate-950 disabled:bg-slate-100" />
           </label>
@@ -660,7 +710,7 @@ export default function LabourDailyAttendancePage() {
           <button onClick={() => loadRows()} disabled={filtersDisabled || lookupLoading || standardBlocked} className="h-11 w-full self-end rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white disabled:opacity-60">{rowLoading ? "Loading attendance..." : "Load Attendance"}</button>
         </div>
 
-        {rows.length > 0 && canSave && !readOnly && (
+        {displayedRows.length > 0 && canSave && !readOnly && (
           <div className="flex flex-wrap gap-2 rounded-lg border bg-white p-3 shadow-sm">
             <button type="button" onClick={() => batchStatus("present")} disabled={saving || submitting} className="min-h-11 rounded-lg border px-3 text-sm font-semibold disabled:opacity-60">Mark All Present</button>
             <button type="button" onClick={() => batchStatus("absent")} disabled={saving || submitting} className="min-h-11 rounded-lg border px-3 text-sm font-semibold disabled:opacity-60">Mark All Absent</button>
@@ -674,7 +724,7 @@ export default function LabourDailyAttendancePage() {
               <tr>{["S.No.", "Labour", "Contractor", "Category", "Daily Rate", "Worker Status", "First Shift", "Second Shift", "OT Hours", "Bonus Hours"].map((heading) => <th key={heading} className="px-3 py-3">{heading}</th>)}</tr>
             </thead>
             <tbody className="divide-y">
-              {rows.map((row, index) => {
+              {displayedRows.map((row, index) => {
                 const controlsDisabled = readOnly || saving || submitting || (row.attendance ? !canEditAttendance : !canAddAttendance);
                 return (
                   <tr key={row.labour_worker_id}>
@@ -709,13 +759,13 @@ export default function LabourDailyAttendancePage() {
                   </tr>
                 );
               })}
-              {!rows.length && <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-500">Select company, site and date, then load attendance.</td></tr>}
+              {!displayedRows.length && <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-500">{rows.length ? "No labourers match the selected Contractor." : "Select company, site and date, then load attendance."}</td></tr>}
             </tbody>
           </table>
         </div>
 
         <div className="space-y-3 md:hidden">
-          {rows.map((row) => {
+          {displayedRows.map((row) => {
             const controlsDisabled = readOnly || saving || submitting || (row.attendance ? !canEditAttendance : !canAddAttendance);
             return (
               <div key={row.labour_worker_id} className="rounded-lg border bg-white p-4 shadow-sm">
@@ -761,7 +811,7 @@ export default function LabourDailyAttendancePage() {
               </div>
             );
           })}
-          {!rows.length && <div className="rounded-lg border bg-white px-3 py-8 text-center text-sm text-slate-500">Select company, site and date, then load attendance.</div>}
+          {!displayedRows.length && <div className="rounded-lg border bg-white px-3 py-8 text-center text-sm text-slate-500">{rows.length ? "No labourers match the selected Contractor." : "Select company, site and date, then load attendance."}</div>}
         </div>
 
         {unlockDialogOpen && (
@@ -777,6 +827,24 @@ export default function LabourDailyAttendancePage() {
               <div className="mt-5 flex justify-end gap-2">
                 <button onClick={() => { setUnlockDialogOpen(false); setUnlockReason(""); }} className="rounded-lg border px-4 py-2 text-sm font-semibold">Cancel</button>
                 <button onClick={unlockDay} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white">Unlock</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {unsavedAction && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+            <div className="w-full max-w-lg rounded-xl bg-white p-5 shadow-xl">
+              <h2 className="text-lg font-semibold text-slate-950">Unsaved Attendance Changes</h2>
+              <p className="mt-2 text-sm text-slate-600">
+                Changing filters will replace the currently loaded attendance rows. Save this draft first, continue without saving, or cancel.
+              </p>
+              <div className="mt-5 flex flex-wrap justify-end gap-2">
+                <button type="button" onClick={() => setUnsavedAction(null)} disabled={saving} className="rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-60">Cancel</button>
+                <button type="button" onClick={continueWithoutSaving} disabled={saving} className="rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-60">Continue Without Saving</button>
+                <button type="button" onClick={saveDraftAndContinue} disabled={saving} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                  {saving ? "Saving..." : "Save Draft & Continue"}
+                </button>
               </div>
             </div>
           </div>
