@@ -32,6 +32,13 @@ export function todayInIst(now = new Date()) {
   return `${lookup.year}-${lookup.month}-${lookup.day}`;
 }
 
+export function previousDate(dateText: string) {
+  const [year, month, day] = dateText.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
 export function isMonthEnded(periodMonth: string, now = new Date()) {
   const [year, month] = periodMonth.split("-").map(Number);
   const nextMonth = new Date(Date.UTC(year, month, 1));

@@ -10,7 +10,7 @@ import {
 } from "@/lib/serverOrganizationScope";
 import { insertErpAuditLog, type ErpAuditAction } from "@/lib/serverAudit";
 import { normalizeIdentifier, normalizeText } from "@/lib/labour/constants";
-import { isAfterLabourDayEndLockCutoff, isAfterLabourPolicyLockCutoff, monthStart, todayInIst } from "@/lib/labour/operations";
+import { isAfterLabourDayEndLockCutoff, isAfterLabourPolicyLockCutoff, monthStart, previousDate, todayInIst } from "@/lib/labour/operations";
 import { optionalFormattedAadhaar } from "@/lib/utils/aadhaar";
 
 export const LABOUR_DOCUMENT_BUCKET = "labour-documents";
@@ -440,17 +440,18 @@ export async function findOrCreateAttendancePeriod(access: LabourAccess, input: 
 }) {
   const periodMonth = monthStart(input.periodMonth || input.attendanceDate);
   if (!periodMonth) throw new Error("Valid month is required.");
-  const contractorId = normalizeText(input.contractorProfileId) || null;
-  let query = access.admin
+  const { data: existingRows, error } = await access.admin
     .from("labour_attendance_periods")
     .select("*")
     .eq("organization_id", input.organizationId)
     .eq("company_id", input.companyId)
     .eq("site_id", input.siteId)
-    .eq("period_month", periodMonth);
-  query = contractorId ? query.eq("contractor_profile_id", contractorId) : query.is("contractor_profile_id", null);
-  const { data: existing, error } = await query.maybeSingle();
+    .eq("period_month", periodMonth)
+    .order("contractor_profile_id", { ascending: true, nullsFirst: true })
+    .order("created_at", { ascending: true })
+    .limit(1);
   if (error) throw error;
+  const existing = existingRows?.[0] || null;
   if (existing) return existing;
   const { data, error: insertError } = await access.admin
     .from("labour_attendance_periods")
@@ -458,7 +459,7 @@ export async function findOrCreateAttendancePeriod(access: LabourAccess, input: 
       organization_id: input.organizationId,
       company_id: input.companyId,
       site_id: input.siteId,
-      contractor_profile_id: contractorId,
+      contractor_profile_id: null,
       period_month: periodMonth,
       originating_attendance_system: input.originatingAttendanceSystem || "standard",
       status: "draft",
@@ -756,9 +757,14 @@ export function isGlobalOrSuperAdmin(access: LabourAccess) {
 }
 
 export function actorCanEditAttendanceDate(access: LabourAccess, attendanceDate: string, reason?: string | null) {
-  if (attendanceDate > todayInIst()) return { error: "Future labour attendance cannot be marked." };
-  if (attendanceDate === todayInIst()) return { ok: true };
-  if (!isGlobalOrSuperAdmin(access)) return { error: "Only today's labour attendance can be edited." };
+  const today = todayInIst();
+  if (attendanceDate > today) return { error: "Future labour attendance cannot be marked." };
+  if (attendanceDate === today) return { ok: true };
+  const olderThanYesterday = attendanceDate < previousDate(today);
+  if (!isGlobalOrSuperAdmin(access) && olderThanYesterday) {
+    return { error: "Labour attendance can be edited only for today or yesterday." };
+  }
+  if (!olderThanYesterday) return { ok: true };
   if (!normalizeText(reason)) return { error: "Backdated attendance reason is required." };
   return { ok: true };
 }

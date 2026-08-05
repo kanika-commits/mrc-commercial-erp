@@ -17,7 +17,7 @@ import {
   validateTrade,
   validateWorkOrder,
 } from "@/app/api/labour/_shared";
-import { buildLabourAttendanceUpsertPayload, isoDate } from "@/lib/labour/operations";
+import { buildLabourAttendanceUpsertPayload, isoDate, previousDate, todayInIst } from "@/lib/labour/operations";
 import { labelFromCode, normalizeText } from "@/lib/labour/constants";
 
 function text(value: unknown) {
@@ -159,17 +159,18 @@ async function loadExistingAttendancePeriod(access: any, input: {
   attendanceDate: string;
 }) {
   const periodMonth = `${input.attendanceDate.slice(0, 7)}-01`;
-  let query = access.admin
+  const { data, error } = await access.admin
     .from("labour_attendance_periods")
     .select("*")
     .eq("organization_id", input.organizationId)
     .eq("company_id", input.companyId)
     .eq("site_id", input.siteId)
-    .eq("period_month", periodMonth);
-  query = input.contractorProfileId ? query.eq("contractor_profile_id", input.contractorProfileId) : query.is("contractor_profile_id", null);
-  const { data, error } = await query.maybeSingle();
+    .eq("period_month", periodMonth)
+    .order("contractor_profile_id", { ascending: true, nullsFirst: true })
+    .order("created_at", { ascending: true })
+    .limit(1);
   if (error) throw error;
-  return data || null;
+  return data?.[0] || null;
 }
 
 async function hasRows(query: any) {
@@ -640,7 +641,7 @@ export async function POST(request: Request) {
         overtimeMinutes: overtime,
         remarks: text(change.remarks),
         source: "manual",
-        backdatedReason: attendanceDate < new Date().toISOString().slice(0, 10) ? backdatedReason : null,
+        backdatedReason: attendanceDate < previousDate(todayInIst()) ? backdatedReason : null,
         actorId: access.auth.user.id,
         actorName: access.auth.user.user_metadata?.full_name || access.auth.user.user_metadata?.name || access.auth.user.email || "Unknown User",
         actorEmail: access.auth.user.email || null,

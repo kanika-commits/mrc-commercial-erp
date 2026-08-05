@@ -44,7 +44,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       };
       const { error } = await access.admin
         .from("labour_attendance_periods")
-        .update({ summary: nextSummary, updated_at: now, ...actorFields(access.auth, "updated") })
+        .update({
+          summary: nextSummary,
+          submitted_at: now,
+          submitted_by: access.auth.user.id,
+          submitted_by_name: access.auth.user.user_metadata?.full_name || access.auth.user.user_metadata?.name || access.auth.user.email || "Unknown User",
+          submitted_by_email: access.auth.user.email || null,
+          updated_at: now,
+          ...actorFields(access.auth, "updated"),
+        })
         .eq("id", id);
       if (error) throw error;
       await audit(access, request, {
