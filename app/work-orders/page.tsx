@@ -888,6 +888,7 @@ export default function WorkOrdersPage() {
                         >
                           {wo.wo_number || "-"}
                         </Link>
+                        {wo.wo_type && <div className="mt-1 text-sm font-medium text-slate-500">{wo.wo_type}</div>}
                       </div>
                     </td>
                     <td className="px-6 py-5 align-top">
