@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, Landmark, Settings, ShieldCheck, Users } from "lucide-react";
+import { Activity, ArrowRight, Landmark, Settings, ShieldCheck, Users } from "lucide-react";
 import { useMemo } from "react";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
@@ -15,33 +15,6 @@ type ModuleRow = {
   sort_order: number;
 };
 
-const toneClasses = {
-  blue: {
-    iconShell: "bg-blue-50",
-    icon: "text-blue-600",
-    badge: "border-blue-100 bg-blue-50 text-blue-700",
-    dot: "bg-blue-500",
-  },
-  indigo: {
-    iconShell: "bg-indigo-50",
-    icon: "text-indigo-600",
-    badge: "border-indigo-100 bg-indigo-50 text-indigo-700",
-    dot: "bg-indigo-500",
-  },
-  violet: {
-    iconShell: "bg-violet-50",
-    icon: "text-violet-600",
-    badge: "border-violet-100 bg-violet-50 text-violet-700",
-    dot: "bg-violet-500",
-  },
-  slate: {
-    iconShell: "bg-slate-100",
-    icon: "text-slate-600",
-    badge: "border-slate-200 bg-slate-50 text-slate-700",
-    dot: "bg-slate-500",
-  },
-};
-
 const adminModules = [
   {
     title: "Organizations",
@@ -49,9 +22,7 @@ const adminModules = [
     moduleCodes: ["organizations"],
     routes: ["/organizations"],
     icon: Landmark,
-    tone: "blue",
-    status: "Secure",
-    meta: "Organization Root",
+    className: "from-blue-50 to-white border-blue-100 text-blue-700",
   },
   {
     title: "Users",
@@ -59,19 +30,15 @@ const adminModules = [
     moduleCodes: ["users"],
     routes: ["/admin/users"],
     icon: Users,
-    tone: "indigo",
-    status: "Secure",
-    meta: "User Access",
+    className: "from-indigo-50 to-white border-indigo-100 text-indigo-700",
   },
   {
     title: "Roles",
-    description: "Manage designation templates.",
+    description: "Manage role templates.",
     moduleCodes: ["roles"],
     routes: ["/admin/roles"],
     icon: ShieldCheck,
-    tone: "violet",
-    status: "Secure",
-    meta: "Role Templates",
+    className: "from-purple-50 to-white border-purple-100 text-purple-700",
   },
   {
     title: "Permissions",
@@ -79,9 +46,15 @@ const adminModules = [
     moduleCodes: ["permissions"],
     routes: ["/admin/permissions"],
     icon: Settings,
-    tone: "slate",
-    status: "Secure",
-    meta: "Access Matrix",
+    className: "from-slate-50 to-white border-slate-200 text-slate-700",
+  },
+  {
+    title: "System Activity",
+    description: "Review ERP activity, changes, approvals and audit history.",
+    moduleCodes: ["system_activity"],
+    routes: ["/admin/activity"],
+    icon: Activity,
+    className: "from-slate-50 to-white border-slate-200 text-slate-700",
   },
 ] as const;
 
@@ -111,6 +84,7 @@ function isVisibleCard(
 export default function AdministrationPage() {
   const { access, moduleNavigation, loading } = useAccessContext();
   const permissions = access?.permissions || [];
+  const canViewSystemActivity = Boolean(access?.roleCodes?.includes("platform_owner") || access?.roleCodes?.includes("super_admin"));
   const modules = useMemo(
     () =>
       ((moduleNavigation.modules || []) as ModuleRow[]).filter(
@@ -124,14 +98,20 @@ export default function AdministrationPage() {
       adminModules
         .map((item) => {
           const module = findModule(modules, item);
-          if (!module || !can(permissions, module.module_code, "view")) {
+          if (!module) {
+            return null;
+          }
+          if (module.module_code === "system_activity") {
+            return canViewSystemActivity ? buildCard(item, module) : null;
+          }
+          if (!can(permissions, module.module_code, "view")) {
             return null;
           }
 
           return buildCard(item, module);
         })
         .filter(isVisibleCard),
-    [modules, permissions],
+    [modules, permissions, canViewSystemActivity],
   );
 
   if (loading) {
@@ -143,18 +123,18 @@ export default function AdministrationPage() {
   }
 
   return (
-    <section className="min-h-screen bg-[#f6f3f5] px-6 py-7 text-[#1b1b1d] md:px-10">
-      <div className="mx-auto max-w-[1500px] space-y-8">
-        <header className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-black md:text-[28px] md:leading-9">
-            Admin &amp; Settings
-          </h1>
-          <p className="max-w-2xl text-sm leading-5 text-slate-600">
-            Manage organizations, users, roles and permissions.
-          </p>
-        </header>
+    <section className="space-y-5">
+      <div className="rounded-2xl border bg-white p-5 shadow-sm">
+        <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
+          Module
+        </p>
+        <h1 className="text-2xl font-bold text-slate-950">Admin &amp; Settings</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Manage organizations, users, roles and permissions.
+        </p>
+      </div>
 
-        <section className="space-y-4">
+      <section className="space-y-3">
           <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
             Administration Directory
           </h2>
@@ -164,67 +144,38 @@ export default function AdministrationPage() {
               No accessible pages found in this module.
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               {visibleCards.map((module) => {
                 const Icon = module.icon;
-                const tone =
-                  toneClasses[module.tone as keyof typeof toneClasses];
 
                 return (
-                  <Link
-                    key={module.moduleCode}
-                    href={module.href}
-                    className="group/module block"
-                  >
-                    <article className="relative overflow-hidden rounded-lg border border-slate-200 bg-white p-5 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-slate-300 hover:shadow-lg">
-                      <div className="mb-4 flex items-start justify-between gap-4">
-                        <div className="rounded-lg border border-slate-200 bg-[#f6f3f5] p-1.5">
-                          <div
-                            className={`flex h-8 w-8 items-center justify-center rounded-md ${tone.iconShell}`}
-                          >
-                            <Icon
-                              className={`h-4 w-4 transition-transform duration-200 group-hover/module:scale-110 ${tone.icon}`}
-                            />
+                  <Link key={module.moduleCode} href={module.href}>
+                    <div
+                      className={`group rounded-xl border bg-gradient-to-br p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${module.className}`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="rounded-xl bg-white/80 p-2 shadow-sm">
+                          <Icon className="h-5 w-5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <h2 className="text-sm font-bold leading-5 text-slate-950">
+                              {module.title}
+                            </h2>
+                            <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 opacity-40 transition group-hover:translate-x-1 group-hover:opacity-100" />
                           </div>
+                          <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">
+                            {module.description}
+                          </p>
                         </div>
-
-                        <span
-                          className={`rounded-full border px-3 py-1 text-[10px] font-bold uppercase leading-4 ${tone.badge}`}
-                        >
-                          {module.status}
-                        </span>
                       </div>
-
-                      <h3 className="text-xl font-semibold leading-7 tracking-tight text-black">
-                        {module.title}
-                      </h3>
-                      <p className="mt-2 min-h-[44px] text-xs leading-5 text-slate-600">
-                        {module.description}
-                      </p>
-
-                      <div className="mt-5 flex items-center justify-between border-t border-slate-200 pt-3">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`h-1.5 w-1.5 rounded-full ${tone.dot}`}
-                          />
-                          <span className="text-xs font-medium text-slate-500">
-                            {module.meta}
-                          </span>
-                        </div>
-
-                        <span className="flex items-center gap-1 text-xs font-bold text-[#00658b]">
-                          Launch
-                          <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover/module:translate-x-1" />
-                        </span>
-                      </div>
-                    </article>
+                    </div>
                   </Link>
                 );
               })}
             </div>
           )}
-        </section>
-      </div>
+      </section>
     </section>
   );
 }
