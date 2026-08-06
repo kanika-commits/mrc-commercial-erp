@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
-  insertDeleteAudit,
   requireDeletePermission,
 } from "@/lib/serverDeleteAudit";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { uploadDriveFile } from "@/src/lib/googleDrive";
 import { requirePermission } from "@/lib/serverPermissions";
@@ -292,7 +292,7 @@ export async function POST(request: Request) {
 
     const { data: workOrder, error: workOrderError } = await admin
       .from("work_orders")
-      .select("id, organization_id, status, approval_status")
+      .select("id, organization_id, company_id, site_id, wo_number, status, approval_status")
       .eq("id", workOrderId)
       .maybeSingle();
 
@@ -482,6 +482,45 @@ export async function POST(request: Request) {
           });
 
         if (documentError) throw documentError;
+      }
+
+      try {
+        await recordAuditEvent(admin, auth.user, {
+          organizationId: workOrder.organization_id,
+          companyId: workOrder.company_id,
+          siteId: workOrder.site_id,
+          moduleCode: MODULE_CODE,
+          entityType: "debit_note",
+          recordId: debitNote.id,
+          recordNumber: debitNoteNumber,
+          parentEntityType: "work_order",
+          parentRecordId: workOrderId,
+          action: "create",
+          actionCategory: "create",
+          activityLabel: "Created Debit Note",
+          description: `Created Debit Note ${debitNoteNumber}.`,
+          workflowStage: "Pending Approval",
+          reason,
+          newValues: {
+            id: debitNote.id,
+            debit_note_number: debitNoteNumber,
+            debit_note_date: debitNoteDate,
+            debit_note_type: debitNoteType,
+            work_order_id: workOrderId,
+            work_order_number: workOrder.wo_number,
+            ra_bill_id: raBillId || null,
+            vendor_id: vendorId,
+            reason,
+            gross_amount: roundedGross,
+            gst_amount: 0,
+            total_amount: roundedGross,
+            status: "Draft",
+            approval_status: "Pending",
+            attachment_count: uploadedPaths.length,
+          },
+        }, request);
+      } catch (auditError) {
+        console.error("[Commercial Audit] Debit Note create audit failed", auditError);
       }
 
       return NextResponse.json({ id: debitNote.id });
@@ -685,6 +724,36 @@ export async function PATCH(request: Request) {
       return fail("Failed to approve Debit Note.", 500, approvalError);
     }
 
+    try {
+      await recordAuditEvent(admin, auth.user, {
+        organizationId: debitNote.organization_id,
+        moduleCode: MODULE_CODE,
+        entityType: "debit_note",
+        recordId: debitNote.id,
+        recordNumber: debitNote.debit_note_number,
+        parentEntityType: "work_order",
+        parentRecordId: debitNote.work_order_id,
+        action: "approve",
+        actionCategory: "workflow",
+        activityLabel: "Approved Debit Note",
+        description: `Approved Debit Note ${debitNote.debit_note_number}.`,
+        workflowStage: "Approved",
+        oldValues: {
+          status: debitNote.status,
+          approval_status: debitNote.approval_status,
+        },
+        newValues: {
+          status: "Approved",
+          approval_status: "Approved",
+          approved_by_name: userName,
+          approved_by_email: userEmail,
+          approved_at: now,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Commercial Audit] Debit Note approval audit failed", auditError);
+    }
+
     return NextResponse.json({ approved: true });
   }
 
@@ -751,6 +820,35 @@ export async function PATCH(request: Request) {
 
   if (debitNoteDeleteError) {
     return fail("Failed to delete rejected Debit Note.", 500, debitNoteDeleteError);
+  }
+
+  try {
+    await recordAuditEvent(admin, auth.user, {
+      organizationId: debitNote.organization_id,
+      moduleCode: MODULE_CODE,
+      entityType: "debit_note",
+      recordId: debitNote.id,
+      recordNumber: debitNote.debit_note_number,
+      parentEntityType: "work_order",
+      parentRecordId: debitNote.work_order_id,
+      action: "reject",
+      actionCategory: "workflow",
+      activityLabel: "Rejected Debit Note",
+      description: `Rejected Debit Note ${debitNote.debit_note_number}.`,
+      workflowStage: "Rejected",
+      reason: rejectionReason,
+      oldValues: debitNote,
+      relatedSnapshot: {
+        debit_note_documents: documents || [],
+      },
+      fileSnapshot: {
+        bucket: DOCUMENT_BUCKET,
+        paths: tempPaths,
+        drive_files_not_deleted: driveDocuments,
+      },
+    }, request);
+  } catch (auditError) {
+    console.error("[Commercial Audit] Debit Note rejection audit failed", auditError);
   }
 
   return NextResponse.json({
@@ -885,27 +983,6 @@ export async function DELETE(request: Request) {
     )
   );
 
-  const audit = await insertDeleteAudit(admin, auth.user, {
-    organizationId: debitNote.organization_id,
-    moduleCode: MODULE_CODE,
-    documentType: "Debit Note",
-    documentId: debitNote.id,
-    documentNumber: debitNote.debit_note_number,
-    deletionReason,
-    recordSnapshot: debitNote,
-    relatedSnapshot: {
-      debit_note_documents: documents,
-    },
-    fileSnapshot: {
-      bucket: DOCUMENT_BUCKET,
-      paths,
-    },
-  }).catch((error) => ({ error }));
-
-  if ("error" in audit) {
-    return fail("insert_audit", audit.error);
-  }
-
   if (paths.length > 0) {
     const { error: storageError } = await admin.storage
       .from(DOCUMENT_BUCKET)
@@ -934,6 +1011,47 @@ export async function DELETE(request: Request) {
 
   if (debitNoteDeleteError) {
     return fail("delete_debit_note", debitNoteDeleteError);
+  }
+
+  try {
+    await recordAuditEvent(admin, auth.user, {
+      organizationId: debitNote.organization_id,
+      moduleCode: MODULE_CODE,
+      entityType: "debit_note",
+      recordId: debitNote.id,
+      recordNumber: debitNote.debit_note_number,
+      parentEntityType: "work_order",
+      parentRecordId: debitNote.work_order_id,
+      action: "delete",
+      actionCategory: "delete",
+      activityLabel: "Deleted Debit Note",
+      description: `Deleted Debit Note ${debitNote.debit_note_number}.`,
+      reason: deletionReason,
+      oldValues: debitNote,
+      relatedSnapshot: {
+        debit_note_documents: documents,
+      },
+      fileSnapshot: {
+        bucket: DOCUMENT_BUCKET,
+        paths,
+      },
+      deleteSnapshot: {
+        documentType: "Debit Note",
+        documentId: debitNote.id,
+        documentNumber: debitNote.debit_note_number,
+        deletionReason,
+        recordSnapshot: debitNote,
+        relatedSnapshot: {
+          debit_note_documents: documents,
+        },
+        fileSnapshot: {
+          bucket: DOCUMENT_BUCKET,
+          paths,
+        },
+      },
+    }, request);
+  } catch (auditError) {
+    console.error("[Commercial Audit] Debit Note delete audit failed", auditError);
   }
 
   return NextResponse.json({

@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
-  insertDeleteAudit,
   requireDeletePermission,
 } from "@/lib/serverDeleteAudit";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { requirePermission } from "@/lib/serverPermissions";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { createWorkOrderDriveFolder } from "@/src/lib/googleDrive";
@@ -540,6 +540,42 @@ export async function POST(request: Request) {
         throw new Error("Work Order file metadata was not saved.");
       }
 
+      try {
+        await recordAuditEvent(admin, auth.user, {
+          organizationId,
+          companyId,
+          siteId,
+          moduleCode: MODULE_CODE,
+          entityType: "work_order",
+          recordId: workOrder.id,
+          recordNumber: woNumber,
+          action: "create",
+          actionCategory: "create",
+          activityLabel: "Created Work Order",
+          description: `Created Work Order ${woNumber}.`,
+          workflowStage: "Pending Approval",
+          newValues: {
+            id: workOrder.id,
+            wo_number: woNumber,
+            wo_type: woType,
+            wo_date: woDate,
+            wo_value: woValue,
+            gst_percent: gstPercent,
+            description: description || null,
+            status: "active",
+            approval_status: "pending",
+            vendor_id: vendorId,
+            vendor_name: vendor.vendor_name,
+            vendor_role: vendorRole,
+            document_id: document.id,
+            file_name: document.file_name,
+            file_path: document.file_path,
+          },
+        }, request);
+      } catch (auditError) {
+        console.error("[Commercial Audit] Work Order create audit failed", auditError);
+      }
+
       return NextResponse.json({ workOrder });
     } catch (error) {
       await cleanupWorkOrder(admin, createdWorkOrderId);
@@ -671,25 +707,6 @@ export async function DELETE(request: Request) {
       .filter(Boolean);
     const filePaths = Array.from(new Set([...documentPaths, ...fileRowPaths]));
 
-    await insertDeleteAudit(admin, auth.user, {
-      organizationId: workOrder.organization_id,
-      moduleCode: MODULE_CODE,
-      documentType: "Work Order",
-      documentId: workOrder.id,
-      documentNumber: workOrder.wo_number,
-      deletionReason,
-      recordSnapshot: workOrder,
-      relatedSnapshot: {
-        work_order_documents: documents,
-        work_order_vendors: vendorLinks,
-        work_order_files: fileRows,
-      },
-      fileSnapshot: {
-        bucket: DOCUMENT_BUCKET,
-        paths: filePaths,
-      },
-    });
-
     if (filePaths.length > 0) {
       const { error: storageError } = await admin.storage
         .from(DOCUMENT_BUCKET)
@@ -724,6 +741,51 @@ export async function DELETE(request: Request) {
       .eq("id", workOrderId);
 
     if (deleteError) throw deleteError;
+
+    try {
+      await recordAuditEvent(admin, auth.user, {
+        organizationId: workOrder.organization_id,
+        companyId: workOrder.company_id,
+        siteId: workOrder.site_id,
+        moduleCode: MODULE_CODE,
+        entityType: "work_order",
+        recordId: workOrder.id,
+        recordNumber: workOrder.wo_number,
+        action: "delete",
+        actionCategory: "delete",
+        activityLabel: "Deleted Work Order",
+        description: `Deleted Work Order ${workOrder.wo_number}.`,
+        reason: deletionReason,
+        oldValues: workOrder,
+        relatedSnapshot: {
+          work_order_documents: documents,
+          work_order_vendors: vendorLinks,
+          work_order_files: fileRows,
+        },
+        fileSnapshot: {
+          bucket: DOCUMENT_BUCKET,
+          paths: filePaths,
+        },
+        deleteSnapshot: {
+          documentType: "Work Order",
+          documentId: workOrder.id,
+          documentNumber: workOrder.wo_number,
+          deletionReason,
+          recordSnapshot: workOrder,
+          relatedSnapshot: {
+            work_order_documents: documents,
+            work_order_vendors: vendorLinks,
+            work_order_files: fileRows,
+          },
+          fileSnapshot: {
+            bucket: DOCUMENT_BUCKET,
+            paths: filePaths,
+          },
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Commercial Audit] Work Order delete audit failed", auditError);
+    }
 
     return NextResponse.json({
       deleted: true,

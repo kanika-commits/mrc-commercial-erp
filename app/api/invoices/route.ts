@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
-  insertDeleteAudit,
   requireDeletePermission,
 } from "@/lib/serverDeleteAudit";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { uploadDriveFile } from "@/src/lib/googleDrive";
 import { requirePermission } from "@/lib/serverPermissions";
@@ -290,7 +290,7 @@ export async function POST(request: Request) {
 
     const { data: workOrder, error: workOrderError } = await admin
       .from("work_orders")
-      .select("id, organization_id, status, approval_status")
+      .select("id, organization_id, company_id, site_id, wo_number, status, approval_status")
       .eq("id", workOrderId)
       .maybeSingle();
 
@@ -442,6 +442,44 @@ export async function POST(request: Request) {
 
       if (documentError) throw documentError;
 
+      try {
+        await recordAuditEvent(admin, auth.user, {
+          organizationId: workOrder.organization_id,
+          companyId: workOrder.company_id,
+          siteId: workOrder.site_id,
+          moduleCode: MODULE_CODE,
+          entityType: "invoice",
+          recordId: invoice.id,
+          recordNumber: invoiceNumber,
+          parentEntityType: "work_order",
+          parentRecordId: workOrderId,
+          action: "create",
+          actionCategory: "create",
+          activityLabel: "Created Invoice",
+          description: `Created Invoice ${invoiceNumber}.`,
+          workflowStage: "Pending Approval",
+          newValues: {
+            id: invoice.id,
+            invoice_number: invoiceNumber,
+            invoice_date: invoiceDate,
+            work_order_id: workOrderId,
+            work_order_number: workOrder.wo_number,
+            vendor_id: vendorId,
+            taxable_amount: roundedTaxable,
+            gst_rate: Number.isFinite(gstRate) ? gstRate : 0,
+            gst_amount: roundedGst,
+            invoice_amount: roundedInvoiceAmount,
+            status: "Submitted",
+            approval_status: "Pending",
+            itc_status: "Pending",
+            remarks: remarks || null,
+            file_path: uploadedPath,
+          },
+        }, request);
+      } catch (auditError) {
+        console.error("[Commercial Audit] Invoice create audit failed", auditError);
+      }
+
       return NextResponse.json({ id: invoice.id });
     } catch (error) {
       await cleanupInvoice(admin, invoiceId, uploadedPath);
@@ -490,7 +528,7 @@ export async function PATCH(request: Request) {
     const admin = adminClient();
     const { data: invoice, error: invoiceError } = await admin
       .from("invoices")
-      .select("id, organization_id")
+      .select("id, organization_id, work_order_id, invoice_number, itc_status")
       .eq("id", invoiceId)
       .maybeSingle();
 
@@ -527,6 +565,33 @@ export async function PATCH(request: Request) {
 
     if (itcError) {
       return fail("Failed to claim ITC.", 500, itcError);
+    }
+
+    try {
+      await recordAuditEvent(admin, auth.user, {
+        organizationId: invoice.organization_id,
+        moduleCode: "itc_claims",
+        entityType: "invoice",
+        recordId: invoice.id,
+        recordNumber: invoice.invoice_number,
+        parentEntityType: "work_order",
+        parentRecordId: invoice.work_order_id,
+        action: "approve",
+        actionCategory: "workflow",
+        activityLabel: "Claimed Invoice ITC",
+        description: `Claimed ITC for Invoice ${invoice.invoice_number}.`,
+        workflowStage: "ITC Claimed",
+        oldValues: {
+          itc_status: invoice.itc_status,
+        },
+        newValues: {
+          itc_status: "Claimed",
+          itc_claimed_by_name: userName,
+          itc_claimed_by_email: userEmail,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Commercial Audit] Invoice ITC claim audit failed", auditError);
     }
 
     return NextResponse.json({ itc_claimed: true });
@@ -680,6 +745,33 @@ export async function PATCH(request: Request) {
       return fail("Failed to approve invoice.", 500, approvalError);
     }
 
+    try {
+      await recordAuditEvent(admin, auth.user, {
+        organizationId: invoice.organization_id,
+        moduleCode: MODULE_CODE,
+        entityType: "invoice",
+        recordId: invoice.id,
+        recordNumber: invoice.invoice_number,
+        parentEntityType: "work_order",
+        parentRecordId: invoice.work_order_id,
+        action: "approve",
+        actionCategory: "workflow",
+        activityLabel: "Approved Invoice",
+        description: `Approved Invoice ${invoice.invoice_number}.`,
+        workflowStage: "Approved",
+        oldValues: {
+          status: invoice.status,
+          approval_status: invoice.approval_status,
+        },
+        newValues: {
+          status: "Approved",
+          approval_status: "Approved",
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Commercial Audit] Invoice approval audit failed", auditError);
+    }
+
     return NextResponse.json({ approved: true });
   }
 
@@ -746,6 +838,35 @@ export async function PATCH(request: Request) {
 
   if (invoiceDeleteError) {
     return fail("Failed to delete rejected invoice.", 500, invoiceDeleteError);
+  }
+
+  try {
+    await recordAuditEvent(admin, auth.user, {
+      organizationId: invoice.organization_id,
+      moduleCode: MODULE_CODE,
+      entityType: "invoice",
+      recordId: invoice.id,
+      recordNumber: invoice.invoice_number,
+      parentEntityType: "work_order",
+      parentRecordId: invoice.work_order_id,
+      action: "reject",
+      actionCategory: "workflow",
+      activityLabel: "Rejected Invoice",
+      description: `Rejected Invoice ${invoice.invoice_number}.`,
+      workflowStage: "Rejected",
+      reason: rejectionReason,
+      oldValues: invoice,
+      relatedSnapshot: {
+        invoice_documents: documents || [],
+      },
+      fileSnapshot: {
+        bucket: DOCUMENT_BUCKET,
+        paths: tempPaths,
+        drive_files_not_deleted: driveDocuments,
+      },
+    }, request);
+  } catch (auditError) {
+    console.error("[Commercial Audit] Invoice rejection audit failed", auditError);
   }
 
   return NextResponse.json({
@@ -876,23 +997,6 @@ export async function DELETE(request: Request) {
       )
     );
 
-    await insertDeleteAudit(admin, actingUser, {
-      organizationId: invoice.organization_id,
-      moduleCode: isItcDelete ? "itc_claims" : MODULE_CODE,
-      documentType: isItcDelete ? "ITC Review Invoice" : "Invoice",
-      documentId: invoice.id,
-      documentNumber: invoice.invoice_number,
-      deletionReason,
-      recordSnapshot: invoice,
-      relatedSnapshot: {
-        invoice_documents: documents || [],
-      },
-      fileSnapshot: {
-        bucket: DOCUMENT_BUCKET,
-        paths,
-      },
-    });
-
     if (paths.length > 0) {
       const { error: storageError } = await admin.storage
         .from(DOCUMENT_BUCKET)
@@ -914,6 +1018,47 @@ export async function DELETE(request: Request) {
       .eq("id", invoiceId);
 
     if (deleteError) throw deleteError;
+
+    try {
+      await recordAuditEvent(admin, actingUser, {
+        organizationId: invoice.organization_id,
+        moduleCode: isItcDelete ? "itc_claims" : MODULE_CODE,
+        entityType: "invoice",
+        recordId: invoice.id,
+        recordNumber: invoice.invoice_number,
+        parentEntityType: "work_order",
+        parentRecordId: invoice.work_order_id,
+        action: "delete",
+        actionCategory: "delete",
+        activityLabel: isItcDelete ? "Deleted ITC Review Invoice" : "Deleted Invoice",
+        description: `Deleted Invoice ${invoice.invoice_number}.`,
+        reason: deletionReason,
+        oldValues: invoice,
+        relatedSnapshot: {
+          invoice_documents: documents || [],
+        },
+        fileSnapshot: {
+          bucket: DOCUMENT_BUCKET,
+          paths,
+        },
+        deleteSnapshot: {
+          documentType: isItcDelete ? "ITC Review Invoice" : "Invoice",
+          documentId: invoice.id,
+          documentNumber: invoice.invoice_number,
+          deletionReason,
+          recordSnapshot: invoice,
+          relatedSnapshot: {
+            invoice_documents: documents || [],
+          },
+          fileSnapshot: {
+            bucket: DOCUMENT_BUCKET,
+            paths,
+          },
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Commercial Audit] Invoice delete audit failed", auditError);
+    }
 
     return NextResponse.json({
       deleted: true,

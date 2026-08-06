@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import {
   createDriveSubfolder,
@@ -250,7 +251,7 @@ export async function POST(
     const admin = adminClient();
     const { data: workOrder, error: workOrderError } = await admin
       .from("work_orders")
-      .select("id, organization_id, wo_number, status, approval_status, wo_value, gst_percent")
+      .select("id, organization_id, company_id, site_id, wo_number, status, approval_status, wo_value, gst_percent")
       .eq("id", id)
       .maybeSingle();
 
@@ -364,6 +365,36 @@ export async function POST(
       .single();
 
     if (insertError) throw insertError;
+
+    try {
+      await recordAuditEvent(admin, access.user, {
+        organizationId: workOrder.organization_id,
+        companyId: workOrder.company_id,
+        siteId: workOrder.site_id,
+        moduleCode: MODULE_CODE,
+        entityType: "work_order_change",
+        recordId: change.id,
+        recordNumber: change.change_number,
+        parentEntityType: "work_order",
+        parentRecordId: workOrder.id,
+        action: "upload",
+        actionCategory: "document",
+        activityLabel: `Uploaded ${CHANGE_CONFIG[changeType].label}`,
+        description: `${CHANGE_CONFIG[changeType].label} ${changeNumber} uploaded for Work Order ${workOrder.wo_number}.`,
+        workflowStage: "Post Approval Change",
+        newValues: {
+          ...change,
+          work_order_number: workOrder.wo_number,
+        },
+        fileSnapshot: {
+          file_id: uploadedFile.file_id,
+          file_url: uploadedFile.file_url,
+          file_name: uploadedFile.file_name || optimizedFile.fileName,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Commercial Audit] Work Order change audit failed", auditError);
+    }
 
     return NextResponse.json({ change });
   } catch (error: any) {

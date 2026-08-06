@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import {
   createServiceRoleClient,
-  insertDeleteAudit,
   requireAuthenticatedUser,
   requireDeletePermission,
 } from "@/lib/serverDeleteAudit";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import {
   createWorkOrderDriveFolder,
@@ -362,6 +362,36 @@ export async function PATCH(
       return fail("Failed to approve RA Bill.", 500, approvalError);
     }
 
+    try {
+      await recordAuditEvent(admin, auth.user, {
+        organizationId: raBill.organization_id,
+        moduleCode: MODULE_CODE,
+        entityType: "ra_bill",
+        recordId: raBill.id,
+        recordNumber: raBill.ra_number,
+        parentEntityType: "work_order",
+        parentRecordId: raBill.work_order_id,
+        action: "approve",
+        actionCategory: "workflow",
+        activityLabel: "Approved RA Bill",
+        description: `Approved RA Bill ${raBill.ra_number}.`,
+        workflowStage: "Approved",
+        oldValues: {
+          status: raBill.status,
+          approval_status: raBill.approval_status,
+        },
+        newValues: {
+          status: "Approved",
+          approval_status: "Approved",
+          approved_by_name: userName,
+          approved_by_email: userEmail,
+          approved_at: now,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Commercial Audit] RA Bill approval audit failed", auditError);
+    }
+
     return NextResponse.json({ approved: true });
   }
 
@@ -428,6 +458,35 @@ export async function PATCH(
 
   if (raBillDeleteError) {
     return fail("Failed to delete rejected RA Bill.", 500, raBillDeleteError);
+  }
+
+  try {
+    await recordAuditEvent(admin, auth.user, {
+      organizationId: raBill.organization_id,
+      moduleCode: MODULE_CODE,
+      entityType: "ra_bill",
+      recordId: raBill.id,
+      recordNumber: raBill.ra_number,
+      parentEntityType: "work_order",
+      parentRecordId: raBill.work_order_id,
+      action: "reject",
+      actionCategory: "workflow",
+      activityLabel: "Rejected RA Bill",
+      description: `Rejected RA Bill ${raBill.ra_number}.`,
+      workflowStage: "Rejected",
+      reason: rejectionReason,
+      oldValues: raBill,
+      relatedSnapshot: {
+        ra_bill_documents: documents || [],
+      },
+      fileSnapshot: {
+        bucket: DOCUMENT_BUCKET,
+        paths: tempPaths,
+        drive_files_not_deleted: driveDocuments,
+      },
+    }, request);
+  } catch (auditError) {
+    console.error("[Commercial Audit] RA Bill rejection audit failed", auditError);
   }
 
   return NextResponse.json({
@@ -637,27 +696,6 @@ export async function DELETE(
     )
   );
 
-  const audit = await insertDeleteAudit(admin, auth.user, {
-    organizationId: raBill.organization_id,
-    moduleCode: MODULE_CODE,
-    documentType: "RA Bill",
-    documentId: raBill.id,
-    documentNumber: raBill.ra_number,
-    deletionReason,
-    recordSnapshot: raBill,
-    relatedSnapshot: {
-      ra_bill_documents: documents,
-    },
-    fileSnapshot: {
-      bucket: DOCUMENT_BUCKET,
-      paths: filePaths,
-    },
-  }).catch((error) => ({ error }));
-
-  if ("error" in audit) {
-    return fail("insert_audit", audit.error);
-  }
-
   if (filePaths.length > 0) {
     const { error: storageError } = await admin.storage
       .from(DOCUMENT_BUCKET)
@@ -686,6 +724,47 @@ export async function DELETE(
 
   if (deleteError) {
     return fail("delete_ra_bill", deleteError);
+  }
+
+  try {
+    await recordAuditEvent(admin, auth.user, {
+      organizationId: raBill.organization_id,
+      moduleCode: MODULE_CODE,
+      entityType: "ra_bill",
+      recordId: raBill.id,
+      recordNumber: raBill.ra_number,
+      parentEntityType: "work_order",
+      parentRecordId: raBill.work_order_id,
+      action: "delete",
+      actionCategory: "delete",
+      activityLabel: "Deleted RA Bill",
+      description: `Deleted RA Bill ${raBill.ra_number}.`,
+      reason: deletionReason,
+      oldValues: raBill,
+      relatedSnapshot: {
+        ra_bill_documents: documents,
+      },
+      fileSnapshot: {
+        bucket: DOCUMENT_BUCKET,
+        paths: filePaths,
+      },
+      deleteSnapshot: {
+        documentType: "RA Bill",
+        documentId: raBill.id,
+        documentNumber: raBill.ra_number,
+        deletionReason,
+        recordSnapshot: raBill,
+        relatedSnapshot: {
+          ra_bill_documents: documents,
+        },
+        fileSnapshot: {
+          bucket: DOCUMENT_BUCKET,
+          paths: filePaths,
+        },
+      },
+    }, request);
+  } catch (auditError) {
+    console.error("[Commercial Audit] RA Bill delete audit failed", auditError);
   }
 
   return NextResponse.json({

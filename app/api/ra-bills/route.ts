@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { requirePermission } from "@/lib/serverPermissions";
 import {
@@ -154,7 +155,7 @@ export async function POST(request: Request) {
 
     const { data: workOrder, error: workOrderError } = await admin
       .from("work_orders")
-      .select("id, organization_id, status, approval_status")
+      .select("id, organization_id, company_id, site_id, wo_number, status, approval_status")
       .eq("id", workOrderId)
       .maybeSingle();
 
@@ -299,6 +300,44 @@ export async function POST(request: Request) {
           });
 
         if (documentError) throw documentError;
+      }
+
+      try {
+        await recordAuditEvent(admin, auth.user, {
+          organizationId: workOrder.organization_id,
+          companyId: workOrder.company_id,
+          siteId: workOrder.site_id,
+          moduleCode: MODULE_CODE,
+          entityType: "ra_bill",
+          recordId: raBill.id,
+          recordNumber: raNumber,
+          parentEntityType: "work_order",
+          parentRecordId: workOrderId,
+          action: "create",
+          actionCategory: "create",
+          activityLabel: "Created RA Bill",
+          description: `Created RA Bill ${raNumber}.`,
+          workflowStage: "Pending Approval",
+          newValues: {
+            id: raBill.id,
+            ra_number: raNumber,
+            ra_date: raDate,
+            work_order_id: workOrderId,
+            work_order_number: workOrder.wo_number,
+            vendor_id: vendorId,
+            gross_amount: valueOfWorkDone,
+            recovery_amount: Number.isFinite(securityAmount) ? securityAmount : 0,
+            gst_rate: Number.isFinite(gstRate) ? gstRate : 0,
+            gst_amount: Number.isFinite(gstAmount) ? gstAmount : 0,
+            net_amount: Number.isFinite(netAmount) ? netAmount : 0,
+            status: "Draft",
+            approval_status: "Pending",
+            remarks: remarks || null,
+            attachment_count: uploadedPaths.length,
+          },
+        }, request);
+      } catch (auditError) {
+        console.error("[Commercial Audit] RA Bill create audit failed", auditError);
       }
 
       return NextResponse.json({ id: raBill.id });

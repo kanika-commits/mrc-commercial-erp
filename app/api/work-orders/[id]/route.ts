@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { requireAnyPermission, requirePermission } from "@/lib/serverPermissions";
-import { insertDeleteAudit } from "@/lib/serverDeleteAudit";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import {
   isInOrganizationScope,
   loadOrganizationScopeForUser,
@@ -438,24 +438,44 @@ async function replacePendingWorkOrderPdf(
     }
   }
 
-  await insertDeleteAudit(admin, user, {
-    organizationId: workOrder.organization_id,
-    moduleCode: MODULE_CODE,
-    documentType: "Work Order PDF Replacement",
-    documentId: workOrder.id,
-    documentNumber: workOrder.wo_number,
-    deletionReason: "Pending Work Order original PDF replaced before approval.",
-    recordSnapshot: {
-      action: "pending_pdf_replaced",
-      previous_file: currentDocument || null,
-      replacement_file: {
-        file_name: nextDocument.file_name,
-        file_url: nextDocument.file_url,
-        file_path: nextDocument.file_path,
-        uploaded_at: nextDocument.uploaded_at,
-      },
+  const replacementSnapshot = {
+    action: "pending_pdf_replaced",
+    previous_file: currentDocument || null,
+    replacement_file: {
+      file_name: nextDocument.file_name,
+      file_url: nextDocument.file_url,
+      file_path: nextDocument.file_path,
+      uploaded_at: nextDocument.uploaded_at,
     },
-  });
+  };
+
+  try {
+    await recordAuditEvent(admin, user, {
+      organizationId: workOrder.organization_id,
+      companyId: workOrder.company_id,
+      siteId: workOrder.site_id,
+      moduleCode: MODULE_CODE,
+      entityType: "work_order",
+      recordId: workOrder.id,
+      recordNumber: workOrder.wo_number,
+      action: "upload",
+      actionCategory: "document",
+      activityLabel: "Replaced Work Order PDF",
+      description: "Pending Work Order original PDF replaced before approval.",
+      workflowStage: "Before Approval",
+      oldValues: { previous_file: currentDocument || null },
+      newValues: replacementSnapshot.replacement_file,
+      deleteSnapshot: {
+        documentType: "Work Order PDF Replacement",
+        documentId: workOrder.id,
+        documentNumber: workOrder.wo_number,
+        deletionReason: "Pending Work Order original PDF replaced before approval.",
+        recordSnapshot: replacementSnapshot,
+      },
+    });
+  } catch (auditError) {
+    console.error("[Commercial Audit] Work Order PDF replacement audit failed", auditError);
+  }
 }
 
 async function loadScopedWorkOrder(
@@ -750,23 +770,48 @@ export async function PATCH(
 
       if (updateError) throw updateError;
 
-      await insertDeleteAudit(admin, platformOwner.user, {
-        organizationId: workOrder.organization_id,
-        moduleCode: MODULE_CODE,
-        documentType: "Work Order Suspension Undo",
-        documentId: workOrder.id,
-        documentNumber: workOrder.wo_number,
-        deletionReason: reason,
-        recordSnapshot: {
-          action: "suspension_undone",
-          suspended_status: workOrder.status,
-          suspended_approval_status: workOrder.approval_status,
-          restored_status: "active",
-          restored_approval_status: restoredApprovalStatus,
-          undone_at: new Date().toISOString(),
+      const undoSnapshot = {
+        action: "suspension_undone",
+        suspended_status: workOrder.status,
+        suspended_approval_status: workOrder.approval_status,
+        restored_status: "active",
+        restored_approval_status: restoredApprovalStatus,
+        undone_at: new Date().toISOString(),
+        reason,
+      };
+
+      try {
+        await recordAuditEvent(admin, platformOwner.user, {
+          organizationId: workOrder.organization_id,
+          moduleCode: MODULE_CODE,
+          entityType: "work_order",
+          recordId: workOrder.id,
+          recordNumber: workOrder.wo_number,
+          action: "resume",
+          actionCategory: "workflow",
+          activityLabel: "Resumed Work Order",
+          description: `Resumed Work Order ${workOrder.wo_number}.`,
+          workflowStage: "Resumed",
           reason,
-        },
-      });
+          oldValues: {
+            status: workOrder.status,
+            approval_status: workOrder.approval_status,
+          },
+          newValues: {
+            status: "active",
+            approval_status: restoredApprovalStatus,
+          },
+          deleteSnapshot: {
+            documentType: "Work Order Suspension Undo",
+            documentId: workOrder.id,
+            documentNumber: workOrder.wo_number,
+            deletionReason: reason,
+            recordSnapshot: undoSnapshot,
+          },
+        }, request);
+      } catch (auditError) {
+        console.error("[Commercial Audit] Work Order resume audit failed", auditError);
+      }
 
       return NextResponse.json({
         work_order_id: id,
@@ -991,29 +1036,52 @@ export async function PATCH(
 
         if (updateError) throw updateError;
 
-        await insertDeleteAudit(admin, actionUser, {
-          organizationId: workOrder.organization_id,
-          moduleCode: MODULE_CODE,
-          documentType: "Work Order Correction",
-          documentId: workOrder.id,
-          documentNumber: workOrder.wo_number,
-          deletionReason: pending
-            ? "Pending Work Order details corrected before approval."
-            : "Approved Work Order allowed fields updated.",
-          recordSnapshot: {
-            action: pending ? "pending_correction" : "approved_allowed_edit",
-            previous: {
-              description: workOrder.description,
-              wo_type: workOrder.wo_type,
-              wo_date: workOrder.wo_date,
-              wo_value: workOrder.wo_value,
-              gst_percent: workOrder.gst_percent,
-              status: workOrder.status,
-              approval_status: workOrder.approval_status,
+        const correctionReason = pending
+          ? "Pending Work Order details corrected before approval."
+          : "Approved Work Order allowed fields updated.";
+        const previousValues = {
+          description: workOrder.description,
+          wo_type: workOrder.wo_type,
+          wo_date: workOrder.wo_date,
+          wo_value: workOrder.wo_value,
+          gst_percent: workOrder.gst_percent,
+          status: workOrder.status,
+          approval_status: workOrder.approval_status,
+        };
+        const correctionSnapshot = {
+          action: pending ? "pending_correction" : "approved_allowed_edit",
+          previous: previousValues,
+          updated: updatePayload,
+        };
+
+        try {
+          await recordAuditEvent(admin, actionUser, {
+            organizationId: workOrder.organization_id,
+            companyId: workOrder.company_id,
+            siteId: workOrder.site_id,
+            moduleCode: MODULE_CODE,
+            entityType: "work_order",
+            recordId: workOrder.id,
+            recordNumber: workOrder.wo_number,
+            action: "update",
+            actionCategory: "update",
+            activityLabel: pending ? "Corrected Work Order" : "Updated Work Order",
+            description: correctionReason,
+            workflowStage: pending ? "Before Approval" : "After Approval",
+            reason: correctionReason,
+            oldValues: previousValues,
+            newValues: updatePayload,
+            deleteSnapshot: {
+              documentType: "Work Order Correction",
+              documentId: workOrder.id,
+              documentNumber: workOrder.wo_number,
+              deletionReason: correctionReason,
+              recordSnapshot: correctionSnapshot,
             },
-            updated: updatePayload,
-          },
-        });
+          }, request);
+        } catch (auditError) {
+          console.error("[Commercial Audit] Work Order correction audit failed", auditError);
+        }
       }
 
       return NextResponse.json({
@@ -1059,6 +1127,35 @@ export async function PATCH(
 
       if (updateError) throw updateError;
 
+      try {
+        await recordAuditEvent(admin, permission.user, {
+          organizationId: scopedWorkOrder.workOrder.organization_id,
+          companyId: scopedWorkOrder.workOrder.company_id,
+          siteId: scopedWorkOrder.workOrder.site_id,
+          moduleCode: MODULE_CODE,
+          entityType: "work_order",
+          recordId: scopedWorkOrder.workOrder.id,
+          recordNumber: scopedWorkOrder.workOrder.wo_number,
+          action: "approve",
+          actionCategory: "workflow",
+          activityLabel: "Approved Work Order",
+          description: `Approved Work Order ${scopedWorkOrder.workOrder.wo_number}.`,
+          workflowStage: "Approved",
+          oldValues: {
+            status: scopedWorkOrder.workOrder.status,
+            approval_status: scopedWorkOrder.workOrder.approval_status,
+          },
+          newValues: {
+            status: "active",
+            approval_status: "approved",
+            approved_by_name: userName,
+            approved_by_email: userEmail,
+          },
+        }, request);
+      } catch (auditError) {
+        console.error("[Commercial Audit] Work Order approval audit failed", auditError);
+      }
+
       return NextResponse.json({ work_order_id: id, approved: true });
     }
 
@@ -1089,22 +1186,49 @@ export async function PATCH(
 
       if (updateError) throw updateError;
 
-      await insertDeleteAudit(admin, permission.user, {
-        organizationId: scopedWorkOrder.workOrder.organization_id,
-        moduleCode: MODULE_CODE,
-        documentType: "Work Order Suspension",
-        documentId: scopedWorkOrder.workOrder.id,
-        documentNumber: scopedWorkOrder.workOrder.wo_number,
-        deletionReason: "Work Order suspended from approval workflow.",
-        recordSnapshot: {
-          action: "suspended",
-          previous_status: scopedWorkOrder.workOrder.status,
-          previous_approval_status: scopedWorkOrder.workOrder.approval_status,
-          suspended_status: "suspended",
-          suspended_approval_status: "suspended",
-          suspended_at: new Date().toISOString(),
-        },
-      });
+      const suspensionSnapshot = {
+        action: "suspended",
+        previous_status: scopedWorkOrder.workOrder.status,
+        previous_approval_status: scopedWorkOrder.workOrder.approval_status,
+        suspended_status: "suspended",
+        suspended_approval_status: "suspended",
+        suspended_at: new Date().toISOString(),
+      };
+
+      try {
+        await recordAuditEvent(admin, permission.user, {
+          organizationId: scopedWorkOrder.workOrder.organization_id,
+          companyId: scopedWorkOrder.workOrder.company_id,
+          siteId: scopedWorkOrder.workOrder.site_id,
+          moduleCode: MODULE_CODE,
+          entityType: "work_order",
+          recordId: scopedWorkOrder.workOrder.id,
+          recordNumber: scopedWorkOrder.workOrder.wo_number,
+          action: "suspend",
+          actionCategory: "workflow",
+          activityLabel: "Suspended Work Order",
+          description: "Work Order suspended from approval workflow.",
+          workflowStage: "Suspended",
+          reason: "Work Order suspended from approval workflow.",
+          oldValues: {
+            status: scopedWorkOrder.workOrder.status,
+            approval_status: scopedWorkOrder.workOrder.approval_status,
+          },
+          newValues: {
+            status: "suspended",
+            approval_status: "suspended",
+          },
+          deleteSnapshot: {
+            documentType: "Work Order Suspension",
+            documentId: scopedWorkOrder.workOrder.id,
+            documentNumber: scopedWorkOrder.workOrder.wo_number,
+            deletionReason: "Work Order suspended from approval workflow.",
+            recordSnapshot: suspensionSnapshot,
+          },
+        }, request);
+      } catch (auditError) {
+        console.error("[Commercial Audit] Work Order suspension audit failed", auditError);
+      }
 
       return NextResponse.json({ work_order_id: id, suspended: true });
     }
@@ -1140,6 +1264,29 @@ export async function PATCH(
       .eq("id", id);
 
     if (updateError) throw updateError;
+
+    try {
+      await recordAuditEvent(admin, access.user, {
+        organizationId: scopedWorkOrder.workOrder.organization_id,
+        companyId: scopedWorkOrder.workOrder.company_id,
+        siteId: scopedWorkOrder.workOrder.site_id,
+        moduleCode: MODULE_CODE,
+        entityType: "work_order",
+        recordId: scopedWorkOrder.workOrder.id,
+        recordNumber: scopedWorkOrder.workOrder.wo_number,
+        action: "update",
+        actionCategory: "update",
+        activityLabel: "Updated Work Order Status",
+        description: `Updated Work Order ${scopedWorkOrder.workOrder.wo_number} status to ${status}.`,
+        workflowStage: "Status Change",
+        oldValues: {
+          status: scopedWorkOrder.workOrder.status,
+        },
+        newValues: { status },
+      }, request);
+    } catch (auditError) {
+      console.error("[Commercial Audit] Work Order status audit failed", auditError);
+    }
 
     return NextResponse.json({ work_order_id: id, status });
   } catch (error: any) {

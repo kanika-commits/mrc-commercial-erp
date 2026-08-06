@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
-  insertDeleteAudit,
   requireDeletePermission,
 } from "@/lib/serverDeleteAudit";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { requirePermission } from "@/lib/serverPermissions";
 import {
   isInOrganizationScope,
@@ -484,6 +484,43 @@ export async function POST(request: Request) {
 
       if (paymentError) throw paymentError;
 
+      try {
+        await recordAuditEvent(admin, auth.user, {
+          organizationId,
+          companyId: companyId || workOrder?.company_id || account.company_id || null,
+          moduleCode: MODULE_CODE,
+          entityType: "payment",
+          recordId: payment.id,
+          recordNumber: paymentNumber,
+          parentEntityType: workOrderId ? "work_order" : null,
+          parentRecordId: workOrderId || null,
+          action: "create",
+          actionCategory: "create",
+          activityLabel: "Created Payment",
+          description: `Created Payment ${paymentNumber}.`,
+          workflowStage: "Draft",
+          newValues: {
+            id: payment.id,
+            payment_number: paymentNumber,
+            payment_date: paymentDate,
+            payment_type: paymentType,
+            work_order_id: workOrderId || null,
+            vendor_id: vendorId || null,
+            reference_number: referenceNumber || null,
+            utr_number: utrNumber || null,
+            company_bank_account_id: companyBankAccountId,
+            total_payment: totalPayment,
+            tds_amount: tdsAmount,
+            transferred_amount: transferredAmount,
+            payment_mode: paymentMode || "Bank Transfer",
+            status: "Draft",
+            remarks: remarks || null,
+          },
+        }, request);
+      } catch (auditError) {
+        console.error("[Commercial Audit] Payment create audit failed", auditError);
+      }
+
       return NextResponse.json({ id: payment.id });
     }
 
@@ -733,7 +770,46 @@ export async function POST(request: Request) {
       .select("id")
       .single();
 
-    if (paymentError) throw paymentError;
+      if (paymentError) throw paymentError;
+
+    try {
+      await recordAuditEvent(admin, auth.user, {
+        organizationId: invoice.organization_id,
+        companyId: workOrder?.company_id || null,
+        moduleCode: MODULE_CODE,
+        entityType: "payment",
+        recordId: payment.id,
+        recordNumber: paymentNumber,
+        parentEntityType: "invoice",
+        parentRecordId: invoice.id,
+        action: "create",
+        actionCategory: "create",
+        activityLabel: "Created Payment",
+        description: `Created Payment ${paymentNumber}.`,
+        workflowStage: "Completed",
+        newValues: {
+          id: payment.id,
+          payment_number: paymentNumber,
+          payment_date: paymentDate,
+          payment_type: "Invoice",
+          invoice_id: invoice.id,
+          invoice_number: invoice.invoice_number,
+          work_order_id: invoice.work_order_id,
+          vendor_id: invoice.vendor_id,
+          reference_number: referenceNumber || null,
+          utr_number: utrNumber || null,
+          company_bank_account_id: companyBankAccountId || null,
+          total_payment: totalPayment,
+          tds_amount: tdsAmount,
+          transferred_amount: transferredAmount,
+          payment_mode: paymentMode,
+          status: "Completed",
+          remarks: remarks || null,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Commercial Audit] Invoice payment create audit failed", auditError);
+    }
 
     return NextResponse.json({ id: payment.id });
   } catch (error: any) {
@@ -831,28 +907,6 @@ export async function DELETE(request: Request) {
       )
     );
 
-    await insertDeleteAudit(admin, auth.user, {
-      organizationId: payment.organization_id,
-      moduleCode: MODULE_CODE,
-      documentType: "Payment",
-      documentId: payment.id,
-      documentNumber:
-        payment.payment_number || payment.reference_number || payment.utr_number,
-      deletionReason,
-      recordSnapshot: payment,
-      relatedSnapshot: documents.length
-        ? {
-            payment_documents: documents,
-          }
-        : null,
-      fileSnapshot: filePaths.length
-        ? {
-            bucket: DOCUMENT_BUCKET,
-            paths: filePaths,
-          }
-        : null,
-    });
-
     if (filePaths.length > 0) {
       const { error: storageError } = await admin.storage
         .from(DOCUMENT_BUCKET)
@@ -880,6 +934,58 @@ export async function DELETE(request: Request) {
       .eq("id", paymentId);
 
     if (deleteError) throw deleteError;
+
+    try {
+      await recordAuditEvent(admin, auth.user, {
+        organizationId: payment.organization_id,
+        companyId: payment.company_id,
+        moduleCode: MODULE_CODE,
+        entityType: "payment",
+        recordId: payment.id,
+        recordNumber:
+          payment.payment_number || payment.reference_number || payment.utr_number,
+        parentEntityType: payment.invoice_id ? "invoice" : payment.work_order_id ? "work_order" : null,
+        parentRecordId: payment.invoice_id || payment.work_order_id || null,
+        action: "delete",
+        actionCategory: "delete",
+        activityLabel: "Deleted Payment",
+        description: `Deleted Payment ${payment.payment_number || payment.reference_number || payment.utr_number || payment.id}.`,
+        reason: deletionReason,
+        oldValues: payment,
+        relatedSnapshot: documents.length
+          ? {
+              payment_documents: documents,
+            }
+          : null,
+        fileSnapshot: filePaths.length
+          ? {
+              bucket: DOCUMENT_BUCKET,
+              paths: filePaths,
+            }
+          : null,
+        deleteSnapshot: {
+          documentType: "Payment",
+          documentId: payment.id,
+          documentNumber:
+            payment.payment_number || payment.reference_number || payment.utr_number,
+          deletionReason,
+          recordSnapshot: payment,
+          relatedSnapshot: documents.length
+            ? {
+                payment_documents: documents,
+              }
+            : null,
+          fileSnapshot: filePaths.length
+            ? {
+                bucket: DOCUMENT_BUCKET,
+                paths: filePaths,
+              }
+            : null,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Commercial Audit] Payment delete audit failed", auditError);
+    }
 
     return NextResponse.json({
       deleted: true,

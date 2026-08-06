@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { requireDeletePermission } from "@/lib/serverDeleteAudit";
 import { requirePermission } from "@/lib/serverPermissions";
 import {
@@ -69,7 +70,7 @@ async function loadAccessibleWorkOrders(
 
   const { data: workOrders, error } = await admin
     .from("work_orders")
-    .select("id, organization_id, company_id, site_id")
+    .select("id, organization_id, company_id, site_id, wo_number")
     .in("id", uniqueIds);
 
   if (error) throw error;
@@ -261,10 +262,10 @@ export async function POST(request: Request) {
       await Promise.all([
         admin
           .from("work_orders")
-          .select("id, organization_id, company_id, site_id")
+          .select("id, organization_id, company_id, site_id, wo_number")
           .eq("id", workOrderId)
           .maybeSingle(),
-        admin.from("vendors").select("id, organization_id").eq("id", vendorId).maybeSingle(),
+        admin.from("vendors").select("id, organization_id, vendor_name").eq("id", vendorId).maybeSingle(),
       ]);
 
     if (workOrderError) throw workOrderError;
@@ -323,6 +324,36 @@ export async function POST(request: Request) {
       .single();
 
     if (linkError) throw linkError;
+
+    try {
+      await recordAuditEvent(admin, auth.user, {
+        organizationId: workOrder.organization_id,
+        companyId: workOrder.company_id,
+        siteId: workOrder.site_id,
+        moduleCode: "work_orders",
+        entityType: "work_order_vendor",
+        recordId: link.id,
+        recordNumber: workOrder.wo_number,
+        parentEntityType: "work_order",
+        parentRecordId: workOrder.id,
+        action: "create",
+        actionCategory: "update",
+        activityLabel: "Linked Work Order Vendor",
+        description: `Linked vendor ${vendor.vendor_name || vendorId} to Work Order ${workOrder.wo_number || workOrderId}.`,
+        workflowStage: "Vendor Link",
+        newValues: {
+          id: link.id,
+          work_order_id: workOrderId,
+          work_order_number: workOrder.wo_number,
+          vendor_id: vendorId,
+          vendor_name: vendor.vendor_name,
+          vendor_role: vendorRole || "Subcontractor",
+          is_primary: false,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Commercial Audit] Work Order vendor link audit failed", auditError);
+    }
 
     return NextResponse.json({ linked: true, link_id: link.id });
   } catch (error: any) {
@@ -413,12 +444,48 @@ export async function DELETE(request: Request) {
       );
     }
 
+    const workOrder = scopedWorkOrders.workOrders[0];
+
+    const { data: vendor, error: vendorError } = await admin
+      .from("vendors")
+      .select("id, vendor_name")
+      .eq("id", link.vendor_id)
+      .maybeSingle();
+
+    if (vendorError) throw vendorError;
+
     const { error: deleteError } = await admin
       .from("work_order_vendors")
       .delete()
       .eq("id", link.id);
 
     if (deleteError) throw deleteError;
+
+    try {
+      await recordAuditEvent(admin, auth.user, {
+        organizationId: workOrder.organization_id,
+        companyId: workOrder.company_id,
+        siteId: workOrder.site_id,
+        moduleCode: "work_orders",
+        entityType: "work_order_vendor",
+        recordId: link.id,
+        recordNumber: workOrder.wo_number,
+        parentEntityType: "work_order",
+        parentRecordId: workOrder.id,
+        action: "delete",
+        actionCategory: "update",
+        activityLabel: "Removed Work Order Vendor",
+        description: `Removed vendor ${vendor?.vendor_name || link.vendor_id} from Work Order ${workOrder.wo_number || link.work_order_id}.`,
+        workflowStage: "Vendor Link",
+        oldValues: {
+          ...link,
+          work_order_number: workOrder.wo_number,
+          vendor_name: vendor?.vendor_name || null,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Commercial Audit] Work Order vendor unlink audit failed", auditError);
+    }
 
     return NextResponse.json({ removed: true });
   } catch (error: any) {
