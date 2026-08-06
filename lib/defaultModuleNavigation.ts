@@ -23,6 +23,7 @@ const approvedNavigationModuleNames: Record<string, string> = {
   users: "Users",
   roles: "Roles",
   permissions: "Permissions",
+  system_activity: "System Activity",
   labour_workers: "Labour Registration",
   labour_site_in: "Site-In",
   labour_engineer_daily: "Engineer Daily Labour",
@@ -65,6 +66,7 @@ const approvedNavigationRoutes: Record<string, string> = {
   "/admin/users": "administration",
   "/admin/roles": "administration",
   "/admin/permissions": "administration",
+  "/admin/activity": "administration",
 };
 
 const approvedGroups = [
@@ -143,6 +145,15 @@ const approvedGroups = [
 ];
 
 const approvedNavigationFallbackModules = [
+  {
+    id: "approved-system-activity",
+    module_group: "administration",
+    module_code: "system_activity",
+    module_name: "System Activity",
+    route: "/admin/activity",
+    sort_order: 5,
+    status: "active",
+  },
   {
     id: "approved-hr-designations",
     module_group: "settings",
@@ -381,6 +392,15 @@ export const DEFAULT_MODULE_NAVIGATION = filterVisibleModuleNavigation({
       module_name: "Permissions",
       route: "/admin/permissions",
       sort_order: 4,
+      status: "active",
+    },
+    {
+      id: "default-system-activity",
+      module_group: "administration",
+      module_code: "system_activity",
+      module_name: "System Activity",
+      route: "/admin/activity",
+      sort_order: 5,
       status: "active",
     },
     {

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { ACCOUNT_INACTIVE_CODE, INACTIVE_ACCOUNT_MESSAGE } from "@/lib/accountStatus";
+import { startSessionActivity } from "@/lib/sessionActivityClient";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -83,6 +84,7 @@ export default function LoginPage() {
         throw new Error(accessResult?.error || INACTIVE_ACCOUNT_MESSAGE);
       }
 
+      await startSessionActivity().catch(() => null);
       router.push("/");
     } catch (error: any) {
       setMessage(error.message || "Login failed.");

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
+  Activity,
   Bell,
   Building2,
   ChevronDown,
@@ -155,6 +156,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const showEngineerLabourWorkflow = isLabourRouteAllowedForAttendanceSystem("labour_site_in", labourWorkflow);
   const showLabourWorkspace = shouldShowLabourWorkspace(labourWorkspace, globalAccess);
   const canViewLabourApprovalPage = globalAccess || can(permissions, "labour_daily_submission", "view") || can(permissions, "labour_attendance", "view");
+  const canViewSystemActivity = Boolean(access?.roleCodes?.includes("platform_owner") || access?.roleCodes?.includes("super_admin"));
   const moduleRouteByCode = useMemo(() => {
     const routeByCode = new Map<string, string>();
     (effectiveNavigation.modules || []).forEach((module: any) => {
@@ -226,18 +228,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       if (!group) return null;
       return { id: group.id, label: group.label, href, icon, children: group.children };
     };
-    const topLeaf = (
-      id: string,
-      label: string,
-      moduleCode: string,
-      href: string,
-      icon: typeof Home,
-    ): SidebarTopGroup | null => {
-      const leaf = navLeaf(label, moduleCode, href);
-      if (!leaf) return null;
-      return { id, label: leaf.label, href: leaf.href, icon };
-    };
-
     const mainModuleGroups = compact<SidebarTopGroup>([
       topNested(
         "module-project-management",
@@ -301,11 +291,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       ),
     ]);
 
-    const administrationItems = compact<SidebarTopGroup>([
-      topLeaf("administration-organizations", "Organizations", "organizations", "/organizations", Building2),
-      topLeaf("administration-users", "Users", "users", "/admin/users", UsersRound),
-      topLeaf("administration-roles", "Roles", "roles", "/admin/roles", Settings),
-      topLeaf("administration-permissions", "Permissions", "permissions", "/admin/permissions", Settings),
+    const administrationChildren = compact<SidebarNode>([
+      navLeaf("Organizations", "organizations", "/organizations"),
+      navLeaf("Users", "users", "/admin/users"),
+      navLeaf("Roles", "roles", "/admin/roles"),
+      navLeaf("Permissions", "permissions", "/admin/permissions"),
+      canViewSystemActivity ? { type: "leaf", label: "System Activity", moduleCode: "system_activity", href: "/admin/activity" } : null,
     ]);
 
     const settingsChildren = compact<SidebarNode>([
@@ -334,7 +325,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         BarChart3,
       ),
       settingsChildren.length > 0 ? { id: "module-settings", label: "Settings", href: "/modules/settings", icon: Settings, activeChildren: settingsChildren } : null,
-      administrationItems.length > 0 ? { id: "module-administration", label: "Admin", href: "/modules/administration", icon: Settings, activeChildren: administrationItems } : null,
+      topNested(
+        "module-administration",
+        "Administration",
+        administrationChildren,
+        "/modules/administration",
+        Settings,
+      ),
     ]);
 
     const mainItems: SidebarTopGroup[] = compact([
@@ -346,10 +343,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
     return compact<SidebarSection>([
       mainItems.length > 0 ? { id: "main", label: "MAIN", items: mainItems } : null,
-      administrationItems.length > 0 ? { id: "administration", label: "ADMINISTRATION", items: administrationItems } : null,
       systemItems.length > 0 ? { id: "system", label: "SYSTEM", items: systemItems } : null,
     ]);
-  }, [canViewAnyMusterModule, canViewLabourApprovalPage, canViewModule, dashboardHref, globalAccess, navLeaf, placeholder, showEngineerLabourWorkflow, showLabourWorkspace, showStandardLabourWorkflow]);
+  }, [canViewAnyMusterModule, canViewLabourApprovalPage, canViewModule, dashboardHref, globalAccess, navLeaf, placeholder, showEngineerLabourWorkflow, showLabourWorkspace, showStandardLabourWorkflow, canViewSystemActivity]);
 
   const sidebarTree = useMemo(
     () => sidebarSections.flatMap((section) => section.items),

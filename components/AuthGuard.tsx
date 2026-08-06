@@ -8,6 +8,7 @@ import AppShell from "@/components/AppShell";
 import { AccessProvider } from "@/components/AccessContext";
 import { can, hasGlobalAccess, type CurrentUserAccess } from "@/lib/accessControl";
 import { ACCOUNT_INACTIVE_CODE, INACTIVE_ACCOUNT_MESSAGE } from "@/lib/accountStatus";
+import { clearSessionActivityId, heartbeatSessionActivity, startSessionActivity } from "@/lib/sessionActivityClient";
 
 type ModuleNavigation = {
   groups: any[];
@@ -396,6 +397,7 @@ export default function AuthGuard({
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_OUT") {
+        clearSessionActivityId();
         clearAccessState();
         setAuthChecked(false);
         const inactiveAccountNotice =
@@ -430,6 +432,36 @@ export default function AuthGuard({
 
     return () => subscription.unsubscribe();
   }, [clearAccessState, isLoginPage, loadAccessAndNavigation, router]);
+
+
+  useEffect(() => {
+    if (isLoginPage || !user || accessLoading) return;
+    let cancelled = false;
+
+    async function startAndHeartbeat() {
+      try {
+        await startSessionActivity();
+        if (!cancelled) await heartbeatSessionActivity();
+      } catch {
+        // Session presence must never block normal ERP access.
+      }
+    }
+
+    startAndHeartbeat();
+    const interval = window.setInterval(async () => {
+      try {
+        const ok = await heartbeatSessionActivity();
+        if (!ok) await startSessionActivity();
+      } catch {
+        // Keep auth/session UX independent from presence tracking.
+      }
+    }, 2 * 60 * 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [accessLoading, isLoginPage, user]);
 
   const accessDenied = useMemo(() => {
     if (isLoginPage) return false;

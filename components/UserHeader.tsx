@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
+import { logoutSessionActivity } from "@/lib/sessionActivityClient";
 
 export default function UserHeader() {
   const { user: contextUser } = useAccessContext();
@@ -41,6 +42,7 @@ export default function UserHeader() {
   }, [contextUser]);
 
   async function logout() {
+    await logoutSessionActivity().catch(() => null);
     await supabase.auth.signOut();
     window.location.href = "/login";
   }
