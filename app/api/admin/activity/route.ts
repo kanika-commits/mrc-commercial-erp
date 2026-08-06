@@ -699,13 +699,12 @@ function presenceSummaryForSessions(sessions: any[]) {
   };
 }
 
-async function loadPresence(admin: any, account: any, activityUsers: any[]) {
+async function loadPresence(admin: any, account: any, activityUsers: any[], userFilter = "") {
   const scopedOrganizations = account.roleCodes.includes("platform_owner") ? [] : account.organizations || [];
   if (!account.roleCodes.includes("platform_owner") && scopedOrganizations.length === 0) {
-    return { byUser: new Map<string, any>(), onlineUsers: [] };
+    return { byUser: new Map<string, any>(), onlineUsers: [], sessionUsers: [] };
   }
 
-  const activityUserIds = unique(activityUsers.map((user) => user.user_id));
   let onlineQuery = admin
     .from("user_session_activity")
     .select("id, user_id, organization_id, session_id, login_at, last_seen_at, logout_at, browser, device_type")
@@ -715,24 +714,18 @@ async function loadPresence(admin: any, account: any, activityUsers: any[]) {
     .limit(500);
   if (!account.roleCodes.includes("platform_owner")) onlineQuery = onlineQuery.in("organization_id", scopedOrganizations);
 
-  let userSessionQuery = activityUserIds.length
-    ? admin
-        .from("user_session_activity")
-        .select("id, user_id, organization_id, session_id, login_at, last_seen_at, logout_at, browser, device_type")
-        .in("user_id", activityUserIds)
-        .order("last_seen_at", { ascending: false })
-        .limit(FETCH_LIMIT)
-    : null;
-  if (userSessionQuery && !account.roleCodes.includes("platform_owner")) userSessionQuery = userSessionQuery.in("organization_id", scopedOrganizations);
+  let sessionQuery = admin
+    .from("user_session_activity")
+    .select("id, user_id, organization_id, session_id, login_at, last_seen_at, logout_at, browser, device_type")
+    .order("last_seen_at", { ascending: false })
+    .limit(FETCH_LIMIT);
+  if (!account.roleCodes.includes("platform_owner")) sessionQuery = sessionQuery.in("organization_id", scopedOrganizations);
 
-  const [onlineResult, userSessionResult] = await Promise.all([
-    onlineQuery,
-    userSessionQuery || Promise.resolve({ data: [], error: null }),
-  ]);
+  const [onlineResult, sessionResult] = await Promise.all([onlineQuery, sessionQuery]);
   if (onlineResult.error) throw onlineResult.error;
-  if (userSessionResult.error) throw userSessionResult.error;
+  if (sessionResult.error) throw sessionResult.error;
 
-  const sessions = [...(onlineResult.data || []), ...(userSessionResult.data || [])];
+  const sessions = [...(onlineResult.data || []), ...(sessionResult.data || [])];
   const uniqueSessions = Array.from(new Map(sessions.map((session: any) => [session.id, session])).values());
   const sessionsByUser = new Map<string, any[]>();
   for (const session of uniqueSessions) {
@@ -748,27 +741,41 @@ async function loadPresence(admin: any, account: any, activityUsers: any[]) {
     : { data: [], error: null };
   if (profilesResult.error) throw profilesResult.error;
   const profiles = new Map((profilesResult.data || []).map((profile: any) => [profile.id, profile]));
+  const filter = normalized(userFilter);
 
   const byUser = new Map<string, any>();
-  for (const [userId, userSessions] of sessionsByUser) {
-    byUser.set(userId, presenceSummaryForSessions(userSessions));
-  }
-
-  const onlineUsers = Array.from(sessionsByUser.entries())
-    .map(([userId, userSessions]) => ({ userId, userSessions, summary: presenceSummaryForSessions(userSessions) }))
-    .filter((entry) => entry.summary.status === "online")
-    .map((entry) => {
-      const profile = profiles.get(entry.userId) as any;
+  const sessionUsers = Array.from(sessionsByUser.entries())
+    .map(([userId, userSessions]) => {
+      const profile = profiles.get(userId) as any;
+      const summary = presenceSummaryForSessions(userSessions);
       return {
-        user_id: entry.userId,
+        user_id: userId,
         user_name: profile?.full_name || profile?.email || "Unknown User",
         user_email: profile?.email || "-",
-        ...entry.summary,
+        ...summary,
       };
     })
+    .filter((sessionUser) => {
+      if (!filter) return true;
+      return normalized(sessionUser.user_name).includes(filter) || normalized(sessionUser.user_email).includes(filter);
+    });
+
+  for (const sessionUser of sessionUsers) {
+    byUser.set(sessionUser.user_id, {
+      status: sessionUser.status,
+      login_time: sessionUser.login_time,
+      logout_time: sessionUser.logout_time,
+      last_seen_at: sessionUser.last_seen_at,
+      browser: sessionUser.browser,
+      device_type: sessionUser.device_type,
+    });
+  }
+
+  const onlineUsers = sessionUsers
+    .filter((sessionUser) => sessionUser.status === "online")
     .sort((a, b) => String(b.last_seen_at || "").localeCompare(String(a.last_seen_at || "")));
 
-  return { byUser, onlineUsers };
+  return { byUser, onlineUsers, sessionUsers };
 }
 
 function groupByUser(activities: any[]) {
@@ -795,6 +802,52 @@ function groupByUser(activities: any[]) {
     groups.set(key, existing);
   }
   return Array.from(groups.values()).sort((a, b) => String(b.last_activity_at || "").localeCompare(String(a.last_activity_at || "")));
+}
+
+function blankActivityUserFromSession(sessionUser: any) {
+  return {
+    user_id: sessionUser.user_id,
+    user_name: sessionUser.user_name || sessionUser.user_email || "Unknown User",
+    user_email: sessionUser.user_email || "-",
+    login_time: null,
+    logout_time: null,
+    total_activities: 0,
+    last_activity_at: null,
+    last_activity_description: "-",
+    activities: [],
+  };
+}
+
+function mergeActivityAndSessionUsers(activityUsers: any[], presence: any) {
+  const usersById = new Map<string, any>();
+  const fallbackUsers: any[] = [];
+
+  for (const activityUser of activityUsers) {
+    if (activityUser.user_id) usersById.set(activityUser.user_id, activityUser);
+    else fallbackUsers.push(activityUser);
+  }
+
+  for (const sessionUser of presence.sessionUsers || []) {
+    if (!sessionUser.user_id || usersById.has(sessionUser.user_id)) continue;
+    usersById.set(sessionUser.user_id, blankActivityUserFromSession(sessionUser));
+  }
+
+  return [...usersById.values(), ...fallbackUsers]
+    .map((user) => ({
+      ...user,
+      ...(user.user_id && presence.byUser.get(user.user_id)
+        ? presence.byUser.get(user.user_id)
+        : { status: "offline", login_time: null, logout_time: null, last_seen_at: null, browser: null, device_type: null }),
+    }))
+    .sort((a, b) => {
+      const aOnline = a.status === "online";
+      const bOnline = b.status === "online";
+      if (aOnline !== bOnline) return aOnline ? -1 : 1;
+      if (aOnline && bOnline) return String(b.login_time || "").localeCompare(String(a.login_time || ""));
+      const activityCompare = String(b.last_activity_at || "").localeCompare(String(a.last_activity_at || ""));
+      if (activityCompare !== 0) return activityCompare;
+      return String(a.user_name || "").localeCompare(String(b.user_name || ""));
+    });
 }
 
 export async function GET(request: Request) {
@@ -875,14 +928,9 @@ export async function GET(request: Request) {
       ...deletedRows.map((row: any) => mapDeletedRow(row, resolveActor)),
     ].sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
     const groupedUsers = groupByUser(activities);
-    const presence = await loadPresence(admin, account, groupedUsers);
+    const presence = await loadPresence(admin, account, groupedUsers, userFilter);
     const selectedSummary = buildSelectedSummary(activities);
-    const users = groupedUsers.map((activityUser) => ({
-      ...activityUser,
-      ...(activityUser.user_id && presence.byUser.get(activityUser.user_id)
-        ? presence.byUser.get(activityUser.user_id)
-        : { status: "offline", login_time: null, logout_time: null, last_seen_at: null, browser: null, device_type: null }),
-    }));
+    const users = mergeActivityAndSessionUsers(groupedUsers, presence);
     const start = (page - 1) * pageSize;
 
     return NextResponse.json({

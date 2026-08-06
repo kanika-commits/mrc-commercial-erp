@@ -293,7 +293,7 @@ export default function SystemActivityPage() {
           <label className="text-xs font-bold uppercase tracking-wide text-slate-500">User<input value={filters.user} onChange={(e) => updateFilter({ user: e.target.value })} placeholder="Name or email" className="mt-1 h-10 w-full rounded-lg border px-3 text-sm font-normal normal-case tracking-normal text-slate-950 placeholder:text-slate-400" /></label>
         </div>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm text-slate-500">One row per user. Showing {users.length} of {totalUsers} users with matching activity.</p>
+          <p className="text-sm text-slate-500">One row per user. Showing {users.length} users.</p>
           <div className="flex gap-2"><button type="button" onClick={clearFilters} className="h-10 rounded-lg border px-4 text-sm font-semibold">Clear Filters</button><button type="button" onClick={() => loadActivity(1)} disabled={loading} className="h-10 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white disabled:opacity-60">{loading ? "Loading..." : "Apply Filters"}</button></div>
         </div>
       </div>
@@ -314,9 +314,16 @@ export default function SystemActivityPage() {
                     <td className="px-3 py-3 text-slate-600">{formatDateTime(user.login_time)}</td>
                     <td className="px-3 py-3 text-slate-600">{user.status === "online" ? "—" : formatDateTime(user.logout_time)}</td>
                     <td className="px-3 py-3 text-slate-600">{formatDateTime(user.last_seen_at)}</td>
-                    <td className="px-3 py-3 font-semibold">{user.total_activities}</td>
-                    <td className="px-3 py-3 text-slate-700">{user.last_activity_description || "—"}</td>
-                    <td className="px-3 py-3 text-slate-700">{formatDateTime(user.last_activity_at)}</td>
+                    <td className="px-3 py-3 font-semibold">
+                      {Number(user.total_activities || 0) === 0 ? (
+                        <span className="inline-flex items-center gap-2">
+                          <span>0</span>
+                          <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-semibold text-slate-600">New Session</span>
+                        </span>
+                      ) : user.total_activities}
+                    </td>
+                    <td className="px-3 py-3 text-slate-700">{Number(user.total_activities || 0) === 0 ? "No activity yet" : user.last_activity_description || "—"}</td>
+                    <td className="px-3 py-3 text-slate-700">{Number(user.total_activities || 0) === 0 ? "—" : formatDateTime(user.last_activity_at)}</td>
                     <td className="px-3 py-3"><button type="button" onClick={() => setExpandedUsers((current) => ({ ...current, [key]: !current[key] }))} className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-semibold">{open ? "Hide" : "Expand"} {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button></td>
                   </tr>
                   {open && <tr key={`${key}-details`}><td colSpan={10} className="bg-slate-50 p-3"><ActivityTable activities={user.activities || []} expanded={expandedActivities} setExpanded={setExpandedActivities} /></td></tr>}

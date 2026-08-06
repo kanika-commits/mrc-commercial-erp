@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import type { User } from "@supabase/supabase-js";
+import { auditActor } from "@/lib/serverAudit";
 
 type ServiceClient = any;
 
@@ -147,12 +148,7 @@ export async function insertDeleteAudit(
   user: User,
   input: DeleteAuditInput
 ) {
-  const userEmail = user.email || "";
-  const userName =
-    user.user_metadata?.full_name ||
-    user.user_metadata?.name ||
-    userEmail ||
-    "Unknown User";
+  const actor = auditActor(user);
 
   const { data, error } = await admin
     .from("deleted_records_audit")
@@ -162,8 +158,8 @@ export async function insertDeleteAudit(
       document_type: input.documentType,
       document_id: input.documentId,
       document_number: input.documentNumber || null,
-      deleted_by_name: userName,
-      deleted_by_email: userEmail,
+      deleted_by_name: actor.userName,
+      deleted_by_email: actor.userEmail || "",
       deletion_reason: input.deletionReason,
       record_snapshot: input.recordSnapshot || null,
       related_snapshot: input.relatedSnapshot || null,
