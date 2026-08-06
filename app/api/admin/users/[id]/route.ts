@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sortCompanies } from "@/lib/companyOrdering";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { requirePermission } from "@/lib/serverPermissions";
 import { isValidPermissionAction } from "@/lib/permissionMatrix";
 import {
@@ -488,7 +489,7 @@ export async function PUT(
 
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
-      .select("id")
+      .select("*")
       .eq("id", id)
       .maybeSingle();
 
@@ -525,6 +526,28 @@ export async function PUT(
           }
         }
 
+        try {
+          await recordAuditEvent(supabase, permission.user, {
+            organizationId: actorOrganizationIds?.[0] || null,
+            moduleCode: "users",
+            entityType: "user",
+            recordId: id,
+            recordNumber: profile.email || id,
+            action: "update",
+            actionCategory: "security",
+            activityLabel: "Updated User Profile",
+            description: `Updated ERP user ${trimmedFullName}.`,
+            workflowStage: "User Profile",
+            oldValues: profile,
+            newValues: {
+              full_name: trimmedFullName,
+              linked_employee_id: hasLinkUpdate ? linked_employee_id || null : undefined,
+            },
+          }, request);
+        } catch (auditError) {
+          console.error("[Admin Audit] User profile update audit failed", auditError);
+        }
+
         return NextResponse.json({
           user_id: id,
           full_name: trimmedFullName,
@@ -549,6 +572,27 @@ export async function PUT(
       }
 
       const savedLink = linkResult as { linked_employee_id: string | null; link_changed: boolean };
+
+      try {
+        await recordAuditEvent(supabase, permission.user, {
+          organizationId: actorOrganizationIds?.[0] || null,
+          moduleCode: "users",
+          entityType: "user",
+          recordId: id,
+          recordNumber: profile.email || id,
+          action: "update",
+          actionCategory: "security",
+          activityLabel: "Updated User Employee Link",
+          description: `Updated employee link for ERP user ${profile.email || id}.`,
+          workflowStage: "User Access",
+          newValues: {
+            linked_employee_id: savedLink.linked_employee_id,
+            link_changed: savedLink.link_changed,
+          },
+        }, request);
+      } catch (auditError) {
+        console.error("[Admin Audit] User employee link audit failed", auditError);
+      }
 
       return NextResponse.json({
         user_id: id,
@@ -717,6 +761,34 @@ export async function PUT(
       }
     }
 
+    try {
+      await recordAuditEvent(supabase, permission.user, {
+        organizationId: organization_ids?.[0] || actorOrganizationIds?.[0] || null,
+        moduleCode: "users",
+        entityType: "user",
+        recordId: id,
+        recordNumber: profile.email || id,
+        action: "update",
+        actionCategory: "security",
+        activityLabel: "Updated User Access",
+        description: `Updated ERP access for user ${profile.email || id}.`,
+        workflowStage: "User Access",
+        oldValues: { profile },
+        newValues: {
+          role_ids,
+          organization_ids,
+          company_ids,
+          site_ids,
+          roles_saved: roleRows.length,
+          access_saved: accessRows.length,
+          permissions_saved: permissionRows.length,
+          linked_employee_id: linkResult?.linked_employee_id,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Admin Audit] User access update audit failed", auditError);
+    }
+
     return NextResponse.json({
       user_id: id,
       roles_saved: roleRows.length,
@@ -783,7 +855,7 @@ export async function PATCH(
 
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
-      .select("id")
+      .select("*")
       .eq("id", id)
       .maybeSingle();
 
@@ -801,6 +873,24 @@ export async function PATCH(
     });
 
     if (resetError) throw resetError;
+
+    try {
+      await recordAuditEvent(supabase, permission.user, {
+        organizationId: actorOrganizationIds?.[0] || null,
+        moduleCode: "users",
+        entityType: "user",
+        recordId: id,
+        recordNumber: profile.email || id,
+        action: "update",
+        actionCategory: "security",
+        activityLabel: "Reset User Password",
+        description: `Reset password for ERP user ${profile.email || id}.`,
+        workflowStage: "Password Reset",
+        newValues: { password_reset: true },
+      }, request);
+    } catch (auditError) {
+      console.error("[Admin Audit] User password reset audit failed", auditError);
+    }
 
     return NextResponse.json({ user_id: id, password_reset: true });
   } catch (error: any) {
@@ -843,7 +933,7 @@ export async function DELETE(
 
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
-      .select("id")
+      .select("*")
       .eq("id", id)
       .maybeSingle();
 
@@ -876,6 +966,30 @@ export async function DELETE(
       .eq("id", id);
 
     if (deleteProfileError) throw deleteProfileError;
+
+    try {
+      await recordAuditEvent(supabase, access.user, {
+        organizationId: actorOrganizationIds?.[0] || null,
+        moduleCode: "users",
+        entityType: "user",
+        recordId: id,
+        recordNumber: profile.email || id,
+        action: "delete",
+        actionCategory: "security",
+        activityLabel: "Deleted User",
+        description: `Deleted ERP user ${profile.email || id}.`,
+        oldValues: profile,
+        deleteSnapshot: {
+          documentType: "User",
+          documentId: id,
+          documentNumber: profile.email || id,
+          deletionReason: "ERP user profile deleted.",
+          recordSnapshot: profile,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Admin Audit] User delete audit failed", auditError);
+    }
 
     return NextResponse.json({
       user_id: id,

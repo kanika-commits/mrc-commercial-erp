@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { jsonError, sessionRequestContext, validateSessionId } from "../_shared";
 
 export async function POST(request: Request) {
@@ -39,6 +40,32 @@ export async function POST(request: Request) {
       .select("id, session_id, login_at, last_seen_at")
       .single();
     if (error) throw error;
+
+    try {
+      await recordAuditEvent(context.admin, context.user, {
+        organizationId: context.metadata.organization_id,
+        moduleCode: "authentication",
+        entityType: "user_session",
+        recordId: data.id,
+        recordNumber: data.session_id,
+        action: "login",
+        actionCategory: "session",
+        activityLabel: existing.data ? "Refreshed Login Session" : "Logged In",
+        description: existing.data ? "User session refreshed." : "User logged in.",
+        workflowStage: "Session",
+        newValues: {
+          session_id: data.session_id,
+          login_at: data.login_at,
+          last_seen_at: data.last_seen_at,
+          browser: context.metadata.browser,
+          device_type: context.metadata.device_type,
+          ip_address: context.metadata.ip_address,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Auth Audit] Login audit failed", auditError);
+    }
+
     return NextResponse.json({ session: data });
   } catch (error: any) {
     return jsonError(error.message || "Failed to start session.", 500);

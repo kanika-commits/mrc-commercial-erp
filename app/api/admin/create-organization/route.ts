@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { requirePermission } from "@/lib/serverPermissions";
 
 function normalizeEmail(email: string) {
@@ -220,6 +221,33 @@ export async function POST(request: Request) {
         .insert(newAccessRows);
 
       if (accessError) throw accessError;
+    }
+
+    try {
+      await recordAuditEvent(adminSupabase, permission.user, {
+        organizationId: organization.id,
+        moduleCode: "organizations",
+        entityType: "organization",
+        recordId: organization.id,
+        recordNumber: orgCode,
+        action: "create",
+        actionCategory: "create",
+        activityLabel: "Created Organization",
+        description: `Created organization ${organization_name}.`,
+        newValues: {
+          organization_id: organization.id,
+          organization_name,
+          organization_code: orgCode,
+          company_id: company.id,
+          company_name,
+          company_code: companyCode,
+          admin_user_id: user.id,
+          admin_name,
+          admin_email: adminEmail,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Admin Audit] Organization create audit failed", auditError);
     }
 
     return NextResponse.json({

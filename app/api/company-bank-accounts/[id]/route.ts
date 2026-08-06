@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { assertCompanyBankAccountPermission } from "@/lib/serverCompanyBankAccountAccess";
 import {
   isInOrganizationScope,
@@ -177,6 +178,34 @@ export async function PUT(
 
     if (updateError) throw updateError;
 
+    try {
+      await recordAuditEvent(supabase, access.user, {
+        organizationId: company.organization_id,
+        companyId,
+        moduleCode: "company_bank_accounts",
+        entityType: "company_bank_account",
+        recordId: id,
+        recordNumber: accountNumber,
+        action: "update",
+        actionCategory: "update",
+        activityLabel: status !== existingAccount.status ? "Updated Bank Account Status" : "Updated Company Bank Account",
+        description: `Updated bank account for ${bankName}.`,
+        workflowStage: status !== existingAccount.status ? "Status Change" : null,
+        oldValues: existingAccount,
+        newValues: {
+          organization_id: company.organization_id,
+          company_id: companyId,
+          bank_name: bankName,
+          account_number: accountNumber,
+          ifsc,
+          is_default: isDefault,
+          status,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Master Audit] Company bank account update audit failed", auditError);
+    }
+
     return NextResponse.json({ account_id: id });
   } catch (error: any) {
     return NextResponse.json(
@@ -224,6 +253,29 @@ export async function DELETE(
       .eq("id", id);
 
     if (updateError) throw updateError;
+
+    try {
+      await recordAuditEvent(supabase, access.user, {
+        organizationId: account.organization_id,
+        companyId: account.company_id,
+        moduleCode: "company_bank_accounts",
+        entityType: "company_bank_account",
+        recordId: account.id,
+        recordNumber: account.account_number,
+        action: "delete",
+        actionCategory: "delete",
+        activityLabel: "Deleted Company Bank Account",
+        description: `Marked bank account ${account.bank_name || account.account_number || account.id} as deleted.`,
+        workflowStage: "Status Change",
+        oldValues: account,
+        newValues: {
+          status: "deleted",
+          is_default: false,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Master Audit] Company bank account delete audit failed", auditError);
+    }
 
     return NextResponse.json({
       success: true,

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { createDriveSubfolder, uploadDriveFile } from "@/src/lib/googleDrive";
 import {
@@ -1164,16 +1165,20 @@ export async function PUT(
     const vendorChanges = changedVendorValues(existingVendor, updatedVendor);
 
     if (vendorChanges.changedFields.length > 0) {
-      await insertVendorAuditLog(supabase, {
-        vendorId: id,
-        organizationId,
-        action: "updated",
-        user: access.user,
-        changedFields: vendorChanges.changedFields,
-        oldValues: vendorChanges.oldValues,
-        newValues: vendorChanges.newValues,
-        restoreSnapshot: vendorSnapshot(existingVendor),
-      });
+      try {
+        await insertVendorAuditLog(supabase, {
+          vendorId: id,
+          organizationId,
+          action: "updated",
+          user: access.user,
+          changedFields: vendorChanges.changedFields,
+          oldValues: vendorChanges.oldValues,
+          newValues: vendorChanges.newValues,
+          restoreSnapshot: vendorSnapshot(existingVendor),
+        });
+      } catch (auditError) {
+        console.error("[Vendor Audit] Legacy vendor update audit failed", auditError);
+      }
     }
 
     const { error: deleteContactsError } = await supabase
@@ -1291,6 +1296,35 @@ export async function PUT(
       if (documentError) throw documentError;
     }
 
+    try {
+      await recordAuditEvent(supabase, access.user, {
+        organizationId,
+        moduleCode: "vendors",
+        entityType: "vendor",
+        recordId: id,
+        recordNumber: existingVendor.vendor_name || id,
+        action: "update",
+        actionCategory: "update",
+        activityLabel: vendorChanges.changedFields.includes("status") ? "Updated Vendor Status" : "Updated Vendor",
+        description: `Updated vendor ${existingVendor.vendor_name || id}.`,
+        workflowStage: vendorChanges.changedFields.includes("status") ? "Status Change" : null,
+        oldValues: {
+          ...vendorChanges.oldValues,
+          contacts_replaced: true,
+          bank_accounts_replaced: true,
+        },
+        newValues: {
+          ...vendorChanges.newValues,
+          gstin_count: gstinRows.length,
+          contact_count: contacts.length,
+          bank_account_count: bankAccounts.length,
+          document_count: documentRows.length,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Master Audit] Vendor update audit failed", auditError);
+    }
+
     return NextResponse.json({ vendor_id: id });
   } catch (error: any) {
     return NextResponse.json(
@@ -1366,7 +1400,7 @@ export async function DELETE(
     const organizationScope = await loadOrganizationScopeForUser(supabase, access.user.id);
     const { data: vendor, error: vendorError } = await supabase
       .from("vendors")
-      .select("id, organization_id, status")
+      .select("id, organization_id, vendor_name, status")
       .eq("id", id)
       .maybeSingle();
 
@@ -1386,6 +1420,25 @@ export async function DELETE(
       .eq("id", id);
 
     if (updateError) throw updateError;
+
+    try {
+      await recordAuditEvent(supabase, access.user, {
+        organizationId: vendor.organization_id,
+        moduleCode: "vendors",
+        entityType: "vendor",
+        recordId: vendor.id,
+        recordNumber: vendor.vendor_name || vendor.id,
+        action: "delete",
+        actionCategory: "delete",
+        activityLabel: "Deleted Vendor",
+        description: `Marked vendor ${vendor.vendor_name || vendor.id} as deleted.`,
+        workflowStage: "Status Change",
+        oldValues: vendor,
+        newValues: { status: "deleted" },
+      }, request);
+    } catch (auditError) {
+      console.error("[Master Audit] Vendor delete audit failed", auditError);
+    }
 
     return NextResponse.json({ success: true, status: "deleted" });
   } catch (error: any) {

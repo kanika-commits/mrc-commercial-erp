@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import {
   isInOrganizationScope,
   loadOrganizationScopeForUser,
@@ -190,21 +191,45 @@ export async function POST(
 
     const changes = changedVendorValues(vendor, restoredVendor);
 
-    const { error: logError } = await supabase.from("vendor_audit_logs").insert({
-      vendor_id: id,
-      organization_id: restoredVendor.organization_id,
-      action: "restored",
-      changed_by_user_id: auth.user.id,
-      changed_by_email: auth.user.email || null,
-      changed_by_name: actorName(auth.user),
-      changed_fields: changes.changedFields,
-      old_values: changes.oldValues,
-      new_values: changes.newValues,
-      restore_snapshot: vendorSnapshot(vendor),
-      note: `Restored vendor to version from ${auditLog.changed_at} (source audit log: ${auditLog.id})`,
-    });
+    try {
+      const { error: logError } = await supabase.from("vendor_audit_logs").insert({
+        vendor_id: id,
+        organization_id: restoredVendor.organization_id,
+        action: "restored",
+        changed_by_user_id: auth.user.id,
+        changed_by_email: auth.user.email || null,
+        changed_by_name: actorName(auth.user),
+        changed_fields: changes.changedFields,
+        old_values: changes.oldValues,
+        new_values: changes.newValues,
+        restore_snapshot: vendorSnapshot(vendor),
+        note: `Restored vendor to version from ${auditLog.changed_at} (source audit log: ${auditLog.id})`,
+      });
 
-    if (logError) throw logError;
+      if (logError) throw logError;
+    } catch (auditError) {
+      console.error("[Vendor Audit] Legacy vendor restore audit failed", auditError);
+    }
+
+    try {
+      await recordAuditEvent(supabase, auth.user, {
+        organizationId: restoredVendor.organization_id,
+        moduleCode: "vendors",
+        entityType: "vendor",
+        recordId: id,
+        recordNumber: restoredVendor.vendor_name || id,
+        action: "update",
+        actionCategory: "update",
+        activityLabel: "Restored Vendor",
+        description: `Restored vendor ${restoredVendor.vendor_name || id}.`,
+        workflowStage: "Recovery",
+        reason: `Restored from vendor audit log ${auditLog.id}.`,
+        oldValues: changes.oldValues,
+        newValues: changes.newValues,
+      }, request);
+    } catch (auditError) {
+      console.error("[Master Audit] Vendor restore audit failed", auditError);
+    }
 
     return NextResponse.json({ vendor_id: id });
   } catch (error: any) {

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { requirePermission } from "@/lib/serverPermissions";
 
 const ACTIVE_MRC_ORGANIZATION_ID = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
@@ -47,12 +48,46 @@ export async function PUT(
     }
 
     const admin = adminClient();
+    const { data: existingOrganization, error: existingError } = await admin
+      .from("organizations")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (existingError) throw existingError;
+
+    if (!existingOrganization) {
+      return NextResponse.json(
+        { error: "Organization was not found." },
+        { status: 404 }
+      );
+    }
+
     const { error } = await admin
       .from("organizations")
       .update({ name, code, status })
       .eq("id", id);
 
     if (error) throw error;
+
+    try {
+      await recordAuditEvent(admin, permission.user, {
+        organizationId: id,
+        moduleCode: "organizations",
+        entityType: "organization",
+        recordId: id,
+        recordNumber: code,
+        action: status !== existingOrganization.status ? "update" : "update",
+        actionCategory: "update",
+        activityLabel: status !== existingOrganization.status ? "Updated Organization Status" : "Updated Organization",
+        description: `Updated organization ${name}.`,
+        workflowStage: status !== existingOrganization.status ? "Status Change" : null,
+        oldValues: existingOrganization,
+        newValues: { name, code, status },
+      }, request);
+    } catch (auditError) {
+      console.error("[Admin Audit] Organization update audit failed", auditError);
+    }
 
     return NextResponse.json({ organization_id: id });
   } catch (error: any) {
@@ -111,7 +146,7 @@ export async function DELETE(
     const admin = adminClient();
     const { data: organization, error: organizationError } = await admin
       .from("organizations")
-      .select("id")
+      .select("*")
       .eq("id", id)
       .maybeSingle();
 
@@ -175,6 +210,31 @@ export async function DELETE(
       .eq("id", id);
 
     if (deleteError) throw deleteError;
+
+    try {
+      await recordAuditEvent(admin, permission.user, {
+        organizationId: organization.id,
+        moduleCode: "organizations",
+        entityType: "organization",
+        recordId: organization.id,
+        recordNumber: organization.code,
+        action: "delete",
+        actionCategory: "delete",
+        activityLabel: "Deleted Organization",
+        description: `Deleted organization ${organization.name || organization.code || organization.id}.`,
+        reason: deletionReason || confirmationText,
+        oldValues: organization,
+        deleteSnapshot: {
+          documentType: "Organization",
+          documentId: organization.id,
+          documentNumber: organization.code,
+          deletionReason: deletionReason || confirmationText || "Organization deleted.",
+          recordSnapshot: organization,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Admin Audit] Organization delete audit failed", auditError);
+    }
 
     return NextResponse.json({ deleted: true, organization_id: id });
   } catch (error: any) {

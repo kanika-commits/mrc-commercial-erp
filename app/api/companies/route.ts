@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { requirePermission } from "@/lib/serverPermissions";
 import {
   loadActorOrganizationScope,
@@ -69,6 +70,29 @@ export async function POST(request: Request) {
       .single();
 
     if (error) throw error;
+
+    try {
+      await recordAuditEvent(admin, permission.user, {
+        organizationId,
+        moduleCode: "companies",
+        entityType: "company",
+        recordId: data.id,
+        recordNumber: companyCode,
+        action: "create",
+        actionCategory: "create",
+        activityLabel: "Created Company",
+        description: `Created company ${companyName}.`,
+        newValues: {
+          id: data.id,
+          organization_id: organizationId,
+          company_name: companyName,
+          company_code: companyCode,
+          status,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Admin Audit] Company create audit failed", auditError);
+    }
 
     return NextResponse.json({ company_id: data.id });
   } catch (error: any) {

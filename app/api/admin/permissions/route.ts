@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { requireAnyPermission } from "@/lib/serverPermissions";
 import { isValidPermissionAction } from "@/lib/permissionMatrix";
 
@@ -111,6 +112,14 @@ export async function PUT(request: Request) {
     }
 
     const admin = adminClient();
+    const { data: role, error: roleError } = await admin
+      .from("roles")
+      .select("id, role_name, role_code")
+      .eq("id", roleId)
+      .maybeSingle();
+
+    if (roleError) throw roleError;
+
     await deleteScopedRolePermissions(admin, roleId, visibleModuleCodes, visiblePermissionKeys);
 
     const uniqueRows = new Map<string, any>();
@@ -146,6 +155,33 @@ export async function PUT(request: Request) {
         .insert(rows);
 
       if (insertError) throw insertError;
+    }
+
+    try {
+      await recordAuditEvent(admin, permission.user, {
+        moduleCode: "permissions",
+        entityType: "role_permission",
+        recordId: roleId,
+        recordNumber: role?.role_code || roleId,
+        parentEntityType: "role",
+        parentRecordId: roleId,
+        action: "update",
+        actionCategory: "security",
+        activityLabel: "Updated Role Permissions",
+        description: `Updated permissions for role ${role?.role_name || roleId}.`,
+        workflowStage: "Permission Change",
+        newValues: {
+          role_id: roleId,
+          role_name: role?.role_name || null,
+          role_code: role?.role_code || null,
+          permissions: rows,
+          visible_module_codes: visibleModuleCodes,
+          visible_permission_keys: visiblePermissionKeys,
+          count: rows.length,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Admin Audit] Role permissions audit failed", auditError);
     }
 
     return NextResponse.json({ saved: true, count: rows.length });

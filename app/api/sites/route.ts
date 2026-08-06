@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { requirePermission } from "@/lib/serverPermissions";
 import {
   loadActorOrganizationScope,
@@ -73,6 +74,31 @@ export async function POST(request: Request) {
       .single();
 
     if (error) throw error;
+
+    try {
+      await recordAuditEvent(admin, permission.user, {
+        organizationId,
+        moduleCode: "sites",
+        entityType: "site",
+        recordId: data.id,
+        recordNumber: siteCode,
+        action: "create",
+        actionCategory: "create",
+        activityLabel: "Created Site",
+        description: `Created site ${siteName}.`,
+        newValues: {
+          id: data.id,
+          organization_id: organizationId,
+          site_name: siteName,
+          site_code: siteCode,
+          location,
+          state,
+          status,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Admin Audit] Site create audit failed", auditError);
+    }
 
     return NextResponse.json({ site_id: data.id });
   } catch (error: any) {

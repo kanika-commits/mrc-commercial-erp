@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { jsonError, sessionRequestContext, validateSessionId } from "../_shared";
 
 export async function POST(request: Request) {
@@ -25,6 +26,34 @@ export async function POST(request: Request) {
       .select("id, logout_at, last_seen_at")
       .maybeSingle();
     if (error) throw error;
+
+    if (data) {
+      try {
+        await recordAuditEvent(context.admin, context.user, {
+          organizationId: context.metadata.organization_id,
+          moduleCode: "authentication",
+          entityType: "user_session",
+          recordId: data.id,
+          recordNumber: sessionId,
+          action: "logout",
+          actionCategory: "session",
+          activityLabel: "Logged Out",
+          description: "User logged out.",
+          workflowStage: "Session",
+          newValues: {
+            session_id: sessionId,
+            logout_at: data.logout_at,
+            last_seen_at: data.last_seen_at,
+            browser: context.metadata.browser,
+            device_type: context.metadata.device_type,
+            ip_address: context.metadata.ip_address,
+          },
+        }, request);
+      } catch (auditError) {
+        console.error("[Auth Audit] Logout audit failed", auditError);
+      }
+    }
+
     return NextResponse.json({ session: data || null });
   } catch (error: any) {
     return jsonError(error.message || "Failed to close session.", 500);

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { requirePermission } from "@/lib/serverPermissions";
 import {
   canAccessTargetUser,
@@ -307,6 +308,33 @@ export async function POST(request: Request) {
     }
 
     const savedLink = linkResult as { linked_employee_id: string | null };
+
+    try {
+      await recordAuditEvent(adminSupabase, permission.user, {
+        organizationId: organization_ids?.[0] || null,
+        moduleCode: "users",
+        entityType: "user",
+        recordId: user.id,
+        recordNumber: normalizedEmail,
+        action: "create",
+        actionCategory: "security",
+        activityLabel: "Created User",
+        description: `Created ERP user ${full_name}.`,
+        workflowStage: "User Access",
+        newValues: {
+          user_id: user.id,
+          full_name,
+          email: normalizedEmail,
+          role_ids,
+          organization_ids,
+          company_ids,
+          site_ids,
+          linked_employee_id: savedLink.linked_employee_id,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Admin Audit] User create audit failed", auditError);
+    }
 
     return NextResponse.json({
       user_id: user.id,

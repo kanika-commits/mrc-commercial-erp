@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { createDriveSubfolder, uploadDriveFile } from "@/src/lib/googleDrive";
 import {
   applyOrganizationScope,
@@ -922,15 +923,19 @@ export async function POST(request: Request) {
     vendorIdForLog = vendorId;
     const createdSnapshot = vendorSnapshot(createdVendor);
 
-    await insertVendorAuditLog(supabase, {
-      vendorId,
-      organizationId,
-      action: "created",
-      user: access.user,
-      changedFields: ["vendor_created"],
-      newValues: createdSnapshot,
-      restoreSnapshot: createdSnapshot,
-    });
+    try {
+      await insertVendorAuditLog(supabase, {
+        vendorId,
+        organizationId,
+        action: "created",
+        user: access.user,
+        changedFields: ["vendor_created"],
+        newValues: createdSnapshot,
+        restoreSnapshot: createdSnapshot,
+      });
+    } catch (auditError) {
+      console.error("[Vendor Audit] Legacy vendor create audit failed", auditError);
+    }
 
     const vendorFolder = await ensureVendorDriveFolder(
       supabase,
@@ -1010,6 +1015,28 @@ export async function POST(request: Request) {
         .insert(documentRows);
 
       if (documentError) throw documentError;
+    }
+
+    try {
+      await recordAuditEvent(supabase, access.user, {
+        organizationId,
+        moduleCode: "vendors",
+        entityType: "vendor",
+        recordId: vendorId,
+        recordNumber: vendor.vendor_name.trim(),
+        action: "create",
+        actionCategory: "create",
+        activityLabel: "Created Vendor",
+        description: `Created vendor ${vendor.vendor_name.trim()}.`,
+        newValues: {
+          ...createdSnapshot,
+          contact_count: contacts.length,
+          bank_account_count: bankAccounts.length,
+          document_count: documentRows.length,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Master Audit] Vendor create audit failed", auditError);
     }
 
     return NextResponse.json({ vendor_id: vendorId });

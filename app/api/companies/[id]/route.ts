@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import {
   isInOrganizationScope,
   loadOrganizationScopeForUser,
@@ -237,7 +238,7 @@ export async function PUT(
     const organizationScope = await loadOrganizationScopeForUser(supabase, access.user.id);
     const { data: company, error: companyError } = await supabase
       .from("companies")
-      .select("id, organization_id")
+      .select("*")
       .eq("id", id)
       .maybeSingle();
 
@@ -261,6 +262,29 @@ export async function PUT(
       .eq("id", id);
 
     if (updateError) throw updateError;
+
+    try {
+      await recordAuditEvent(supabase, access.user, {
+        organizationId: company.organization_id,
+        moduleCode: "companies",
+        entityType: "company",
+        recordId: id,
+        recordNumber: companyCode,
+        action: "update",
+        actionCategory: "update",
+        activityLabel: status !== company.status ? "Updated Company Status" : "Updated Company",
+        description: `Updated company ${companyName}.`,
+        workflowStage: status !== company.status ? "Status Change" : null,
+        oldValues: company,
+        newValues: {
+          company_name: companyName,
+          company_code: companyCode,
+          status,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Admin Audit] Company update audit failed", auditError);
+    }
 
     return NextResponse.json({ company_id: id });
   } catch (error: any) {
@@ -298,7 +322,7 @@ export async function DELETE(
     const organizationScope = await loadOrganizationScopeForUser(supabase, access.user.id);
     const { data: company, error: companyError } = await supabase
       .from("companies")
-      .select("id, organization_id, company_code, status")
+      .select("*")
       .eq("id", id)
       .maybeSingle();
 
@@ -360,6 +384,31 @@ export async function DELETE(
       .eq("id", id);
 
     if (deleteError) throw deleteError;
+
+    try {
+      await recordAuditEvent(supabase, access.user, {
+        organizationId: company.organization_id,
+        moduleCode: "companies",
+        entityType: "company",
+        recordId: company.id,
+        recordNumber: company.company_code,
+        action: "delete",
+        actionCategory: "delete",
+        activityLabel: "Deleted Company",
+        description: `Deleted company ${company.company_name || company.company_code || company.id}.`,
+        reason: deletionReason || confirmationText,
+        oldValues: company,
+        deleteSnapshot: {
+          documentType: "Company",
+          documentId: company.id,
+          documentNumber: company.company_code,
+          deletionReason: deletionReason || confirmationText || "Company deleted.",
+          recordSnapshot: company,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Admin Audit] Company delete audit failed", auditError);
+    }
 
     return NextResponse.json({ success: true, deleted: true, company_id: id });
   } catch (error: any) {

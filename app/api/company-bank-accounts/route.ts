@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { assertCompanyBankAccountPermission } from "@/lib/serverCompanyBankAccountAccess";
 import {
   applyOrganizationScope,
@@ -102,6 +103,33 @@ export async function POST(request: Request) {
       .maybeSingle();
 
     if (insertError) throw insertError;
+
+    try {
+      await recordAuditEvent(admin, access.user, {
+        organizationId: company.organization_id,
+        companyId,
+        moduleCode: "company_bank_accounts",
+        entityType: "company_bank_account",
+        recordId: account?.id,
+        recordNumber: accountNumber,
+        action: "create",
+        actionCategory: "create",
+        activityLabel: "Created Company Bank Account",
+        description: `Created bank account for ${bankName}.`,
+        newValues: {
+          id: account?.id,
+          organization_id: company.organization_id,
+          company_id: companyId,
+          bank_name: bankName,
+          account_number: accountNumber,
+          ifsc,
+          is_default: isDefault,
+          status,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Master Audit] Company bank account create audit failed", auditError);
+    }
 
     return NextResponse.json({ account });
   } catch (error: any) {

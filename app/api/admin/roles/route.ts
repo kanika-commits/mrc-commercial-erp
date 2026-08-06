@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import { requirePermission } from "@/lib/serverPermissions";
 
 export async function GET(request: Request) {
@@ -81,6 +82,29 @@ export async function POST(request: Request) {
       .single();
 
     if (error) throw error;
+
+    try {
+      await recordAuditEvent(supabase, permission.user, {
+        moduleCode: "roles",
+        entityType: "role",
+        recordId: data.id,
+        recordNumber: roleCode,
+        action: "create",
+        actionCategory: "security",
+        activityLabel: "Created Role",
+        description: `Created role ${roleName}.`,
+        workflowStage: "Role Setup",
+        newValues: {
+          id: data.id,
+          role_name: roleName,
+          role_code: roleCode,
+          status: "active",
+          is_system_role: false,
+        },
+      }, request);
+    } catch (auditError) {
+      console.error("[Admin Audit] Role create audit failed", auditError);
+    }
 
     return NextResponse.json({ role_id: data.id });
   } catch (error: any) {
