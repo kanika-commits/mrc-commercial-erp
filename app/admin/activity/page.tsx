@@ -84,7 +84,7 @@ function activityBadgeClass(activity: any) {
 }
 
 function RecordCell({ activity }: { activity: any }) {
-  const label = activity.record || "Record details";
+  const label = activity.record || "—";
   if (activity.record_url) {
     return <Link href={activity.record_url} className="font-semibold text-blue-700 hover:underline">{label}</Link>;
   }

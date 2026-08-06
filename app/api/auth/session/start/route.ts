@@ -9,18 +9,18 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const sessionId = validateSessionId(body.session_id);
 
-    const existing = await context.admin
+    const existingSession = await context.admin
       .from("user_session_activity")
       .select("id, user_id")
       .eq("session_id", sessionId)
       .maybeSingle();
-    if (existing.error) throw existing.error;
-    if (existing.data && existing.data.user_id !== context.user.id) {
+    if (existingSession.error) throw existingSession.error;
+    if (existingSession.data && existingSession.data.user_id !== context.user.id) {
       return jsonError("Session id belongs to another user.", 403);
     }
 
     const now = new Date().toISOString();
-    const payload: Record<string, unknown> = {
+    const presencePayload: Record<string, unknown> = {
       session_id: sessionId,
       user_id: context.user.id,
       organization_id: context.metadata.organization_id,
@@ -32,38 +32,87 @@ export async function POST(request: Request) {
       user_agent: context.metadata.user_agent,
       updated_at: now,
     };
-    if (!existing.data) payload.login_at = now;
 
-    const { data, error } = await context.admin
-      .from("user_session_activity")
-      .upsert(payload, { onConflict: "session_id" })
-      .select("id, session_id, login_at, last_seen_at")
-      .single();
-    if (error) throw error;
+    let data: any = null;
+    let loginAuditRequired = false;
 
-    try {
-      await recordAuditEvent(context.admin, context.user, {
-        organizationId: context.metadata.organization_id,
-        moduleCode: "authentication",
-        entityType: "user_session",
-        recordId: data.id,
-        recordNumber: data.session_id,
-        action: "login",
-        actionCategory: "session",
-        activityLabel: existing.data ? "Refreshed Login Session" : "Logged In",
-        description: existing.data ? "User session refreshed." : "User logged in.",
-        workflowStage: "Session",
-        newValues: {
-          session_id: data.session_id,
-          login_at: data.login_at,
-          last_seen_at: data.last_seen_at,
-          browser: context.metadata.browser,
-          device_type: context.metadata.device_type,
-          ip_address: context.metadata.ip_address,
-        },
-      }, request);
-    } catch (auditError) {
-      console.error("[Auth Audit] Login audit failed", auditError);
+    if (existingSession.data) {
+      const updateResult = await context.admin
+        .from("user_session_activity")
+        .update(presencePayload)
+        .eq("id", existingSession.data.id)
+        .eq("user_id", context.user.id)
+        .select("id, session_id, login_at, last_seen_at")
+        .single();
+
+      if (updateResult.error) throw updateResult.error;
+      data = updateResult.data;
+    } else {
+      const insertResult = await context.admin
+        .from("user_session_activity")
+        .insert({
+          ...presencePayload,
+          login_at: now,
+        })
+        .select("id, session_id, login_at, last_seen_at")
+        .single();
+
+      if (insertResult.error) {
+        if (insertResult.error.code !== "23505") throw insertResult.error;
+
+        const existingAfterConflict = await context.admin
+          .from("user_session_activity")
+          .select("id, user_id")
+          .eq("session_id", sessionId)
+          .maybeSingle();
+
+        if (existingAfterConflict.error) throw existingAfterConflict.error;
+        if (existingAfterConflict.data && existingAfterConflict.data.user_id !== context.user.id) {
+          return jsonError("Session id belongs to another user.", 403);
+        }
+        if (!existingAfterConflict.data) throw insertResult.error;
+
+        const updateResult = await context.admin
+          .from("user_session_activity")
+          .update(presencePayload)
+          .eq("id", existingAfterConflict.data.id)
+          .eq("user_id", context.user.id)
+          .select("id, session_id, login_at, last_seen_at")
+          .single();
+
+        if (updateResult.error) throw updateResult.error;
+        data = updateResult.data;
+      } else {
+        data = insertResult.data;
+        loginAuditRequired = true;
+      }
+    }
+
+    if (loginAuditRequired) {
+      try {
+        await recordAuditEvent(context.admin, context.user, {
+          organizationId: context.metadata.organization_id,
+          moduleCode: "authentication",
+          entityType: "user_session",
+          recordId: data.id,
+          recordNumber: data.session_id,
+          action: "login",
+          actionCategory: "session",
+          activityLabel: "Logged In",
+          description: "User logged in.",
+          workflowStage: "Session",
+          newValues: {
+            session_id: data.session_id,
+            login_at: data.login_at,
+            last_seen_at: data.last_seen_at,
+            browser: context.metadata.browser,
+            device_type: context.metadata.device_type,
+            ip_address: context.metadata.ip_address,
+          },
+        }, request);
+      } catch (auditError) {
+        console.error("[Auth Audit] Login audit failed", auditError);
+      }
     }
 
     return NextResponse.json({ session: data });

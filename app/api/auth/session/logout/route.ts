@@ -10,6 +10,15 @@ export async function POST(request: Request) {
     const sessionId = validateSessionId(body.session_id);
     const now = new Date().toISOString();
 
+    const existing = await context.admin
+      .from("user_session_activity")
+      .select("id, logout_at")
+      .eq("session_id", sessionId)
+      .eq("user_id", context.user.id)
+      .maybeSingle();
+    if (existing.error) throw existing.error;
+    const shouldAuditLogout = Boolean(existing.data && !existing.data.logout_at);
+
     const { data, error } = await context.admin
       .from("user_session_activity")
       .update({
@@ -27,7 +36,7 @@ export async function POST(request: Request) {
       .maybeSingle();
     if (error) throw error;
 
-    if (data) {
+    if (data && shouldAuditLogout) {
       try {
         await recordAuditEvent(context.admin, context.user, {
           organizationId: context.metadata.organization_id,

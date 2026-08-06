@@ -189,7 +189,49 @@ function recordLabelFromDescription(description: unknown) {
   return "";
 }
 
+function isAuthenticationEvent(row: any) {
+  const source = normalized([
+    row.module_code,
+    row.module,
+    row.entity_type,
+    row.document_type,
+    row.technical?.entity_type,
+    row.action,
+    row.description,
+  ].filter(Boolean).join(" "));
+
+  return (
+    source.includes("authentication") ||
+    source.includes("user_session") ||
+    source.includes("session refresh") ||
+    source.includes("session refreshed") ||
+    source.includes("session expired") ||
+    ["login", "logout", "heartbeat", "session_expired"].includes(normalized(row.action))
+  );
+}
+
+function authenticationActivityLabel(action: string) {
+  const labels: Record<string, string> = {
+    login: "User Logged In",
+    logout: "User Logged Out",
+    heartbeat: "Session Refreshed",
+    session_expired: "Session Expired",
+  };
+  return labels[normalized(action)] || "";
+}
+
+function authenticationDescription(action: string) {
+  const descriptions: Record<string, string> = {
+    login: "User signed in successfully.",
+    logout: "User signed out.",
+    heartbeat: "User session is active.",
+    session_expired: "User session expired.",
+  };
+  return descriptions[normalized(action)] || "—";
+}
+
 function recordLabel(row: any) {
+  if (isAuthenticationEvent(row)) return "—";
   if (row.document_number) return row.document_number;
   const sources = [row.new_values, row.old_values, row.record_snapshot, row.related_snapshot, row.file_snapshot].filter(Boolean);
   const keys = ["document_number", "wo_number", "ra_bill_number", "ra_number", "invoice_number", "payment_number", "debit_note_number", "employee_code", "labour_code", "vendor_name", "employee_name", "worker_name", "attendance_date"];
@@ -274,6 +316,10 @@ function auditStage(row: any) {
 
 function actionVerb(action: string) {
   const labels: Record<string, string> = {
+    login: "User Logged In",
+    logout: "User Logged Out",
+    heartbeat: "Session Refreshed",
+    session_expired: "Session Expired",
     corrected: "Corrected",
     suspended: "Suspended",
     delete: "Deleted",
@@ -307,7 +353,12 @@ function sourceText(row: any) {
 }
 
 function entityDisplayName(row: any) {
+  if (isAuthenticationEvent(row)) return "Authentication";
   const source = sourceText(row);
+  if (source.includes("organization")) return "Organization";
+  if (source.includes("company_bank_account")) return "Company Bank Account";
+  if (source.includes("company")) return "Company";
+  if (source.includes("site")) return "Site";
   if (source.includes("work_order") || source.includes("work order") || source.includes("wo_")) return "Work Order";
   if (source.includes("labour") || source.includes("worker")) return "Labour";
   if (source.includes("attendance")) return "Attendance";
@@ -347,6 +398,10 @@ function businessActivityLabel(row: any, action: string) {
   const entity = entityDisplayName(row);
   const description = normalized(row.description || row.deletion_reason);
   const transition = statusTransition(row);
+
+  if (entity === "Authentication") {
+    return authenticationActivityLabel(action) || actionVerb(action);
+  }
 
   if (entity === "Labour") {
     if (action === "create") return "Registered Labour";
@@ -473,6 +528,8 @@ function businessDescription(row: any, action: string, record: string, fallback:
   const label = activity || businessActivityLabel(row, action);
   const transition = statusTransition(row);
 
+  if (entity === "Authentication") return authenticationDescription(action);
+
   if (entity === "Labour") {
     if (transition.before && transition.after && transition.before !== transition.after) {
       return `Status changed from ${titleCaseStatus(transition.before)} to ${titleCaseStatus(transition.after)}.`;
@@ -491,7 +548,7 @@ function businessDescription(row: any, action: string, record: string, fallback:
 
 function lastActivityDescription(activity: any) {
   const label = activity.display_activity || actionVerb(activity.action || "");
-  if (activity.record && activity.record !== "Record details") return `${label} · ${activity.record}`;
+  if (activity.record && activity.record !== "Record details" && activity.record !== "—") return `${label} · ${activity.record}`;
   return label || activity.description || "—";
 }
 
@@ -526,32 +583,58 @@ function buildSelectedSummary(activities: any[]) {
 
 
 function recordUrl(row: any, recordId: unknown) {
+  if (isAuthenticationEvent(row)) return null;
+
   const id = text(recordId);
   if (!id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return null;
   const entity = entityDisplayName(row);
+  const allowedEntities = new Set([
+    "Work Order",
+    "Vendor",
+    "Employee",
+    "Labour",
+    "Company",
+    "Site",
+    "Organization",
+    "User",
+    "Role",
+    "Permissions",
+    "RA Bill",
+    "Invoice",
+    "Payment",
+    "Debit Note",
+  ]);
+  if (!allowedEntities.has(entity)) return null;
+
   const routeByEntity: Record<string, string> = {
     "Work Order": "/work-orders",
     "Labour": "/labour/workers",
     "Employee": "/hr/employees",
     "Vendor": "/vendors",
+    "Company": "/companies",
+    "Site": "/sites",
+    "Organization": "/organizations",
     "Invoice": "/invoices",
     "Invoice ITC": "/invoices",
     "RA Bill": "/ra-bills",
     "Payment": "/payments",
     "Debit Note": "/debit-notes",
     "User": "/admin/users",
+    "Role": "/admin/roles",
+    "Permissions": "/admin/permissions",
   };
   const base = routeByEntity[entity];
   return base ? `${base}/${id}` : null;
 }
 
 function mapAuditRow(row: any, resolveActor: (input: any) => any) {
+  const authenticationEvent = isAuthenticationEvent(row);
   const record = recordLabel(row);
   const reason = extractReason(row.new_values, row.old_values) || "";
-  const stage = auditStage(row);
+  const stage = authenticationEvent ? "—" : auditStage(row);
   const changes = summarizeChanges(row.old_values, row.new_values);
-  if (reason) changes.push({ label: "Reason", before: null, after: reason });
-  if (stage !== "Not Available") changes.push({ label: "Stage", before: null, after: stage });
+  if (!authenticationEvent && reason) changes.push({ label: "Reason", before: null, after: reason });
+  if (!authenticationEvent && stage !== "Not Available") changes.push({ label: "Stage", before: null, after: stage });
   const actor = resolveActor({ id: row.created_by, email: row.created_by_email, name: row.created_by_name });
   const action = row.action || "other";
   const displayActivity = businessActivityLabel(row, action);
@@ -566,9 +649,9 @@ function mapAuditRow(row: any, resolveActor: (input: any) => any) {
     action,
     display_activity: displayActivity,
     record,
-    record_url: recordUrl(row, row.record_id),
+    record_url: authenticationEvent ? null : recordUrl(row, row.record_id),
     stage,
-    reason: reason || "-",
+    reason: authenticationEvent ? "—" : reason || "-",
     description: businessDescription(row, action, record, row.description || "No description recorded.", reason, displayActivity),
     changes,
     technical: {
