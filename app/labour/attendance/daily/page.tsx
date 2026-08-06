@@ -92,7 +92,7 @@ export default function LabourDailyAttendancePage() {
   const canOverride = global || can(permissions, "labour_attendance", "override");
   const [lookups, setLookups] = useState<any>({ companies: [], sites: [], contractors: [] });
   const [labourWorkspace, setLabourWorkspace] = useState<LabourWorkspaceSummary>({ pairs: [], attendance_systems: [] });
-  const [filters, setFilters] = useState({ company_id: "", site_id: "", contractor_profile_id: "", attendance_date: today() });
+  const [filters, setFilters] = useState({ company_id: "", site_id: "", contractor_profile_id: "", labour_search: "", attendance_date: today() });
   const [rows, setRows] = useState<any[]>([]);
   const [period, setPeriod] = useState<any>(null);
   const [dayLock, setDayLock] = useState<any>(null);
@@ -114,12 +114,16 @@ export default function LabourDailyAttendancePage() {
   const lookupRequestRef = useRef(0);
 
   const filteredSites = useMemo(() => lookups.sites || [], [lookups.sites]);
-  const displayedRows = useMemo(
-    () => filters.contractor_profile_id
-      ? rows.filter((row) => row.contractor?.id === filters.contractor_profile_id)
-      : rows,
-    [filters.contractor_profile_id, rows],
-  );
+  const displayedRows = useMemo(() => {
+    const normalizedLabourSearch = filters.labour_search.trim().toLowerCase();
+    return rows.filter((row) => {
+      const contractorMatches = !filters.contractor_profile_id || row.contractor?.id === filters.contractor_profile_id;
+      const labourMatches = !normalizedLabourSearch
+        || String(row.worker?.worker_name || "").toLowerCase().includes(normalizedLabourSearch)
+        || String(row.worker?.labour_code || "").toLowerCase().includes(normalizedLabourSearch);
+      return contractorMatches && labourMatches;
+    });
+  }, [filters.contractor_profile_id, filters.labour_search, rows]);
   const otErrors = useMemo(() => Object.fromEntries(
     rows
       .map((row) => [row.labour_worker_id, otValidationMessage(row.ot_hours)])
@@ -245,6 +249,10 @@ export default function LabourDailyAttendancePage() {
   function updateFilters(patch: Partial<typeof filters>, options: { clearContractors?: boolean } = {}) {
     if ("contractor_profile_id" in patch && Object.keys(patch).length === 1) {
       setFilters((current) => ({ ...current, contractor_profile_id: patch.contractor_profile_id || "" }));
+      return;
+    }
+    if ("labour_search" in patch && Object.keys(patch).length === 1) {
+      setFilters((current) => ({ ...current, labour_search: patch.labour_search || "" }));
       return;
     }
     const action = () => applyFilterChange(patch, options);
@@ -671,7 +679,7 @@ export default function LabourDailyAttendancePage() {
           </div>
         )}
 
-        <div className="grid gap-3 rounded-lg border bg-white p-4 shadow-sm md:grid-cols-5">
+        <div className="grid gap-3 rounded-lg border bg-white p-4 shadow-sm md:grid-cols-6">
           <label className="text-xs font-bold uppercase tracking-wide text-slate-500">
             Company
             <select disabled={filtersDisabled} value={filters.company_id} onChange={(e) => {
@@ -706,6 +714,10 @@ export default function LabourDailyAttendancePage() {
               </select>
               {lookupLoading && <span aria-hidden="true" className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border-2 border-slate-300 border-t-slate-700 animate-spin" />}
             </div>
+          </label>
+          <label className="text-xs font-bold uppercase tracking-wide text-slate-500">
+            Labour Name
+            <input disabled={filtersDisabled} type="search" value={filters.labour_search} onChange={(e) => updateFilters({ labour_search: e.target.value })} placeholder="Search labour name or code" className="mt-1 h-11 w-full rounded-lg border px-3 text-sm font-normal normal-case tracking-normal text-slate-950 placeholder:text-slate-400 disabled:bg-slate-100" />
           </label>
           <button onClick={() => loadRows()} disabled={filtersDisabled || lookupLoading || standardBlocked} className="h-11 w-full self-end rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white disabled:opacity-60">{rowLoading ? "Loading attendance..." : "Load Attendance"}</button>
         </div>
@@ -759,7 +771,7 @@ export default function LabourDailyAttendancePage() {
                   </tr>
                 );
               })}
-              {!displayedRows.length && <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-500">{rows.length ? "No labourers match the selected Contractor." : "Select company, site and date, then load attendance."}</td></tr>}
+              {!displayedRows.length && <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-500">{rows.length ? "No labourers match the selected filters." : "Select company, site and date, then load attendance."}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -811,7 +823,7 @@ export default function LabourDailyAttendancePage() {
               </div>
             );
           })}
-          {!displayedRows.length && <div className="rounded-lg border bg-white px-3 py-8 text-center text-sm text-slate-500">{rows.length ? "No labourers match the selected Contractor." : "Select company, site and date, then load attendance."}</div>}
+          {!displayedRows.length && <div className="rounded-lg border bg-white px-3 py-8 text-center text-sm text-slate-500">{rows.length ? "No labourers match the selected filters." : "Select company, site and date, then load attendance."}</div>}
         </div>
 
         {unlockDialogOpen && (
