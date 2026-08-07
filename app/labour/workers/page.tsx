@@ -445,17 +445,22 @@ export default function LabourWorkersPage() {
               </div>
             </div>
           )}
+          <p className="mb-3 text-sm text-slate-500">
+            Showing {workers.length} Labourers
+          </p>
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                 <tr>
+                  <th className="w-16 px-3 py-3">S. No.</th>
                   {selectionMode && <th className="px-3 py-3">Select</th>}
                   {["Labour Code", "Labour Name", "Father/Husband", "Contractor", "Category", "Current Company", "Current Site", "Mobile", "Status", "Actions"].map((heading) => <th key={heading} className="px-3 py-3">{heading}</th>)}
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {workers.map((worker) => (
+                {workers.map((worker, index) => (
                   <tr key={worker.id}>
+                    <td className="w-16 px-3 py-3 text-slate-500">{index + 1}</td>
                     {selectionMode && (
                       <td className="px-3 py-3">
                         <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600">
@@ -507,7 +512,7 @@ export default function LabourWorkersPage() {
                     </td>
                   </tr>
                 ))}
-                {!workers.length && !error && <tr><td colSpan={selectionMode ? 11 : 10} className="px-3 py-8 text-center text-slate-500">{loading ? "Loading..." : "No registered labour found."}</td></tr>}
+                {!workers.length && !error && <tr><td colSpan={selectionMode ? 12 : 11} className="px-3 py-8 text-center text-slate-500">{loading ? "Loading..." : "No registered labour found."}</td></tr>}
               </tbody>
             </table>
           </div>
