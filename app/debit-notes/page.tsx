@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { formatIstTimestamp } from "@/lib/dateTime";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -340,6 +341,7 @@ export default function DebitNotesPage() {
                       <div className="flex justify-end gap-2">
                         <Link
                           href={`/debit-notes/${note.id}`}
+                          onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "debit_note", recordId: note.id, source: "debit_notes_register" })}
                           className="rounded-lg border px-3 py-1.5 text-xs font-medium hover:bg-slate-50"
                         >
                           View

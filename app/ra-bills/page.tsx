@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { formatIstTimestamp } from "@/lib/dateTime";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -336,6 +337,7 @@ export default function RABillsPage() {
                     <div className="flex justify-end gap-2">
                       <Link
                         href={`/ra-bills/${bill.id}`}
+                        onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "ra_bill", recordId: bill.id, source: "ra_bills_register" })}
                         className="inline-flex items-center justify-center rounded-md border border-slate-200 p-2 text-slate-500 hover:bg-slate-100 hover:text-sky-700"
                         title="View RA Bill"
                       >

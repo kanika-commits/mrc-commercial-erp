@@ -8,6 +8,7 @@ import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import AlertMessage from "@/components/AlertMessage";
 import { getAllowedOrganizationIds } from "@/lib/clientOrganizationScope";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 type Site = {
   id: string;
@@ -325,6 +326,7 @@ export default function SitesPage() {
                       <div className="flex items-center justify-end gap-2">
                         <Link
                           href={`/sites/${site.id}`}
+                          onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "site", recordId: site.id, source: "sites_register" })}
                           className="inline-flex h-8 w-8 items-center justify-center rounded text-slate-500 transition hover:bg-slate-100 hover:text-[#00658b]"
                           title="View site"
                         >

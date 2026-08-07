@@ -7,10 +7,11 @@ export async function POST(request: Request) {
     if ("response" in context) return context.response;
     const body = await request.json().catch(() => ({}));
     const sessionId = validateSessionId(body.session_id);
+    const resume = body.resume === true;
 
     const existing = await context.admin
       .from("user_session_activity")
-      .select("id, last_seen_at")
+      .select("id, last_seen_at, active_since_at")
       .eq("session_id", sessionId)
       .eq("user_id", context.user.id)
       .maybeSingle();
@@ -27,6 +28,7 @@ export async function POST(request: Request) {
     const { data, error } = await context.admin
       .from("user_session_activity")
       .update({
+        ...(resume ? { active_since_at: now } : {}),
         last_seen_at: now,
         browser: context.metadata.browser,
         device_type: context.metadata.device_type,
@@ -36,7 +38,7 @@ export async function POST(request: Request) {
       })
       .eq("id", existing.data.id)
       .eq("user_id", context.user.id)
-      .select("id, last_seen_at")
+      .select("id, active_since_at, last_seen_at")
       .single();
     if (error) throw error;
     return NextResponse.json({ session: data });

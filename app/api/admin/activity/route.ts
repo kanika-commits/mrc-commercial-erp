@@ -6,7 +6,7 @@ const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 50;
 const FETCH_LIMIT = 2000;
 const ACTIVITY_LIMIT_PER_USER = 100;
-const ONLINE_THRESHOLD_MS = 10 * 60 * 1000;
+const ONLINE_THRESHOLD_MS = 5 * 60 * 1000;
 const SENSITIVE_KEY_PATTERN = /(password|token|access_token|refresh_token|secret|service_role|authorization|api_key)/i;
 const HIDDEN_KEY_PATTERN = /(^id$|_id$|uuid|active_deployment|closed_deployment|organization_id|company_id|site_id|created_by|updated_by|deleted_by|deployment_update|snapshot)/i;
 
@@ -114,6 +114,15 @@ function cleanValue(value: unknown): unknown {
 
 function objectValue(value: unknown) {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function clientAuditMetadata(row: any) {
+  return objectValue(objectValue(row.new_values).__audit);
+}
+
+function effectiveAction(row: any) {
+  const canonical = normalized(clientAuditMetadata(row).canonical_action);
+  return canonical || normalized(row.action) || "other";
 }
 
 function summarizeObjectChanges(oldObject: Record<string, unknown>, newObject: Record<string, unknown>) {
@@ -232,6 +241,10 @@ function authenticationDescription(action: string) {
 
 function recordLabel(row: any) {
   if (isAuthenticationEvent(row)) return "—";
+  const canonicalAction = effectiveAction(row);
+  if (row.module_code === "navigation" || canonicalAction === "view_page") return "—";
+  const clientRecordNumber = text(clientAuditMetadata(row).record_number);
+  if (clientRecordNumber) return clientRecordNumber;
   if (row.document_number) return row.document_number;
   const sources = [row.new_values, row.old_values, row.record_snapshot, row.related_snapshot, row.file_snapshot].filter(Boolean);
   const keys = ["document_number", "wo_number", "ra_bill_number", "ra_number", "invoice_number", "payment_number", "debit_note_number", "employee_code", "labour_code", "vendor_name", "employee_name", "worker_name", "attendance_date"];
@@ -398,6 +411,11 @@ function businessActivityLabel(row: any, action: string) {
   const entity = entityDisplayName(row);
   const description = normalized(row.description || row.deletion_reason);
   const transition = statusTransition(row);
+  const auditMetadata: any = clientAuditMetadata(row);
+
+  if (["view_page", "view_record", "view_document", "download_document", "export", "print"].includes(action) && auditMetadata?.activity_label) {
+    return String(auditMetadata.activity_label).replace(/\b[a-z]/g, (character) => character.toUpperCase());
+  }
 
   if (entity === "Authentication") {
     return authenticationActivityLabel(action) || actionVerb(action);
@@ -636,7 +654,7 @@ function mapAuditRow(row: any, resolveActor: (input: any) => any) {
   if (!authenticationEvent && reason) changes.push({ label: "Reason", before: null, after: reason });
   if (!authenticationEvent && stage !== "Not Available") changes.push({ label: "Stage", before: null, after: stage });
   const actor = resolveActor({ id: row.created_by, email: row.created_by_email, name: row.created_by_name });
-  const action = row.action || "other";
+  const action = effectiveAction(row);
   const displayActivity = businessActivityLabel(row, action);
   return {
     id: row.id,
@@ -742,7 +760,7 @@ function onlineCutoffIso() {
 }
 
 function sessionIsOnline(session: any) {
-  if (session.logout_at || !session.last_seen_at) return false;
+  if (!session.last_seen_at) return false;
   return new Date(session.last_seen_at).getTime() >= Date.now() - ONLINE_THRESHOLD_MS;
 }
 
@@ -756,25 +774,26 @@ function earliestActiveSession(sessions: any[]) {
 
 function presenceSummaryForSessions(sessions: any[]) {
   if (!sessions.length) {
-    return { status: "offline", login_time: null, logout_time: null, last_seen_at: null, browser: null, device_type: null };
+    return { status: "offline", login_time: null, active_since: null, logout_time: null, last_seen_at: null, browser: null, device_type: null };
   }
   const active = sessions.filter(sessionIsOnline);
   if (active.length) {
-    const loginSession = earliestActiveSession(active);
-    const seenSession = latestSession(active);
+    const activeSession = latestSession(active);
     return {
       status: "online",
-      login_time: loginSession?.login_at || null,
+      login_time: activeSession?.login_at || null,
+      active_since: activeSession?.active_since_at || null,
       logout_time: null,
-      last_seen_at: seenSession?.last_seen_at || null,
-      browser: seenSession?.browser || null,
-      device_type: seenSession?.device_type || null,
+      last_seen_at: activeSession?.last_seen_at || null,
+      browser: activeSession?.browser || null,
+      device_type: activeSession?.device_type || null,
     };
   }
   const latest = latestSession(sessions);
   return {
     status: "offline",
     login_time: latest?.login_at || null,
+    active_since: latest?.active_since_at || null,
     logout_time: latest?.logout_at || null,
     last_seen_at: latest?.last_seen_at || null,
     browser: latest?.browser || null,
@@ -790,7 +809,7 @@ async function loadPresence(admin: any, account: any, activityUsers: any[], user
 
   let onlineQuery = admin
     .from("user_session_activity")
-    .select("id, user_id, organization_id, session_id, login_at, last_seen_at, logout_at, browser, device_type")
+    .select("id, user_id, organization_id, session_id, login_at, active_since_at, last_seen_at, logout_at, browser, device_type")
     .is("logout_at", null)
     .gte("last_seen_at", onlineCutoffIso())
     .order("last_seen_at", { ascending: false })
@@ -799,7 +818,7 @@ async function loadPresence(admin: any, account: any, activityUsers: any[], user
 
   let sessionQuery = admin
     .from("user_session_activity")
-    .select("id, user_id, organization_id, session_id, login_at, last_seen_at, logout_at, browser, device_type")
+    .select("id, user_id, organization_id, session_id, login_at, active_since_at, last_seen_at, logout_at, browser, device_type")
     .order("last_seen_at", { ascending: false })
     .limit(FETCH_LIMIT);
   if (!account.roleCodes.includes("platform_owner")) sessionQuery = sessionQuery.in("organization_id", scopedOrganizations);
@@ -847,6 +866,7 @@ async function loadPresence(admin: any, account: any, activityUsers: any[], user
     byUser.set(sessionUser.user_id, {
       status: sessionUser.status,
       login_time: sessionUser.login_time,
+      active_since: sessionUser.active_since,
       logout_time: sessionUser.logout_time,
       last_seen_at: sessionUser.last_seen_at,
       browser: sessionUser.browser,
@@ -920,7 +940,7 @@ function mergeActivityAndSessionUsers(activityUsers: any[], presence: any) {
       ...user,
       ...(user.user_id && presence.byUser.get(user.user_id)
         ? presence.byUser.get(user.user_id)
-        : { status: "offline", login_time: null, logout_time: null, last_seen_at: null, browser: null, device_type: null }),
+        : { status: "offline", login_time: null, active_since: null, logout_time: null, last_seen_at: null, browser: null, device_type: null }),
     }))
     .sort((a, b) => {
       const aOnline = a.status === "online";

@@ -18,6 +18,7 @@ import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { formatIstTimestamp } from "@/lib/dateTime";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -233,6 +234,7 @@ export default function VendorDetailPage() {
   }
 
   async function openVendorDocument(document: any) {
+    recordClientAuditEvent({ eventType: "view_document", entityType: "vendor", recordId: vendorId, documentId: document.id, source: "vendor_detail" });
     if (!document.id) {
       alert("Document id is missing.");
       return;

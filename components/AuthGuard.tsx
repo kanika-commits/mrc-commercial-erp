@@ -437,29 +437,70 @@ export default function AuthGuard({
   useEffect(() => {
     if (isLoginPage || !user || accessLoading) return;
     let cancelled = false;
+    const idleThresholdMs = 5 * 60 * 1000;
+    const heartbeatRateLimitMs = 60 * 1000;
+    let lastActivityAt = Date.now();
+    let lastHeartbeatAt = 0;
+    let heartbeatInFlight = false;
+
+    async function sendHeartbeat(force = false, resume = false) {
+      if (cancelled || document.visibilityState !== "visible" || heartbeatInFlight) return;
+      const now = Date.now();
+      if (!force && now - lastActivityAt > idleThresholdMs) return;
+      if (now - lastHeartbeatAt < heartbeatRateLimitMs) return;
+
+      heartbeatInFlight = true;
+      try {
+        const ok = await heartbeatSessionActivity({ resume });
+        lastHeartbeatAt = Date.now();
+        if (!ok && !cancelled) await startSessionActivity();
+      } catch {
+        // Keep auth/session UX independent from presence tracking.
+      } finally {
+        heartbeatInFlight = false;
+      }
+    }
 
     async function startAndHeartbeat() {
       try {
         await startSessionActivity();
-        if (!cancelled) await heartbeatSessionActivity();
+        if (!cancelled && document.visibilityState === "visible") {
+          await heartbeatSessionActivity();
+          lastHeartbeatAt = Date.now();
+        }
       } catch {
         // Session presence must never block normal ERP access.
       }
     }
 
     startAndHeartbeat();
-    const interval = window.setInterval(async () => {
-      try {
-        const ok = await heartbeatSessionActivity();
-        if (!ok) await startSessionActivity();
-      } catch {
-        // Keep auth/session UX independent from presence tracking.
-      }
-    }, 2 * 60 * 1000);
+    const markActivity = () => {
+      const now = Date.now();
+      const resumed = now - lastActivityAt > idleThresholdMs;
+      lastActivityAt = now;
+      void sendHeartbeat(true, resumed);
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") markActivity();
+    };
+    const interval = window.setInterval(() => void sendHeartbeat(), 2 * 60 * 1000);
+
+    window.addEventListener("pointerdown", markActivity, { passive: true });
+    window.addEventListener("keydown", markActivity, { passive: true });
+    window.addEventListener("touchstart", markActivity, { passive: true });
+    window.addEventListener("scroll", markActivity, { passive: true });
+    window.addEventListener("focus", markActivity);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       cancelled = true;
       window.clearInterval(interval);
+      window.removeEventListener("pointerdown", markActivity);
+      window.removeEventListener("keydown", markActivity);
+      window.removeEventListener("touchstart", markActivity);
+      window.removeEventListener("scroll", markActivity);
+      window.removeEventListener("focus", markActivity);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [accessLoading, isLoginPage, user]);
 

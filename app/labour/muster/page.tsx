@@ -3,6 +3,7 @@
 import { Download } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
 import { useAccessContext } from "@/components/AccessContext";
 import { labelFromCode } from "@/lib/labour/constants";
@@ -46,6 +47,7 @@ export default function LabourMusterPage() {
   }
 
   async function exportCsv() {
+    recordClientAuditEvent({ eventType: "export", entityType: "labour_attendance", source: "labour_muster", context: { filters } });
     const params = new URLSearchParams(filters as any);
     const response = await fetch(`/api/labour/muster/export?${params}`, { headers: { Authorization: `Bearer ${await token()}` } });
     const blob = await response.blob();

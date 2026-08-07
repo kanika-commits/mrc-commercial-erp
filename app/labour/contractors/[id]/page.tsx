@@ -8,6 +8,7 @@ import { useAccessContext } from "@/components/AccessContext";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
 import { LABOUR_CONTRACTOR_DOCUMENT_TYPES, labelFromCode } from "@/lib/labour/constants";
 import { supabase } from "@/lib/supabase";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "-";
@@ -129,6 +130,7 @@ export default function LabourContractorDetailPage() {
   }
 
   async function openVendorDocument(document: any) {
+    recordClientAuditEvent({ eventType: "view_document", entityType: "vendor", recordId: params.id, documentId: document.id, source: "labour_contractor_documents" });
     setError("");
     const response = await fetch(`/api/vendors/${contractor.vendor_id}`, {
       method: "POST",

@@ -9,6 +9,7 @@ import { apiFetch, formatDate } from "@/components/hr/hrClient";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { ATTENDANCE_STATUS_CODES, ATTENDANCE_STATUSES, EMPLOYEE_STANDARD_WORKING_HOURS, currentIndiaDate, monthStart } from "@/lib/hr/attendance";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 export default function MonthlyAttendancePage() {
   const { access } = useAccessContext();
@@ -106,6 +107,7 @@ export default function MonthlyAttendancePage() {
 
   function exportCsv() {
     if (!companyId || !siteId || !month) return;
+    recordClientAuditEvent({ eventType: "export", entityType: "employee_attendance", source: "employee_attendance_monthly", context: { companyId, siteId, month } });
     window.location.href = `/api/hr/attendance/export?company_id=${companyId}&site_id=${siteId}&month=${month}-01`;
   }
 

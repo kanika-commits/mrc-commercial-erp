@@ -30,6 +30,7 @@ import {
   type NotificationCounts,
 } from "@/components/NotificationCountsContext";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 import { DEFAULT_MODULE_NAVIGATION } from "@/lib/defaultModuleNavigation";
 import {
   isLabourRouteAllowedForAttendanceSystem,
@@ -568,6 +569,31 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setNotificationsOpen(false);
     setMobileSidebarOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    const pageKeyByPath: Record<string, string> = {
+      "/": "dashboard",
+      "/work-orders": "work_orders_register",
+      "/ra-bills": "ra_bills_register",
+      "/invoices": "invoices_register",
+      "/payments": "payments_register",
+      "/debit-notes": "debit_notes_register",
+      "/vendors": "vendors_register",
+      "/hr/employees": "employees_register",
+      "/labour/workers": "labour_workers_register",
+      "/labour/attendance/daily": "labour_attendance",
+      "/hr/attendance/monthly": "employee_attendance",
+      "/organizations": "organizations",
+      "/companies": "companies",
+      "/sites": "sites",
+      "/admin/users": "users",
+      "/admin/roles": "roles",
+      "/reports": "reports",
+      "/settings": "settings",
+    };
+    const pageKey = pageKeyByPath[pathname];
+    if (pageKey) recordClientAuditEvent({ eventType: "view_page", entityType: "page", pageKey, source: "app_shell" });
   }, [pathname]);
 
   useEffect(() => {

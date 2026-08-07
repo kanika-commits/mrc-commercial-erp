@@ -6,6 +6,7 @@ import AlertMessage from "@/components/AlertMessage";
 import RequirePermission from "@/components/RequirePermission";
 import DeleteOrganizationButton from "@/components/DeleteOrganizationButton";
 import { formatIstTimestamp } from "@/lib/dateTime";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 type OrganizationRow = {
   id: string;
@@ -65,6 +66,7 @@ export default function OrganizationsTable({
                     <Link
                       href={`/organizations/${org.id}`}
                       className="rounded border px-3 py-1"
+                      onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "organization", recordId: org.id, source: "organizations_register" })}
                     >
                       View
                     </Link>

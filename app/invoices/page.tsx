@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { formatIstTimestamp } from "@/lib/dateTime";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -396,6 +397,7 @@ export default function InvoicesPage() {
                       <div className="flex justify-end gap-2">
                         <Link
                           href={`/invoices/${invoice.id}`}
+                          onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "invoice", recordId: invoice.id, source: "invoices_register" })}
                           className="inline-flex justify-center rounded-xl border px-3 py-2 text-xs font-medium hover:bg-slate-50"
                         >
                           View
@@ -509,6 +511,7 @@ export default function InvoicesPage() {
                       <td className="p-3 text-right">
                         <Link
                           href={`/invoices/${invoice.id}`}
+                          onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "invoice", recordId: invoice.id, source: "invoices_register" })}
                           className="inline-flex justify-center rounded-xl border px-3 py-2 text-xs font-medium hover:bg-slate-50"
                         >
                           View

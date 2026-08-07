@@ -8,6 +8,7 @@ import { sortCompanies } from "@/lib/companyOrdering";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import AlertMessage from "@/components/AlertMessage";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 export default function AdminUsersPage() {
   const { access } = useAccessContext();
@@ -207,6 +208,7 @@ export default function AdminUsersPage() {
                 <td className="p-3">
                   <Link
                     href={`/admin/users/${profile.id}`}
+                    onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "user", recordId: profile.id, source: "users_register" })}
                     className="rounded border px-3 py-1"
                   >
                     Edit Access

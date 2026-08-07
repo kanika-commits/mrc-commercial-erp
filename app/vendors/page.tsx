@@ -13,6 +13,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 type Vendor = {
   id: string;
@@ -374,6 +375,7 @@ export default function VendorsPage() {
                       <div className="min-w-0">
                         <Link
                           href={`/vendors/${vendor.id}`}
+                          onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "vendor", recordId: vendor.id, source: "vendors_register" })}
                           className="font-semibold text-slate-950 hover:text-[#00658b]"
                         >
                           {vendor.vendor_name || "-"}

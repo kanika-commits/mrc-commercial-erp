@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { formatIstTimestamp } from "@/lib/dateTime";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 const PAGE_SIZE = 50;
 
@@ -262,6 +263,7 @@ export default function PaymentsPage() {
                       <div className="flex justify-center gap-2">
                         <Link
                           href={`/payments/${payment.id}`}
+                          onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "payment", recordId: payment.id, source: "payments_register" })}
                           className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
                         >
                           View

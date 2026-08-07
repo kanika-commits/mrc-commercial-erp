@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Download, Eye, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
 import { useAccessContext } from "@/components/AccessContext";
 
@@ -58,6 +59,7 @@ export default function LabourWagesPage() {
   }
 
   async function exportCsv() {
+    recordClientAuditEvent({ eventType: "export", entityType: "labour_attendance", source: "labour_wages", context: { filters } });
     const response = await fetch("/api/labour/wages?export=csv", { headers: { Authorization: `Bearer ${await token()}` } });
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);

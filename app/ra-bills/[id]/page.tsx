@@ -13,6 +13,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import AuditTrailCard from "@/components/AuditTrailCard";
 import { formatIstTimestamp } from "@/lib/dateTime";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -182,6 +183,7 @@ export default function RABillDetailPage() {
   }
 
   function openDocument(document: any) {
+    recordClientAuditEvent({ eventType: "view_document", entityType: "ra_bill", recordId: billId, documentId: document.id, source: "ra_bill_detail" });
     const url = isGoogleDocumentUrl(document.file_url)
       ? document.file_url
       : document.signed_url;

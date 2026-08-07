@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { companySortPriority } from "@/lib/companyOrdering";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 function maskAccount(value?: string | null) {
   if (!value) return "-";
@@ -236,6 +237,7 @@ export default function CompanyBankAccountsPage() {
                         <div className="flex items-center justify-end gap-2">
                           <Link
                             href={`/company-bank-accounts/${account.id}`}
+                            onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "company_bank_account", recordId: account.id, source: "company_bank_accounts_register" })}
                             className="rounded-lg border px-3 py-1.5 text-xs font-medium hover:bg-slate-50"
                           >
                             View

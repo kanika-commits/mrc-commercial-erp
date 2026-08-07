@@ -7,6 +7,7 @@ import { ArrowLeft, Building2, ExternalLink, FileMinus, Paperclip } from "lucide
 import AuditTrailCard from "@/components/AuditTrailCard";
 import { supabase } from "@/lib/supabase";
 import { formatIstTimestamp } from "@/lib/dateTime";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -148,6 +149,7 @@ export default function DebitNoteDetailPage() {
   }
 
   function openDocument(document: any) {
+    recordClientAuditEvent({ eventType: "view_document", entityType: "debit_note", recordId: debitNoteId, documentId: document.id, source: "debit_note_detail" });
     if (!document.signed_url) {
       setMessage(
         document.signed_url_error ||

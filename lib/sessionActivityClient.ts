@@ -29,7 +29,7 @@ async function authToken() {
   return session?.access_token || "";
 }
 
-async function postSessionActivity(endpoint: string) {
+async function postSessionActivity(endpoint: string, options: { resume?: boolean } = {}) {
   const token = await authToken();
   const sessionId = getSessionActivityId();
   if (!token || !sessionId) return false;
@@ -39,7 +39,7 @@ async function postSessionActivity(endpoint: string) {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ session_id: sessionId }),
+    body: JSON.stringify({ session_id: sessionId, ...options }),
   });
   return response.ok;
 }
@@ -48,8 +48,8 @@ export async function startSessionActivity() {
   return postSessionActivity("/api/auth/session/start");
 }
 
-export async function heartbeatSessionActivity() {
-  return postSessionActivity("/api/auth/session/heartbeat");
+export async function heartbeatSessionActivity(options: { resume?: boolean } = {}) {
+  return postSessionActivity("/api/auth/session/heartbeat", options);
 }
 
 export async function logoutSessionActivity() {

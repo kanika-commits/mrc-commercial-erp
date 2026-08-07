@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
 import { useAccessContext } from "@/components/AccessContext";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 export default function LabourAdvancesPage() {
   const { access } = useAccessContext();
@@ -58,6 +59,7 @@ export default function LabourAdvancesPage() {
   }
 
   async function exportCsv() {
+    recordClientAuditEvent({ eventType: "export", entityType: "labour_worker", source: "labour_advances" });
     const response = await fetch("/api/labour/advances?export=csv", { headers: { Authorization: `Bearer ${await token()}` } });
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);

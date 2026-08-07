@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
 import { useAccessContext } from "@/components/AccessContext";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 type Trade = {
   id: string;
@@ -121,6 +122,7 @@ export default function LabourTradesPage() {
   }
 
   async function exportCsv() {
+    recordClientAuditEvent({ eventType: "export", entityType: "labour_worker", source: "labour_trades" });
     const params = new URLSearchParams(queryString);
     params.set("export", "csv");
     const response = await fetch(`/api/labour/trades?${params.toString()}`, { headers: { Authorization: `Bearer ${await token()}` } });

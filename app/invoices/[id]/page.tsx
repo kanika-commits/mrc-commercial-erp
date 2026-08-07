@@ -13,6 +13,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import AuditTrailCard from "@/components/AuditTrailCard";
 import { formatIstTimestamp } from "@/lib/dateTime";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -140,6 +141,7 @@ export default function InvoiceDetailPage() {
   }
 
   function openDocument(doc: any) {
+    recordClientAuditEvent({ eventType: "view_document", entityType: "invoice", recordId: invoiceId, documentId: doc.id, source: "invoice_detail" });
     if (!doc?.signed_url) {
       setMessage(doc?.signed_url_error || "Invoice PDF is not available.");
       return;

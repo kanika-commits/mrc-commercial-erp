@@ -42,7 +42,7 @@ export async function POST(request: Request) {
         .update(presencePayload)
         .eq("id", existingSession.data.id)
         .eq("user_id", context.user.id)
-        .select("id, session_id, login_at, last_seen_at")
+        .select("id, session_id, login_at, active_since_at, last_seen_at")
         .single();
 
       if (updateResult.error) throw updateResult.error;
@@ -52,6 +52,7 @@ export async function POST(request: Request) {
         .from("user_session_activity")
         .insert({
           ...presencePayload,
+          active_since_at: now,
           login_at: now,
         })
         .select("id, session_id, login_at, last_seen_at")
@@ -77,7 +78,7 @@ export async function POST(request: Request) {
           .update(presencePayload)
           .eq("id", existingAfterConflict.data.id)
           .eq("user_id", context.user.id)
-          .select("id, session_id, login_at, last_seen_at")
+          .select("id, session_id, login_at, active_since_at, last_seen_at")
           .single();
 
         if (updateResult.error) throw updateResult.error;
@@ -104,6 +105,7 @@ export async function POST(request: Request) {
           newValues: {
             session_id: data.session_id,
             login_at: data.login_at,
+            active_since_at: data.active_since_at,
             last_seen_at: data.last_seen_at,
             browser: context.metadata.browser,
             device_type: context.metadata.device_type,

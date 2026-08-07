@@ -6,6 +6,7 @@ import type { HrDepartment, HrDesignation, HrEmployee, LookupOption } from "@/ty
 import StatusBadge from "./StatusBadge";
 import { formatDate, labelize } from "./hrClient";
 import EmployeePhoto from "./EmployeePhoto";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 type Props = {
   employees: HrEmployee[];
@@ -73,12 +74,12 @@ export default function EmployeeTable({
                     <EmployeePhoto name={employee.employee_name} photoUrl={employee.photo_signed_url} size="sm" />
                   </td>
                   <td className="px-3 py-3">
-                    <Link href={`/hr/employees/${employee.id}`} className="font-semibold text-sky-700 hover:underline">
+                    <Link href={`/hr/employees/${employee.id}`} className="font-semibold text-sky-700 hover:underline" onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "employee", recordId: employee.id, source: "employees_register" })}>
                       {employee.employee_code}
                     </Link>
                   </td>
                   <td className="px-3 py-3">
-                    <Link href={`/hr/employees/${employee.id}`} className="font-semibold text-slate-950 hover:text-sky-700">
+                    <Link href={`/hr/employees/${employee.id}`} className="font-semibold text-slate-950 hover:text-sky-700" onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "employee", recordId: employee.id, source: "employees_register" })}>
                       {employee.employee_name}
                     </Link>
                     {employee.date_of_joining && (
@@ -132,7 +133,7 @@ export default function EmployeeTable({
                 <EmployeePhoto name={employee.employee_name} photoUrl={employee.photo_signed_url} size="sm" />
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-semibold text-slate-500">#{startIndex + index + 1} · {employee.employee_code}</p>
-                  <Link href={`/hr/employees/${employee.id}`} className="mt-1 block font-semibold text-slate-950">
+                  <Link href={`/hr/employees/${employee.id}`} className="mt-1 block font-semibold text-slate-950" onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "employee", recordId: employee.id, source: "employees_register" })}>
                     {employee.employee_name}
                   </Link>
                   <p className="mt-1 text-sm text-slate-600">{lookup(companies, employee.company_id)}</p>

@@ -16,6 +16,7 @@ import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { formatIstTimestamp } from "@/lib/dateTime";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 type WorkOrder = {
   id: string;
@@ -884,6 +885,7 @@ export default function WorkOrdersPage() {
                       <div className="max-w-[320px] text-base font-bold leading-6">
                         <Link
                           href={`/work-orders/${wo.id}`}
+                          onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "work_order", recordId: wo.id, source: "work_orders_register" })}
                           className="text-[#00658b] hover:underline"
                         >
                           {wo.wo_number || "-"}

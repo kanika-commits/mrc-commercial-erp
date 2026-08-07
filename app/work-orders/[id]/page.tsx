@@ -9,6 +9,7 @@ import { useAccessContext } from "@/components/AccessContext";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
 import AuditTrailCard from "@/components/AuditTrailCard";
 import { formatIstTimestamp } from "@/lib/dateTime";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 const STATUS_OPTIONS = [
   { value: "yet_to_start", label: "Yet to Start" },
@@ -480,6 +481,7 @@ const [documents, setDocuments] = useState<any[]>([]);
   }
 
   function openDocument(document: any) {
+    recordClientAuditEvent({ eventType: "view_document", entityType: "work_order", recordId: workOrderId, documentId: document.id, source: "work_order_detail" });
     if (!document.signed_url) {
       setMessage(
         document.signed_url_error ||
@@ -1037,7 +1039,8 @@ const woLedgerRows = useMemo(() => {
       new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime()
   );
 }, [workOrder, raBills, invoices, payments, debitNotes, totals.woTotalValue, mainVendorName]);
-function downloadWOLedger() {
+function downloadWOLedger(workOrderId: string) {
+  recordClientAuditEvent({ eventType: "download_document", entityType: "work_order", recordId: workOrderId, source: "work_order_ledger" });
   const headers = [
     "Date",
     "Type",
@@ -1194,7 +1197,7 @@ function downloadWOLedger() {
   {canExportWorkOrders && (
     <button
       type="button"
-      onClick={downloadWOLedger}
+      onClick={() => downloadWOLedger(workOrderId)}
       className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-4 py-2 text-white hover:bg-slate-800"
     >
       <Download className="h-4 w-4" />

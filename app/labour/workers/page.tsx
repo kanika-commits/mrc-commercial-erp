@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
 import { useAccessContext } from "@/components/AccessContext";
 import { formatLabourCode, LABOUR_STATUSES, labelFromCode, normalizeLabourCode } from "@/lib/labour/constants";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -188,6 +189,7 @@ export default function LabourWorkersPage() {
   }
 
   async function exportLabourRegister() {
+    recordClientAuditEvent({ eventType: "export", entityType: "labour_worker", source: "labour_workers_register", context: { filters } });
     setError("");
     try {
       const response = await fetch("/api/labour/export", { headers: { Authorization: `Bearer ${await token()}` } });
@@ -499,7 +501,7 @@ export default function LabourWorkersPage() {
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex flex-wrap gap-2">
-                        <Link href={`/labour/workers/${worker.id}`} className="inline-flex items-center gap-1 rounded-md border px-3 py-1.5"><Eye className="h-4 w-4" /> View</Link>
+                        <Link href={`/labour/workers/${worker.id}`} className="inline-flex items-center gap-1 rounded-md border px-3 py-1.5" onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "labour_worker", recordId: worker.id, source: "labour_workers_register" })}><Eye className="h-4 w-4" /> View</Link>
                         {canDelete && <button type="button" onClick={() => deleteWorker(worker)} className="inline-flex items-center gap-1 rounded-md border border-red-200 px-3 py-1.5 text-red-600"><Trash2 className="h-4 w-4" /> Delete</button>}
                       </div>
                     </td>

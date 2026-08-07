@@ -9,6 +9,7 @@ import { sortCompanies } from "@/lib/companyOrdering";
 import { formatStatusLabel } from "@/lib/statusLabels";
 import DeleteCompanyButton from "@/components/DeleteCompanyButton";
 import { getAllowedOrganizationIds } from "@/lib/clientOrganizationScope";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 type Company = {
   id: string;
@@ -181,6 +182,7 @@ export default function CompaniesPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <Link
                         href={`/companies/${company.id}`}
+                        onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "company", recordId: company.id, source: "companies_register" })}
                         className="rounded border px-3 py-1"
                       >
                         View

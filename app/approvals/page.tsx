@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
 import { formatIstTimestamp } from "@/lib/dateTime";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -202,6 +203,7 @@ export default function ApprovalsPage() {
   }
 
   function openRaDocument(document: any) {
+    recordClientAuditEvent({ eventType: "view_document", entityType: "ra_bill", recordId: document.ra_bill_id, documentId: document.id, source: "approvals" });
     if (!document.signed_url) {
       showMessage(
         "error",
@@ -224,6 +226,7 @@ export default function ApprovalsPage() {
   }
 
   function openDebitDocument(document: any) {
+    recordClientAuditEvent({ eventType: "view_document", entityType: "debit_note", recordId: document.debit_note_id, documentId: document.id, source: "approvals" });
     if (!document.signed_url) {
       showMessage(
         "error",

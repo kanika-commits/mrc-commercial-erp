@@ -5,6 +5,7 @@ import { FileUp, Pencil, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { recordClientAuditEvent } from "@/lib/clientAudit";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
 import { useAccessContext } from "@/components/AccessContext";
 import { formatLabourCode, LABOUR_DOCUMENT_TYPES, labelFromCode, normalizeIdentifier } from "@/lib/labour/constants";
@@ -195,6 +196,7 @@ export default function LabourWorkerDetailPage() {
   }, [showDeploymentForm, deploymentForm.commercial_model, deploymentForm.contractor_profile_id, deploymentForm.company_id, deploymentForm.site_id, deploymentForm.effective_from]);
 
   async function openDoc(documentId: string) {
+    recordClientAuditEvent({ eventType: "view_document", entityType: "labour_worker", recordId: params.id, documentId, source: "labour_worker_detail" });
     setError("");
     const response = await fetch(`/api/labour/workers/${params.id}/documents?document_id=${documentId}`, { headers: { Authorization: `Bearer ${await token()}` } });
     const payload = await parsePayload(response);

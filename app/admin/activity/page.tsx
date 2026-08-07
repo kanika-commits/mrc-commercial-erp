@@ -176,7 +176,7 @@ export default function SystemActivityPage() {
       ...user,
       ...(user.user_id && presenceByUser[user.user_id]
         ? presenceByUser[user.user_id]
-        : { status: "offline", login_time: null, logout_time: null, last_seen_at: null, browser: null, device_type: null }),
+        : { status: "offline", login_time: null, active_since: null, logout_time: null, last_seen_at: null, browser: null, device_type: null }),
     })));
   }, [allowed, users]);
 
@@ -300,7 +300,7 @@ export default function SystemActivityPage() {
 
       <div className="overflow-x-auto rounded-lg border bg-white shadow-sm">
         <table className="min-w-full text-sm">
-          <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr>{["User Name", "Email", "Status", "Login Time", "Logout Time", "Last Seen", "Activities", "Last Activity", "Last Activity Date", "Details"].map((heading) => <th key={heading} className="px-3 py-3 font-bold">{heading}</th>)}</tr></thead>
+          <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr>{["User Name", "Email", "Status", "Login Time", "Active Since", "Last Seen", "Logout Time", "Activities", "Last Activity", "Last Activity Date", "Details"].map((heading) => <th key={heading} className="px-3 py-3 font-bold">{heading}</th>)}</tr></thead>
           <tbody className="divide-y">
             {users.map((user) => {
               const key = user.user_id || user.user_email || user.user_name;
@@ -312,8 +312,9 @@ export default function SystemActivityPage() {
                     <td className="px-3 py-3 text-slate-600">{user.user_email || "—"}</td>
                     <td className="px-3 py-3"><PresenceStatus status={user.status} /></td>
                     <td className="px-3 py-3 text-slate-600">{formatDateTime(user.login_time)}</td>
-                    <td className="px-3 py-3 text-slate-600">{user.status === "online" ? "—" : formatDateTime(user.logout_time)}</td>
+                    <td className="px-3 py-3 text-slate-600">{formatDateTime(user.active_since)}</td>
                     <td className="px-3 py-3 text-slate-600">{formatDateTime(user.last_seen_at)}</td>
+                    <td className="px-3 py-3 text-slate-600">{user.status === "online" ? "—" : formatDateTime(user.logout_time)}</td>
                     <td className="px-3 py-3 font-semibold">
                       {Number(user.total_activities || 0) === 0 ? (
                         <span className="inline-flex items-center gap-2">
@@ -326,11 +327,11 @@ export default function SystemActivityPage() {
                     <td className="px-3 py-3 text-slate-700">{Number(user.total_activities || 0) === 0 ? "—" : formatDateTime(user.last_activity_at)}</td>
                     <td className="px-3 py-3"><button type="button" onClick={() => setExpandedUsers((current) => ({ ...current, [key]: !current[key] }))} className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-semibold">{open ? "Hide" : "Expand"} {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button></td>
                   </tr>
-                  {open && <tr key={`${key}-details`}><td colSpan={10} className="bg-slate-50 p-3"><ActivityTable activities={user.activities || []} expanded={expandedActivities} setExpanded={setExpandedActivities} /></td></tr>}
+                  {open && <tr key={`${key}-details`}><td colSpan={11} className="bg-slate-50 p-3"><ActivityTable activities={user.activities || []} expanded={expandedActivities} setExpanded={setExpandedActivities} /></td></tr>}
                 </>
               );
             })}
-            {!users.length && <tr><td colSpan={10} className="px-3 py-10 text-center text-slate-500">{loading ? "Loading activity..." : "No users matched the selected activity filters."}</td></tr>}
+            {!users.length && <tr><td colSpan={11} className="px-3 py-10 text-center text-slate-500">{loading ? "Loading activity..." : "No users matched the selected activity filters."}</td></tr>}
           </tbody>
         </table>
       </div>
