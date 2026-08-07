@@ -583,6 +583,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       "/hr/employees": "employees_register",
       "/labour/workers": "labour_workers_register",
       "/labour/attendance/daily": "labour_attendance",
+      "/hr/attendance/daily": "employee_attendance",
       "/hr/attendance/monthly": "employee_attendance",
       "/organizations": "organizations",
       "/companies": "companies",
