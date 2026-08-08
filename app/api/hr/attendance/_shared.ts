@@ -656,6 +656,7 @@ export function parseMonthlyParams(url: string) {
   const companyId = String(params.get("company_id") || "").trim();
   const siteId = String(params.get("site_id") || "").trim();
   const month = monthStart(params.get("month"));
+  if (!siteId) return { error: "Site is required." } as const;
   if (!month) return { error: "Valid month is required." } as const;
   return { companyId, siteId, month } as const;
 }

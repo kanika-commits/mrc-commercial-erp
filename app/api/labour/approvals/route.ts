@@ -945,7 +945,7 @@ function flattenSubmissionForRegister(submission: any, employeeById: Map<string,
   });
 }
 
-async function loadStandardApprovalRows(access: any, input: {
+export async function loadStandardApprovalRows(access: any, input: {
   organizationId: string;
   companyId: string;
   siteId: string;
@@ -994,23 +994,35 @@ async function loadStandardApprovalRows(access: any, input: {
   const { data: deployments, error: deploymentError } = deploymentIds.length
     ? await access.admin
         .from("labour_deployments")
-        .select("id, labour_trade_id, trade, wage_rate")
+        .select("id, contractor_profile_id, labour_trade_id, trade, wage_rate, labour_contractor_profiles(id, contractor_code, vendors(vendor_name))")
         .in("id", deploymentIds)
     : { data: [], error: null };
   if (deploymentError) throw deploymentError;
+  const contractorIds = Array.from(new Set([
+    ...(attendanceRows || []).map((row: any) => row.contractor_profile_id),
+    ...(deployments || []).map((deployment: any) => deployment.contractor_profile_id),
+    ...(periods || []).map((period: any) => period.contractor_profile_id),
+  ].filter(Boolean)));
+  const { data: contractors, error: contractorError } = contractorIds.length
+    ? await access.admin
+        .from("labour_contractor_profiles")
+        .select("id, contractor_code, vendors(vendor_name)")
+        .in("id", contractorIds)
+    : { data: [], error: null };
+  if (contractorError) throw contractorError;
   const tradeIds = Array.from(new Set((deployments || []).map((deployment: any) => deployment.labour_trade_id).filter(Boolean)));
   const { data: trades, error: tradeError } = tradeIds.length
     ? await access.admin.from("labour_trades").select("id, trade_name, trade_code").in("id", tradeIds)
     : { data: [], error: null };
   if (tradeError) throw tradeError;
   const deploymentById = new Map<string, any>((deployments || []).map((deployment: any) => [deployment.id, deployment]));
+  const contractorById = new Map<string, any>((contractors || []).map((contractor: any) => [contractor.id, contractor]));
   const tradeById = new Map<string, any>((trades || []).map((trade: any) => [trade.id, trade]));
   const rowsByPeriod = new Map<string, any[]>();
   for (const row of attendanceRows || []) {
     rowsByPeriod.set(row.period_id, [...(rowsByPeriod.get(row.period_id) || []), row]);
   }
   const flattened = (periods || []).flatMap((period: any) => {
-    const contractorName = period.labour_contractor_profiles?.vendors?.vendor_name || period.labour_contractor_profiles?.contractor_code || "All Contractors";
     const rows = rowsByPeriod.get(period.id) || [];
     if (!rows.length) return [];
     return rows.flatMap((attendance: any) => {
@@ -1018,13 +1030,17 @@ async function loadStandardApprovalRows(access: any, input: {
       if (requestedStatus && status !== requestedStatus) return [];
       const deployment: any = deploymentById.get(attendance.deployment_id);
       const trade: any = deployment?.labour_trade_id ? tradeById.get(deployment.labour_trade_id) : null;
+      const contractorProfile = contractorById.get(attendance.contractor_profile_id)
+        || contractorById.get(deployment?.contractor_profile_id)
+        || period.labour_contractor_profiles;
+      const contractorName = contractorProfile?.vendors?.vendor_name || contractorProfile?.contractor_code || "-";
       return [{
         id: `${period.id}:${attendance.id}`,
         submission_id: period.id,
         attendance_period_id: period.id,
         company_id: period.company_id,
         site_id: period.site_id,
-        contractor_profile_id: period.contractor_profile_id,
+        contractor_profile_id: attendance.contractor_profile_id || deployment?.contractor_profile_id || period.contractor_profile_id || null,
         company_name: period.companies?.company_name || "-",
         site_name: period.sites?.site_name || "-",
         contractor_name: contractorName,
@@ -1335,7 +1351,7 @@ async function auditTransition(access: any, request: Request, submission: any, a
   });
 }
 
-async function loadStandardPeriod(access: any, id: string) {
+export async function loadStandardPeriod(access: any, id: string) {
   let query = access.admin.from("labour_attendance_periods").select("*").eq("id", id);
   if (access.organizationScope !== null) query = query.in("organization_id", access.organizationScope);
   query = applyCompanySiteScope(query, access.assignments);

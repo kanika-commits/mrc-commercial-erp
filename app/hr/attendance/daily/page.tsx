@@ -73,6 +73,11 @@ export default function DailyAttendancePage() {
   };
   const hasEditableRows = rows.some(rowEditable);
   const hasAttendanceForSelectedDate = rows.some((row) => Boolean(row.attendance));
+  const attendanceStatus = !hasAttendanceForSelectedDate
+    ? "Not Submitted"
+    : ["submitted", "level_1_approved", "level_2_approved", "finalized"].includes(String(period?.status || "").toLowerCase())
+      ? "Submitted"
+      : "Draft";
 
   useEffect(() => {
     let active = true;
@@ -312,13 +317,11 @@ export default function DailyAttendancePage() {
       </section>
 
       {period && (
-        <div className="grid gap-3 md:grid-cols-5">
+        <div className="grid gap-3 md:grid-cols-4">
           <Summary label="Employees" value={visibleRows.length} />
-          <Summary label="Selected Date" value={hasAttendanceForSelectedDate ? "Saved" : "Not Saved"} />
-          <Summary label="Monthly Period" value={sentBack ? "Sent Back" : period.status || "draft"} />
+          <Summary label="Attendance Status" value={attendanceStatus} />
           <Summary label="Date" value={formatDate(date)} />
           <Summary label="Working Day" value={`${policy?.standard_working_hours || EMPLOYEE_STANDARD_WORKING_HOURS} hrs`} />
-          <Summary label="Lock" value={dayLock ? "Locked" : "Open"} />
         </div>
       )}
 
@@ -332,16 +335,6 @@ export default function DailyAttendancePage() {
             <p><span className="font-semibold">Previously Submitted:</span> {period.submitted_at ? new Date(period.submitted_at).toLocaleString("en-IN") : "-"}</p>
           </div>
           <p className="mt-2 font-semibold">Correct the attendance and resubmit it for approval.</p>
-        </section>
-      )}
-
-      {period && hasAttendanceForSelectedDate && (period.submitted_at || period.send_back_reason) && (
-        <section className="rounded-2xl border bg-white p-4 text-sm text-slate-600 shadow-sm">
-          <p className="font-bold text-slate-950">Monthly Period Activity</p>
-          <div className="mt-2 grid gap-1 md:grid-cols-2">
-            {period.submitted_at && <p><span className="font-semibold text-slate-800">{sentBack ? "Previously Submitted:" : "Submitted:"}</span> {period.submitted_by_name || period.submitted_by_email || "-"} · {new Date(period.submitted_at).toLocaleString("en-IN")}</p>}
-            {period.send_back_reason && <p><span className="font-semibold text-slate-800">Latest Send Back:</span> {period.send_back_reason}</p>}
-          </div>
         </section>
       )}
 

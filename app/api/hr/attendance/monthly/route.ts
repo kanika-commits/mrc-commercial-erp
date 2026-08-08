@@ -6,6 +6,7 @@ import {
   jsonError,
   loadAttendanceRows,
   loadEligibleEmployees,
+  loadEmployeeAttendanceLookups,
   loadEmployeeAttendancePolicyForScope,
   parseMonthlyParams,
   requireAttendanceView,
@@ -21,48 +22,31 @@ export async function GET(request: Request) {
     if ("error" in params) return jsonError(String(params.error), 400);
 
     const admin = adminClient();
-    const scope = await validateCompanySiteScope(admin, auth, params.companyId, params.siteId);
-    if ("response" in scope) return scope.response;
-
     const monthDates = datesForMonth(params.month);
-    const [employees, attendanceRows, period, dayLocks, policy] = await Promise.all([
-      loadEligibleEmployees(admin, {
-        organizationId: scope.organizationId,
-        companyId: params.companyId,
-        siteId: params.siteId,
-        startDate: monthDates[0],
-        endDate: monthDates[monthDates.length - 1],
-      }),
-      loadAttendanceRows(admin, {
-        organizationId: scope.organizationId,
-        companyId: params.companyId,
-        siteId: params.siteId,
-        startDate: monthDates[0],
-        endDate: monthDates[monthDates.length - 1],
-      }),
-      ensurePeriod(admin, auth, {
-        organizationId: scope.organizationId,
-        companyId: params.companyId,
-        siteId: params.siteId,
-        month: params.month,
-      }),
-      admin
-        .from("employee_attendance_day_locks")
-        .select("*")
-        .eq("organization_id", scope.organizationId)
-        .eq("company_id", params.companyId)
-        .eq("site_id", params.siteId)
-        .gte("attendance_date", monthDates[0])
-        .lte("attendance_date", monthDates[monthDates.length - 1])
-        .eq("is_locked", true),
-      loadEmployeeAttendancePolicyForScope(admin, {
-        organizationId: scope.organizationId,
-        companyId: params.companyId,
-        siteId: params.siteId,
-      }),
-    ]);
-
-    if (dayLocks.error) throw dayLocks.error;
+    const lookup = params.companyId ? null : await loadEmployeeAttendanceLookups(admin, auth);
+    const companyIds = params.companyId ? [params.companyId] : Array.from(new Set((lookup?.pairs || []).filter((pair: any) => pair.site_id === params.siteId).map((pair: any) => pair.company_id)));
+    if (!companyIds.length) return jsonError("No permitted companies are available for the selected site.", 403);
+    const scopes = await Promise.all(companyIds.map((companyId) => validateCompanySiteScope(admin, auth, companyId, params.siteId)));
+    const rejectedScope = scopes.find((scope) => "response" in scope);
+    if (rejectedScope && "response" in rejectedScope) return rejectedScope.response;
+    const organizationId = (scopes[0] as any).organizationId;
+    const companyResults = await Promise.all(companyIds.map(async (companyId) => {
+      const [employees, attendanceRows, period, dayLocks, policy] = await Promise.all([
+        loadEligibleEmployees(admin, { organizationId, companyId, siteId: params.siteId, startDate: monthDates[0], endDate: monthDates[monthDates.length - 1] }),
+        loadAttendanceRows(admin, { organizationId, companyId, siteId: params.siteId, startDate: monthDates[0], endDate: monthDates[monthDates.length - 1] }),
+        ensurePeriod(admin, auth, { organizationId, companyId, siteId: params.siteId, month: params.month }),
+        admin.from("employee_attendance_day_locks").select("*").eq("organization_id", organizationId).eq("company_id", companyId).eq("site_id", params.siteId).gte("attendance_date", monthDates[0]).lte("attendance_date", monthDates[monthDates.length - 1]).eq("is_locked", true),
+        loadEmployeeAttendancePolicyForScope(admin, { organizationId, companyId, siteId: params.siteId }),
+      ]);
+      if (dayLocks.error) throw dayLocks.error;
+      return { employees, attendanceRows, period, dayLocks: dayLocks.data || [], policy };
+    }));
+    const employees = companyResults.flatMap((item) => item.employees);
+    const attendanceRows = companyResults.flatMap((item) => item.attendanceRows);
+    const periods = companyResults.map((item) => item.period).filter(Boolean);
+    const dayLocks = companyResults.flatMap((item) => item.dayLocks);
+    const period = periods[0] || null;
+    const policy = companyResults.find((item) => item.policy)?.policy || null;
     const attendanceMap = new Map(attendanceRows.map((row: any) => [`${row.employee_id}:${row.attendance_date}`, row]));
     const rows = employees.map((employee: any) => {
       const dayStatuses = monthDates.map((date) => attendanceMap.get(`${employee.id}:${date}`)?.status || null);
@@ -92,8 +76,9 @@ export async function GET(request: Request) {
       employees,
       rows,
       attendance: attendanceRows,
-      day_locks: dayLocks.data || [],
+      day_locks: dayLocks,
       period,
+      periods,
       policy,
       summary,
     });

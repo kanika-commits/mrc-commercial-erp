@@ -29,8 +29,12 @@ export default function MonthlyAttendancePage() {
   const [message, setMessage] = useState("");
   const [success, setSuccess] = useState("");
   const visibleSites = useMemo(
-    () => companyId ? lookups.sites.filter((site) => site.scope_company_id === companyId) : lookups.sites,
-    [companyId, lookups.sites],
+    () => Array.from(new Map(lookups.sites.map((site) => [site.id, site])).values()),
+    [lookups.sites],
+  );
+  const visibleRows = useMemo(
+    () => result?.rows?.filter((row: any) => !companyId || row.employee.company_id === companyId) || [],
+    [companyId, result],
   );
   const pendingApproval = result && ["submitted", "level_1_approved", "level_2_approved"].includes(result.period?.status);
 
@@ -51,15 +55,16 @@ export default function MonthlyAttendancePage() {
   }, []);
 
   async function load() {
-    if (!companyId || !siteId || !month) {
-      setMessage("Select company, site and month.");
+    if (!siteId || !month) {
+      setMessage("Select site and month.");
       return;
     }
     setLoading(true);
     setMessage("");
     setSuccess("");
     try {
-      const data = await apiFetch(`/api/hr/attendance/monthly?company_id=${companyId}&site_id=${siteId}&month=${month}-01`);
+      const companyQuery = companyId ? `&company_id=${encodeURIComponent(companyId)}` : "";
+      const data = await apiFetch(`/api/hr/attendance/monthly?site_id=${encodeURIComponent(siteId)}&month=${month}-01${companyQuery}`);
       setResult(data);
     } catch (error: any) {
       setMessage(error.message || "Failed to load monthly attendance.");
@@ -133,8 +138,8 @@ export default function MonthlyAttendancePage() {
 
       <section className="rounded-2xl border bg-white p-4 shadow-sm">
         <div className="grid gap-3 md:grid-cols-4">
-          <Select label="Company" value={companyId} onChange={(value) => { setCompanyId(value); setSiteId(""); }} options={lookups.companies} />
-          <Select label="Site" value={siteId} onChange={setSiteId} options={visibleSites} />
+          <Select label="Site *" value={siteId} onChange={setSiteId} options={visibleSites} />
+          <Select label="Company" value={companyId} onChange={setCompanyId} options={lookups.companies} allLabel="All Companies" />
           <label className="block">
             <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Month</span>
             <input type="month" value={month} max={currentIndiaDate().slice(0, 7)} onChange={(event) => setMonth(event.target.value)} className="h-10 w-full rounded-xl border px-3 text-sm" />
@@ -150,9 +155,9 @@ export default function MonthlyAttendancePage() {
       {result && (
         <>
           <div className="grid gap-3 md:grid-cols-6">
-            <Summary label="Employees" value={result.employees?.length || 0} />
-            <Summary label="Recorded" value={result.summary?.total_recorded || 0} />
-            <Summary label="Missing" value={result.summary?.missing || 0} />
+            <Summary label="Employees" value={visibleRows.length} />
+            <Summary label="Recorded" value={visibleRows.reduce((total: number, row: any) => total + Number(row.summary?.total_recorded || 0), 0)} />
+            <Summary label="Missing" value={visibleRows.reduce((total: number, row: any) => total + Number(row.summary?.missing || 0), 0)} />
             <Summary label="Period" value={result.period?.status || "draft"} />
             <Summary label="Working Day" value={`${result.policy?.standard_working_hours || EMPLOYEE_STANDARD_WORKING_HOURS} hrs`} />
             <Summary label="Locked Days" value={result.day_locks?.length || 0} />
@@ -165,7 +170,7 @@ export default function MonthlyAttendancePage() {
                 <p className="text-sm text-slate-500">Daily entry remains the editing surface; this page is for review and period actions.</p>
               </div>
               <div className="flex flex-wrap gap-2">
-                {canExport && <button type="button" onClick={exportCsv} className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-slate-50"><Download className="h-4 w-4" />Export CSV</button>}
+                {canExport && companyId && <button type="button" onClick={exportCsv} className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-slate-50"><Download className="h-4 w-4" />Export CSV</button>}
                 {canReject && pendingApproval && <button type="button" onClick={() => periodAction("send-back")} className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-slate-50">Send Back</button>}
                 {canApprove && pendingApproval && <button type="button" onClick={() => periodAction("finalize")} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white">Approve</button>}
                 {isAdminRecovery && result.period?.status === "finalized" && <button type="button" onClick={() => periodAction("reopen")} className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-slate-50">Reopen</button>}
@@ -186,7 +191,7 @@ export default function MonthlyAttendancePage() {
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {result.rows.map((row: any) => (
+                {visibleRows.map((row: any) => (
                   <tr key={row.employee.id}>
                     <td className="sticky left-0 z-10 bg-white px-3 py-3">
                       <p className="font-semibold text-slate-950">{row.employee.employee_name}</p>
@@ -211,12 +216,12 @@ export default function MonthlyAttendancePage() {
   );
 }
 
-function Select({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: { id: string; label: string }[] }) {
+function Select({ label, value, onChange, options, allLabel }: { label: string; value: string; onChange: (value: string) => void; options: { id: string; label: string }[]; allLabel?: string }) {
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</span>
       <select value={value} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-xl border px-3 text-sm">
-        <option value="">Select {label}</option>
+        <option value="">{allLabel || `Select ${label}`}</option>
         {options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
       </select>
     </label>

@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { ArrowLeft, CheckCircle2, RotateCcw } from "lucide-react";
+import { CheckCircle2, RotateCcw } from "lucide-react";
 import AlertMessage from "@/components/AlertMessage";
 import { useAccessContext } from "@/components/AccessContext";
 import HrSectionNav from "@/components/hr/HrSectionNav";
@@ -227,10 +226,6 @@ export default function EmployeeAttendanceApprovalPage() {
           <h1 className="text-3xl font-bold text-slate-950">Attendance Approval</h1>
           <p className="text-sm text-slate-500">Review submitted monthly employee attendance periods at your configured approval level.</p>
         </div>
-        <Link href="/hr/attendance/monthly" className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50">
-          <ArrowLeft className="h-4 w-4" />
-          Attendance Register
-        </Link>
       </header>
       <HrSectionNav />
       <AlertMessage type="error" message={message} onClose={() => setMessage("")} />

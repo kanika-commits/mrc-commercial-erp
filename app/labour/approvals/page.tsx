@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, Image as ImageIcon, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { CheckCircle2, ChevronDown, Image as ImageIcon, RotateCcw, Search, Trash2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAccessContext } from "@/components/AccessContext";
@@ -147,7 +147,7 @@ export function LabourApprovalsPageContent({ historyMode = false }: { historyMod
   const [filters, setFilters] = useState({
     company_id: "",
     site_id: "",
-    work_date: today(),
+    work_date: "",
     date_from: today(),
     date_to: today(),
     contractor_profile_id: "",
@@ -177,6 +177,7 @@ export function LabourApprovalsPageContent({ historyMode = false }: { historyMod
   const [actioning, setActioning] = useState(false);
   const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
   const [registerLoaded, setRegisterLoaded] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [activeView, setActiveView] = useState<"daily" | "monthly">("daily");
 
   const selectedSet = useMemo(() => new Set(selectedSubmissionIds), [selectedSubmissionIds]);
@@ -325,9 +326,9 @@ export function LabourApprovalsPageContent({ historyMode = false }: { historyMod
   }
 
   async function loadRows(nextFilters = filters, options: { metadataOnly?: boolean; silent?: boolean } = {}) {
-    const hasDateContext = historyMode ? Boolean(nextFilters.date_from && nextFilters.date_to) : Boolean(nextFilters.work_date);
+    const hasDateContext = historyMode ? Boolean(nextFilters.date_from && nextFilters.date_to) : true;
     if (!options.metadataOnly && (!nextFilters.company_id || !nextFilters.site_id || !hasDateContext)) {
-      if (!options.silent) showMessage("warning", historyMode ? "Select Company, Site and date range before loading the attendance register." : "Select Company, Site and Date before loading the approval register.");
+      if (!options.silent) showMessage("warning", historyMode ? "Select Company, Site and date range before loading the attendance register." : "Select Company and Site before applying the approval filters.");
       return;
     }
     setLoading(true);
@@ -434,6 +435,22 @@ export function LabourApprovalsPageContent({ historyMode = false }: { historyMod
   function transitionOpenRegister(action: string, needsReason = false) {
     if (!activeRegister) return;
     transition(action, needsReason, [activeRegister]);
+  }
+
+  async function exportRegister(format: "xlsx" | "pdf") {
+    if (!activeRegister || !isStandard) return;
+    setExportOpen(false);
+    try {
+      const periodIds = activeRegister.period_ids || [activeRegister.submission_id || activeRegister.id];
+      const attendanceDate = activeRegister.work_date || filters.work_date || "";
+      const response = await fetch(`/api/labour/approvals/export?format=${format}&period_ids=${encodeURIComponent(periodIds.filter(Boolean).join(","))}&attendance_date=${encodeURIComponent(attendanceDate)}`, { headers: { Authorization: `Bearer ${await token()}` } });
+      if (!response.ok) throw new Error((await response.text()) || "Could not export attendance register.");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a"); anchor.href = url; anchor.download = `Labour_Attendance.${format}`; anchor.click(); URL.revokeObjectURL(url);
+    } catch (error: any) {
+      showMessage("error", error.message || "Could not export attendance register.");
+    }
   }
 
   async function deleteAttendance(register: any) {
@@ -580,11 +597,11 @@ export function LabourApprovalsPageContent({ historyMode = false }: { historyMod
           <div className={historyMode ? "grid gap-3 xl:grid-cols-[minmax(220px,1.1fr)_minmax(260px,1.4fr)_minmax(150px,0.7fr)_minmax(150px,0.7fr)_minmax(150px,0.7fr)]" : "grid gap-3 xl:grid-cols-[minmax(260px,1.4fr)_minmax(320px,1.8fr)_minmax(150px,0.7fr)_minmax(150px,0.7fr)]"}>
             <FilterSelect label="Company" value={filters.company_id} onChange={handleCompanyChange} options={lookups.companies} empty="Select Company" />
             <FilterSelect label="Site" value={filters.site_id} onChange={handleSiteChange} options={siteOptions} empty="Select Site" />
-            {!historyMode && <label className="text-xs font-bold uppercase tracking-wide text-slate-500">{isStandard ? "Attendance Date / Period" : "Date"}<input type="date" value={filters.work_date} onChange={(event) => patchFilters({ work_date: event.target.value })} className="mt-1 h-10 w-full rounded-md border px-2 text-sm font-normal normal-case tracking-normal" /></label>}
+            {!historyMode && <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Attendance Date<input type="date" value={filters.work_date} onChange={(event) => patchFilters({ work_date: event.target.value })} className="mt-1 h-10 w-full rounded-md border px-2 text-sm font-normal normal-case tracking-normal" /></label>}
             {historyMode && <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Attendance Date From<input type="date" value={filters.date_from} onChange={(event) => patchFilters({ date_from: event.target.value })} className="mt-1 h-10 w-full rounded-md border px-2 text-sm font-normal normal-case tracking-normal" /></label>}
             {historyMode && <label className="text-xs font-bold uppercase tracking-wide text-slate-500">Attendance Date To<input type="date" value={filters.date_to} onChange={(event) => patchFilters({ date_to: event.target.value })} className="mt-1 h-10 w-full rounded-md border px-2 text-sm font-normal normal-case tracking-normal" /></label>}
             <div className="flex items-end">
-              <button type="button" onClick={() => loadRows()} disabled={loading || !filters.company_id || !filters.site_id || (historyMode ? !filters.date_from || !filters.date_to : !filters.work_date)} className="h-10 w-full rounded-md bg-slate-950 px-4 text-sm font-semibold text-white disabled:opacity-60">{loading ? "Loading..." : historyMode ? "Load History" : "Load Register"}</button>
+              <button type="button" onClick={() => loadRows()} disabled={loading || !filters.company_id || !filters.site_id || (historyMode ? !filters.date_from || !filters.date_to : false)} className="h-10 w-full rounded-md bg-slate-950 px-4 text-sm font-semibold text-white disabled:opacity-60">{loading ? "Loading..." : historyMode ? "Load History" : "Apply Filters"}</button>
             </div>
           </div>
           <div className={isStandard ? "grid gap-3 xl:grid-cols-[minmax(190px,0.75fr)_minmax(300px,1.4fr)_1fr]" : "grid gap-3 xl:grid-cols-[minmax(190px,0.75fr)_minmax(300px,1.4fr)_minmax(130px,0.45fr)_1fr]"}>
@@ -683,6 +700,7 @@ export function LabourApprovalsPageContent({ historyMode = false }: { historyMod
                 {!historyMode && isEngineerMode && canPmSendBack && activeRegister.status === "pending_pm_approval" && <button type="button" disabled={actioning} onClick={() => transitionOpenRegister("pm_send_back", true)} className="inline-flex h-10 items-center gap-2 rounded-md border bg-white px-4 text-sm font-semibold disabled:opacity-60"><RotateCcw className="h-4 w-4" />Send Back Register</button>}
                 {!historyMode && isEngineerMode && canHoSendBack && activeRegister.status === "pending_ho_approval" && <button type="button" disabled={actioning} onClick={() => transitionOpenRegister("ho_send_back", true)} className="inline-flex h-10 items-center gap-2 rounded-md border bg-white px-4 text-sm font-semibold disabled:opacity-60"><RotateCcw className="h-4 w-4" />Send Back Register</button>}
                 {isPlatformOwner && <button type="button" disabled={actioning} onClick={() => deleteAttendance(activeRegister)} className="inline-flex h-10 items-center gap-2 rounded-md border border-red-200 bg-red-50 px-4 text-sm font-semibold text-red-700 disabled:opacity-60"><Trash2 className="h-4 w-4" />Delete</button>}
+                {isStandard && <div className="relative"><button type="button" onClick={() => setExportOpen((current) => !current)} className="inline-flex h-10 items-center gap-2 rounded-md border bg-white px-4 text-sm font-semibold hover:bg-slate-50"><span>Export</span><ChevronDown className="h-4 w-4" /></button>{exportOpen && <div className="absolute right-0 top-11 z-30 min-w-44 rounded-md border bg-white p-1 text-sm shadow-lg"><button type="button" onClick={() => void exportRegister("xlsx")} className="block w-full rounded px-3 py-2 text-left hover:bg-slate-50">Excel (.xlsx)</button><button type="button" onClick={() => void exportRegister("pdf")} className="block w-full rounded px-3 py-2 text-left hover:bg-slate-50">PDF (.pdf)</button></div>}</div>}
                 <button type="button" onClick={closeRegister} className="h-10 rounded-md border bg-white px-4 text-sm font-semibold">{historyMode ? "Back to Attendance Register" : "Back to Registers"}</button>
               </div>
             </div>
