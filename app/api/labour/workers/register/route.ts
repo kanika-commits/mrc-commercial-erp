@@ -607,29 +607,13 @@ export async function POST(request: Request) {
     };
 
     if (existing.worker) {
+      if (existing.worker.status !== "active") {
+        return jsonError("This labourer is inactive. Reactivate them from the common Reactivate Labour form.", 409);
+      }
       const currentDeployment = await loadCurrentDeployment(access.admin, existing.worker.id);
       if (sameAssignment(currentDeployment, nextAssignment)) {
         if (currentDeployment?.commercial_model === "daily_wage" && requiresDailyRate && wageRate !== null && Number(currentDeployment.wage_rate ?? -1) !== wageRate) {
           return jsonError("Daily Rate for an existing labourer cannot be changed through registration. Use Update Daily Rate.", 409);
-        }
-        if (existing.worker.status !== "active") {
-          await access.admin.from("labour_workers").update({
-            status: "active",
-            ...actorFields(access.auth, "updated"),
-            updated_at: new Date().toISOString(),
-          }).eq("id", existing.worker.id);
-          await audit(access, request, {
-            moduleCode: MODULE,
-            action: "update",
-            entityType: "labour_worker",
-            recordId: existing.worker.id,
-            organizationId,
-            companyId,
-            siteId,
-            description: `Reactivated labourer ${existing.worker.labour_code} at the selected site.`,
-            oldValues: { status: existing.worker.status },
-            newValues: { status: "active" },
-          });
         }
         return NextResponse.json({
           action: existing.worker.status === "active" ? "already_registered" : "reactivated",

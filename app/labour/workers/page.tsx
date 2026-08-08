@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { BadgeIndianRupee, ChevronDown, Download, Eye, FileUp, Plus, Search, Trash2, UserX, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
 import { useAccessContext } from "@/components/AccessContext";
@@ -26,6 +27,7 @@ function initials(name: string | null | undefined) {
 }
 
 export default function LabourWorkersPage() {
+  const router = useRouter();
   const { access } = useAccessContext();
   const permissions = access?.permissions || [];
   const global = hasGlobalAccess(access);
@@ -331,6 +333,10 @@ export default function LabourWorkersPage() {
 
   async function changeWorkerStatus(worker: any, status: string) {
     if (!status || status === worker.status) return;
+    if (worker.status === "inactive" && status === "active") {
+      router.push(`/labour/workers/${worker.id}?activate=1`);
+      return;
+    }
     setError("");
     setSuccess("");
     try {

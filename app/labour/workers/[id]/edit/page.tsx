@@ -95,7 +95,7 @@ export default function EditLabourWorkerPage() {
   return (
     <section className="min-h-screen bg-[#f6f3f5] px-6 py-7 md:px-10">
       <div className="mx-auto max-w-[1100px] space-y-5">
-        <header className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.28em] text-sky-600">Labour Master</p><h1 className="text-3xl font-semibold">Edit Labourer</h1></div><div className="flex gap-2"><Link href={`/labour/workers/${params.id}`} className="rounded-lg border bg-white px-4 py-2 font-semibold">Cancel</Link><button onClick={save} className="rounded-lg bg-slate-950 px-4 py-2 font-semibold text-white">Save Changes</button></div></header>
+        <header className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.28em] text-sky-600">Labour Master</p><h1 className="text-3xl font-semibold">Edit Labourer</h1></div><div className="flex gap-2">{form.status === "inactive" && <Link href={`/labour/workers/${params.id}?activate=1&source=edit`} className="rounded-lg bg-slate-950 px-4 py-2 font-semibold text-white">Reactivate Labour</Link>}<Link href={`/labour/workers/${params.id}`} className="rounded-lg border bg-white px-4 py-2 font-semibold">Cancel</Link><button onClick={save} className="rounded-lg bg-slate-950 px-4 py-2 font-semibold text-white">Save Changes</button></div></header>
         {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{error}</div>}
         <div className="grid gap-4 rounded-lg border bg-white p-5 shadow-sm md:grid-cols-2">
           <Input label="Labour Code" value={formatLabourCode(form.labour_code)} onChange={() => {}} disabled />
@@ -111,7 +111,7 @@ export default function EditLabourWorkerPage() {
           </div>
           <Select label="Labour Category *" value={form.labour_trade_id || ""} onChange={(v) => setForm({ ...form, labour_trade_id: v })} options={["", ...lookups.trades.map((t: any) => t.id)]} labels={Object.fromEntries(lookups.trades.map((t: any) => [t.id, t.trade_name]))} />
           <Input label="Joining Date" type="date" value={form.date_of_joining || ""} onChange={(v) => setForm({ ...form, date_of_joining: v })} />
-          <Select label="Status" value={form.status || ""} onChange={(v) => setForm({ ...form, status: v })} options={LABOUR_STATUSES.filter((status) => status !== "deleted")} />
+          <Select label="Status" value={form.status || ""} onChange={(v) => setForm({ ...form, status: v })} options={LABOUR_STATUSES.filter((status) => status !== "deleted" && !(form.status === "inactive" && status === "active"))} />
           <label className="md:col-span-2 text-sm font-semibold text-slate-700">Remarks<textarea value={form.remarks || ""} onChange={(e) => setForm({ ...form, remarks: e.target.value })} className="mt-1 min-h-24 w-full rounded-lg border px-3 py-2" /></label>
         </div>
       </div>

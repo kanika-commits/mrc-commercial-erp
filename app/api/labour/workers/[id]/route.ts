@@ -245,6 +245,9 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
     if (!isValidActionValue(LABOUR_STATUSES, status)) return jsonError("Invalid labour status.");
     if (payload.status_only === true) {
       if (status === current.status) return NextResponse.json({ labour_worker_id: id, unchanged: true });
+      if (current.status === "inactive" && status === "active") {
+        return jsonError("Reactivating a labourer requires a new deployment. Open the labourer's record and create the deployment first.", 409);
+      }
       const updatePayload = {
         status,
         updated_at: new Date().toISOString(),
@@ -265,6 +268,9 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
         newValues: { status, reason: text(payload.reason) },
       });
       return NextResponse.json({ labour_worker_id: id, status });
+    }
+    if (current.status === "inactive" && status === "active") {
+      return jsonError("Reactivating a labourer requires a new deployment. Open the labourer's record and create the deployment first.", 409);
     }
     if (requestedWorkerType && requestedWorkerType !== TECHNICAL_WORKER_TYPE) return jsonError("Worker Type is not a supported Labourer Master option.");
     if (skillLevel && !isValidActionValue(SKILL_LEVELS, skillLevel)) return jsonError("Invalid skill level.");

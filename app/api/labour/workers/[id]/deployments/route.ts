@@ -109,8 +109,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const manpowerWorkOrderId = text(payload.manpower_work_order_id);
     const labourTradeId = text(payload.labour_trade_id) || text(payload.trade_id);
     const contractorProfileId = text(payload.contractor_profile_id) || worker.current_contractor_profile_id;
+    const isReactivation = worker.status === "inactive";
 
     if (!companyId || !siteId || !effectiveFrom) return jsonError("Company, site and effective date are required.");
+    if (isReactivation && !contractorProfileId) return jsonError("Contractor is required to reactivate a labourer.");
     if (!labourTradeId) return jsonError("Labour Category is required.");
     if (skillLevel && !isValidActionValue(SKILL_LEVELS, skillLevel)) return jsonError("Invalid skill level.");
     if (wageType && !isValidActionValue(WAGE_TYPES, wageType)) return jsonError("Invalid wage type.");
@@ -121,7 +123,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const tradeCheck = await validateTrade(access, worker.organization_id, labourTradeId);
     if ("error" in tradeCheck) return jsonError(tradeCheck.error || "Selected Labour Category is not available.", 403);
 
-    const workOrderCheck = commercialModel === "contract_basis"
+    const workOrderCheck = (commercialModel === "contract_basis" || (isReactivation && commercialModel === "daily_wage"))
       ? await validateCommercialWorkOrderForContractor(access, {
         organizationId: worker.organization_id,
         companyId,
@@ -131,10 +133,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       })
       : { workOrder: null };
     if ("error" in workOrderCheck) return jsonError(workOrderCheck.error || "Selected Commercial Work Order is not available.", 403);
-    if (commercialModel === "contract_basis" && !workOrderCheck.workOrder) return jsonError("Contract-basis deployment requires a Commercial Work Order.");
-    if (commercialModel === "daily_wage" && !manpowerWorkOrderId) return jsonError("Daily-wage deployment requires a Manpower Work Order.");
+    if (!isReactivation && commercialModel === "contract_basis" && !workOrderCheck.workOrder) return jsonError("Contract-basis deployment requires a Commercial Work Order.");
+    if (isReactivation && commercialModel === "daily_wage" && (!workOrderCheck.workOrder || !Number.isFinite(Number(payload.wage_rate)) || Number(payload.wage_rate) <= 0)) return jsonError("Commercial Work Order and a positive Daily Rate are required to reactivate a labourer.");
+    if (isReactivation && !text(payload.deployment_reason)) {
+      return jsonError("Reactivation Reason is required.");
+    }
+    if (isReactivation && commercialModel === "contract_basis" && !manpowerWorkOrderId) return jsonError("Contractual Labour requires an Approved Manpower Work Order.");
+    if (!isReactivation && commercialModel === "daily_wage" && !manpowerWorkOrderId) return jsonError("Daily-wage deployment requires a Manpower Work Order.");
     let resolvedMwoRate: any = null;
-    if (commercialModel === "daily_wage") {
+    if (commercialModel === "daily_wage" && !isReactivation) {
       const { data: mwo, error: mwoError } = await access.admin
         .from("manpower_work_orders")
         .select("id, organization_id, company_id, site_id, contractor_profile_id, status")
@@ -158,6 +165,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         .order("effective_from", { ascending: false })
         .limit(1)
         .maybeSingle();
+      if (rateError) throw rateError;
+      if (!rate) return jsonError("Selected Manpower Work Order does not have an active rate for this Labour Category on the deployment date.", 403);
+      resolvedMwoRate = rate;
+    }
+    if (isReactivation && commercialModel === "contract_basis") {
+      const { data: mwo, error: mwoError } = await access.admin.from("manpower_work_orders").select("id, organization_id, company_id, site_id, contractor_profile_id, status").eq("id", manpowerWorkOrderId).maybeSingle();
+      if (mwoError) throw mwoError;
+      if (!mwo || mwo.organization_id !== worker.organization_id || mwo.company_id !== companyId || mwo.site_id !== siteId || mwo.status !== "approved" || mwo.contractor_profile_id !== contractorProfileId) return jsonError("Selected Manpower Work Order is not available for this contractor, company and site.", 403);
+      const { data: rate, error: rateError } = await access.admin.from("manpower_work_order_rates").select("daily_rate, effective_from, effective_to, status, labour_trade_id").eq("manpower_work_order_id", manpowerWorkOrderId).eq("labour_trade_id", labourTradeId).eq("status", "active").lte("effective_from", effectiveFrom).or(`effective_to.is.null,effective_to.gte.${effectiveFrom}`).order("effective_from", { ascending: false }).limit(1).maybeSingle();
       if (rateError) throw rateError;
       if (!rate) return jsonError("Selected Manpower Work Order does not have an active rate for this Labour Category on the deployment date.", 403);
       resolvedMwoRate = rate;
@@ -197,21 +213,22 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       contractor_profile_id: contractorProfileId,
       company_id: companyId,
       site_id: siteId,
-      work_order_id: commercialModel === "contract_basis" ? text(payload.work_order_id) : null,
-      manpower_work_order_id: manpowerWorkOrderId,
+      work_order_id: (commercialModel === "contract_basis" && !isReactivation) || (isReactivation && commercialModel === "daily_wage") ? text(payload.work_order_id) : null,
+      manpower_work_order_id: isReactivation && commercialModel === "contract_basis" ? manpowerWorkOrderId : (!isReactivation ? manpowerWorkOrderId : null),
       commercial_model: commercialModel,
       trade: tradeCheck.trade?.trade_name || null,
       labour_trade_id: tradeCheck.trade?.id || null,
       skill_level: skillLevel,
-      wage_type: commercialModel === "daily_wage" ? "daily" : wageType,
-      wage_rate: commercialModel === "daily_wage" ? resolvedMwoRate?.daily_rate : text(payload.wage_rate),
+      wage_type: commercialModel === "daily_wage" ? "daily" : (isReactivation ? "daily" : wageType),
+      wage_rate: isReactivation ? (commercialModel === "daily_wage" ? Number(payload.wage_rate) : resolvedMwoRate?.daily_rate) : (commercialModel === "daily_wage" ? resolvedMwoRate?.daily_rate : text(payload.wage_rate)),
       effective_from: effectiveFrom,
       effective_to: text(payload.effective_to),
       status: text(payload.effective_to) ? "ended" : "active",
       deployment_reason: deploymentReason,
     };
 
-    const { data, error } = await access.admin.rpc("transfer_labour_deployment", {
+    const rpcName = isReactivation ? "reactivate_labour_deployment" : "transfer_labour_deployment";
+    const rpcArgs = {
       p_worker_id: id,
       p_organization_id: worker.organization_id,
       p_contractor_profile_id: insertPayload.contractor_profile_id,
@@ -230,11 +247,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       p_actor_id: access.auth.user.id,
       p_actor_name: access.auth.user.user_metadata?.full_name || access.auth.user.user_metadata?.name || access.auth.user.email || "Unknown User",
       p_actor_email: access.auth.user.email || null,
-    });
+      ...(isReactivation ? { p_labour_trade_id: insertPayload.labour_trade_id } : {}),
+    };
+    const { data, error } = await access.admin.rpc(rpcName, rpcArgs);
     if (error) throw error;
     const deploymentId = Array.isArray(data) ? data[0] : data;
 
-    if (insertPayload.labour_trade_id) {
+    if (insertPayload.labour_trade_id && !isReactivation) {
       const { error: categoryUpdateError } = await access.admin
         .from("labour_deployments")
         .update({ labour_trade_id: insertPayload.labour_trade_id })
@@ -257,7 +276,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       organizationId: worker.organization_id,
       companyId,
       siteId,
-      description: openDeployment ? "Transferred labourer to a new deployment." : "Created labour deployment.",
+      description: isReactivation
+        ? `Reactivated labourer ${worker.labour_code}.`
+        : openDeployment ? "Transferred labourer to a new deployment." : "Created labour deployment.",
       newValues: insertPayload,
     } as any);
 

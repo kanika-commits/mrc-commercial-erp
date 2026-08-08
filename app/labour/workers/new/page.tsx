@@ -1281,8 +1281,8 @@ export default function NewLabourWorkerPage() {
                           {row.existing && isSameSelectedAssignment(row, assignment) && row.existing.status === "active" && (
                             <Link href="/labour/attendance/daily" className="inline-flex rounded-lg bg-green-700 px-2 py-1.5 text-[11px] font-bold text-white">Attendance</Link>
                           )}
-                          {row.existing && isSameSelectedAssignment(row, assignment) && row.existing.status !== "active" && (
-                            <span className="rounded-lg bg-amber-100 px-2 py-1.5 text-[11px] font-bold text-amber-800">Reactivate</span>
+                          {row.existing && row.existing.status !== "active" && (
+                            <Link href={`/labour/workers/${row.existing.id}?activate=1&source=registration`} className="rounded-lg bg-amber-100 px-2 py-1.5 text-[11px] font-bold text-amber-800">Reactivate</Link>
                           )}
                           {row.ocr_status === "failed" && (
                             <button type="button" onClick={() => retryOcr(row)} disabled={processingOcr || saving} className="rounded-lg border bg-white px-2 py-1.5 text-[11px] font-bold disabled:opacity-60">

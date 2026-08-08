@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { FileUp, Pencil, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { recordClientAuditEvent } from "@/lib/clientAudit";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
@@ -90,6 +90,8 @@ function changedFieldCount(log: any) {
 export default function LabourWorkerDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const activationSource = searchParams.get("source");
   const { access } = useAccessContext();
   const permissions = access?.permissions || [];
   const global = hasGlobalAccess(access);
@@ -163,7 +165,7 @@ export default function LabourWorkerDetailPage() {
 
   async function loadCommercialWorkOrders(form = deploymentForm) {
     const contractorProfileId = form.contractor_profile_id || worker?.current_contractor_profile_id || "";
-    if (form.commercial_model !== "contract_basis") return;
+    if (form.commercial_model !== "contract_basis" && !(worker?.status === "inactive" && form.commercial_model === "daily_wage")) return;
     if (!contractorProfileId || !form.company_id || !form.site_id) {
       setCommercialWorkOrders([]);
       setCommercialWorkOrdersError("");
@@ -191,7 +193,7 @@ export default function LabourWorkerDetailPage() {
 
   useEffect(() => {
     if (!showDeploymentForm) return;
-    if (deploymentForm.commercial_model !== "contract_basis") return;
+    if (deploymentForm.commercial_model !== "contract_basis" && !(worker?.status === "inactive" && deploymentForm.commercial_model === "daily_wage")) return;
     loadCommercialWorkOrders();
   }, [showDeploymentForm, deploymentForm.commercial_model, deploymentForm.contractor_profile_id, deploymentForm.company_id, deploymentForm.site_id, deploymentForm.effective_from]);
 
@@ -259,6 +261,9 @@ export default function LabourWorkerDetailPage() {
     if (currentDeployment && deploymentForm.deployment_reason.trim().length < 10) {
       return setDeploymentError("Enter a transfer reason of at least 10 characters.");
     }
+    if (worker.status === "inactive" && !deploymentForm.deployment_reason.trim()) {
+      return setDeploymentError("Reactivation Reason is required.");
+    }
     const response = await fetch(`/api/labour/workers/${params.id}/deployments`, {
       method: "POST",
       headers: { "content-type": "application/json", Authorization: `Bearer ${await token()}` },
@@ -273,6 +278,7 @@ export default function LabourWorkerDetailPage() {
     setCommercialWorkOrdersError("");
     setSuccess(currentDeployment ? "Worker transferred successfully." : "Initial deployment created.");
     await load();
+    if (worker.status === "inactive" && activationSource === "registration") router.push("/labour/workers/new");
   }
 
   async function saveRateChange() {
@@ -306,6 +312,18 @@ export default function LabourWorkerDetailPage() {
   }
 
   const worker = data?.worker;
+  function closeDeploymentForm() {
+    setShowDeploymentForm(false);
+    setDeploymentError("");
+    if (worker?.status === "inactive" && activationSource === "registration") router.push("/labour/workers/new");
+    else if (worker?.status === "inactive") router.replace(`/labour/workers/${worker.id}`);
+  }
+
+  useEffect(() => {
+    if (worker?.status !== "inactive" || searchParams.get("activate") !== "1" || !canChangeDeployment || showDeploymentForm) return;
+    openDeploymentForm();
+  }, [worker?.id, worker?.status, canChangeDeployment, showDeploymentForm, searchParams]);
+
   if (!worker) return <section className="p-8 text-sm text-slate-500">{error || "Loading labourer..."}</section>;
   const deployments = data.deployments || [];
   const documents = data.documents || [];
@@ -330,7 +348,7 @@ export default function LabourWorkerDetailPage() {
     return true;
   });
   const hasDailyWageFilters = Boolean(deploymentForm.company_id && deploymentForm.site_id && deploymentForm.effective_from);
-  const noApprovedMwoAvailable = deploymentForm.commercial_model === "daily_wage" && hasDailyWageFilters && deploymentManpowerWorkOrders.length === 0;
+  const noApprovedMwoAvailable = deploymentForm.commercial_model === "contract_basis" && hasDailyWageFilters && deploymentManpowerWorkOrders.length === 0;
 
   function openDeploymentForm() {
     setError("");
@@ -347,7 +365,7 @@ export default function LabourWorkerDetailPage() {
       site_id: currentDeployment?.site_id || "",
       labour_trade_id: currentDeployment?.labour_trade_id || worker.labour_trade_id || "",
       skill_level: currentDeployment?.skill_level || worker.skill_level || "",
-      commercial_model: currentDeployment?.commercial_model || "contract_basis",
+      commercial_model: worker.status === "inactive" ? "daily_wage" : currentDeployment?.commercial_model || "contract_basis",
       effective_from: "",
       deployment_reason: "",
     });
@@ -370,7 +388,7 @@ export default function LabourWorkerDetailPage() {
           </div>
           <div className="flex flex-wrap gap-2">
             {worker.current_contractor_profile_id && <Link href={`/labour/contractors/${worker.current_contractor_profile_id}`} className="inline-flex h-11 items-center rounded-lg border bg-white px-4 text-sm font-semibold">Open Contractor</Link>}
-            {canDeploy && <button onClick={openDeploymentForm} className="inline-flex h-11 items-center gap-2 rounded-lg border bg-white px-4 text-sm font-semibold"><Plus className="h-4 w-4" /> {currentDeployment ? "Transfer / Update Deployment" : "Create Deployment"}</button>}
+            {canDeploy && (worker.status !== "inactive" || canChangeDeployment) && <button onClick={openDeploymentForm} className="inline-flex h-11 items-center gap-2 rounded-lg border bg-white px-4 text-sm font-semibold"><Plus className="h-4 w-4" /> {worker.status === "inactive" ? "Reactivate Labour" : currentDeployment ? "Transfer / Update Deployment" : "Create Deployment"}</button>}
             {canEdit && <Link href={`/labour/workers/${worker.id}/edit`} className="inline-flex h-11 items-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white"><Pencil className="h-4 w-4" /> Edit</Link>}
             {canDelete && <button type="button" onClick={() => deleteWorker(worker)} className="inline-flex h-11 items-center gap-2 rounded-lg border border-red-200 bg-white px-4 text-sm font-semibold text-red-600"><Trash2 className="h-4 w-4" /> Delete</button>}
           </div>
@@ -493,15 +511,15 @@ export default function LabourWorkerDetailPage() {
         <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-white p-5 shadow-xl">
           <div className="mb-4 flex items-start justify-between gap-3">
             <div>
-              <h2 className="text-xl font-semibold">{currentDeployment ? "Transfer / Change Deployment" : "Create Initial Deployment"}</h2>
+              <h2 className="text-xl font-semibold">{worker.status === "inactive" ? "Reactivate Labour" : currentDeployment ? "Transfer / Change Deployment" : "Create Initial Deployment"}</h2>
               {currentDeployment && <p className="mt-1 text-sm text-slate-500">Current deployment started on {formatDate(currentDeployment.effective_from)}. New deployment must start after {formatDate(currentDeployment.effective_from)}.</p>}
             </div>
-            <button onClick={() => { setShowDeploymentForm(false); setDeploymentError(""); }} className="rounded-lg border px-3 py-2 text-sm font-semibold">Close</button>
+            {worker.status !== "inactive" && <button onClick={closeDeploymentForm} className="rounded-lg border px-3 py-2 text-sm font-semibold">Cancel</button>}
           </div>
           {(deploymentError || commercialWorkOrdersError) && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{deploymentError || commercialWorkOrdersError}</div>}
-          {canChangeDeployment && canChangeRate && <label className="mb-4 block text-sm font-semibold text-slate-700">Change Type<select value={deploymentOperation} onChange={(event) => { setDeploymentError(""); setDeploymentOperation(event.target.value as "deployment" | "rate"); }} className="mt-1 h-11 w-full rounded-lg border px-3"><option value="deployment">Transfer / Change Deployment</option><option value="rate">Update Daily Rate</option></select></label>}
-          {canChangeDeployment && !canChangeRate && <p className="mb-4 rounded-lg border bg-slate-50 p-3 text-sm font-semibold text-slate-700">Change Type: Transfer / Change Deployment</p>}
-          {canChangeRate && !canChangeDeployment && <p className="mb-4 rounded-lg border bg-slate-50 p-3 text-sm font-semibold text-slate-700">Change Type: Update Daily Rate</p>}
+          {worker.status !== "inactive" && canChangeDeployment && canChangeRate && <label className="mb-4 block text-sm font-semibold text-slate-700">Change Type<select value={deploymentOperation} onChange={(event) => { setDeploymentError(""); setDeploymentOperation(event.target.value as "deployment" | "rate"); }} className="mt-1 h-11 w-full rounded-lg border px-3"><option value="deployment">Transfer / Change Deployment</option><option value="rate">Update Daily Rate</option></select></label>}
+          {worker.status !== "inactive" && canChangeDeployment && !canChangeRate && <p className="mb-4 rounded-lg border bg-slate-50 p-3 text-sm font-semibold text-slate-700">Change Type: Transfer / Change Deployment</p>}
+          {worker.status !== "inactive" && canChangeRate && !canChangeDeployment && <p className="mb-4 rounded-lg border bg-slate-50 p-3 text-sm font-semibold text-slate-700">Change Type: Update Daily Rate</p>}
           {deploymentOperation === "deployment" && canChangeDeployment && <div className="grid gap-3 md:grid-cols-2">
             <label className="text-sm font-semibold text-slate-700">Contractor<input value={lookups.contractors.find((contractor: any) => contractor.id === deploymentContractorId)?.vendors?.vendor_name || lookups.contractors.find((contractor: any) => contractor.id === deploymentContractorId)?.contractor_code || "-"} disabled className="mt-1 h-11 w-full rounded-lg border bg-slate-100 px-3" /></label>
             <label className="text-sm font-semibold text-slate-700">Payment Model<select value={deploymentForm.commercial_model} onChange={(event) => { setDeploymentError(""); setCommercialWorkOrdersError(""); setCommercialWorkOrders([]); setDeploymentForm({ ...deploymentForm, commercial_model: event.target.value, work_order_id: "", manpower_work_order_id: "" }); }} className="mt-1 h-11 w-full rounded-lg border px-3"><option value="daily_wage">Daily Wage</option><option value="contract_basis">Contractual Labour</option></select></label>
@@ -509,9 +527,12 @@ export default function LabourWorkerDetailPage() {
             <label className="text-sm font-semibold text-slate-700">Site<select value={deploymentForm.site_id} onChange={(event) => { setDeploymentError(""); setCommercialWorkOrdersError(""); setDeploymentForm({ ...deploymentForm, site_id: event.target.value, work_order_id: "", manpower_work_order_id: "" }); }} className="mt-1 h-11 w-full rounded-lg border px-3"><option value="">Select Site</option>{deploymentSites.map((site: any) => <option key={site.id} value={site.id}>{site.site_name}</option>)}</select></label>
             <label className="text-sm font-semibold text-slate-700">Labour Category<select value={deploymentForm.labour_trade_id} onChange={(event) => setDeploymentForm({ ...deploymentForm, labour_trade_id: event.target.value })} className="mt-1 h-11 w-full rounded-lg border px-3"><option value="">Select Labour Category</option>{lookups.trades.map((trade: any) => <option key={trade.id} value={trade.id}>{trade.trade_name}</option>)}</select></label>
             <label className="text-sm font-semibold text-slate-700">Effective From<input type="date" value={deploymentForm.effective_from} onChange={(event) => { setDeploymentError(""); setCommercialWorkOrdersError(""); setDeploymentForm({ ...deploymentForm, effective_from: event.target.value, manpower_work_order_id: "" }); }} className="mt-1 h-11 w-full rounded-lg border px-3" /></label>
-            {deploymentForm.commercial_model === "daily_wage" && <label className="text-sm font-semibold text-slate-700 md:col-span-2">Approved Manpower Work Order<select value={deploymentForm.manpower_work_order_id} disabled={noApprovedMwoAvailable} onChange={(event) => setDeploymentForm({ ...deploymentForm, manpower_work_order_id: event.target.value })} className="mt-1 h-11 w-full rounded-lg border px-3 disabled:bg-slate-100 disabled:text-slate-500"><option value="">{noApprovedMwoAvailable ? "No approved MWO available" : "Select Approved MWO"}</option>{deploymentManpowerWorkOrders.map((mwo: any) => <option key={mwo.id} value={mwo.id}>{mwo.manpower_wo_number} · {mwo.title}</option>)}</select>{noApprovedMwoAvailable && <span className="mt-1 block text-xs font-medium text-slate-500">Create & approve an MWO for the selected site.</span>}</label>}
-            {deploymentForm.commercial_model === "contract_basis" && <label className="text-sm font-semibold text-slate-700 md:col-span-2">Commercial Work Order<select value={deploymentForm.work_order_id} disabled={commercialWorkOrdersLoading || Boolean(deploymentForm.company_id && deploymentForm.site_id && !commercialWorkOrdersLoading && !deploymentWorkOrders.length)} onChange={(event) => { setDeploymentError(""); setCommercialWorkOrdersError(""); setDeploymentForm({ ...deploymentForm, work_order_id: event.target.value }); }} className="mt-1 h-11 w-full rounded-lg border px-3 disabled:bg-slate-100 disabled:text-slate-500"><option value="">{commercialWorkOrdersLoading ? "Loading approved Commercial Work Orders..." : deploymentForm.company_id && deploymentForm.site_id && !deploymentWorkOrders.length ? "No approved Commercial Work Order available" : "Select Commercial Work Order"}</option>{deploymentWorkOrders.map((wo: any) => <option key={wo.id} value={wo.id}>{wo.wo_number}{wo.wo_type ? ` — ${wo.wo_type}` : ""}</option>)}</select>{deploymentForm.company_id && deploymentForm.site_id && !commercialWorkOrdersLoading && !deploymentWorkOrders.length && !commercialWorkOrdersError && <span className="mt-1 block text-xs font-medium text-slate-500">No approved Commercial Work Order is linked to this contractor for the selected company and site.</span>}</label>}
-            <label className="text-sm font-semibold text-slate-700 md:col-span-2">{currentDeployment ? "Transfer Reason *" : "Reason (Optional)"}<input value={deploymentForm.deployment_reason} onChange={(event) => setDeploymentForm({ ...deploymentForm, deployment_reason: event.target.value })} className="mt-1 h-11 w-full rounded-lg border px-3" /></label>
+            {worker.status === "inactive" && deploymentForm.commercial_model === "contract_basis" && <label className="text-sm font-semibold text-slate-700 md:col-span-2">Approved Manpower Work Order<select value={deploymentForm.manpower_work_order_id} disabled={noApprovedMwoAvailable} onChange={(event) => setDeploymentForm({ ...deploymentForm, manpower_work_order_id: event.target.value })} className="mt-1 h-11 w-full rounded-lg border px-3 disabled:bg-slate-100 disabled:text-slate-500"><option value="">{noApprovedMwoAvailable ? "No approved MWO available" : "Select Approved MWO"}</option>{deploymentManpowerWorkOrders.map((mwo: any) => <option key={mwo.id} value={mwo.id}>{mwo.manpower_wo_number} · {mwo.title}</option>)}</select></label>}
+            {(worker.status !== "inactive" ? deploymentForm.commercial_model === "contract_basis" : deploymentForm.commercial_model === "daily_wage") && <label className="text-sm font-semibold text-slate-700 md:col-span-2">Commercial Work Order<select value={deploymentForm.work_order_id} disabled={commercialWorkOrdersLoading || Boolean(deploymentForm.company_id && deploymentForm.site_id && !commercialWorkOrdersLoading && !deploymentWorkOrders.length)} onChange={(event) => { setDeploymentError(""); setCommercialWorkOrdersError(""); setDeploymentForm({ ...deploymentForm, work_order_id: event.target.value }); }} className="mt-1 h-11 w-full rounded-lg border px-3 disabled:bg-slate-100 disabled:text-slate-500"><option value="">{commercialWorkOrdersLoading ? "Loading approved Commercial Work Orders..." : "Select Commercial Work Order"}</option>{deploymentWorkOrders.map((wo: any) => <option key={wo.id} value={wo.id}>{wo.wo_number}{wo.wo_type ? ` — ${wo.wo_type}` : ""}</option>)}</select></label>}
+            {worker.status === "inactive" && deploymentForm.commercial_model === "daily_wage" && <>
+              <label className="text-sm font-semibold text-slate-700">Wage Rate *<input type="number" min="0" step="0.01" value={deploymentForm.wage_rate} onChange={(event) => setDeploymentForm({ ...deploymentForm, wage_rate: event.target.value })} className="mt-1 h-11 w-full rounded-lg border px-3" /></label>
+            </>}
+            <label className="text-sm font-semibold text-slate-700 md:col-span-2">{worker.status === "inactive" ? "Reactivation Reason *" : currentDeployment ? "Transfer Reason *" : "Reason (Optional)"}<input value={deploymentForm.deployment_reason} onChange={(event) => setDeploymentForm({ ...deploymentForm, deployment_reason: event.target.value })} className="mt-1 h-11 w-full rounded-lg border px-3" /></label>
           </div>}
           {deploymentOperation === "rate" && canChangeRate && <div className="grid gap-3 md:grid-cols-2">
             <Info label="Current Daily Rate" value={formatCurrency(currentDeployment?.daily_rate)} />
@@ -526,8 +547,8 @@ export default function LabourWorkerDetailPage() {
             <label className="text-sm font-semibold text-slate-700 md:col-span-2">Reason *<input value={rateForm.reason} onChange={(event) => setRateForm({ ...rateForm, reason: event.target.value })} className="mt-1 h-11 w-full rounded-lg border px-3" /></label>
           </div>}
           <div className="mt-5 flex justify-end gap-2">
-            <button onClick={() => { setShowDeploymentForm(false); setDeploymentError(""); }} className="rounded-lg border px-4 py-2 text-sm font-semibold">Cancel</button>
-            {deploymentOperation === "deployment" && canChangeDeployment && <button onClick={saveDeployment} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white">{currentDeployment ? "Save Transfer" : "Create Deployment"}</button>}
+            <button onClick={closeDeploymentForm} className="rounded-lg border px-4 py-2 text-sm font-semibold">Cancel</button>
+            {deploymentOperation === "deployment" && canChangeDeployment && <button onClick={saveDeployment} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white">{worker.status === "inactive" ? "Activate Labour" : currentDeployment ? "Save Transfer" : "Create Deployment"}</button>}
             {deploymentOperation === "rate" && canChangeRate && <button onClick={saveRateChange} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white">Update Daily Rate</button>}
           </div>
         </div>

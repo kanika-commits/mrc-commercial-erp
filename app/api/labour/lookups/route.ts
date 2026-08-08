@@ -52,7 +52,7 @@ async function loadCommercialWorkOrdersForDeployment(access: any, input: {
 
   let query = access.admin
     .from("work_orders")
-    .select("id, organization_id, company_id, site_id, wo_number, status, approval_status")
+    .select("id, organization_id, company_id, site_id, wo_number, wo_type, status, approval_status")
     .in("id", workOrderIds)
     .eq("organization_id", organizationId)
     .eq("company_id", input.companyId)
