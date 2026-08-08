@@ -240,6 +240,12 @@ export async function loadEmployeeAttendanceLookups(
       site_name: siteNames.get(pair.site_id),
     }))
     .sort((left, right) => `${left.company_name} ${left.site_name}`.localeCompare(`${right.company_name} ${right.site_name}`));
+  const uniqueSites = Array.from(new Map(visiblePairs.map((pair) => [pair.site_id, pair])).values()).map((site) => ({
+    id: site.site_id,
+    label: site.site_name,
+    organization_id: site.organization_id,
+    company_ids: Array.from(new Set(visiblePairs.filter((pair) => pair.site_id === site.site_id).map((pair) => pair.company_id))),
+  }));
 
   return {
     pairs: visiblePairs,
@@ -247,22 +253,7 @@ export async function loadEmployeeAttendanceLookups(
       .filter((id) => visiblePairs.some((pair) => pair.company_id === id))
       .map((id) => ({ id, label: companyNames.get(id) || id }))
       .sort((left, right) => left.label.localeCompare(right.label)),
-    sites: visiblePairs.map((pair) => ({
-      id: pair.site_id,
-      label: pair.site_name,
-      company_id: pair.company_id,
-      scope_company_id: pair.company_id,
-      organization_id: pair.organization_id,
-      attendance_method: pair.attendance_method,
-      approval_workflow_code: pair.approval_workflow_code,
-      attendance_lock_rule: pair.attendance_lock_rule,
-      approval_level_count: pair.approval_level_count,
-      approval_workflow_version: pair.approval_workflow_version,
-      lock_after_hours: pair.lock_after_hours,
-      standard_working_hours: EMPLOYEE_STANDARD_WORKING_HOURS,
-      policy_status: pair.policy_status,
-      sources: pair.sources,
-    })),
+    sites: uniqueSites,
   };
 }
 

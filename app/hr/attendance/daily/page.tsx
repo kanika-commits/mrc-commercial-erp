@@ -13,6 +13,7 @@ import { ATTENDANCE_STATUS_LABELS, EMPLOYEE_STANDARD_WORKING_HOURS, PHASE1_ATTEN
 type RowState = {
   employee_id: string;
   status: string;
+  company_id?: string;
 };
 
 export default function DailyAttendancePage() {
@@ -29,6 +30,8 @@ export default function DailyAttendancePage() {
   const [date, setDate] = useState(today);
   const [rows, setRows] = useState<any[]>([]);
   const [period, setPeriod] = useState<any>(null);
+  const [periods, setPeriods] = useState<any[]>([]);
+  const [attendanceContexts, setAttendanceContexts] = useState<Record<string, any>>({});
   const [policy, setPolicy] = useState<any>(null);
   const [dayLock, setDayLock] = useState<any>(null);
   const [draft, setDraft] = useState<Record<string, RowState>>({});
@@ -39,10 +42,12 @@ export default function DailyAttendancePage() {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [unsavedAction, setUnsavedAction] = useState<null | (() => void)>(null);
 
-  const visibleSites = useMemo(
-    () => companyId ? lookups.sites.filter((site) => site.scope_company_id === companyId) : lookups.sites,
-    [companyId, lookups.sites],
-  );
+  const visibleSites = lookups.sites;
+  const visibleCompanies = useMemo(() => {
+    const site = lookups.sites.find((item) => item.id === siteId);
+    const allowed = new Set(site?.company_ids || []);
+    return !allowed.size ? lookups.companies : lookups.companies.filter((item) => allowed.has(item.id));
+  }, [lookups.companies, lookups.sites, siteId]);
   const isPast = date < today;
   const isFuture = date > today;
   const earliestNormalEditDate = previousDate(today);
@@ -51,12 +56,21 @@ export default function DailyAttendancePage() {
   const readOnlyReason = useMemo(() => {
     if (!canEdit) return "You do not have permission to edit attendance.";
     if (isFuture) return "Future attendance cannot be created or edited.";
-    if (dayLock) return "This attendance day is locked.";
-    if (["submitted", "level_1_approved", "level_2_approved", "finalized", "cancelled"].includes(period?.status)) return "This attendance period is read-only.";
     if (isOlderThanYesterday && !isAdminRecovery) return "Attendance can be edited only for today or yesterday.";
     return "";
-  }, [canEdit, dayLock, isAdminRecovery, isFuture, isOlderThanYesterday, period?.status]);
+  }, [canEdit, isAdminRecovery, isFuture, isOlderThanYesterday]);
   const editable = canEdit && !readOnlyReason;
+  const visibleRows = useMemo(
+    () => companyId ? rows.filter((item) => item.employee.company_id === companyId) : rows,
+    [companyId, rows],
+  );
+  const rowEditable = (item: any) => {
+    if (!canEdit || isFuture || (isOlderThanYesterday && !isAdminRecovery)) return false;
+    const context = attendanceContexts[item.employee.company_id || ""];
+    if (!context || context.dayLock) return false;
+    return !["submitted", "level_1_approved", "level_2_approved", "finalized", "cancelled"].includes(context.period?.status);
+  };
+  const hasEditableRows = rows.some(rowEditable);
 
   useEffect(() => {
     let active = true;
@@ -75,8 +89,8 @@ export default function DailyAttendancePage() {
   }, []);
 
   async function load(options: { skipDirtyGuard?: boolean } = {}) {
-    if (!companyId || !siteId || !date) {
-      setMessage("Select company, site and date.");
+    if (!siteId || !date) {
+      setMessage("Select site and date.");
       return;
     }
     if (!options.skipDirtyGuard && hasUnsavedChanges) {
@@ -87,15 +101,29 @@ export default function DailyAttendancePage() {
     setMessage("");
     setSuccess("");
     try {
-      const result = await apiFetch(`/api/hr/attendance/daily?company_id=${companyId}&site_id=${siteId}&date=${date}`);
-      setRows(result.attendance || []);
-      setPeriod(result.period || null);
-      setPolicy(result.policy || null);
-      setDayLock(result.day_lock || null);
+      const selectedSite = lookups.sites.find((item) => item.id === siteId);
+      const companyIds: string[] = (selectedSite?.company_ids || []).filter(Boolean) as string[];
+      if (!companyIds.length) {
+        setMessage("No permitted companies are available for the selected site.");
+        return;
+      }
+      const results = await Promise.all(companyIds.map((id) => apiFetch(`/api/hr/attendance/daily?company_id=${id}&site_id=${siteId}&date=${date}`)));
+      const merged = results.flatMap((result, index) => (result.attendance || []).map((item: any) => ({ ...item, employee: { ...item.employee, company_id: companyIds[index], company_name: lookups.companies.find((company) => company.id === companyIds[index])?.label || companyIds[index] } })));
+      const nextContexts: Record<string, any> = {};
+      results.forEach((result, index) => {
+        nextContexts[companyIds[index]] = { period: result.period, policy: result.policy, dayLock: result.day_lock };
+      });
+      setRows(merged);
+      setPeriods(results.map((result) => result.period).filter(Boolean));
+      setAttendanceContexts(nextContexts);
+      setPeriod(results[0]?.period || null);
+      setPolicy(results[0]?.policy || null);
+      setDayLock(null);
       const nextDraft: Record<string, RowState> = {};
-      for (const item of result.attendance || []) {
+      for (const item of merged) {
         nextDraft[item.employee.id] = {
           employee_id: item.employee.id,
+          company_id: item.employee.company_id,
           status: item.attendance?.status || "present",
         };
       }
@@ -118,7 +146,8 @@ export default function DailyAttendancePage() {
 
   function markAllPresent() {
     const next = { ...draft };
-    for (const item of rows) {
+    for (const item of visibleRows) {
+      if (!rowEditable(item)) continue;
       next[item.employee.id] = { ...(next[item.employee.id] || { employee_id: item.employee.id }), status: "present" };
     }
     setDraft(next);
@@ -129,6 +158,8 @@ export default function DailyAttendancePage() {
     const action = () => {
       setRows([]);
       setPeriod(null);
+      setPeriods([]);
+      setAttendanceContexts({});
       setPolicy(null);
       setDayLock(null);
       setDraft({});
@@ -162,7 +193,7 @@ export default function DailyAttendancePage() {
   }
 
   async function save(options: { silent?: boolean } = {}) {
-    if (!editable) return null;
+    if (!rows.some(rowEditable)) return null;
     const requiresReason = isOlderThanYesterday && isAdminRecovery;
     const reason = requiresReason ? window.prompt("Enter reason for backdated attendance correction:") : "";
     if (requiresReason && !reason?.trim()) {
@@ -175,14 +206,27 @@ export default function DailyAttendancePage() {
       setSuccess("");
     }
     try {
-      const attendance = Object.values(draft);
-      const result = await apiFetch("/api/hr/attendance/daily", {
-        method: "PUT",
-        body: JSON.stringify({ company_id: companyId, site_id: siteId, date, attendance, backdated_reason: reason }),
-      });
-      if (!options.silent) setSuccess(`Draft saved for ${result.saved || 0} attendance rows.`);
+      const groups = new Map<string, RowState[]>();
+      for (const row of Object.values(draft)) {
+        const item = rows.find((entry) => entry.employee.id === row.employee_id);
+        if (row.company_id && item && rowEditable(item)) groups.set(row.company_id, [...(groups.get(row.company_id) || []), row]);
+      }
+      const outcomes = await Promise.all(Array.from(groups.entries()).map(async ([groupCompanyId, attendance]) => {
+        try {
+          return { companyId: groupCompanyId, result: await apiFetch("/api/hr/attendance/daily", { method: "PUT", body: JSON.stringify({ company_id: groupCompanyId, site_id: siteId, date, attendance, backdated_reason: reason }) }) };
+        } catch (error) {
+          return { companyId: groupCompanyId, error };
+        }
+      }));
+      const failures = outcomes.filter((outcome: any) => outcome.error);
+      if (failures.length) {
+        const labels = failures.map((failure: any) => lookups.companies.find((company) => company.id === failure.companyId)?.label || failure.companyId);
+        throw new Error(`Attendance save failed for: ${labels.join(", ")}. Other company drafts may have been saved.`);
+      }
+      const results = outcomes.map((outcome: any) => outcome.result);
+      if (!options.silent) setSuccess(`Draft saved for ${results.reduce((total, result) => total + Number(result.saved || 0), 0)} attendance rows.`);
       await load({ skipDirtyGuard: true });
-      return result;
+      return { periods: results.map((result) => result.period).filter(Boolean) };
     } catch (error: any) {
       setMessage(error.message || "Failed to save attendance.");
       return null;
@@ -192,11 +236,11 @@ export default function DailyAttendancePage() {
   }
 
   async function submitAttendance() {
-    if (!editable || !canSubmit) return;
+    if (!rows.some(rowEditable) || !canSubmit) return;
     const saved = await save({ silent: true });
     if (!saved) return;
-    const periodId = saved.period?.id || period?.id;
-    if (!periodId) {
+    const periodIds = (saved.periods || periods).map((item: any) => item.id).filter(Boolean);
+    if (!periodIds.length) {
       setMessage("Attendance period could not be resolved for submission.");
       return;
     }
@@ -204,8 +248,17 @@ export default function DailyAttendancePage() {
     setMessage("");
     setSuccess("");
     try {
-      const result = await apiFetch(`/api/hr/attendance/periods/${periodId}/submit`, { method: "POST" });
-      setPeriod(result.period || period || null);
+      const results = [];
+      for (let index = 0; index < periodIds.length; index += 1) {
+        try {
+          results.push(await apiFetch(`/api/hr/attendance/periods/${periodIds[index]}/submit`, { method: "POST" }));
+        } catch (error: any) {
+          const submittedPeriod = (saved.periods || periods).find((item: any) => item.id === periodIds[index]);
+          const label = lookups.companies.find((company) => company.id === submittedPeriod?.company_id)?.label || submittedPeriod?.company_id || "the selected company";
+          throw new Error(`Attendance submission failed for ${label}: ${error.message || "request failed"}`);
+        }
+      }
+      setPeriod(results[0]?.period || period || null);
       setSuccess(sentBack ? "Attendance resubmitted for approval." : "Attendance submitted for approval.");
       await load({ skipDirtyGuard: true });
     } catch (error: any) {
@@ -237,8 +290,8 @@ export default function DailyAttendancePage() {
 
       <section className="rounded-2xl border bg-white p-4 shadow-sm">
         <div className="grid gap-3 md:grid-cols-4">
-          <Select label="Company" value={companyId} disabled={loading || saving} onChange={(value) => updateAttendanceContext(() => { setCompanyId(value); setSiteId(""); })} options={lookups.companies} />
-          <Select label="Site" value={siteId} disabled={loading || saving} onChange={(value) => updateAttendanceContext(() => setSiteId(value))} options={visibleSites} />
+          <Select label="Site *" value={siteId} disabled={loading || saving} onChange={(value) => updateAttendanceContext(() => { setSiteId(value); setCompanyId(""); })} options={visibleSites} />
+          <Select label="Company" value={companyId} disabled={loading || saving} onChange={setCompanyId} options={visibleCompanies} allLabel="All Companies" />
           <label className="block">
             <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Date</span>
             <input type="date" value={date} min={isAdminRecovery ? undefined : earliestNormalEditDate} max={today} disabled={loading || saving} onChange={(event) => updateAttendanceContext(() => setDate(event.target.value))} className="h-10 w-full rounded-xl border px-3 text-sm disabled:bg-slate-100" />
@@ -253,7 +306,7 @@ export default function DailyAttendancePage() {
 
       {period && (
         <div className="grid gap-3 md:grid-cols-5">
-          <Summary label="Employees" value={rows.length} />
+          <Summary label="Employees" value={visibleRows.length} />
           <Summary label="Period" value={sentBack ? "Sent Back" : period.status || "draft"} />
           <Summary label="Date" value={formatDate(date)} />
           <Summary label="Working Day" value={`${policy?.standard_working_hours || EMPLOYEE_STANDARD_WORKING_HOURS} hrs`} />
@@ -293,9 +346,9 @@ export default function DailyAttendancePage() {
             <p className="text-sm text-slate-500">Employees without saved attendance appear as Present until saved.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {editable && <button type="button" onClick={markAllPresent} className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-slate-50">Mark All Present</button>}
-            {editable && <button type="button" onClick={() => save()} disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"><Save className="h-4 w-4" />{saving ? "Saving..." : "Save Draft"}</button>}
-            {editable && canSubmit && <button type="button" onClick={submitAttendance} disabled={saving || rows.length === 0} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"><Send className="h-4 w-4" />{sentBack ? "Resubmit Attendance" : "Submit Attendance"}</button>}
+            {hasEditableRows && <button type="button" onClick={markAllPresent} className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-slate-50">Mark All Present</button>}
+            {hasEditableRows && <button type="button" onClick={() => save()} disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"><Save className="h-4 w-4" />{saving ? "Saving..." : "Save Draft"}</button>}
+            {hasEditableRows && canSubmit && <button type="button" onClick={submitAttendance} disabled={saving || rows.length === 0} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"><Send className="h-4 w-4" />{sentBack ? "Resubmit Attendance" : "Submit Attendance"}</button>}
           </div>
         </div>
         <table className="min-w-[760px] w-full text-left text-sm">
@@ -303,24 +356,26 @@ export default function DailyAttendancePage() {
             <tr>
               <th className="px-4 py-3">S. No.</th>
               <th className="px-3 py-3">Employee</th>
+              <th className="px-3 py-3">Company</th>
               <th className="px-3 py-3">Department</th>
               <th className="px-3 py-3">Designation</th>
               <th className="px-3 py-3">Status</th>
             </tr>
           </thead>
           <tbody className="divide-y">
-            {rows.length === 0 ? (
-              <tr><td colSpan={5} className="px-4 py-10 text-center text-slate-500">No employees loaded.</td></tr>
-            ) : rows.map((item, index) => {
-              const current = draft[item.employee.id] || { employee_id: item.employee.id, status: "present" };
+            {visibleRows.length === 0 ? (
+              <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-500">No employees loaded.</td></tr>
+            ) : visibleRows.map((item, index) => {
+              const current = draft[item.employee.id] || { employee_id: item.employee.id, status: "present", company_id: item.employee.company_id };
               return (
                 <tr key={item.employee.id}>
                   <td className="px-4 py-3 text-slate-500">{index + 1}</td>
                   <td className="px-3 py-3 font-medium text-slate-950">{item.employee.employee_name}</td>
+                  <td className="px-3 py-3 text-slate-600">{item.employee.company_name || "-"}</td>
                   <td className="px-3 py-3 text-slate-600">{item.employee.department_name || "-"}</td>
                   <td className="px-3 py-3 text-slate-600">{item.employee.designation_name || "-"}</td>
                   <td className="px-3 py-3">
-                    <select disabled={!editable} value={current.status} onChange={(event) => updateRow(item.employee.id, { status: event.target.value })} className="h-9 rounded-xl border px-3 text-sm disabled:bg-slate-50">
+                    <select disabled={!rowEditable(item)} value={current.status} onChange={(event) => updateRow(item.employee.id, { status: event.target.value })} className="h-9 rounded-xl border px-3 text-sm disabled:bg-slate-50">
                       {PHASE1_ATTENDANCE_STATUSES.map((status) => <option key={status} value={status}>{ATTENDANCE_STATUS_LABELS[status]}</option>)}
                     </select>
                   </td>
@@ -352,12 +407,12 @@ export default function DailyAttendancePage() {
   );
 }
 
-function Select({ label, value, onChange, options, disabled }: { label: string; value: string; onChange: (value: string) => void; options: { id: string; label: string }[]; disabled?: boolean }) {
+function Select({ label, value, onChange, options, disabled, allLabel }: { label: string; value: string; onChange: (value: string) => void; options: { id: string; label: string }[]; disabled?: boolean; allLabel?: string }) {
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</span>
       <select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-xl border px-3 text-sm disabled:bg-slate-100">
-        <option value="">Select {label}</option>
+        <option value="">{allLabel || `Select ${label}`}</option>
         {options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
       </select>
     </label>
