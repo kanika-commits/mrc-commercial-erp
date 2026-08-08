@@ -5,6 +5,7 @@ const HIDDEN_PERMISSION_MODULES = new Set([
   "labour_work_logs",
   "labour_work_groups",
   "hr_employee_document_import",
+  "hr_employee_import",
   "labour_contractors",
   "labour_manpower_work_orders",
   "labour_attendance_import",
@@ -21,7 +22,6 @@ const HIDDEN_PERMISSION_MODULES = new Set([
   "labour_workspace",
   "labour_deployments",
   "labour_documents",
-  "labour_attendance_approval",
   "labour_photo_evidence",
   "labour_attendance_unlock",
 ]);
