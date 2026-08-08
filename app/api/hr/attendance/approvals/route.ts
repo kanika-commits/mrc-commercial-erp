@@ -67,7 +67,7 @@ function employeeRows(employees: any[], attendanceRows: any[], month: string) {
   });
 }
 
-async function loadVisiblePeriods(admin: any, auth: any, statusFilter: string | null = "pending") {
+export async function loadVisiblePeriods(admin: any, auth: any, statusFilter: string | null = "pending") {
   const organizationScope = await loadActorOrganizationScope(admin, auth);
   const statuses = periodStatusesFromFilter(statusFilter);
   let query = admin
@@ -94,7 +94,7 @@ async function loadVisiblePeriods(admin: any, auth: any, statusFilter: string | 
   return scopedPeriods.filter((period: any) => canReviewEmployeeAttendancePeriod(auth, period));
 }
 
-async function enrichPeriodRows(admin: any, periods: any[]) {
+export async function enrichPeriodRows(admin: any, periods: any[]) {
   const companyIds = Array.from(new Set(periods.map((period) => period.company_id).filter(Boolean)));
   const siteIds = Array.from(new Set(periods.map((period) => period.site_id).filter(Boolean)));
   const periodIds = periods.map((period) => period.id).filter(Boolean);
@@ -132,6 +132,7 @@ async function enrichPeriodRows(admin: any, periods: any[]) {
     status: period.status,
     status_label: statusLabel(period.status),
     current_approval_level: period.current_approval_level,
+    approval_workflow_snapshot: period.approval_workflow_snapshot || {},
     current_level_label: currentLevelLabel(period),
     submitted_by_name: period.submitted_by_name,
     submitted_at: period.submitted_at,
@@ -140,7 +141,7 @@ async function enrichPeriodRows(admin: any, periods: any[]) {
   }));
 }
 
-async function loadDetail(admin: any, auth: any, periodId: string) {
+export async function loadDetail(admin: any, auth: any, periodId: string) {
   const periods = await loadVisiblePeriods(admin, auth, "all");
   const period = periods.find((row: any) => row.id === periodId);
   if (!period) return { response: jsonError("Attendance approval package was not found or is not waiting for your approval.", 404) } as const;

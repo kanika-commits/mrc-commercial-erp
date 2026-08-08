@@ -41,6 +41,7 @@ export default function DailyAttendancePage() {
   const [success, setSuccess] = useState("");
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [unsavedAction, setUnsavedAction] = useState<null | (() => void)>(null);
+  const [submitConfirmationOpen, setSubmitConfirmationOpen] = useState(false);
 
   const visibleSites = lookups.sites;
   const visibleCompanies = useMemo(() => {
@@ -71,6 +72,7 @@ export default function DailyAttendancePage() {
     return !["submitted", "level_1_approved", "level_2_approved", "finalized", "cancelled"].includes(context.period?.status);
   };
   const hasEditableRows = rows.some(rowEditable);
+  const hasAttendanceForSelectedDate = rows.some((row) => Boolean(row.attendance));
 
   useEffect(() => {
     let active = true;
@@ -235,7 +237,7 @@ export default function DailyAttendancePage() {
     }
   }
 
-  async function submitAttendance() {
+  async function performSubmitAttendance() {
     if (!rows.some(rowEditable) || !canSubmit) return;
     const saved = await save({ silent: true });
     if (!saved) return;
@@ -266,6 +268,11 @@ export default function DailyAttendancePage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function requestSubmitAttendance() {
+    if (!rows.some(rowEditable) || !canSubmit || saving) return;
+    setSubmitConfirmationOpen(true);
   }
 
   if (!canView) {
@@ -307,7 +314,8 @@ export default function DailyAttendancePage() {
       {period && (
         <div className="grid gap-3 md:grid-cols-5">
           <Summary label="Employees" value={visibleRows.length} />
-          <Summary label="Period" value={sentBack ? "Sent Back" : period.status || "draft"} />
+          <Summary label="Selected Date" value={hasAttendanceForSelectedDate ? "Saved" : "Not Saved"} />
+          <Summary label="Monthly Period" value={sentBack ? "Sent Back" : period.status || "draft"} />
           <Summary label="Date" value={formatDate(date)} />
           <Summary label="Working Day" value={`${policy?.standard_working_hours || EMPLOYEE_STANDARD_WORKING_HOURS} hrs`} />
           <Summary label="Lock" value={dayLock ? "Locked" : "Open"} />
@@ -327,9 +335,9 @@ export default function DailyAttendancePage() {
         </section>
       )}
 
-      {period && (period.submitted_at || period.send_back_reason) && (
+      {period && hasAttendanceForSelectedDate && (period.submitted_at || period.send_back_reason) && (
         <section className="rounded-2xl border bg-white p-4 text-sm text-slate-600 shadow-sm">
-          <p className="font-bold text-slate-950">Attendance Activity</p>
+          <p className="font-bold text-slate-950">Monthly Period Activity</p>
           <div className="mt-2 grid gap-1 md:grid-cols-2">
             {period.submitted_at && <p><span className="font-semibold text-slate-800">{sentBack ? "Previously Submitted:" : "Submitted:"}</span> {period.submitted_by_name || period.submitted_by_email || "-"} · {new Date(period.submitted_at).toLocaleString("en-IN")}</p>}
             {period.send_back_reason && <p><span className="font-semibold text-slate-800">Latest Send Back:</span> {period.send_back_reason}</p>}
@@ -348,7 +356,7 @@ export default function DailyAttendancePage() {
           <div className="flex flex-wrap gap-2">
             {hasEditableRows && <button type="button" onClick={markAllPresent} className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-slate-50">Mark All Present</button>}
             {hasEditableRows && <button type="button" onClick={() => save()} disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"><Save className="h-4 w-4" />{saving ? "Saving..." : "Save Draft"}</button>}
-            {hasEditableRows && canSubmit && <button type="button" onClick={submitAttendance} disabled={saving || rows.length === 0} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"><Send className="h-4 w-4" />{sentBack ? "Resubmit Attendance" : "Submit Attendance"}</button>}
+            {hasEditableRows && canSubmit && <button type="button" onClick={requestSubmitAttendance} disabled={saving || rows.length === 0} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"><Send className="h-4 w-4" />{sentBack ? "Resubmit Attendance" : "Submit Attendance"}</button>}
           </div>
         </div>
         <table className="min-w-[760px] w-full text-left text-sm">
@@ -386,6 +394,16 @@ export default function DailyAttendancePage() {
         </table>
       </section>
 
+      {submitConfirmationOpen && <SubmitConfirmation
+        siteName={lookups.sites.find((site) => site.id === siteId)?.label || siteId}
+        date={date}
+        rows={rows}
+        companies={lookups.companies}
+        onCancel={() => setSubmitConfirmationOpen(false)}
+        onConfirm={() => { setSubmitConfirmationOpen(false); void performSubmitAttendance(); }}
+        saving={saving}
+      />}
+
       {unsavedAction && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="w-full max-w-lg rounded-xl bg-white p-5 shadow-xl">
@@ -405,6 +423,16 @@ export default function DailyAttendancePage() {
       )}
     </section>
   );
+}
+
+function SubmitConfirmation({ siteName, date, rows, companies, onCancel, onConfirm, saving }: any) {
+  const companyCounts = rows.reduce((map: Record<string, number>, row: any) => {
+    const id = row.employee.company_id || "unknown";
+    map[id] = (map[id] || 0) + 1;
+    return map;
+  }, {});
+  const companyIds = Object.keys(companyCounts);
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" role="dialog" aria-modal="true" aria-label="Submit Attendance confirmation"><div className="w-full max-w-lg rounded-2xl bg-white shadow-xl"><div className="border-b px-6 py-5"><h2 className="text-xl font-bold text-slate-950">Submit Attendance?</h2><p className="mt-1 text-sm text-slate-500">This will submit attendance for all loaded companies at this site.</p></div><div className="space-y-3 px-6 py-5 text-sm"><p><span className="font-semibold">Site:</span> {siteName}</p><p><span className="font-semibold">Date:</span> {formatDate(date)}</p><p><span className="font-semibold">Employees:</span> {rows.length}</p><p><span className="font-semibold">Companies:</span> {companyIds.length}</p><div className="rounded-xl bg-slate-50 p-3">{companyIds.map((id) => <p key={id} className="text-slate-700">{companies.find((company: any) => company.id === id)?.label || id}: {companyCounts[id]} employees</p>)}</div><p className="text-slate-600">This will submit the attendance for approval.</p></div><div className="flex justify-end gap-3 border-t bg-slate-50 px-6 py-4"><button type="button" onClick={onCancel} disabled={saving} className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-100">Cancel</button><button type="button" onClick={onConfirm} disabled={saving} className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving ? "Submitting..." : "Submit Attendance"}</button></div></div></div>;
 }
 
 function Select({ label, value, onChange, options, disabled, allLabel }: { label: string; value: string; onChange: (value: string) => void; options: { id: string; label: string }[]; disabled?: boolean; allLabel?: string }) {
