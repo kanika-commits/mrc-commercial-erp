@@ -68,6 +68,18 @@ export async function requireAttendanceView(request: Request) {
   return requirePermission(request, HR_ATTENDANCE_MODULE, "view");
 }
 
+export async function requireAttendanceRegisterView(request: Request) {
+  return requirePermission(request, "hr_attendance_register", "view");
+}
+
+export async function requireEmployeeAttendanceLookupView(request: Request) {
+  return requireAnyPermission(request, [
+    { moduleCode: HR_ATTENDANCE_MODULE, actionCode: "view" },
+    { moduleCode: "hr_attendance_register", actionCode: "view" },
+    { moduleCode: HR_ATTENDANCE_APPROVAL_MODULE, actionCode: "view" },
+  ]);
+}
+
 export async function requireAttendancePolicyView(request: Request) {
   return requirePermission(request, HR_EMPLOYEE_ATTENDANCE_POLICY_MODULE, "view");
 }
@@ -113,6 +125,10 @@ function assignmentMatchesAccess(
   });
 }
 
+function hasExplicitSiteScope(accessRows: any[]) {
+  return accessRows.some((access) => Boolean(access.site_id));
+}
+
 function policyScopeMatchesAccess(
   scope: { organization_id?: string | null; company_id?: string | null; site_id?: string | null },
   accessRows: any[],
@@ -131,7 +147,9 @@ export async function loadEmployeeAttendanceLookups(
   auth: ServerPermissionContext,
 ) {
   const organizationScope = await loadActorOrganizationScope(admin, auth);
-  const assignments = isGlobalScope(organizationScope) ? { rows: [] as any[] } : await loadActorAssignments(admin, auth.user.id);
+  const assignments = isGlobalScope(organizationScope)
+    ? { rows: [] as any[], siteIds: [] as string[] }
+    : await loadActorAssignments(admin, auth.user.id);
 
   let employeeQuery = admin
     .from("hr_employees")
@@ -194,7 +212,13 @@ export async function loadEmployeeAttendanceLookups(
   const addPair = (row: any, source: "employee_assignment" | "employment_history" | "attendance_policy") => {
     if (!row?.organization_id || !row?.company_id || !row?.site_id) return;
     if (String(row.employment_status || "").toLowerCase() === "deleted") return;
-    if (!isGlobalScope(organizationScope) && !assignmentMatchesAccess(row, assignments.rows)) return;
+    if (!isGlobalScope(organizationScope)) {
+      if (hasExplicitSiteScope(assignments.rows)) {
+        if (!assignments.siteIds.includes(row.site_id)) return;
+      } else if (!assignmentMatchesAccess(row, assignments.rows)) {
+        return;
+      }
+    }
     const key = `${row.organization_id}:${row.company_id}:${row.site_id}`;
     pairMap.set(key, {
       ...(pairMap.get(key) || {}),
@@ -468,7 +492,7 @@ export async function validateCompanySiteScope(
 
   if (!isGlobalScope(organizationScope)) {
     const assignments = await loadActorAssignments(admin, auth.user.id);
-    if (assignments.siteIds.length > 0 && !assignments.siteIds.includes(siteId)) {
+    if (hasExplicitSiteScope(assignments.rows) && !assignments.siteIds.includes(siteId)) {
       return { response: jsonError("Selected site is not available for this user.", 403) } as const;
     }
     if (assignments.siteIds.length === 0 && assignments.companyIds.length > 0 && !assignments.companyIds.includes(companyId)) {

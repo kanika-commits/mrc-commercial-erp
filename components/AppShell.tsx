@@ -254,6 +254,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         [
           navLeaf("Employee Registration", "hr_employees", "/hr/employees"),
           navLeaf("Attendance", "hr_attendance", "/hr/attendance/daily"),
+          navLeaf("Attendance Register", "hr_attendance_register", "/hr/attendance/monthly"),
           navLeaf("Attendance Approval", "hr_attendance_approval", "/hr/attendance-approval"),
           placeholder("Salary"),
           navLeaf("Reimbursement", "reimbursements", "/hr/reimbursements"),
@@ -587,7 +588,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       "/labour/workers/import": "labour_import",
       "/labour/attendance/daily": "labour_attendance",
       "/hr/attendance/daily": "employee_attendance",
-      "/hr/attendance/monthly": "employee_attendance",
+      "/hr/attendance/monthly": "hr_attendance_register",
       "/organizations": "organizations",
       "/companies": "companies",
       "/sites": "sites",

@@ -9,13 +9,13 @@ import {
   loadEmployeeAttendanceLookups,
   loadEmployeeAttendancePolicyForScope,
   parseMonthlyParams,
-  requireAttendanceView,
+  requireAttendanceRegisterView,
   validateCompanySiteScope,
 } from "../_shared";
 
 export async function GET(request: Request) {
   try {
-    const auth = await requireAttendanceView(request);
+    const auth = await requireAttendanceRegisterView(request);
     if ("response" in auth) return auth.response;
 
     const params = parseMonthlyParams(request.url);

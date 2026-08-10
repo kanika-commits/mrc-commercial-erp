@@ -94,6 +94,12 @@ const PERMISSION_PRESENTATION: Record<string, VisiblePermissionPresentation> = {
     visible_sort_order: 20,
     visible_actions: ["view", "add", "edit", "submit", "override", "export"],
   },
+  hr_attendance_register: {
+    visible_group: "Human Resources",
+    visible_name: "Attendance Register",
+    visible_sort_order: 25,
+    visible_actions: ["view"],
+  },
   hr_attendance_approval: {
     visible_group: "Human Resources",
     visible_name: "Attendance Approval",

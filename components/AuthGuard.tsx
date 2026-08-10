@@ -80,7 +80,9 @@ function hasExplicitHrRouteAccess(
     pathname === "/hr/attendance/monthly" ||
     /^\/hr\/attendance\/periods\/[^/]+$/.test(pathname)
   ) {
-    return can(access.permissions, "hr_attendance", "view");
+    return pathname === "/hr/attendance/monthly"
+      ? can(access.permissions, "hr_attendance_register", "view")
+      : can(access.permissions, "hr_attendance", "view");
   }
 
   if (pathname === "/settings/policies/employee-attendance") {

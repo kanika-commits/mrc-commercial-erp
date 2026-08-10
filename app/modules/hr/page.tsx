@@ -44,7 +44,7 @@ const primaryModules = [
     title: "Attendance Register",
     description: "Review monthly day-wise attendance, totals and period status.",
     href: "/hr/attendance/monthly",
-    moduleCode: "hr_attendance",
+    moduleCode: "hr_attendance_register",
     icon: CalendarCheck,
     className: "from-green-50 to-white border-green-100 text-green-700",
   },
@@ -106,7 +106,7 @@ const primaryModules = [
   },
 ];
 
-const directHrModuleCodes = new Set(["hr_employees", "hr_attendance", "hr_attendance_approval", "reimbursements"]);
+const directHrModuleCodes = new Set(["hr_employees", "hr_attendance", "hr_attendance_register", "hr_attendance_approval", "reimbursements"]);
 const musterModuleCodes = new Set(["labour_workspace", "labour_workers", "labour_attendance", "labour_site_in", "labour_engineer_daily", "labour_daily_submission"]);
 
 export default function HrLauncherPage() {

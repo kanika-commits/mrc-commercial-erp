@@ -24,7 +24,7 @@ const cards = [
 export default function AttendancePage() {
   const { access } = useAccessContext();
   const permissions = access?.permissions || [];
-  const canView = can(permissions, "hr_attendance", "view");
+  const canView = can(permissions, "hr_attendance", "view") || can(permissions, "hr_attendance_register", "view");
 
   return (
     <section className="space-y-6">

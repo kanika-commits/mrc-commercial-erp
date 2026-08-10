@@ -89,6 +89,7 @@ const MODULE_ACTIONS: Record<string, PermissionAction[]> = {
   hr_departments: ["view", "add", "edit", "delete"],
   hr_designations: ["view", "add", "edit", "delete"],
   hr_attendance: ["view", "add", "edit", "submit", "override", "export"],
+  hr_attendance_register: ["view"],
   hr_attendance_approval: ["view", "approve", "reject"],
   hr_employee_attendance_policy: ["view", "add", "edit"],
   hr_employee_import: ["view", "upload", "execute", "export"],

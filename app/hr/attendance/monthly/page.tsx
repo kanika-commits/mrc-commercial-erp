@@ -8,13 +8,13 @@ import HrSectionNav from "@/components/hr/HrSectionNav";
 import { apiFetch, formatDate } from "@/components/hr/hrClient";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
-import { ATTENDANCE_STATUS_CODES, ATTENDANCE_STATUSES, EMPLOYEE_STANDARD_WORKING_HOURS, currentIndiaDate, monthStart } from "@/lib/hr/attendance";
+import { ATTENDANCE_STATUS_CODES, currentIndiaDate, monthStart } from "@/lib/hr/attendance";
 import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 export default function MonthlyAttendancePage() {
   const { access } = useAccessContext();
   const permissions = access?.permissions || [];
-  const canView = can(permissions, "hr_attendance", "view");
+  const canView = can(permissions, "hr_attendance_register", "view");
   const canApprove = can(permissions, "hr_attendance_approval", "approve");
   const canReject = can(permissions, "hr_attendance_approval", "reject");
   const canExport = can(permissions, "hr_attendance", "export");
@@ -24,6 +24,7 @@ export default function MonthlyAttendancePage() {
   const [companyId, setCompanyId] = useState("");
   const [siteId, setSiteId] = useState("");
   const [month, setMonth] = useState(monthStart(currentIndiaDate())!.slice(0, 7));
+  const [employeeSearch, setEmployeeSearch] = useState("");
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -36,6 +37,14 @@ export default function MonthlyAttendancePage() {
     () => result?.rows?.filter((row: any) => !companyId || row.employee.company_id === companyId) || [],
     [companyId, result],
   );
+  const filteredRows = useMemo(() => {
+    const query = employeeSearch.trim().toLowerCase();
+    if (!query) return visibleRows;
+    return visibleRows.filter((row: any) => {
+      const employee = row.employee || {};
+      return `${employee.employee_name || ""} ${employee.employee_code || ""}`.toLowerCase().includes(query);
+    });
+  }, [employeeSearch, visibleRows]);
   const pendingApproval = result && ["submitted", "level_1_approved", "level_2_approved"].includes(result.period?.status);
 
   useEffect(() => {
@@ -137,7 +146,7 @@ export default function MonthlyAttendancePage() {
       <AlertMessage type="success" message={success} onClose={() => setSuccess("")} />
 
       <section className="rounded-2xl border bg-white p-4 shadow-sm">
-        <div className="grid gap-3 md:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-5">
           <Select label="Site *" value={siteId} onChange={setSiteId} options={visibleSites} />
           <Select label="Company" value={companyId} onChange={setCompanyId} options={lookups.companies} allLabel="All Companies" />
           <label className="block">
@@ -149,20 +158,15 @@ export default function MonthlyAttendancePage() {
               {loading ? "Loading..." : "Load"}
             </button>
           </div>
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Search Employee</span>
+            <input type="search" value={employeeSearch} onChange={(event) => setEmployeeSearch(event.target.value)} placeholder="Search by employee name" className="h-10 w-full rounded-xl border px-3 text-sm" />
+          </label>
         </div>
       </section>
 
       {result && (
         <>
-          <div className="grid gap-3 md:grid-cols-6">
-            <Summary label="Employees" value={visibleRows.length} />
-            <Summary label="Recorded" value={visibleRows.reduce((total: number, row: any) => total + Number(row.summary?.total_recorded || 0), 0)} />
-            <Summary label="Missing" value={visibleRows.reduce((total: number, row: any) => total + Number(row.summary?.missing || 0), 0)} />
-            <Summary label="Period" value={result.period?.status || "draft"} />
-            <Summary label="Working Day" value={`${result.policy?.standard_working_hours || EMPLOYEE_STANDARD_WORKING_HOURS} hrs`} />
-            <Summary label="Locked Days" value={result.day_locks?.length || 0} />
-          </div>
-
           <section className="rounded-2xl border bg-white shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
               <div>
@@ -185,13 +189,10 @@ export default function MonthlyAttendancePage() {
                 <tr>
                   <th className="sticky left-0 z-10 bg-slate-50 px-3 py-3">Employee</th>
                   {result.dates.map((date: string) => <th key={date} className="px-2 py-3 text-center">{date.slice(-2)}</th>)}
-                  {ATTENDANCE_STATUSES.map((status) => <th key={status} className="px-2 py-3 text-center">{ATTENDANCE_STATUS_CODES[status]}</th>)}
-                  <th className="px-2 py-3 text-center">Missing</th>
-                  <th className="px-2 py-3 text-center">Recorded</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {visibleRows.map((row: any) => (
+                {filteredRows.map((row: any) => (
                   <tr key={row.employee.id}>
                     <td className="sticky left-0 z-10 bg-white px-3 py-3">
                       <p className="font-semibold text-slate-950">{row.employee.employee_name}</p>
@@ -202,9 +203,6 @@ export default function MonthlyAttendancePage() {
                         {day ? ATTENDANCE_STATUS_CODES[day.status as keyof typeof ATTENDANCE_STATUS_CODES] : "-"}
                       </td>
                     ))}
-                    {ATTENDANCE_STATUSES.map((status) => <td key={status} className="px-2 py-3 text-center font-semibold">{row.summary?.[status] || 0}</td>)}
-                    <td className="px-2 py-3 text-center font-semibold">{row.summary?.missing || 0}</td>
-                    <td className="px-2 py-3 text-center font-semibold">{row.summary?.total_recorded || 0}</td>
                   </tr>
                 ))}
               </tbody>
@@ -226,8 +224,4 @@ function Select({ label, value, onChange, options, allLabel }: { label: string; 
       </select>
     </label>
   );
-}
-
-function Summary({ label, value }: { label: string; value: string | number }) {
-  return <div className="rounded-2xl border bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 text-xl font-bold text-slate-950">{value}</p></div>;
 }

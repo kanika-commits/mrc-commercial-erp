@@ -41,11 +41,14 @@ async function accessibleDailyRows(admin: any, auth: any, statuses: string[]) {
   let rows = data || [];
   if (!isGlobalScope(organizationScope)) {
     const assignments = await loadActorAssignments(admin, auth.user.id);
-    rows = rows.filter((row: any) => assignments.rows.some((assignment: any) =>
-      (!assignment.organization_id || assignment.organization_id === row.organization_id) &&
-      (!assignment.company_id || assignment.company_id === row.company_id) &&
-      (!assignment.site_id || assignment.site_id === row.site_id),
-    ));
+    const explicitSiteIds = new Set(assignments.rows.map((assignment: any) => assignment.site_id).filter(Boolean));
+    rows = rows.filter((row: any) => explicitSiteIds.size
+      ? explicitSiteIds.has(row.site_id)
+      : assignments.rows.some((assignment: any) =>
+        (!assignment.organization_id || assignment.organization_id === row.organization_id) &&
+        (!assignment.company_id || assignment.company_id === row.company_id) &&
+        (!assignment.site_id || assignment.site_id === row.site_id),
+      ));
   }
   return rows;
 }

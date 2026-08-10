@@ -3,12 +3,12 @@ import {
   adminClient,
   jsonError,
   loadEmployeeAttendanceLookups,
-  requireAttendanceView,
+  requireEmployeeAttendanceLookupView,
 } from "../_shared";
 
 export async function GET(request: Request) {
   try {
-    const auth = await requireAttendanceView(request);
+    const auth = await requireEmployeeAttendanceLookupView(request);
     if ("response" in auth) return auth.response;
     const admin = adminClient();
     const lookups = await loadEmployeeAttendanceLookups(admin, auth);
