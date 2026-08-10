@@ -7,7 +7,7 @@ import { useAccessContext } from "@/components/AccessContext";
 import HrSectionNav from "@/components/hr/HrSectionNav";
 import { useNotificationCounts } from "@/components/NotificationCountsContext";
 import { apiFetch, formatDate } from "@/components/hr/hrClient";
-import { ATTENDANCE_STATUS_CODES, ATTENDANCE_STATUS_LABELS, ATTENDANCE_STATUSES, currentIndiaDate } from "@/lib/hr/attendance";
+import { ATTENDANCE_STATUS_CODES, ATTENDANCE_STATUS_LABELS, ATTENDANCE_STATUSES } from "@/lib/hr/attendance";
 
 const attendancePeriodStatusOptions = [
   ["pending", "Pending Approval"],
@@ -48,6 +48,11 @@ export default function EmployeeAttendanceApprovalPage() {
   const { access } = useAccessContext();
   const isPlatformOwner = Boolean(access?.roleCodes.includes("platform_owner"));
   const [rows, setRows] = useState<any[]>([]);
+  const [sites, setSites] = useState<any[]>([]);
+  const [siteId, setSiteId] = useState("");
+  const [appliedSiteId, setAppliedSiteId] = useState("");
+  const [appliedFromDate, setAppliedFromDate] = useState("");
+  const [appliedToDate, setAppliedToDate] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [detail, setDetail] = useState<any>(null);
   const [fromDate, setFromDate] = useState("");
@@ -57,6 +62,7 @@ export default function EmployeeAttendanceApprovalPage() {
   const [departmentFilter, setDepartmentFilter] = useState("");
   const [designationFilter, setDesignationFilter] = useState("");
   const [periodStatusFilter, setPeriodStatusFilter] = useState("pending");
+  const [appliedPeriodStatus, setAppliedPeriodStatus] = useState("pending");
   const [statusFilter, setStatusFilter] = useState("");
   const [employeeSearch, setEmployeeSearch] = useState("");
   const [showHistory, setShowHistory] = useState(false);
@@ -71,8 +77,7 @@ export default function EmployeeAttendanceApprovalPage() {
   const [approveOpen, setApproveOpen] = useState(false);
 
   const selectedRow = useMemo(() => rows.find((row) => row.id === selectedId) || null, [rows, selectedId]);
-  const monthEnded = detail?.dates?.length ? detail.dates[detail.dates.length - 1] < currentIndiaDate() : false;
-  const finalApproveBlocked = detail?.periods?.some((period: any) => period.status !== "finalized") && !monthEnded;
+  const hasPendingInRange = Boolean(detail?.workflow_states?.some((state: any) => state.status === "submitted"));
   const filteredRows = useMemo(() => {
     if (!detail?.rows) return [];
     const start = fromDate || detail.dates?.[0] || "";
@@ -100,12 +105,17 @@ export default function EmployeeAttendanceApprovalPage() {
       .filter((row: any) => !statusFilter || row.filtered_days.some((day: any) => day?.status === statusFilter));
   }, [companyFilter, departmentFilter, designationFilter, detail, employeeFilter, employeeSearch, fromDate, statusFilter, toDate]);
 
-  async function loadQueue(preferredId = selectedId, nextPeriodStatus = periodStatusFilter) {
+  async function loadQueue(preferredId = selectedId, nextPeriodStatus = appliedPeriodStatus, nextSiteId = appliedSiteId, nextFromDate = appliedFromDate, nextToDate = appliedToDate) {
     setLoading(true);
     setMessage("");
     try {
-      const payload = await apiFetch(`/api/hr/attendance/approval-groups?period_status=${encodeURIComponent(nextPeriodStatus)}`);
-      const nextRows = payload.groups || [];
+      const query = new URLSearchParams({ period_status: nextPeriodStatus });
+      if (nextSiteId) query.set("site_id", nextSiteId);
+      if (nextFromDate) query.set("from_date", nextFromDate);
+      if (nextToDate) query.set("to_date", nextToDate);
+      const payload = await apiFetch(`/api/hr/attendance/approval-groups?${query.toString()}`);
+      const nextRows = nextSiteId ? payload.groups || [] : [];
+      setSites(payload.sites || []);
       setRows(nextRows);
       const nextSelected = nextRows.some((row: any) => row.id === preferredId) ? preferredId : nextRows[0]?.id || "";
       setSelectedId(nextSelected);
@@ -121,17 +131,22 @@ export default function EmployeeAttendanceApprovalPage() {
     }
   }
 
-  async function loadDetail(id: string) {
+  async function loadDetail(id: string, range?: { from: string; to: string }) {
     if (!id) return;
     const group = rows.find((row) => row.id === id);
     if (!group) return;
     setDetailLoading(true);
     setMessage("");
     try {
-      const payload = await apiFetch(`/api/hr/attendance/approval-groups?site_id=${encodeURIComponent(group.site_id)}&period_month=${encodeURIComponent(group.period_month)}`);
+      const queueDates = rows.map((row: any) => row.attendance_date).filter(Boolean).sort();
+      const nextFrom = range?.from || appliedFromDate || queueDates[0] || group.attendance_date;
+      const nextTo = range?.to || appliedToDate || queueDates[queueDates.length - 1] || group.attendance_date;
+      const payload = await apiFetch(`/api/hr/attendance/approval-groups?period_status=${encodeURIComponent(appliedPeriodStatus)}&site_id=${encodeURIComponent(group.site_id)}&attendance_date=${encodeURIComponent(group.attendance_date)}&from_date=${encodeURIComponent(nextFrom)}&to_date=${encodeURIComponent(nextTo)}`);
       setDetail(payload);
-      setFromDate(payload.dates?.[0] || "");
-      setToDate(payload.dates?.[payload.dates.length - 1] || "");
+      if (range || appliedFromDate || appliedToDate) {
+        setFromDate(payload.dates?.[0] || "");
+        setToDate(payload.dates?.[payload.dates.length - 1] || "");
+      }
       setEmployeeFilter("");
       setCompanyFilter("");
       setDepartmentFilter("");
@@ -148,9 +163,9 @@ export default function EmployeeAttendanceApprovalPage() {
   }
 
   useEffect(() => {
-    loadQueue("", periodStatusFilter);
+    loadQueue("", appliedPeriodStatus, appliedSiteId, appliedFromDate, appliedToDate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [periodStatusFilter]);
+  }, [appliedPeriodStatus, appliedSiteId, appliedFromDate, appliedToDate]);
 
   useEffect(() => {
     if (selectedId) loadDetail(selectedId);
@@ -159,7 +174,6 @@ export default function EmployeeAttendanceApprovalPage() {
 
   async function approvalAction(action: "finalize" | "send-back") {
     if (!selectedId) return;
-    if (action === "finalize" && finalApproveBlocked) return;
     const reason = action === "send-back" ? sendBackReason.trim() : "";
     if (action === "send-back" && reason.length < 10) {
       setMessage("Enter a send-back reason of at least 10 characters.");
@@ -170,10 +184,11 @@ export default function EmployeeAttendanceApprovalPage() {
     setSuccess("");
     try {
       const endpoint = action === "send-back" ? "/api/hr/attendance/approval-groups/send-back" : "/api/hr/attendance/approval-groups/approve";
-      const eligibleIds = (selectedRow?.periods || []).filter((period: any) => action === "finalize" ? period.can_approve : period.can_send_back).map((period: any) => period.period_id);
-      const result = await apiFetch(endpoint, { method: "POST", body: JSON.stringify({ period_ids: eligibleIds, reason }) });
+      const eligibleIds = (detail?.workflow_states || selectedRow?.periods || []).filter((period: any) => action === "finalize" ? period.status === "submitted" : period.status === "submitted").map((period: any) => period.id || period.daily_submission_id).filter(Boolean);
+      const result = await apiFetch(endpoint, { method: "POST", body: JSON.stringify({ daily_submission_ids: eligibleIds, reason }) });
       const failures = (result.results || []).filter((item: any) => !item.success);
-      setSuccess(failures.length ? `Completed with ${failures.length} company-period failure(s).` : action === "send-back" ? "Attendance periods sent back." : "Attendance periods approved.");
+      const resultSummary = (result.results || []).map((item: any) => `${formatDate(item.attendance_date)} - ${item.success ? action === "send-back" ? "Sent Back" : "Approved" : `Failed: ${item.error || "Unknown error"}`}`).join(" | ");
+      setSuccess(resultSummary || (action === "send-back" ? "Attendance dates sent back." : "Attendance dates approved."));
       if (action === "send-back") notifications.refresh();
       const nextSelected = await loadQueue(selectedId);
       if (nextSelected) await loadDetail(nextSelected);
@@ -185,13 +200,13 @@ export default function EmployeeAttendanceApprovalPage() {
   }
 
   function openSendBackModal() {
-    setSendBackIds((selectedRow?.periods || []).filter((period: any) => period.can_send_back).map((period: any) => period.period_id));
+    setSendBackIds((detail?.workflow_states || []).filter((period: any) => period.status === "submitted").map((period: any) => period.id));
     setSendBackReason("");
     setSendBackOpen(true);
   }
 
   function openApproveModal() {
-    if (!selectedId || finalApproveBlocked) return;
+    if (!selectedId) return;
     setApproveOpen(true);
   }
 
@@ -224,32 +239,54 @@ export default function EmployeeAttendanceApprovalPage() {
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-slate-950">Attendance Approval</h1>
-          <p className="text-sm text-slate-500">Review submitted monthly employee attendance periods at your configured approval level.</p>
+          <p className="text-sm text-slate-500">Review submitted daily employee attendance registers at your configured approval level.</p>
         </div>
       </header>
       <HrSectionNav />
       <AlertMessage type="error" message={message} onClose={() => setMessage("")} />
       <AlertMessage type="success" message={success} onClose={() => setSuccess("")} />
 
+      <section className="rounded-2xl border bg-white p-4 shadow-sm">
+        <div className="grid gap-3 md:grid-cols-5 md:items-end">
+          <Select label="Site *" value={siteId} onChange={setSiteId} options={sites} emptyLabel="Select Site" />
+          <Select label="Daily Attendance Status" value={periodStatusFilter} onChange={setPeriodStatusFilter} options={attendancePeriodStatusOptions.map(([id, label]) => ({ id, label }))} emptyLabel="Select Status" />
+          <DateInput label="From Date" value={fromDate} onChange={setFromDate} />
+          <DateInput label="To Date" value={toDate} onChange={setToDate} />
+          <button type="button" onClick={() => {
+            if (!siteId) return setMessage("Select a site before applying filters.");
+            if (Boolean(fromDate) !== Boolean(toDate)) return setMessage("Select both From Date and To Date, or leave both blank.");
+            if ((fromDate && !/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) || (toDate && !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) || (fromDate && toDate && fromDate > toDate)) return setMessage("From Date cannot be after To Date.");
+            setAppliedSiteId(siteId);
+            setAppliedPeriodStatus(periodStatusFilter);
+            setAppliedFromDate(fromDate);
+            setAppliedToDate(toDate);
+            setSelectedId("");
+          }} className="h-10 rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white">Apply Filters</button>
+        </div>
+      </section>
+
       <section className="rounded-2xl border bg-white shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
           <div>
-            <h2 className="font-semibold text-slate-950">Attendance Period Queue</h2>
-            <p className="text-sm text-slate-500">Browse attendance periods by approval workflow state.</p>
+            <h2 className="font-semibold text-slate-950">Daily Attendance Approval Queue</h2>
+            <p className="text-sm text-slate-500">Browse submitted daily attendance registers by site, date, and approval status.</p>
           </div>
-          <label className="min-w-[220px] text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Attendance Period Status
-            <select value={periodStatusFilter} onChange={(event) => setPeriodStatusFilter(event.target.value)} className="mt-1 h-10 w-full rounded-xl border px-3 text-sm font-normal normal-case tracking-normal">
-              {attendancePeriodStatusOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
-          </label>
         </div>
         {loading ? <p className="p-4 text-sm text-slate-500">Loading approval queue...</p> : rows.length === 0 ? (
           <div className="p-8 text-center text-sm text-slate-500">
-            <p className="font-semibold text-slate-700">No attendance periods match this approval status.</p>
-            <p className="mt-1">Change Attendance Period Status to browse another workflow state.</p>
+            <p className="font-semibold text-slate-700">{appliedSiteId ? "No daily attendance registers match the selected filters." : "Select a site to view attendance awaiting approval."}</p>
+            {appliedSiteId && <p className="mt-1">Try a different status or date range.</p>}
           </div>
-        ) : <MonthlyQueue rows={rows} selectedId={selectedId} onSelect={setSelectedId} />}
+        ) : <MonthlyQueue rows={rows} selectedId={selectedId} onSelect={(id) => {
+          const next = rows.find((row) => row.id === id);
+          setSelectedId(id);
+          if (next) {
+            setFromDate(next.attendance_date);
+            setToDate(next.attendance_date);
+            setAppliedFromDate(next.attendance_date);
+            setAppliedToDate(next.attendance_date);
+          }
+        }} />}
       </section>
 
       {selectedRow && (
@@ -257,32 +294,27 @@ export default function EmployeeAttendanceApprovalPage() {
           <div className="rounded-2xl border bg-white p-4 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Attendance Period</p>
-                <h2 className="mt-1 text-xl font-bold text-slate-950">{selectedRow.site_name} · {selectedRow.period_label}</h2>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Daily Attendance Register</p>
+                <h2 className="mt-1 text-xl font-bold text-slate-950">{selectedRow.site_name} · {formatDate(selectedRow.attendance_date)}</h2>
                 <p className="mt-1 text-sm text-slate-500">{selectedRow.total_employee_count} Employees · {selectedRow.company_count} Companies · {selectedRow.status_label}</p>
                 <div className="mt-2 space-y-0.5 text-xs text-slate-500">
-                  {(selectedRow.periods || []).map((period: any) => <p key={period.period_id}>{period.company_name} · {period.employee_count} employees</p>)}
+                  {(selectedRow.periods || []).map((period: any) => <p key={period.daily_submission_id}>{period.company_name} · {period.employee_count} employees</p>)}
                 </div>
               </div>
               <div className="max-w-md text-sm text-slate-500">
-                Filters only affect the displayed records. Approval applies to the complete attendance period.
+                Filters affect only the displayed employee rows. Approval applies only to submitted attendance dates in the selected range.
               </div>
               <div className="flex flex-wrap gap-2">
-                <button type="button" disabled={actionLoading || detailLoading} onClick={openSendBackModal} className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-slate-50 disabled:opacity-60">
+                <button type="button" disabled={actionLoading || detailLoading || !hasPendingInRange} onClick={openSendBackModal} className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-slate-50 disabled:opacity-60">
                   <RotateCcw className="h-4 w-4" />
                   Send Back
                 </button>
-                <button type="button" title={finalApproveBlocked ? "Final approval becomes available after the attendance period ends." : "Approve attendance period"} disabled={actionLoading || detailLoading || finalApproveBlocked} onClick={openApproveModal} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white outline-none transition focus:ring-2 focus:ring-slate-400 disabled:cursor-not-allowed disabled:opacity-60">
+                <button type="button" title="Approve submitted attendance dates" disabled={actionLoading || detailLoading || !hasPendingInRange} onClick={openApproveModal} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white outline-none transition focus:ring-2 focus:ring-slate-400 disabled:cursor-not-allowed disabled:opacity-60">
                   <CheckCircle2 className="h-4 w-4" />
                   Approve
                 </button>
               </div>
             </div>
-            {finalApproveBlocked && (
-              <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
-                {selectedRow.period_label} attendance is still in progress. Final approval will be available after month-end.
-              </p>
-            )}
           </div>
           {detailLoading || !detail ? <p className="rounded-2xl border bg-white p-4 text-sm text-slate-500 shadow-sm">Loading approval details...</p> : (
             <MonthlyDetail
@@ -297,8 +329,8 @@ export default function EmployeeAttendanceApprovalPage() {
               statusFilter={statusFilter}
               employeeSearch={employeeSearch}
               showHistory={showHistory}
-              onFromDate={setFromDate}
-              onToDate={setToDate}
+              onFromDate={(value: string) => { if (toDate && value > toDate) { setMessage("From Date cannot be after To Date."); return; } setFromDate(value); if (value && selectedId) void loadDetail(selectedId, { from: value, to: toDate || value }); }}
+              onToDate={(value: string) => { if (fromDate && value < fromDate) { setMessage("To Date cannot be before From Date."); return; } setToDate(value); if (value && selectedId) void loadDetail(selectedId, { from: fromDate || value, to: value }); }}
               onEmployee={setEmployeeFilter}
               onCompany={setCompanyFilter}
               onDepartment={setDepartmentFilter}
@@ -306,14 +338,16 @@ export default function EmployeeAttendanceApprovalPage() {
               onStatus={setStatusFilter}
               onEmployeeSearch={setEmployeeSearch}
               onClearFilters={() => {
-                setFromDate(detail.dates?.[0] || "");
-                setToDate(detail.dates?.[detail.dates.length - 1] || "");
+                const selectedDate = selectedRow.attendance_date || detail.dates?.[0] || "";
+                setFromDate(selectedDate);
+                setToDate(selectedDate);
                 setEmployeeFilter("");
                 setCompanyFilter("");
                 setDepartmentFilter("");
                 setDesignationFilter("");
                 setStatusFilter("");
                 setEmployeeSearch("");
+                if (selectedId) void loadDetail(selectedId, { from: selectedDate, to: selectedDate });
               }}
               onToggleHistory={() => setShowHistory((current) => !current)}
             />
@@ -321,19 +355,20 @@ export default function EmployeeAttendanceApprovalPage() {
         </section>
       )}
       {approveOpen && selectedRow && detail && <ApproveDialog group={selectedRow} detail={detail} onCancel={() => setApproveOpen(false)} onConfirm={() => { setApproveOpen(false); void approvalAction("finalize"); }} saving={actionLoading} />}
-      {sendBackOpen && selectedRow && <SendBackDialog periods={selectedRow.periods || []} selectedIds={sendBackIds} reason={sendBackReason} onToggle={(id: string) => setSendBackIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])} onReason={setSendBackReason} onCancel={() => setSendBackOpen(false)} onConfirm={() => { setSendBackOpen(false); void approvalAction("send-back"); }} saving={actionLoading} />}
+      {sendBackOpen && selectedRow && <SendBackDialog periods={(detail?.workflow_states || []).filter((period: any) => period.status === "submitted")} selectedIds={sendBackIds} reason={sendBackReason} onToggle={(id: string) => setSendBackIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])} onReason={setSendBackReason} onCancel={() => setSendBackOpen(false)} onConfirm={() => { setSendBackOpen(false); void approvalAction("send-back"); }} saving={actionLoading} />}
     </section>
   );
 }
 
 function SendBackDialog({ periods, selectedIds, reason, onToggle, onReason, onCancel, onConfirm, saving }: any) {
-  const eligible = periods.filter((period: any) => period.can_send_back);
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" role="dialog" aria-modal="true" aria-label="Send Back Attendance"><div className="w-full max-w-lg rounded-2xl bg-white shadow-xl"><div className="border-b px-6 py-5"><h2 className="text-xl font-bold text-slate-950">Send Back Attendance</h2><p className="mt-1 text-sm text-slate-500">Select the company periods that need correction.</p></div><div className="space-y-3 px-6 py-5">{eligible.map((period: any) => <label key={period.period_id} className="flex items-start gap-3 rounded-xl border p-3 text-sm"><input type="checkbox" checked={selectedIds.includes(period.period_id)} onChange={() => onToggle(period.period_id)} className="mt-1" /><span><span className="font-semibold text-slate-950">{period.company_name}</span><span className="block text-slate-500">{period.status_label}</span></span></label>)}<label className="block text-sm font-semibold text-slate-700"><span>Reason *</span><textarea value={reason} onChange={(event) => onReason(event.target.value)} rows={3} className="mt-1 w-full rounded-xl border px-3 py-2 text-sm" /></label></div><div className="flex justify-end gap-3 border-t bg-slate-50 px-6 py-4"><button type="button" onClick={onCancel} disabled={saving} className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold">Cancel</button><button type="button" onClick={onConfirm} disabled={saving || !selectedIds.length || reason.trim().length < 10} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving ? "Sending..." : "Send Back"}</button></div></div></div>;
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" role="dialog" aria-modal="true" aria-label="Send Back Attendance"><div className="w-full max-w-lg rounded-2xl bg-white shadow-xl"><div className="border-b px-6 py-5"><h2 className="text-xl font-bold text-slate-950">Send Back Attendance</h2><p className="mt-1 text-sm text-slate-500">Select the submitted dates and company registers that need correction.</p></div><div className="space-y-3 px-6 py-5">{periods.map((period: any) => <label key={period.id} className="flex items-start gap-3 rounded-xl border p-3 text-sm"><input type="checkbox" checked={selectedIds.includes(period.id)} onChange={() => onToggle(period.id)} className="mt-1" /><span><span className="font-semibold text-slate-950">{formatDate(period.attendance_date)} · {period.company_name || "Company"}</span><span className="block text-slate-500">Submitted</span></span></label>)}<label className="block text-sm font-semibold text-slate-700"><span>Reason *</span><textarea value={reason} onChange={(event) => onReason(event.target.value)} rows={3} className="mt-1 w-full rounded-xl border px-3 py-2 text-sm" /></label></div><div className="flex justify-end gap-3 border-t bg-slate-50 px-6 py-4"><button type="button" onClick={onCancel} disabled={saving} className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold">Cancel</button><button type="button" onClick={onConfirm} disabled={saving || !selectedIds.length || reason.trim().length < 10} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving ? "Sending..." : "Send Back"}</button></div></div></div>;
 }
 
 function ApproveDialog({ group, detail, onCancel, onConfirm, saving }: any) {
-  const datesWithAttendance = (detail.dates || []).filter((date: string, index: number) => (detail.rows || []).some((row: any) => Boolean(row.days?.[index])));
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" role="dialog" aria-modal="true" aria-label="Approve Attendance"><div className="w-full max-w-lg rounded-2xl bg-white shadow-xl"><div className="border-b px-6 py-5"><h2 className="text-xl font-bold text-slate-950">Approve Attendance</h2><p className="mt-1 text-sm text-slate-500">Review this grouped attendance submission before approval.</p></div><div className="space-y-3 px-6 py-5 text-sm"><div className="grid grid-cols-2 gap-3 rounded-xl bg-slate-50 p-3"><div><p className="text-xs uppercase tracking-wide text-slate-500">Site</p><p className="font-semibold text-slate-950">{group.site_name}</p></div><div><p className="text-xs uppercase tracking-wide text-slate-500">Month</p><p className="font-semibold text-slate-950">{group.period_label}</p></div><div><p className="text-xs uppercase tracking-wide text-slate-500">Employees</p><p className="font-semibold text-slate-950">{group.total_employee_count}</p></div><div><p className="text-xs uppercase tracking-wide text-slate-500">Companies</p><p className="font-semibold text-slate-950">{group.company_count}</p></div></div><div><p className="font-semibold text-slate-700">Company periods</p><div className="mt-1 space-y-1 text-slate-600">{(group.periods || []).map((period: any) => <p key={period.period_id}>{period.company_name} · {period.employee_count} employees</p>)}</div></div><div><p className="font-semibold text-slate-700">Dates with attendance</p><p className="mt-1 text-slate-600">{datesWithAttendance.length ? datesWithAttendance.map((date: string) => formatDate(date)).join(", ") : "No attendance dates recorded."}</p></div></div><div className="flex justify-end gap-3 border-t bg-slate-50 px-6 py-4"><button type="button" onClick={onCancel} disabled={saving} className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold">Cancel</button><button type="button" onClick={onConfirm} disabled={saving} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving ? "Approving..." : "Approve"}</button></div></div></div>;
+  const pending = (detail.workflow_states || []).filter((state: any) => state.status === "submitted");
+  const dates = Array.from(new Set(pending.map((state: any) => state.attendance_date))).sort() as string[];
+  const companies = Array.from(new Set(pending.map((state: any) => state.company_id))).length;
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" role="dialog" aria-modal="true" aria-label="Approve Employee Attendance"><div className="w-full max-w-lg rounded-2xl bg-white shadow-xl"><div className="border-b px-6 py-5"><h2 className="text-xl font-bold text-slate-950">Approve Employee Attendance?</h2><p className="mt-1 text-sm text-slate-500">Only submitted daily registers in the selected range will be approved.</p></div><div className="space-y-3 px-6 py-5 text-sm"><div className="grid grid-cols-2 gap-3 rounded-xl bg-slate-50 p-3"><div><p className="text-xs uppercase tracking-wide text-slate-500">Site</p><p className="font-semibold text-slate-950">{group.site_name}</p></div><div><p className="text-xs uppercase tracking-wide text-slate-500">Date Range</p><p className="font-semibold text-slate-950">{formatDate(detail.dates?.[0])} - {formatDate(detail.dates?.[detail.dates.length - 1])}</p></div><div><p className="text-xs uppercase tracking-wide text-slate-500">Pending Dates to Approve</p><p className="font-semibold text-slate-950">{dates.length}</p></div><div><p className="text-xs uppercase tracking-wide text-slate-500">Companies</p><p className="font-semibold text-slate-950">{companies}</p></div></div><div><p className="font-semibold text-slate-700">Dates</p><p className="mt-1 text-slate-600">{dates.length ? dates.map((date: string) => formatDate(date)).join(", ") : "No submitted dates in this range."}</p></div></div><div className="flex justify-end gap-3 border-t bg-slate-50 px-6 py-4"><button type="button" onClick={onCancel} disabled={saving} className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold">Cancel</button><button type="button" onClick={onConfirm} disabled={saving || !pending.length} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving ? "Approving..." : "Approve"}</button></div></div></div>;
 }
 
 function MonthlyQueue({ rows, selectedId, onSelect }: { rows: any[]; selectedId: string; onSelect: (id: string) => void }) {
@@ -341,7 +376,7 @@ function MonthlyQueue({ rows, selectedId, onSelect }: { rows: any[]; selectedId:
     <div className="overflow-x-auto">
       <table className="w-full min-w-[900px] text-left text-sm">
         <thead className="border-b bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-          <tr><th className="px-4 py-3">Month</th><th className="px-4 py-3">Site</th><th className="px-4 py-3 text-center">Employees</th><th className="px-4 py-3 text-center">Companies</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Action</th></tr>
+          <tr><th className="px-4 py-3">Date</th><th className="px-4 py-3">Site</th><th className="px-4 py-3 text-center">Employees</th><th className="px-4 py-3 text-center">Companies</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Action</th></tr>
         </thead>
         <tbody className="divide-y">{rows.map((row) => <tr key={row.id} className={row.id === selectedId ? "bg-slate-50" : ""}><td className="px-4 py-3 font-semibold text-slate-950">{row.period_label}</td><td className="px-4 py-3">{row.site_name}</td><td className="px-4 py-3 text-center font-semibold">{row.total_employee_count ?? "-"}</td><td className="px-4 py-3 text-center">{row.company_count ?? "-"}</td><td className="px-4 py-3">{row.status_label}</td><td className="px-4 py-3 text-right"><button type="button" onClick={() => onSelect(row.id)} className="rounded-xl border px-3 py-2 text-xs font-semibold outline-none hover:bg-white focus:ring-2 focus:ring-slate-400">Review</button></td></tr>)}</tbody>
       </table>
@@ -378,8 +413,6 @@ function MonthlyDetail({ detail, rows, fromDate, toDate, employeeFilter, company
           <div className="flex flex-wrap gap-2"><button type="button" onClick={() => setShowMoreFilters((current) => !current)} className="rounded-xl border px-3 py-2 text-xs font-semibold outline-none hover:bg-slate-50 focus:ring-2 focus:ring-slate-400">{showMoreFilters ? "Hide Filters" : "More Filters"}</button><button type="button" onClick={onClearFilters} className="rounded-xl border px-3 py-2 text-xs font-semibold outline-none hover:bg-slate-50 focus:ring-2 focus:ring-slate-400">Clear Filters</button></div>
         </div>
         <div className="mt-3 grid gap-3 md:grid-cols-3 xl:grid-cols-4">
-          <DateInput label="From Date" value={fromDate} min={minDate} max={maxDate} onChange={onFromDate} />
-          <DateInput label="To Date" value={toDate} min={minDate} max={maxDate} onChange={onToDate} />
           <Select label="Company" value={companyFilter} onChange={onCompany} options={(detail.periods || []).map((period: any) => ({ id: period.company_id, label: period.company_name }))} emptyLabel="All Companies" />
           <Select label="Employee" value={employeeFilter} onChange={onEmployee} options={(detail.employees || []).map((employee: any) => ({ id: employee.id, label: `${employee.employee_code || "-"} · ${employee.employee_name}` }))} />
           <label className="block xl:col-span-2">
@@ -422,7 +455,7 @@ function Select({ label, value, onChange, options, emptyLabel }: { label: string
   return <label className="block"><span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</span><select value={value} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-xl border px-3 text-sm"><option value="">{emptyLabel || `All ${label}`}</option>{options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>;
 }
 
-function DateInput({ label, value, min, max, onChange }: { label: string; value: string; min: string; max: string; onChange: (value: string) => void }) {
+function DateInput({ label, value, min, max, onChange }: { label: string; value: string; min?: string; max?: string; onChange: (value: string) => void }) {
   return <label className="block"><span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</span><input type="date" value={value} min={min} max={max} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-xl border px-3 text-sm" /></label>;
 }
 

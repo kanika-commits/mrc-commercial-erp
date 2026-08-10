@@ -1,6 +1,6 @@
 import { insertErpAuditLog } from "@/lib/serverAudit";
-import { actorName, datesForMonth } from "@/lib/hr/attendance";
-import { adminClient, jsonError, loadAttendanceRows, loadEligibleEmployees, loadEmployeeAttendancePolicyForScope, policySnapshot, requireAttendancePermission } from "../../../_shared";
+import { actorName } from "@/lib/hr/attendance";
+import { adminClient, ensureDailySubmission, jsonError, loadAttendanceRows, loadEligibleEmployees, loadEmployeeAttendancePolicyForScope, loadDailySubmission, requireAttendancePermission } from "../../../_shared";
 import { loadScopedPeriod } from "../_shared";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -12,38 +12,32 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const loaded = await loadScopedPeriod(admin, auth, id);
     if ("response" in loaded) return loaded.response;
     const period = loaded.period;
-    if (!["draft", "reopened"].includes(period.status)) return jsonError("Only draft or reopened periods can be submitted.", 403);
-    const dates = datesForMonth(period.period_month);
+    const payload = await request.json().catch(() => ({}));
+    const attendanceDate = String(payload.attendance_date || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate) || !attendanceDate.startsWith(String(period.period_month).slice(0, 7))) return jsonError("A valid attendance date in the selected period is required.", 400);
+    const dailySubmission = await loadDailySubmission(admin, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, attendanceDate });
+    if (dailySubmission && !["draft", "reopened"].includes(String(dailySubmission.status || "").toLowerCase())) return jsonError("This attendance date is already submitted or approved.", 403);
     const [employees, rows, policy] = await Promise.all([
-      loadEligibleEmployees(admin, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, startDate: dates[0], endDate: dates[dates.length - 1] }),
-      loadAttendanceRows(admin, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, startDate: dates[0], endDate: dates[dates.length - 1] }),
-      loadEmployeeAttendancePolicyForScope(admin, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id }),
+      loadEligibleEmployees(admin, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, startDate: attendanceDate, endDate: attendanceDate }),
+      loadAttendanceRows(admin, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, startDate: attendanceDate, endDate: attendanceDate }),
+      loadEmployeeAttendancePolicyForScope(admin, { organizationId: period.organization_id, siteId: period.site_id }),
     ]);
-    const summary = { total_recorded: rows.length, missing: Math.max(0, employees.length * dates.length - rows.length) };
-    const snapshot = policySnapshot(policy);
-    const approvalLevelCount = Number(snapshot.approval_level_count || 0);
-    const { data, error } = await admin
-      .from("employee_attendance_periods")
-      .update({
-        status: approvalLevelCount === 0 ? "finalized" : "submitted",
+    if (!policy) return jsonError("Employee Attendance Policy is not configured for the selected site.", 409);
+    if (!rows.length) return jsonError("Save attendance before submitting this date.", 400);
+    const daily = await ensureDailySubmission(admin, auth, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, periodId: period.id, attendanceDate });
+    const now = new Date().toISOString();
+    const { data, error } = await admin.from("employee_attendance_daily_submissions").update({
+        status: "submitted",
         submitted_by: auth.user.id,
         submitted_by_name: actorName(auth.user),
         submitted_by_email: auth.user.email || null,
-        submitted_at: new Date().toISOString(),
-        finalized_by: approvalLevelCount === 0 ? auth.user.id : null,
-        finalized_by_name: approvalLevelCount === 0 ? actorName(auth.user) : null,
-        finalized_by_email: approvalLevelCount === 0 ? auth.user.email || null : null,
-        finalized_at: approvalLevelCount === 0 ? new Date().toISOString() : null,
-        approval_workflow_version: snapshot.approval_workflow_version,
-        approval_workflow_snapshot: snapshot,
-        current_approval_level: approvalLevelCount === 0 ? null : 1,
-        summary,
+        submitted_at: now,
         updated_by: auth.user.id,
         updated_by_name: actorName(auth.user),
         updated_by_email: auth.user.email || null,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", period.id)
+      .eq("id", daily.id)
       .select("*")
       .single();
     if (error) throw error;
@@ -52,15 +46,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       companyId: period.company_id,
       siteId: period.site_id,
       moduleCode: "hr_attendance",
-      entityType: "employee_attendance_period",
-      recordId: period.id,
+      entityType: "employee_attendance_daily_submission",
+      recordId: data.id,
       action: "manual_event",
-      description: approvalLevelCount === 0 ? "Attendance period submitted and finalized without approval levels." : "Attendance period submitted.",
-      oldValues: period,
+      description: "Daily attendance submitted for approval.",
+      oldValues: daily,
       newValues: data,
       source: "system",
     }, request);
-    return Response.json({ period: data });
+    return Response.json({ period, daily_submission: data });
   } catch (error: any) {
     return jsonError(error.message || "Failed to submit attendance period.", 500);
   }

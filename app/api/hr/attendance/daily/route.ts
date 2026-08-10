@@ -4,9 +4,11 @@ import { actorName, buildAttendanceUpsertPayload, isAdminRecoveryRole, monthStar
 import {
   adminClient,
   assertDateEditAllowed,
+  assertDateSelectable,
   ensurePeriod,
   jsonError,
   loadAttendanceRows,
+  loadDailySubmission,
   loadDayLock,
   loadEligibleEmployees,
   loadEmployeeAttendancePolicyForScope,
@@ -18,7 +20,6 @@ import {
   requireAttendanceView,
   validateCompanySiteScope,
   validateDailyPayload,
-  validateEditablePeriod,
 } from "../_shared";
 
 export async function GET(request: Request) {
@@ -28,13 +29,15 @@ export async function GET(request: Request) {
 
     const params = parseDailyParams(request.url);
     if ("error" in params) return jsonError(String(params.error), 400);
+    const dateAllowed = assertDateSelectable(auth, params.attendanceDate);
+    if (!dateAllowed.allowed) return jsonError(dateAllowed.error || "Attendance date cannot be loaded.", 403);
 
     const admin = adminClient();
     const scope = await validateCompanySiteScope(admin, auth, params.companyId, params.siteId);
     if ("response" in scope) return scope.response;
 
     const month = monthStart(params.attendanceDate)!;
-    const [employees, rows, period, dayLock, policy] = await Promise.all([
+    const [employees, rows, period, dayLock, policy, dailySubmission] = await Promise.all([
       loadEligibleEmployees(admin, {
         organizationId: scope.organizationId,
         companyId: params.companyId,
@@ -63,10 +66,16 @@ export async function GET(request: Request) {
       }),
       loadEmployeeAttendancePolicyForScope(admin, {
         organizationId: scope.organizationId,
-        companyId: params.companyId,
         siteId: params.siteId,
       }),
+      loadDailySubmission(admin, {
+        organizationId: scope.organizationId,
+        companyId: params.companyId,
+        siteId: params.siteId,
+        attendanceDate: params.attendanceDate,
+      }),
     ]);
+    if (!policy) return jsonError("Employee Attendance Policy is not configured for the selected site.", 409);
 
     const rowsByEmployee = new Map(rows.map((row: any) => [row.employee_id, row]));
     const departmentIds = Array.from(new Set(employees.map((employee: any) => employee.department_id).filter(Boolean)));
@@ -95,6 +104,7 @@ export async function GET(request: Request) {
         attendance: rowsByEmployee.get(employee.id) || null,
       })),
       period,
+      daily_submission: dailySubmission,
       policy,
       day_lock: dayLock,
       can_admin_backdate: isAdminRecoveryRole(auth.roleCodes),
@@ -135,9 +145,6 @@ export async function PUT(request: Request) {
       siteId: params.siteId,
       month,
     });
-    const periodError = validateEditablePeriod(period);
-    if (periodError) return jsonError(periodError, 403);
-
     const dayLock = await loadDayLock(admin, {
       organizationId: scope.organizationId,
       companyId: params.companyId,
@@ -146,9 +153,18 @@ export async function PUT(request: Request) {
     });
     const policy = await loadEmployeeAttendancePolicyForScope(admin, {
       organizationId: scope.organizationId,
-      companyId: params.companyId,
       siteId: params.siteId,
     });
+    if (!policy) return jsonError("Employee Attendance Policy is not configured for the selected site.", 409);
+    const dailySubmission = await loadDailySubmission(admin, {
+      organizationId: scope.organizationId,
+      companyId: params.companyId,
+      siteId: params.siteId,
+      attendanceDate,
+    });
+    if (dailySubmission && !["draft", "reopened"].includes(String(dailySubmission.status || "").toLowerCase())) {
+      return jsonError("This attendance date is already submitted or approved and is read-only.", 403);
+    }
     const lockedByPolicy = isEmployeeAttendanceLockedByPolicy(policy, attendanceDate);
     if (dayLock || lockedByPolicy) {
       if (!hasEmployeePostLockEditAuthority(auth, policy)) return jsonError("This attendance day is locked for this user.", 403);
@@ -203,6 +219,32 @@ export async function PUT(request: Request) {
       .select("*");
     if (error) throw error;
 
+    const dailyState = dailySubmission
+      ? await admin.from("employee_attendance_daily_submissions").update({
+          status: dailySubmission.status === "reopened" ? "reopened" : "draft",
+          updated_by: auth.user.id,
+          updated_by_name: actorName(auth.user),
+          updated_by_email: auth.user.email || null,
+          updated_at: now,
+        }).eq("id", dailySubmission.id).select("*").single()
+      : await admin.from("employee_attendance_daily_submissions").insert({
+          organization_id: scope.organizationId,
+          company_id: params.companyId,
+          site_id: params.siteId,
+          period_id: period.id,
+          attendance_date: attendanceDate,
+          status: "draft",
+          created_by: auth.user.id,
+          created_by_name: actorName(auth.user),
+          created_by_email: auth.user.email || null,
+          updated_by: auth.user.id,
+          updated_by_name: actorName(auth.user),
+          updated_by_email: auth.user.email || null,
+          created_at: now,
+          updated_at: now,
+        }).select("*").single();
+    if (dailyState.error && dailyState.error.code !== "42P01") throw dailyState.error;
+
     await insertErpAuditLog(admin, auth.user, {
       organizationId: scope.organizationId,
       companyId: params.companyId,
@@ -220,7 +262,7 @@ export async function PUT(request: Request) {
       source: "system",
     }, request);
 
-    return NextResponse.json({ saved: data?.length || 0, attendance: data || [], period });
+    return NextResponse.json({ saved: data?.length || 0, attendance: data || [], period, daily_submission: dailyState.data || dailySubmission || null });
   } catch (error: any) {
     return jsonError(error.message || "Failed to save daily attendance.", 500);
   }

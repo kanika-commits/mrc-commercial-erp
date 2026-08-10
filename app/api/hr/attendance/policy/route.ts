@@ -8,7 +8,7 @@ import {
   loadEmployeeAttendancePolicyLookups,
   requireAttendancePolicyView,
   requireAttendancePolicyWrite,
-  validateEmployeeAttendancePolicyScope,
+  validateEmployeeAttendancePolicySiteScope,
 } from "../_shared";
 
 function normalizeStatus(value: unknown) {
@@ -100,7 +100,13 @@ export async function GET(request: Request) {
     const admin = adminClient();
     const lookups = await loadEmployeeAttendancePolicyLookups(admin, auth);
     const pairs = lookups.pairs || [];
-    const policyKeys = new Set(pairs.map((pair: any) => `${pair.organization_id}:${pair.company_id}:${pair.site_id}`));
+    const siteMap = new Map<string, any>();
+    for (const pair of pairs) {
+      const key = `${pair.organization_id}:${pair.site_id}`;
+      if (!siteMap.has(key)) siteMap.set(key, { organization_id: pair.organization_id, id: pair.site_id, label: pair.site_name });
+    }
+    const sites = Array.from(siteMap.values());
+    const policyKeys = new Set(sites.map((site: any) => `${site.organization_id}:${site.id}`));
 
     let query = admin
       .from("employee_attendance_policies")
@@ -111,9 +117,7 @@ export async function GET(request: Request) {
     const { data, error } = await query.order("updated_at", { ascending: false });
     if (error) throw error;
 
-    const policies = (data || []).filter((policy: any) =>
-      policyKeys.has(`${policy.organization_id}:${policy.company_id}:${policy.site_id}`),
-    );
+    const policies = (data || []).filter((policy: any) => policyKeys.has(`${policy.organization_id}:${policy.site_id}`));
     const children = await loadPolicyChildren(admin, policies);
     const layersByPolicy = new Map<string, any[]>();
     const editorsByPolicy = new Map<string, any[]>();
@@ -121,7 +125,8 @@ export async function GET(request: Request) {
     for (const editor of children.editors) editorsByPolicy.set(editor.policy_id, [...(editorsByPolicy.get(editor.policy_id) || []), editor]);
     const userLookups = await loadPolicyUsers(admin);
     return NextResponse.json({
-      ...lookups,
+      companies: [],
+      sites,
       ...userLookups,
       policies: policies.map((policy: any) => ({
         ...policy,
@@ -143,10 +148,9 @@ export async function PUT(request: Request) {
     const auth = await requireAttendancePolicyWrite(request);
     if ("response" in auth) return auth.response;
     const payload = await request.json().catch(() => ({}));
-    const companyId = String(payload.company_id || "").trim();
     const siteId = String(payload.site_id || "").trim();
     const admin = adminClient();
-    const scope = await validateEmployeeAttendancePolicyScope(admin, auth, companyId, siteId);
+    const scope = await validateEmployeeAttendancePolicySiteScope(admin, auth, siteId);
     if ("response" in scope) return scope.response;
 
     const status = normalizeStatus(payload.status);
@@ -161,7 +165,7 @@ export async function PUT(request: Request) {
     }
     const values = {
       organization_id: scope.organizationId,
-      company_id: companyId,
+      company_id: null,
       site_id: siteId,
       attendance_method: "manual_hr_entry",
       approval_workflow_code: "employee_attendance_period_approval",
@@ -180,9 +184,8 @@ export async function PUT(request: Request) {
       .from("employee_attendance_policies")
       .select("*")
       .eq("organization_id", scope.organizationId)
-      .eq("company_id", companyId)
       .eq("site_id", siteId)
-      .neq("status", "deleted")
+      .eq("status", "active")
       .maybeSingle();
     if (existingError) throw existingError;
     const existingLayers = existing?.id
@@ -246,7 +249,7 @@ export async function PUT(request: Request) {
       const insertResult = await admin.from("employee_attendance_policy_layers").insert(incomingLayers.map((layer) => ({
         policy_id: policyId,
         organization_id: scope.organizationId,
-        company_id: companyId,
+        company_id: null,
         site_id: siteId,
         workflow_version: workflowVersion,
         level_sequence: layer.level_sequence,
@@ -285,7 +288,7 @@ export async function PUT(request: Request) {
     ].map((row) => ({
       policy_id: policyId,
       organization_id: scope.organizationId,
-      company_id: companyId,
+      company_id: null,
       site_id: siteId,
       ...row,
       status: "active",
@@ -300,7 +303,6 @@ export async function PUT(request: Request) {
 
     await insertErpAuditLog(admin, auth.user, {
       organizationId: scope.organizationId,
-      companyId,
       siteId,
       moduleCode: "hr_employee_attendance_policy",
       entityType: "employee_attendance_policy",

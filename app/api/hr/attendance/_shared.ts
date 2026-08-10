@@ -11,6 +11,7 @@ import {
   actorName,
   ATTENDANCE_STATUSES,
   canEditAttendanceDate,
+  canSelectAttendanceDate,
   canLockAttendanceDate,
   currentIndiaDate,
   datesForMonth,
@@ -323,17 +324,17 @@ export async function loadEmployeeAttendancePolicyLookups(
 
 export async function loadEmployeeAttendancePolicyForScope(
   admin: ReturnType<typeof adminClient>,
-  values: { organizationId: string; companyId: string; siteId: string },
+  values: { organizationId: string; siteId: string },
 ) {
   const { data, error } = await admin
     .from("employee_attendance_policies")
     .select("*")
     .eq("organization_id", values.organizationId)
-    .eq("company_id", values.companyId)
     .eq("site_id", values.siteId)
-    .neq("status", "deleted")
+    .eq("status", "active")
     .maybeSingle();
   if (error) throw error;
+  if (!data) return null;
 
   let layers: any[] = [];
   let postLockEditors: any[] = [];
@@ -361,7 +362,7 @@ export async function loadEmployeeAttendancePolicyForScope(
   return {
     id: data?.id || null,
     organization_id: values.organizationId,
-    company_id: values.companyId,
+    company_id: data?.company_id || null,
     site_id: values.siteId,
     attendance_method: data?.attendance_method || "manual_hr_entry",
     approval_workflow_code: data?.approval_workflow_code || "employee_attendance_period_approval",
@@ -517,6 +518,33 @@ export async function validateEmployeeAttendancePolicyScope(
   return { organizationId: company.organization_id as string, organizationScope } as const;
 }
 
+export async function validateEmployeeAttendancePolicySiteScope(
+  admin: ReturnType<typeof adminClient>,
+  auth: ServerPermissionContext,
+  siteId: string,
+) {
+  if (!siteId) return { response: jsonError("Site is required.", 400) } as const;
+  const organizationScope = await loadActorOrganizationScope(admin, auth);
+  const { data: site, error } = await admin
+    .from("sites")
+    .select("id, organization_id, status")
+    .eq("id", siteId)
+    .eq("status", "active")
+    .maybeSingle();
+  if (error) throw error;
+  if (!site) return { response: jsonError("Selected site was not found.", 404) } as const;
+  if (!isInOrganizationScope(organizationScope, site.organization_id)) {
+    return { response: jsonError("Selected site is not available for this organization.", 403) } as const;
+  }
+  if (!isGlobalScope(organizationScope)) {
+    const assignments = await loadActorAssignments(admin, auth.user.id);
+    if (!assignments.siteIds.includes(siteId)) {
+      return { response: jsonError("Selected site is not available for this user.", 403) } as const;
+    }
+  }
+  return { organizationId: site.organization_id as string, organizationScope } as const;
+}
+
 export async function ensurePeriod(
   admin: ReturnType<typeof adminClient>,
   auth: ServerPermissionContext,
@@ -642,6 +670,68 @@ export async function loadAttendanceRows(
   return data || [];
 }
 
+export async function loadDailySubmission(
+  admin: ReturnType<typeof adminClient>,
+  values: { organizationId: string; companyId: string; siteId: string; attendanceDate: string },
+) {
+  const { data, error } = await admin
+    .from("employee_attendance_daily_submissions")
+    .select("*")
+    .eq("organization_id", values.organizationId)
+    .eq("company_id", values.companyId)
+    .eq("site_id", values.siteId)
+    .eq("attendance_date", values.attendanceDate)
+    .maybeSingle();
+  if (error && error.code !== "42P01") throw error;
+  return data || null;
+}
+
+export async function ensureDailySubmission(
+  admin: ReturnType<typeof adminClient>,
+  auth: ServerPermissionContext,
+  values: { organizationId: string; companyId: string; siteId: string; periodId: string; attendanceDate: string },
+) {
+  const existing = await loadDailySubmission(admin, values);
+  if (existing) return existing;
+  const { data, error } = await admin
+    .from("employee_attendance_daily_submissions")
+    .insert({
+      organization_id: values.organizationId,
+      company_id: values.companyId,
+      site_id: values.siteId,
+      period_id: values.periodId,
+      attendance_date: values.attendanceDate,
+      status: "draft",
+      created_by: auth.user.id,
+      created_by_name: actorName(auth.user),
+      created_by_email: auth.user.email || null,
+      updated_by: auth.user.id,
+      updated_by_name: actorName(auth.user),
+      updated_by_email: auth.user.email || null,
+    })
+    .select("*")
+    .single();
+  if (error && error.code === "23505") return loadDailySubmission(admin, values);
+  if (error) throw error;
+  return data;
+}
+
+export function isDailySubmissionEditable(state: any) {
+  return !state || ["draft", "reopened"].includes(String(state.status || "").toLowerCase());
+}
+
+export async function filterAccessibleDailySubmissions(admin: ReturnType<typeof adminClient>, auth: ServerPermissionContext, rows: any[]) {
+  const organizationScope = await loadActorOrganizationScope(admin, auth);
+  const scopedRows = isGlobalScope(organizationScope) ? rows : rows.filter((row: any) => Array.isArray(organizationScope) && organizationScope.includes(row.organization_id));
+  if (isGlobalScope(organizationScope)) return scopedRows;
+  const assignments = await loadActorAssignments(admin, auth.user.id);
+  return scopedRows.filter((row: any) => assignments.rows.some((assignment: any) =>
+    (!assignment.organization_id || assignment.organization_id === row.organization_id) &&
+    (!assignment.company_id || assignment.company_id === row.company_id) &&
+    (!assignment.site_id || assignment.site_id === row.site_id),
+  ));
+}
+
 export function parseDailyParams(url: string) {
   const params = new URL(url).searchParams;
   const companyId = String(params.get("company_id") || "").trim();
@@ -686,6 +776,10 @@ export function validateDailyPayload(payload: any) {
 
 export function assertDateEditAllowed(auth: ServerPermissionContext, attendanceDate: string, reason?: string | null) {
   return canEditAttendanceDate(attendanceDate, isAdminRecoveryRole(auth.roleCodes), reason);
+}
+
+export function assertDateSelectable(auth: ServerPermissionContext, attendanceDate: string) {
+  return canSelectAttendanceDate(attendanceDate, isAdminRecoveryRole(auth.roleCodes));
 }
 
 export function assertCanLockDate(attendanceDate: string) {

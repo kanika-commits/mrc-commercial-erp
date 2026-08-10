@@ -143,7 +143,7 @@ export function requiresBackdatedReason(attendanceDate: string, isAdminRecovery:
 
 export function canEditAttendanceDate(attendanceDate: string, isAdminRecovery: boolean, reason?: string | null, today = currentIndiaDate()) {
   const comparison = compareDates(attendanceDate, today);
-  if (comparison > 0) return { allowed: false, error: "Future attendance cannot be created or edited." };
+  if (comparison > 0 && !isAdminRecovery) return { allowed: false, error: "Future attendance cannot be created or edited." };
   if (comparison === 0) return { allowed: true, backdated: false };
   const olderThanYesterday = compareDates(attendanceDate, previousDate(today)) < 0;
   if (!isAdminRecovery && olderThanYesterday) {
@@ -152,6 +152,16 @@ export function canEditAttendanceDate(attendanceDate: string, isAdminRecovery: b
   if (!olderThanYesterday) return { allowed: true, backdated: false };
   if (!String(reason || "").trim()) return { allowed: false, error: "Backdated attendance reason is required." };
   return { allowed: true, backdated: true };
+}
+
+export function canSelectAttendanceDate(attendanceDate: string, isAdminRecovery: boolean, today = currentIndiaDate()) {
+  if (isAdminRecovery) return { allowed: true };
+  const comparison = compareDates(attendanceDate, today);
+  if (comparison > 0) return { allowed: false, error: "Future attendance cannot be loaded." };
+  if (compareDates(attendanceDate, previousDate(today)) < 0) {
+    return { allowed: false, error: "Attendance can be loaded only for today or yesterday." };
+  }
+  return { allowed: true };
 }
 
 export function isEmployeeEligibleForDate(employee: {

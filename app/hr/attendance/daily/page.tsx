@@ -8,7 +8,7 @@ import HrSectionNav from "@/components/hr/HrSectionNav";
 import { apiFetch, formatDate } from "@/components/hr/hrClient";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
-import { ATTENDANCE_STATUS_LABELS, EMPLOYEE_STANDARD_WORKING_HOURS, PHASE1_ATTENDANCE_STATUSES, currentIndiaDate, previousDate } from "@/lib/hr/attendance";
+import { ATTENDANCE_STATUS_LABELS, PHASE1_ATTENDANCE_STATUSES, currentIndiaDate, previousDate } from "@/lib/hr/attendance";
 
 type RowState = {
   employee_id: string;
@@ -35,6 +35,7 @@ export default function DailyAttendancePage() {
   const [policy, setPolicy] = useState<any>(null);
   const [dayLock, setDayLock] = useState<any>(null);
   const [draft, setDraft] = useState<Record<string, RowState>>({});
+  const [employeeSearch, setEmployeeSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -53,7 +54,9 @@ export default function DailyAttendancePage() {
   const isFuture = date > today;
   const earliestNormalEditDate = previousDate(today);
   const isOlderThanYesterday = date < earliestNormalEditDate;
-  const sentBack = period?.status === "reopened";
+  const dailyStates = Object.values(attendanceContexts).map((context: any) => context.dailySubmission?.status).filter(Boolean);
+  const dailyStatus = dailyStates.length === 0 ? "not_submitted" : new Set(dailyStates).size === 1 ? dailyStates[0] : "mixed";
+  const sentBack = dailyStatus === "reopened";
   const readOnlyReason = useMemo(() => {
     if (!canEdit) return "You do not have permission to edit attendance.";
     if (isFuture) return "Future attendance cannot be created or edited.";
@@ -65,19 +68,27 @@ export default function DailyAttendancePage() {
     () => companyId ? rows.filter((item) => item.employee.company_id === companyId) : rows,
     [companyId, rows],
   );
+  const filteredRows = useMemo(() => {
+    const query = employeeSearch.trim().toLowerCase();
+    if (!query) return visibleRows;
+    return visibleRows.filter((item) => String(item.employee?.employee_name || "").toLowerCase().includes(query));
+  }, [employeeSearch, visibleRows]);
   const rowEditable = (item: any) => {
     if (!canEdit || isFuture || (isOlderThanYesterday && !isAdminRecovery)) return false;
     const context = attendanceContexts[item.employee.company_id || ""];
     if (!context || context.dayLock) return false;
-    return !["submitted", "level_1_approved", "level_2_approved", "finalized", "cancelled"].includes(context.period?.status);
+    return !["submitted", "approved", "cancelled"].includes(String(context.dailySubmission?.status || ""));
   };
   const hasEditableRows = rows.some(rowEditable);
-  const hasAttendanceForSelectedDate = rows.some((row) => Boolean(row.attendance));
-  const attendanceStatus = !hasAttendanceForSelectedDate
-    ? "Not Submitted"
-    : ["submitted", "level_1_approved", "level_2_approved", "finalized"].includes(String(period?.status || "").toLowerCase())
-      ? "Submitted"
-      : "Draft";
+  const statusCounts = useMemo(() => rows.reduce((counts: { present: number; absent: number }, item: any) => {
+    const status = String((draft[item.employee.id]?.status || item.attendance?.status || "present")).toLowerCase();
+    if (status === "present") counts.present += 1;
+    if (status === "absent") counts.absent += 1;
+    return counts;
+  }, { present: 0, absent: 0 }), [draft, rows]);
+  const dailySubmissionInfo = Object.values(attendanceContexts).map((context: any) => context.dailySubmission).filter(Boolean);
+  const submittedSubmission = dailySubmissionInfo.find((submission: any) => submission.status === "submitted");
+  const approvedSubmission = dailySubmissionInfo.find((submission: any) => submission.status === "approved");
 
   useEffect(() => {
     let active = true;
@@ -118,7 +129,7 @@ export default function DailyAttendancePage() {
       const merged = results.flatMap((result, index) => (result.attendance || []).map((item: any) => ({ ...item, employee: { ...item.employee, company_id: companyIds[index], company_name: lookups.companies.find((company) => company.id === companyIds[index])?.label || companyIds[index] } })));
       const nextContexts: Record<string, any> = {};
       results.forEach((result, index) => {
-        nextContexts[companyIds[index]] = { period: result.period, policy: result.policy, dayLock: result.day_lock };
+        nextContexts[companyIds[index]] = { period: result.period, policy: result.policy, dayLock: result.day_lock, dailySubmission: result.daily_submission };
       });
       setRows(merged);
       setPeriods(results.map((result) => result.period).filter(Boolean));
@@ -258,7 +269,7 @@ export default function DailyAttendancePage() {
       const results = [];
       for (let index = 0; index < periodIds.length; index += 1) {
         try {
-          results.push(await apiFetch(`/api/hr/attendance/periods/${periodIds[index]}/submit`, { method: "POST" }));
+          results.push(await apiFetch(`/api/hr/attendance/periods/${periodIds[index]}/submit`, { method: "POST", body: JSON.stringify({ attendance_date: date }) }));
         } catch (error: any) {
           const submittedPeriod = (saved.periods || periods).find((item: any) => item.id === periodIds[index]);
           const label = lookups.companies.find((company) => company.id === submittedPeriod?.company_id)?.label || submittedPeriod?.company_id || "the selected company";
@@ -318,11 +329,24 @@ export default function DailyAttendancePage() {
 
       {period && (
         <div className="grid gap-3 md:grid-cols-4">
-          <Summary label="Employees" value={visibleRows.length} />
-          <Summary label="Attendance Status" value={attendanceStatus} />
+          <Summary label="Employees" value={rows.length} />
+          <Summary label="Present" value={statusCounts.present} />
+          <Summary label="Absent" value={statusCounts.absent} />
           <Summary label="Date" value={formatDate(date)} />
-          <Summary label="Working Day" value={`${policy?.standard_working_hours || EMPLOYEE_STANDARD_WORKING_HOURS} hrs`} />
         </div>
+      )}
+
+      {submittedSubmission && (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 shadow-sm">
+          <p className="font-bold">Attendance submitted</p>
+          <p className="mt-1">{submittedSubmission.submitted_at ? `Attendance submitted on ${new Date(submittedSubmission.submitted_at).toLocaleString("en-IN")}` : "Attendance submitted"}{submittedSubmission.submitted_by_name ? ` by ${submittedSubmission.submitted_by_name}.` : "."}</p>
+        </section>
+      )}
+
+      {approvedSubmission && !submittedSubmission && (
+        <section className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 shadow-sm">
+          <p className="font-bold">Attendance approved</p>
+        </section>
       )}
 
       {sentBack && (
@@ -346,6 +370,10 @@ export default function DailyAttendancePage() {
             <h2 className="font-semibold text-slate-950">Mark Attendance</h2>
             <p className="text-sm text-slate-500">Employees without saved attendance appear as Present until saved.</p>
           </div>
+          <label className="w-full sm:ml-auto sm:w-64">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Search Employee</span>
+            <input type="search" value={employeeSearch} onChange={(event) => setEmployeeSearch(event.target.value)} placeholder="Search by employee name" className="h-9 w-full rounded-xl border px-3 text-sm" />
+          </label>
           <div className="flex flex-wrap gap-2">
             {hasEditableRows && <button type="button" onClick={markAllPresent} className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-slate-50">Mark All Present</button>}
             {hasEditableRows && <button type="button" onClick={() => save()} disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"><Save className="h-4 w-4" />{saving ? "Saving..." : "Save Draft"}</button>}
@@ -364,9 +392,9 @@ export default function DailyAttendancePage() {
             </tr>
           </thead>
           <tbody className="divide-y">
-            {visibleRows.length === 0 ? (
+            {filteredRows.length === 0 ? (
               <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-500">No employees loaded.</td></tr>
-            ) : visibleRows.map((item, index) => {
+            ) : filteredRows.map((item, index) => {
               const current = draft[item.employee.id] || { employee_id: item.employee.id, status: "present", company_id: item.employee.company_id };
               return (
                 <tr key={item.employee.id}>

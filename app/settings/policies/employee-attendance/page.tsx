@@ -16,9 +16,8 @@ export default function EmployeeAttendancePolicyPage() {
   const canEdit =
     can(permissions, "hr_employee_attendance_policy", "add") ||
     can(permissions, "hr_employee_attendance_policy", "edit");
-  const [lookups, setLookups] = useState<{ companies: any[]; sites: any[]; policies: any[] }>({ companies: [], sites: [], policies: [] });
+  const [lookups, setLookups] = useState<{ sites: any[]; policies: any[] }>({ sites: [], policies: [] });
   const [users, setUsers] = useState<any[]>([]);
-  const [companyId, setCompanyId] = useState("");
   const [siteId, setSiteId] = useState("");
   const [approvalLevelCount, setApprovalLevelCount] = useState("1");
   const [approvalLayers, setApprovalLayers] = useState<Array<{ level_sequence: number; stage_name: string; approver_user_id: string }>>([
@@ -32,14 +31,9 @@ export default function EmployeeAttendancePolicyPage() {
   const [message, setMessage] = useState("");
   const [success, setSuccess] = useState("");
 
-  const visibleSites = useMemo(
-    () => companyId ? lookups.sites.filter((site) => site.scope_company_id === companyId) : lookups.sites,
-    [companyId, lookups.sites],
-  );
-
   const selectedPolicy = useMemo(
-    () => lookups.policies.find((policy) => policy.company_id === companyId && policy.site_id === siteId) || null,
-    [companyId, lookups.policies, siteId],
+    () => lookups.policies.find((policy) => policy.site_id === siteId) || null,
+    [lookups.policies, siteId],
   );
 
   async function load() {
@@ -47,7 +41,7 @@ export default function EmployeeAttendancePolicyPage() {
     setMessage("");
     try {
       const payload = await apiFetch("/api/hr/attendance/policy");
-      setLookups({ companies: payload.companies || [], sites: payload.sites || [], policies: payload.policies || [] });
+      setLookups({ sites: payload.sites || [], policies: payload.policies || [] });
       setUsers(payload.users || []);
     } catch (error: any) {
       setMessage(error.message || "Failed to load employee attendance policies.");
@@ -103,8 +97,8 @@ export default function EmployeeAttendancePolicyPage() {
   }
 
   async function save() {
-    if (!companyId || !siteId) {
-      setMessage("Select company and site.");
+    if (!siteId) {
+      setMessage("Select a site.");
       return;
     }
     setSaving(true);
@@ -114,7 +108,6 @@ export default function EmployeeAttendancePolicyPage() {
       await apiFetch("/api/hr/attendance/policy", {
         method: "PUT",
         body: JSON.stringify({
-          company_id: companyId,
           site_id: siteId,
           attendance_lock_rule: "configured_hours_after_day_end",
           approval_level_count: Number(approvalLevelCount),
@@ -142,7 +135,7 @@ export default function EmployeeAttendancePolicyPage() {
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-slate-950">Employee Attendance Policy</h1>
-          <p className="text-sm text-slate-500">Configure manual HR attendance entry and the existing period approval workflow by company and site.</p>
+          <p className="text-sm text-slate-500">Configure manual HR attendance entry and approval workflow for each site.</p>
         </div>
         <Link href="/modules/settings" className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50">
           <ArrowLeft className="h-4 w-4" />
@@ -155,8 +148,7 @@ export default function EmployeeAttendancePolicyPage() {
 
       <section className="rounded-2xl border bg-white p-5 shadow-sm">
         <div className="grid gap-4 md:grid-cols-2">
-          <Select label="Company" value={companyId} onChange={(value) => { setCompanyId(value); setSiteId(""); }} options={lookups.companies} />
-          <Select label="Site" value={siteId} onChange={setSiteId} options={visibleSites} />
+          <Select label="Site" value={siteId} onChange={setSiteId} options={lookups.sites} />
           <ReadOnlyField label="Attendance Method" value="Manual HR Entry" />
           <ReadOnlyField label="Standard Working Day" value={`${EMPLOYEE_STANDARD_WORKING_HOURS} hours`} />
           <label className="block">
@@ -234,7 +226,6 @@ export default function EmployeeAttendancePolicyPage() {
         <table className="min-w-[760px] w-full text-left text-sm">
           <thead className="border-b bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
             <tr>
-              <th className="px-4 py-3">Company</th>
               <th className="px-3 py-3">Site</th>
               <th className="px-3 py-3">Method</th>
               <th className="px-3 py-3">Working Day</th>
@@ -246,13 +237,11 @@ export default function EmployeeAttendancePolicyPage() {
           </thead>
           <tbody className="divide-y">
             {lookups.policies.length === 0 ? (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">No Employee Attendance Policies have been configured.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-500">No Employee Attendance Policies have been configured.</td></tr>
             ) : lookups.policies.map((policy) => {
-              const company = lookups.companies.find((item) => item.id === policy.company_id);
-              const site = lookups.sites.find((item) => item.scope_company_id === policy.company_id && item.id === policy.site_id);
+              const site = lookups.sites.find((item) => item.id === policy.site_id);
               return (
-                <tr key={policy.id || `${policy.company_id}:${policy.site_id}`}>
-                  <td className="px-4 py-3 font-medium text-slate-950">{company?.label || "-"}</td>
+                <tr key={policy.id || policy.site_id}>
                   <td className="px-3 py-3 text-slate-700">{site?.label || "-"}</td>
                   <td className="px-3 py-3 text-slate-700">Manual HR Entry</td>
                   <td className="px-3 py-3 text-slate-700">{EMPLOYEE_STANDARD_WORKING_HOURS} hours</td>
