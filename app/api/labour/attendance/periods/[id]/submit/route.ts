@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { actorFields, applyCompanySiteScope, audit, jsonError, originatingAttendanceSystem, requireLabourPermission } from "@/app/api/labour/_shared";
+import { actorFields, applyCompanySiteScope, audit, isGlobalOrSuperAdmin, jsonError, originatingAttendanceSystem, requireLabourPermission } from "@/app/api/labour/_shared";
 import { applyOrganizationScope } from "@/lib/serverOrganizationScope";
 import { isoDate } from "@/lib/labour/operations";
+import { hasActiveSiteHrAssignment } from "@/lib/serverSiteHr";
 
 async function loadPeriod(access: any, id: string) {
   let query = access.admin.from("labour_attendance_periods").select("*").eq("id", id);
@@ -21,6 +22,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const { id } = await context.params;
     const period = await loadPeriod(access, id);
     if (!period) return jsonError("Attendance period not found.", 404);
+    if (!isGlobalOrSuperAdmin(access) && !(await hasActiveSiteHrAssignment(access.admin, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, userId: access.auth.user.id }))) {
+      return jsonError("You are not assigned as Site HR for this site.", 403);
+    }
     const payload = await request.json().catch(() => ({}));
     const attendanceDate = isoDate(payload.attendance_date);
     const workflow = originatingAttendanceSystem(period.originating_attendance_system);

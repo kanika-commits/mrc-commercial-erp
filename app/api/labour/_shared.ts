@@ -12,6 +12,7 @@ import { insertErpAuditLog, type ErpAuditAction } from "@/lib/serverAudit";
 import { normalizeIdentifier, normalizeText } from "@/lib/labour/constants";
 import { isAfterLabourDayEndLockCutoff, isAfterLabourPolicyLockCutoff, monthStart, previousDate, todayInIst } from "@/lib/labour/operations";
 import { optionalFormattedAadhaar } from "@/lib/utils/aadhaar";
+import { hasActiveSiteHrAssignment } from "@/lib/serverSiteHr";
 
 export const LABOUR_DOCUMENT_BUCKET = "labour-documents";
 
@@ -659,8 +660,7 @@ export async function isAssignedMusterSiteHr(access: LabourAccess, input: {
   siteId: string;
 }) {
   if (isGlobalOrSuperAdmin(access)) return true;
-  const configuration = await getActiveMusterConfiguration(access, input);
-  return configuration?.site_hr_user_id === access.auth.user.id;
+  return hasActiveSiteHrAssignment(access.admin, { ...input, userId: access.auth.user.id });
 }
 
 export async function loadMusterSiteHrBlocker(access: LabourAccess, input: {
@@ -669,8 +669,9 @@ export async function loadMusterSiteHrBlocker(access: LabourAccess, input: {
   siteId: string;
 }) {
   if (isGlobalOrSuperAdmin(access)) return null;
+  const assigned = await isAssignedMusterSiteHr(access, input);
   const configuration = await getActiveMusterConfiguration(access, input);
-  if (configuration?.site_hr_user_id && configuration.site_hr_user_id !== access.auth.user.id) {
+  if (configuration?.site_hr_user_id && !assigned) {
     return "You are not assigned as Site HR for this Site.";
   }
   return null;

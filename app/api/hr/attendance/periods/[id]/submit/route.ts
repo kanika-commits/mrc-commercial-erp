@@ -1,7 +1,8 @@
 import { insertErpAuditLog } from "@/lib/serverAudit";
-import { actorName } from "@/lib/hr/attendance";
+import { actorName, isAdminRecoveryRole } from "@/lib/hr/attendance";
 import { adminClient, ensureDailySubmission, jsonError, loadAttendanceRows, loadEligibleEmployees, loadEmployeeAttendancePolicyForScope, loadDailySubmission, requireAttendancePermission } from "../../../_shared";
 import { loadScopedPeriod } from "../_shared";
+import { hasActiveSiteHrAssignment } from "@/lib/serverSiteHr";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -12,6 +13,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const loaded = await loadScopedPeriod(admin, auth, id);
     if ("response" in loaded) return loaded.response;
     const period = loaded.period;
+    if (!isAdminRecoveryRole(auth.roleCodes) && !(await hasActiveSiteHrAssignment(admin, { userId: auth.user.id, organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id }))) return jsonError("You are not assigned as Site HR for this site.", 403);
     const payload = await request.json().catch(() => ({}));
     const attendanceDate = String(payload.attendance_date || "").trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate) || !attendanceDate.startsWith(String(period.period_month).slice(0, 7))) return jsonError("A valid attendance date in the selected period is required.", 400);

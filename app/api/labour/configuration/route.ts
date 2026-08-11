@@ -12,6 +12,7 @@ import {
 } from "@/app/api/labour/_shared";
 import { normalizeText } from "@/lib/labour/constants";
 import { applyOrganizationScope } from "@/lib/serverOrganizationScope";
+import { loadActiveSiteHrUserIds } from "@/lib/serverSiteHr";
 
 function text(value: unknown) {
   const next = normalizeText(value);
@@ -308,9 +309,7 @@ async function loadEmployeeCandidates(access: any, input: { organizationId: stri
     if (employee?.id) consumedEmployeeIds.add(employee.id);
     const erpEnabled = true;
     const siteHrEligible = erpEnabled && input.permissionContext && input.siteId && input.companyId
-      ? input.permissionContext.isInScope(profile.id, input.organizationId, input.companyId, input.siteId) &&
-        input.permissionContext.hasPermission(profile.id, "labour_site_in", "add") &&
-        input.permissionContext.hasPermission(profile.id, "labour_attendance", "add")
+      ? input.permissionContext.isInScope(profile.id, input.organizationId, input.companyId, input.siteId)
       : false;
     return {
       id: profile.id,
@@ -481,7 +480,7 @@ export async function GET(request: Request) {
       loadUserPermissionContext(access),
       loadOverrideAuthorities(access, resolved),
     ]);
-    const [approvalLayers, configurationEvents] = await Promise.all([
+    const [approvalLayers, configurationEvents, siteHrUserIds] = await Promise.all([
       loadApprovalLayers(access, {
         configurationId: configuration?.id,
         organizationId: scope.organizationId,
@@ -495,13 +494,14 @@ export async function GET(request: Request) {
         companyId,
         siteId,
       }),
+      loadActiveSiteHrUserIds(access.admin, { ...resolved, fallbackUserId: configuration?.site_hr_user_id }),
     ]);
     const employeeCandidates = await loadEmployeeCandidates(access, { organizationId: scope.organizationId, companyId, siteId, permissionContext });
     return NextResponse.json({
       ...lookups,
       attendance_policies: attendancePolicySummary.rows,
       attendance_policy_conflicts: attendancePolicySummary.conflicts,
-      configuration: configuration ? { ...configuration, attendance_system: siteAttendanceSystemPolicy?.attendance_system || null } : siteAttendanceSystemPolicy ? { attendance_system: siteAttendanceSystemPolicy.attendance_system } : null,
+      configuration: configuration ? { ...configuration, site_hr_user_ids: siteHrUserIds, attendance_system: siteAttendanceSystemPolicy?.attendance_system || null } : siteAttendanceSystemPolicy ? { site_hr_user_ids: siteHrUserIds, attendance_system: siteAttendanceSystemPolicy.attendance_system } : null,
       site_attendance_system_policy: siteAttendanceSystemPolicy,
       organization_configuration: organizationConfiguration,
       approval_layers: approvalLayers,
@@ -528,7 +528,7 @@ export async function POST(request: Request) {
     const scope = await validateLabourCompanySiteIndependent(access, requestedOrganizationId, companyId, siteId);
     if ("error" in scope) return jsonError(scope.error || "Selected company/site is not available.", 403);
     const organizationId = scope.organizationId;
-    const siteHrUserId = text(payload.site_hr_user_id);
+    const siteHrUserIds = Array.from(new Set((Array.isArray(payload.site_hr_user_ids) ? payload.site_hr_user_ids : [payload.site_hr_user_id]).map(text).filter(Boolean))) as string[];
     const attendanceSystem = attendanceSystemValue(payload.attendance_system);
     const layerCount = approvalLayerCount(payload.approval_layer_count);
     const overrideUserIds: string[] = Array.from(
@@ -540,7 +540,7 @@ export async function POST(request: Request) {
     const existingSitePolicy = await getActiveSiteAttendanceSystemPolicy(access, { organizationId, siteId });
     if (layerCount === null) return jsonError("Approval layer count must be between 1 and 5.");
     if (!hasLabourPermission(access, "labour_muster_configuration", "edit_attendance_policy")) return jsonError("You cannot edit Attendance lock policy.", 403);
-    if (siteHrUserId && !hasLabourPermission(access, "labour_muster_configuration", "edit_site_responsibility")) return jsonError("You cannot edit Site responsibility.", 403);
+    if (siteHrUserIds.length && !hasLabourPermission(access, "labour_muster_configuration", "edit_site_responsibility")) return jsonError("You cannot edit Site responsibility.", 403);
     if (payload.override_user_ids !== undefined && !hasLabourPermission(access, "labour_muster_configuration", "assign_override_authority")) return jsonError("You cannot assign Attendance override authority.", 403);
 
     const permissionContext = await loadUserPermissionContext(access);
@@ -548,10 +548,10 @@ export async function POST(request: Request) {
     const userById = new Map<string, any>(users.map((user: any) => [user.id, user]));
     const employeeCandidates = await loadEmployeeCandidates(access, { organizationId, companyId, siteId, permissionContext });
     const employeeByUserId = new Map(employeeCandidates.filter((employee: any) => employee.linked_user_id).map((employee: any) => [employee.linked_user_id, employee]));
-    const resolvedSiteHrUserId = text(payload.site_hr_user_id);
-    const siteHrCandidate: any = resolvedSiteHrUserId ? employeeByUserId.get(resolvedSiteHrUserId) : null;
-    if (resolvedSiteHrUserId && !siteHrCandidate?.site_hr_eligible) return jsonError(siteHrCandidate?.ineligibility_reason || "Selected Site HR must be active, site-scoped and have Site-In/Attendance permissions.", 403);
-    if (resolvedSiteHrUserId && !userById.get(resolvedSiteHrUserId)?.site_hr_eligible) return jsonError("Selected Site HR must be active, site-scoped and have Site-In/Attendance permissions.", 403);
+    for (const siteHrUserId of siteHrUserIds) {
+      const siteHrCandidate: any = employeeByUserId.get(siteHrUserId);
+      if (!siteHrCandidate?.site_hr_eligible || !userById.get(siteHrUserId)?.site_hr_eligible) return jsonError(siteHrCandidate?.ineligibility_reason || "Selected Site HR must be active, site-scoped and have Site-In/Attendance permissions.", 403);
+    }
     const incomingLayers = normalizeApprovalLayers(payload.approval_layers, layerCount);
     const resolvedLayers = [];
     for (const layer of incomingLayers) {
@@ -595,7 +595,7 @@ export async function POST(request: Request) {
       organization_id: organizationId,
       company_id: companyId,
       site_id: siteId,
-      site_hr_user_id: resolvedSiteHrUserId,
+      site_hr_user_id: siteHrUserIds[0] || null,
       pm_user_id: firstLayerApprover.approver_user_id,
       attendance_system: attendanceSystem,
       attendance_lock_hours: lockHours,
@@ -608,6 +608,31 @@ export async function POST(request: Request) {
       ? await access.admin.from("labour_site_configurations").update({ ...configPayload, ...actorFields(access.auth, "updated"), updated_at: new Date().toISOString() }).eq("id", existing.id).select("id").single()
       : await access.admin.from("labour_site_configurations").insert({ ...configPayload, ...actorFields(access.auth, "created") }).select("id").single();
     if (result.error) throw result.error;
+
+    const assignmentQuery = access.admin.from("site_hr_assignments");
+    const existingAssignments = await assignmentQuery.select("id,user_id,status").eq("organization_id", organizationId).eq("company_id", companyId).eq("site_id", siteId);
+    if (existingAssignments.error && existingAssignments.error.code !== "42P01") throw existingAssignments.error;
+    if (!existingAssignments.error) {
+      const selected = new Set(siteHrUserIds);
+      const stale = (existingAssignments.data || []).filter((row: any) => row.status === "active" && !selected.has(row.user_id));
+      if (stale.length) {
+        const { error } = await assignmentQuery.update({ status: "inactive", ...actorFields(access.auth, "updated"), updated_at: new Date().toISOString() }).in("id", stale.map((row: any) => row.id));
+        if (error) throw error;
+      }
+      const rows = existingAssignments.data || [];
+      for (const userId of siteHrUserIds) {
+        const matchingRows = rows.filter((row: any) => row.user_id === userId);
+        if (matchingRows.some((row: any) => row.status === "active")) continue;
+        const inactiveRow = matchingRows.find((row: any) => row.status !== "active");
+        if (inactiveRow) {
+          const { error } = await assignmentQuery.update({ status: "active", ...actorFields(access.auth, "updated"), updated_at: new Date().toISOString() }).eq("id", inactiveRow.id);
+          if (error) throw error;
+          continue;
+        }
+        const { error } = await assignmentQuery.insert({ organization_id: organizationId, company_id: companyId, site_id: siteId, user_id: userId, status: "active", ...actorFields(access.auth, "created") });
+        if (error) throw error;
+      }
+    }
 
     const configId = result.data.id;
     if (!existingSitePolicy || existingSitePolicy.attendance_system !== attendanceSystem) {

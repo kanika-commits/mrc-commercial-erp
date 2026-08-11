@@ -9,6 +9,7 @@ import {
   jsonError,
   loadLabourEditLockBlocker,
   loadMusterSiteHrBlocker,
+  isGlobalOrSuperAdmin,
   loadEligibleDeployments,
   requireLabourPermission,
   originatingAttendanceSystem,
@@ -19,6 +20,7 @@ import {
 } from "@/app/api/labour/_shared";
 import { buildLabourAttendanceUpsertPayload, isoDate, previousDate, todayInIst } from "@/lib/labour/operations";
 import { labelFromCode, normalizeText } from "@/lib/labour/constants";
+import { hasActiveSiteHrAssignment } from "@/lib/serverSiteHr";
 
 function text(value: unknown) {
   const next = normalizeText(value);
@@ -532,6 +534,9 @@ export async function POST(request: Request) {
     const organizationId = scopeCheck.organizationId;
     const siteHrBlocker = await loadMusterSiteHrBlocker(access, { organizationId, companyId, siteId });
     if (siteHrBlocker) return jsonError(siteHrBlocker, 403);
+    if (!isGlobalOrSuperAdmin(access) && !(await hasActiveSiteHrAssignment(access.admin, { organizationId, companyId, siteId, userId: access.auth.user.id }))) {
+      return jsonError("You are not assigned as Site HR for this site.", 403);
+    }
     const contractorCheck = await loadContractorProfileIds(access, organizationId, contractorProfileFilterId);
     if ("error" in contractorCheck) return jsonError(contractorCheck.error || "Selected contractor is not available.", 403);
     const contractorProfileId = contractorCheck.primaryProfileId;

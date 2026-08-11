@@ -135,6 +135,79 @@ function EmployeePicker({
   );
 }
 
+function SiteHrMultiPicker({
+  value,
+  candidates,
+  disabled,
+  onChange,
+}: {
+  value: string[];
+  candidates: any[];
+  disabled?: boolean;
+  onChange: (userIds: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const selected = new Set(value);
+  const eligibleCandidates = candidates.filter((candidate) => candidate.site_hr_eligible);
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return eligibleCandidates.filter((candidate) => !query ||
+      String(candidate.employee_name || "").toLowerCase().includes(query) ||
+      String(candidate.employee_code || "").toLowerCase().includes(query) ||
+      String(candidate.email || "").toLowerCase().includes(query));
+  }, [eligibleCandidates, search]);
+  const selectedCandidates = value.map((id) => candidates.find((candidate) => candidate.linked_user_id === id)).filter(Boolean);
+  const summary = selectedCandidates.length
+    ? `${selectedCandidates.slice(0, 2).map((candidate: any) => candidate.employee_name || candidate.profile_name || candidate.email).join(", ")}${selectedCandidates.length > 2 ? ` +${selectedCandidates.length - 2} more` : ""}`
+    : "Select Site HR users";
+
+  function toggle(userId: string) {
+    const next = new Set(selected);
+    if (next.has(userId)) next.delete(userId);
+    else next.add(userId);
+    onChange(Array.from(next));
+  }
+
+  return (
+    <div className="relative">
+      <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Site HR</p>
+      <button type="button" disabled={disabled} onClick={() => setOpen((current) => !current)} className="mt-1 flex min-h-10 w-full items-center justify-between gap-2 rounded-md border bg-white px-3 py-2 text-left text-sm disabled:bg-slate-100 disabled:opacity-70">
+        <span className={`min-w-0 truncate ${selectedCandidates.length ? "font-semibold text-slate-900" : "text-slate-500"}`}>{summary}</span>
+        <span className="shrink-0 text-slate-500">▾</span>
+      </button>
+      {open && (
+        <>
+          <button type="button" aria-label="Close Site HR selector" className="fixed inset-0 z-40 cursor-default" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 right-0 z-50 mt-1 overflow-hidden rounded-md border bg-white shadow-lg">
+            <div className="border-b p-2">
+              <input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, code or email" className="h-9 w-full rounded-md border px-2 text-sm" />
+            </div>
+            <div className="max-h-60 overflow-auto p-1">
+              {!filtered.length && <p className="p-3 text-sm text-slate-500">No active eligible users found.</p>}
+              {filtered.map((candidate) => {
+                const userId = candidate.linked_user_id;
+                return (
+                  <label key={userId} className="flex cursor-pointer items-start gap-2 rounded px-2 py-2 text-sm hover:bg-slate-50">
+                    <input type="checkbox" checked={selected.has(userId)} onChange={() => toggle(userId)} className="mt-0.5" />
+                    <span className="min-w-0">
+                      <span className="block truncate font-semibold">{candidate.employee_name || candidate.profile_name}</span>
+                      <span className="block truncate text-xs text-slate-500">{candidate.employee_code || candidate.email || ""}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="flex justify-end border-t p-2">
+              <button type="button" onClick={() => setOpen(false)} className="rounded-md border px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Done</button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function LabourMusterConfigurationPage() {
   const { access } = useAccessContext();
   const permissions = access?.permissions || [];
@@ -155,7 +228,7 @@ export default function LabourMusterConfigurationPage() {
   const [diagnostics, setDiagnostics] = useState<any>(null);
   const [filters, setFilters] = useState({ company_id: "", site_id: "" });
   const [form, setForm] = useState({
-    site_hr_user_id: "",
+    site_hr_user_ids: [] as string[],
     attendance_system: "",
     attendance_lock_hours: "5",
     approval_layer_count: "2",
@@ -232,7 +305,7 @@ export default function LabourMusterConfigurationPage() {
               { layer_sequence: 2, stage_name: "HO Approval", approver_user_id: "" },
             ];
         setForm({
-          site_hr_user_id: payload.configuration.site_hr_user_id || "",
+          site_hr_user_ids: payload.configuration.site_hr_user_ids || (payload.configuration.site_hr_user_id ? [payload.configuration.site_hr_user_id] : []),
           attendance_system: payload.configuration.attendance_system || "",
           attendance_lock_hours: String(payload.configuration.attendance_lock_hours || 5),
           approval_layer_count: String(payload.configuration.approval_layer_count || loadedLayers.length || 2),
@@ -241,7 +314,7 @@ export default function LabourMusterConfigurationPage() {
         });
       } else if (nextFilters.company_id && nextFilters.site_id) {
         setForm({
-          site_hr_user_id: "",
+          site_hr_user_ids: [],
           attendance_system: "",
           attendance_lock_hours: "5",
           approval_layer_count: "2",
@@ -388,7 +461,7 @@ export default function LabourMusterConfigurationPage() {
           <section className="rounded-lg border bg-white p-4 shadow-sm">
             <h2 className="text-lg font-semibold">Site Responsibility</h2>
             <div className="mt-4 space-y-3">
-              <EmployeePicker title="Primary Site HR" placeholder="Select Site HR" value={form.site_hr_user_id} candidates={employeeCandidates} disabled={saving || !canEditResponsibility} eligibilityKey="site_hr_eligible" onChange={(userId) => setForm({ ...form, site_hr_user_id: userId })} onMessage={(text) => setMessage({ type: "error", text })} />
+              <SiteHrMultiPicker value={form.site_hr_user_ids} candidates={employeeCandidates} disabled={saving || !canEditResponsibility} onChange={(site_hr_user_ids) => setForm({ ...form, site_hr_user_ids })} />
               <p className="text-xs text-slate-500">Site HR remains site-specific and must already have the Site-In and Attendance access needed to operate the site.</p>
             </div>
           </section>
