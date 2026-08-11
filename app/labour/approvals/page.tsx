@@ -800,7 +800,7 @@ function MonthlyLabourAttendanceView() {
     contractor_profile_id: "",
     category: "",
     attendance_status: "all",
-    status: "finalized",
+    status: "submitted",
     search: "",
   });
   const [rows, setRows] = useState<any[]>([]);
@@ -907,7 +907,7 @@ function MonthlyLabourAttendanceView() {
         </label>
         <div className="flex items-end gap-2">
           <button type="button" onClick={() => loadMonthly()} className="h-10 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white">Apply</button>
-          <button type="button" onClick={() => updateFilters({ contractor_profile_id: "", category: "", attendance_status: "all", status: "finalized", search: "" })} className="h-10 rounded-md border bg-white px-4 text-sm font-semibold">Clear</button>
+          <button type="button" onClick={() => updateFilters({ contractor_profile_id: "", category: "", attendance_status: "all", status: "submitted", search: "" })} className="h-10 rounded-md border bg-white px-4 text-sm font-semibold">Clear</button>
         </div>
       </div>
 

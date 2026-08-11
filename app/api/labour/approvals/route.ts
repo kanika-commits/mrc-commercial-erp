@@ -1180,13 +1180,22 @@ async function loadStandardMonthlyRegister(access: any, input: {
     },
   ])).values()).filter((item: any) => item.id);
   if (!periodIds.length) return { rows: [], days, contractors, categories: [] };
-  const { data: attendanceRows, error: attendanceError } = await access.admin
-    .from("labour_attendance")
-    .select("id, period_id, labour_worker_id, deployment_id, attendance_date, first_half_present, second_half_present, overtime_minutes, approved_overtime_minutes, bonus_minutes, labour_workers(id, labour_code, worker_name)")
-    .in("period_id", periodIds)
-    .gte("attendance_date", fromDate)
-    .lte("attendance_date", toDate);
-  if (attendanceError) throw attendanceError;
+  const attendanceRows: any[] = [];
+  const attendancePageSize = 1000;
+  for (let offset = 0; ; offset += attendancePageSize) {
+    const { data: page, error: attendanceError } = await access.admin
+      .from("labour_attendance")
+      .select("id, period_id, labour_worker_id, deployment_id, attendance_date, first_half_present, second_half_present, overtime_minutes, approved_overtime_minutes, bonus_minutes, labour_workers(id, labour_code, worker_name)")
+      .in("period_id", periodIds)
+      .gte("attendance_date", fromDate)
+      .lte("attendance_date", toDate)
+      .order("attendance_date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + attendancePageSize - 1);
+    if (attendanceError) throw attendanceError;
+    attendanceRows.push(...(page || []));
+    if (!page || page.length < attendancePageSize) break;
+  }
   const deploymentIds = Array.from(new Set((attendanceRows || []).map((row: any) => row.deployment_id).filter(Boolean)));
   const { data: deployments, error: deploymentError } = deploymentIds.length
     ? await access.admin
@@ -1211,7 +1220,8 @@ async function loadStandardMonthlyRegister(access: any, input: {
   for (const attendance of attendanceRows || []) {
     if (!attendance.labour_worker_id) continue;
     const period: any = periodById.get(attendance.period_id);
-    if (!standardDateStatusMatches(period, attendance.attendance_date, requestedStatus, true)) continue;
+    const statusMatches = standardDateStatusMatches(period, attendance.attendance_date, requestedStatus, true);
+    if (!statusMatches) continue;
     const deployment: any = deploymentById.get(attendance.deployment_id);
     const trade: any = deployment?.labour_trade_id ? tradeById.get(deployment.labour_trade_id) : null;
     const contractorName = deployment?.labour_contractor_profiles?.vendors?.vendor_name
@@ -1789,7 +1799,7 @@ export async function GET(request: Request) {
           categories: [],
           days: daysInMonth(month),
           month,
-          default_status: "finalized",
+          default_status: "submitted",
           mode: "standard_monthly",
           read_only: true,
         });
@@ -1801,7 +1811,7 @@ export async function GET(request: Request) {
         companyId,
         siteId,
         month,
-        status: standardStatusFromFilter(text(searchParams.get("status")) || "finalized"),
+        status: standardStatusFromFilter(text(searchParams.get("status")) || "submitted"),
         contractorProfileId: text(searchParams.get("contractor_profile_id")),
         category: text(searchParams.get("category")),
         attendanceStatus: text(searchParams.get("attendance_status")),
@@ -1812,7 +1822,7 @@ export async function GET(request: Request) {
         companies,
         sites,
         month,
-        default_status: "finalized",
+        default_status: "submitted",
         mode: "standard_monthly",
         read_only: true,
       });

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { actorFields, applyCompanySiteScope, audit, isGlobalOrSuperAdmin, jsonError, originatingAttendanceSystem, requireLabourPermission } from "@/app/api/labour/_shared";
+import { actorFields, applyCompanySiteScope, audit, isGlobalOrSuperAdmin, jsonError, loadEligibleDeployments, originatingAttendanceSystem, requireLabourPermission } from "@/app/api/labour/_shared";
 import { applyOrganizationScope } from "@/lib/serverOrganizationScope";
 import { isoDate } from "@/lib/labour/operations";
 import { hasActiveSiteHrAssignment } from "@/lib/serverSiteHr";
@@ -31,6 +31,24 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (!workflow) return jsonError("This attendance period has no originating attendance workflow. Confirm the historical workflow before submitting it.", 409);
     if (workflow === "site_in_engineer") return jsonError("This attendance period belongs to Site-In & Engineer Daily Labour. Use Engineer Daily Labour for this existing record.", 403);
     if (attendanceDate) {
+      const deployments = await loadEligibleDeployments(access, {
+        organizationId: period.organization_id,
+        companyId: period.company_id,
+        siteId: period.site_id,
+        contractorProfileId: period.contractor_profile_id,
+        attendanceDate,
+      });
+      const workerIds = Array.from(new Set(deployments.map((deployment: any) => deployment.labour_worker_id).filter(Boolean)));
+      const { data: attendanceRows, error: attendanceError } = workerIds.length
+        ? await access.admin.from("labour_attendance").select("labour_worker_id, first_half_present, second_half_present").eq("period_id", period.id).eq("attendance_date", attendanceDate).in("labour_worker_id", workerIds)
+        : { data: [], error: null };
+      if (attendanceError) throw attendanceError;
+      const attendanceByWorker = new Map((attendanceRows || []).map((row: any) => [row.labour_worker_id, row]));
+      const incompleteCount = workerIds.filter((workerId) => {
+        const row: any = attendanceByWorker.get(workerId);
+        return !row || typeof row.first_half_present !== "boolean" || typeof row.second_half_present !== "boolean";
+      }).length;
+      if (incompleteCount) return jsonError(`Attendance is incomplete for ${incompleteCount} labourers. Complete attendance before submitting.`, 409);
       const selectedStatus = period.summary?.date_statuses?.[attendanceDate]?.status || period.status;
       if (!["draft", "reopened"].includes(selectedStatus)) return jsonError("Only draft attendance can be submitted for this date.");
       const now = new Date().toISOString();
