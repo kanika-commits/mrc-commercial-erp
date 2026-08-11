@@ -235,6 +235,10 @@ function hasRouteAccess(
 
   if (globalAccess) return true;
 
+  if (pathname === "/admin/activity") {
+    return access.roleCodes.includes("super_admin") || can(access.permissions, "system_activity", "view");
+  }
+
   if (pathname === "/") {
     return can(access.permissions, "dashboard", "view");
   }

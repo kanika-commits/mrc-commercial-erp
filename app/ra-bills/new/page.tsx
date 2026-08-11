@@ -329,10 +329,17 @@ export default function NewRABillPage() {
         body: payload,
       });
 
-      const result = await response.json();
+      const contentType = response.headers.get("content-type") || "";
+      const result = contentType.includes("application/json")
+        ? await response.json().catch(() => ({}))
+        : { error: await response.text() };
 
       if (!response.ok) {
-        throw new Error(result.error || "Failed to create RA Bill.");
+        const rawMessage = String(result.error || "").trim();
+        const message = response.status === 413 || /request entity too large|payload too large/i.test(rawMessage)
+          ? "RA Bill attachment is too large to upload."
+          : rawMessage || "Failed to create RA Bill.";
+        throw new Error(message);
       }
 
       router.push(`/ra-bills/${result.id}`);
