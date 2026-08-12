@@ -1470,6 +1470,25 @@ async function transitionStandardPeriod(access: any, request: Request, payload: 
         oldValues: period,
         newValues: patch,
       });
+      const dateSummary = patch.summary?.date_statuses?.[workDate] || {};
+      const recipientUserId = dateSummary.submitted_by || period.submitted_by;
+      if (recipientUserId && recipientUserId !== access.auth.user.id) {
+        const approverName = actorName(access) || access.auth.user.email || "Approver";
+        const { data: site } = await access.admin.from("sites").select("site_name").eq("id", period.site_id).maybeSingle();
+        const notification = await access.admin.from("user_notifications").insert({
+          organization_id: period.organization_id,
+          recipient_user_id: recipientUserId,
+          notification_type: "labour_attendance_sent_back",
+          title: "Labour Attendance Sent Back",
+          message: `${site?.site_name || "Selected site"} attendance for ${workDate} was sent back by ${approverName}. Reason: ${reason}`,
+          target_url: `/labour/attendance/daily?company_id=${encodeURIComponent(period.company_id)}&site_id=${encodeURIComponent(period.site_id)}&attendance_date=${encodeURIComponent(workDate)}`,
+          related_entity_type: "labour_attendance_period",
+          related_entity_id: period.id,
+          created_by: access.auth.user.id,
+          created_by_name: approverName,
+        });
+        if (notification.error) console.error("Labour attendance notification creation failed:", notification.error.message);
+      }
     }
     return NextResponse.json({ updated: true, status: "reopened" });
   }

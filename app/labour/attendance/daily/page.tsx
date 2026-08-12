@@ -132,7 +132,8 @@ export default function LabourDailyAttendancePage() {
 
   const hasUnsavedChanges = Object.values(dirty).some(Boolean);
   const readOnly = dayLock?.is_locked || ["submitted", "finalized"].includes(period?.status);
-  const sentBack = period?.status === "reopened";
+  const dateSummary = period?.summary?.date_statuses?.[filters.attendance_date] || {};
+  const sentBack = period?.status === "reopened" || dateSummary.status === "reopened";
   const filtersDisabled = rowLoading || saving || submitting;
   const attendanceSystem = lookups.attendance_system || null;
   const systemValue = attendanceSystem?.value || null;
@@ -670,9 +671,9 @@ export default function LabourDailyAttendancePage() {
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 shadow-sm">
             <p className="text-base font-bold">Attendance Sent Back</p>
             <div className="mt-2 grid gap-1 md:grid-cols-2">
-              <p><span className="font-semibold">Reason:</span> {period.transition_reason || "No reason recorded."}</p>
-              <p><span className="font-semibold">Sent Back By:</span> {period.reopened_by_name || period.reopened_by_email || period.updated_by_name || period.updated_by_email || "-"}</p>
-              <p><span className="font-semibold">Sent Back At:</span> {period.reopened_at ? new Date(period.reopened_at).toLocaleString("en-IN") : period.updated_at ? new Date(period.updated_at).toLocaleString("en-IN") : "-"}</p>
+              <p><span className="font-semibold">Reason:</span> {dateSummary.reason || period.transition_reason || "No reason recorded."}</p>
+              <p><span className="font-semibold">Sent Back By:</span> {dateSummary.reopened_by_name || period.reopened_by_name || period.reopened_by_email || period.updated_by_name || period.updated_by_email || "-"}</p>
+              <p><span className="font-semibold">Sent Back At:</span> {dateSummary.reopened_at ? new Date(dateSummary.reopened_at).toLocaleString("en-IN") : period.reopened_at ? new Date(period.reopened_at).toLocaleString("en-IN") : period.updated_at ? new Date(period.updated_at).toLocaleString("en-IN") : "-"}</p>
               <p><span className="font-semibold">Previously Submitted:</span> {period.submitted_at ? new Date(period.submitted_at).toLocaleString("en-IN") : "-"}</p>
             </div>
             <p className="mt-2 font-semibold">Correct the Labour attendance for this site/date and resubmit it for approval.</p>
