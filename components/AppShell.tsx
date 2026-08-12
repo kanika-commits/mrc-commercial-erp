@@ -534,7 +534,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [loadNotificationCounts, user]);
 
   useEffect(() => {
-    setNotificationsOpen(false);
     setMobileSidebarOpen(false);
   }, [pathname]);
 
