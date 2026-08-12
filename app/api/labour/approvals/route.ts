@@ -1106,11 +1106,23 @@ async function loadStandardApprovalRegisters(access: any, input: {
   if (error) throw error;
   const periodIds = (periods || []).map((period: any) => period.id).filter(Boolean);
   if (!periodIds.length) return [];
-  const { data: attendanceRows, error: attendanceError } = await access.admin
-    .from("labour_attendance")
-    .select("id, period_id, labour_worker_id, attendance_date, first_half_present, second_half_present, overtime_minutes, approved_overtime_minutes, bonus_minutes")
-    .in("period_id", periodIds);
-  if (attendanceError) throw attendanceError;
+  const attendanceRows: any[] = [];
+  const attendancePageSize = 1000;
+  for (let offset = 0; ; offset += attendancePageSize) {
+    let attendanceQuery = access.admin
+      .from("labour_attendance")
+      .select("id, period_id, labour_worker_id, attendance_date, first_half_present, second_half_present, overtime_minutes, approved_overtime_minutes, bonus_minutes")
+      .in("period_id", periodIds)
+      .order("attendance_date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + attendancePageSize - 1);
+    if (input.workDate) attendanceQuery = attendanceQuery.gte("attendance_date", input.workDate);
+    if (input.toDate) attendanceQuery = attendanceQuery.lte("attendance_date", input.toDate);
+    const { data: page, error: attendanceError } = await attendanceQuery;
+    if (attendanceError) throw attendanceError;
+    attendanceRows.push(...(page || []));
+    if (!page || page.length < attendancePageSize) break;
+  }
   const rowsByPeriod = new Map<string, any[]>();
   for (const row of attendanceRows || []) {
     rowsByPeriod.set(row.period_id, [...(rowsByPeriod.get(row.period_id) || []), row]);
@@ -1120,7 +1132,6 @@ async function loadStandardApprovalRegisters(access: any, input: {
     for (const attendance of rowsByPeriod.get(period.id) || []) {
       const workDate = dateText(attendance.attendance_date);
       if (!workDate) continue;
-      if (!standardDateStatusMatches(period, workDate, requestedStatus, true)) continue;
       const key = [period.organization_id, period.company_id, period.site_id, workDate].join(":");
       const current = groups.get(key) || { periods: [], rows: [], workDate };
       if (!current.periods.some((item: any) => item.id === period.id)) current.periods.push(period);
@@ -1128,7 +1139,9 @@ async function loadStandardApprovalRegisters(access: any, input: {
       groups.set(key, current);
     }
   }
-  let registers = Array.from(groups.values()).map((group) => compactStandardSiteRegister(group.periods, group.rows, group.workDate));
+  let registers = Array.from(groups.values())
+    .map((group) => compactStandardSiteRegister(group.periods, group.rows, group.workDate))
+    .filter((register: any) => !requestedStatus || register.status === requestedStatus);
   if (input.contractorProfileId) {
     const allowedPeriodIds = new Set((periods || []).filter((period: any) => period.contractor_profile_id === input.contractorProfileId).map((period: any) => period.id));
     registers = registers.filter((register: any) => register.period_ids?.some((periodId: string) => allowedPeriodIds.has(periodId)));
