@@ -131,8 +131,9 @@ export default function LabourDailyAttendancePage() {
   ) as Record<string, string>, [rows]);
 
   const hasUnsavedChanges = Object.values(dirty).some(Boolean);
-  const readOnly = dayLock?.is_locked || ["submitted", "finalized"].includes(period?.status);
   const dateSummary = period?.summary?.date_statuses?.[filters.attendance_date] || {};
+  const reopenedDate = dateSummary.status === "reopened";
+  const readOnly = dayLock?.is_locked || (!reopenedDate && ["submitted", "finalized"].includes(period?.status));
   const sentBack = period?.status === "reopened" || dateSummary.status === "reopened";
   const filtersDisabled = rowLoading || saving || submitting;
   const attendanceSystem = lookups.attendance_system || null;

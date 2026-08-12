@@ -141,6 +141,7 @@ function selectedDateRegisterStatus(period: any, attendanceRows: any[], attendan
 
 function selectedDateReadOnlyReason(period: any, dayLock: any, selectedStatus: string) {
   if (dayLock?.is_locked) return "Attendance is locked for this date.";
+  if (selectedStatus === "reopened") return null;
   if (selectedStatus === "submitted") return "Attendance has been submitted for this date.";
   if (selectedStatus === "finalized") return "Attendance has been approved for this date.";
   return null;
@@ -527,8 +528,6 @@ export async function POST(request: Request) {
     const backdatedReason = text(payload.backdated_reason);
     if (!companyId || !siteId || !attendanceDate) return jsonError("Company, site and attendance date are required.");
 
-    const dateAccess = actorCanEditAttendanceDate(access, attendanceDate, backdatedReason);
-    if ("error" in dateAccess) return jsonError(dateAccess.error || "You cannot edit attendance for this date.", 403);
     const scopeCheck = await validateLabourCompanySiteIndependent(access, requestedOrganizationId, companyId, siteId);
     if ("error" in scopeCheck) return jsonError(scopeCheck.error || "Selected company/site is not available.", 403);
     const organizationId = scopeCheck.organizationId;
@@ -543,6 +542,9 @@ export async function POST(request: Request) {
     const contractorProfileIds = contractorCheck.profileIds;
 
     const existingPeriod = await loadExistingAttendancePeriod(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate });
+    const reopenedDate = existingPeriod?.summary?.date_statuses?.[attendanceDate]?.status === "reopened";
+    const dateAccess = actorCanEditAttendanceDate(access, attendanceDate, reopenedDate ? backdatedReason || "sent_back" : backdatedReason);
+    if ("error" in dateAccess) return jsonError(dateAccess.error || "You cannot edit attendance for this date.", 403);
     const originResult = await resolveAttendanceSystemForPeriod(access, { period: existingPeriod, organizationId, companyId, siteId, contractorProfileId, attendanceDate });
     if ("error" in originResult) return jsonError(originResult.error, originResult.status);
     const attendanceSystem = originResult.attendanceSystem;
