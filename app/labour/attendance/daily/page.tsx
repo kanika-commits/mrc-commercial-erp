@@ -98,6 +98,7 @@ export default function LabourDailyAttendancePage() {
   const [dayLock, setDayLock] = useState<any>(null);
   const [readOnlyReason, setReadOnlyReason] = useState("");
   const [policy, setPolicy] = useState<any>(null);
+  const reopenedAttendanceDates: string[] = lookups.reopened_attendance_dates || [];
   const [dirty, setDirty] = useState<Record<string, boolean>>({});
   const [message, setMessage] = useState("");
   const [submitSuccessMessage, setSubmitSuccessMessage] = useState("");
@@ -703,9 +704,14 @@ export default function LabourDailyAttendancePage() {
           </label>
           <label className="text-xs font-bold uppercase tracking-wide text-slate-500">
             Attendance Date
-            <input disabled={filtersDisabled} type="date" value={filters.attendance_date} min={canRecoverOlderAttendance ? undefined : earliestNormalEditDate} max={todayDate} onChange={(e) => {
+            <select disabled={filtersDisabled} value={filters.attendance_date} onChange={(e) => {
               updateFilters({ attendance_date: e.target.value, contractor_profile_id: "" }, { clearContractors: true });
-            }} className="mt-1 h-11 w-full rounded-lg border px-3 text-sm font-normal normal-case tracking-normal text-slate-950 disabled:bg-slate-100" />
+            }} className="mt-1 h-11 w-full rounded-lg border px-3 text-sm font-normal normal-case tracking-normal text-slate-950 disabled:bg-slate-100">
+              {Array.from(new Set([
+                ...reopenedAttendanceDates,
+                ...(canRecoverOlderAttendance ? [] : [earliestNormalEditDate, todayDate]),
+              ])).sort().map((date) => <option key={date} value={date}>{date}</option>)}
+            </select>
           </label>
           <label className="text-xs font-bold uppercase tracking-wide text-slate-500">
             Contractor

@@ -368,6 +368,7 @@ export async function GET(request: Request) {
       let deployments: any[] = [];
       let siteInContractors: { contractors: any[] } = { contractors: [] };
       let attendanceSystem: any = null;
+      let reopenedAttendanceDates: string[] = [];
 
       if (selectedCompanyId && selectedSiteId) {
         const scopeCheck = await validateLabourOperationalCompanySite(access, null, selectedCompanyId, selectedSiteId);
@@ -376,6 +377,21 @@ export async function GET(request: Request) {
         attendanceSystem = system.ok
           ? { status: "configured", value: system.attendanceSystem }
           : { status: system.reason, value: null, message: system.message };
+        if (system.ok && system.attendanceSystem === "standard") {
+          const { data: periods, error: periodsError } = await access.admin
+            .from("labour_attendance_periods")
+            .select("summary")
+            .eq("organization_id", scopeCheck.organizationId)
+            .eq("company_id", selectedCompanyId)
+            .eq("site_id", selectedSiteId)
+            .eq("originating_attendance_system", "standard");
+          if (periodsError) throw periodsError;
+          reopenedAttendanceDates = Array.from(new Set((periods || []).flatMap((period: any) =>
+            Object.entries(period.summary?.date_statuses || {})
+              .filter(([, value]: [string, any]) => value?.status === "reopened")
+              .map(([date]) => date),
+          ))).filter((date): date is string => /^\d{4}-\d{2}-\d{2}$/.test(date)).sort();
+        }
         deployments = await loadEligibleDeployments(access, {
           organizationId: scopeCheck.organizationId,
           companyId: selectedCompanyId,
@@ -421,6 +437,7 @@ export async function GET(request: Request) {
         work_orders: Array.from(workOrderMap.values()).sort(byName("wo_number")),
         vendors: [],
         contractors: siteInContractors.contractors,
+        reopened_attendance_dates: reopenedAttendanceDates,
         attendance_system: attendanceSystem,
         trades: Array.from(tradeMap.values()).sort(byName("trade_name")),
         manpower_work_orders: Array.from(manpowerWorkOrderMap.values()).sort(byName("manpower_wo_number")),
