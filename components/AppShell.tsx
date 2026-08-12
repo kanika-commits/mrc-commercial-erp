@@ -6,7 +6,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
   Activity,
-  Bell,
   Building2,
   ChevronDown,
   FileText,
@@ -23,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import UserHeader from "@/components/UserHeader";
+import NotificationCenter from "@/components/NotificationCenter";
 import { useAccessContext } from "@/components/AccessContext";
 import {
   EMPTY_NOTIFICATION_COUNTS,
@@ -86,39 +86,6 @@ type SidebarSection = {
   items: SidebarTopGroup[];
 };
 
-const notificationLinks = [
-  {
-    label: "Pending Work Orders",
-    key: "pendingWorkOrders",
-    href: "/approvals/work-orders",
-  },
-  {
-    label: "Pending RA Bills",
-    key: "pendingRaBills",
-    href: "/approvals",
-  },
-  {
-    label: "Pending Debit Notes",
-    key: "pendingDebitNotes",
-    href: "/approvals",
-  },
-  {
-    label: "Pending ITC Review",
-    key: "pendingItcReview",
-    href: "/invoices/itc",
-  },
-  {
-    label: "Employee Attendance Sent Back",
-    key: "employeeAttendanceSentBack",
-    href: "/hr/attendance/daily",
-  },
-  {
-    label: "Labour Attendance Sent Back",
-    key: "labourAttendanceSentBack",
-    href: "/labour/attendance/daily",
-  },
-] as const;
-
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "constructiq-sidebar-collapsed";
 const SIDEBAR_EXPANDED_GROUPS_STORAGE_KEY = "constructiq-sidebar-expanded-groups";
 
@@ -130,7 +97,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     loading: accessLoading,
     user,
   } = useAccessContext();
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationCounts, setNotificationCounts] = useState<NotificationCounts>(
     EMPTY_NOTIFICATION_COUNTS,
   );
@@ -621,11 +587,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     };
   }, [mobileSidebarOpen]);
 
-  const totalNotifications = notificationLinks.reduce(
-    (sum, item) => sum + (notificationCounts[item.key] || 0),
-    0,
-  );
-
   const notificationCountsContextValue = useMemo(
     () => ({
       counts: notificationCounts,
@@ -784,60 +745,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </button>
 
             <div className="flex min-w-0 items-center gap-2 sm:gap-4 lg:gap-5">
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setNotificationsOpen((open) => !open)}
-                  className="relative flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 transition hover:bg-slate-100"
-                  aria-label="Notifications"
-                  aria-expanded={notificationsOpen}
-                >
-                  <Bell className="h-5 w-5" />
-                  {totalNotifications > 0 && (
-                    <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold leading-4 text-white">
-                      {totalNotifications}
-                    </span>
-                  )}
-                </button>
-
-                {notificationsOpen && (
-                  <div className="absolute right-0 top-11 z-50 w-[calc(100vw-2rem)] max-w-80 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
-                    <div className="border-b border-slate-100 px-2 pb-2">
-                      <p className="text-sm font-bold text-slate-950">
-                        Notifications
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        Pending workflow alerts
-                      </p>
-                    </div>
-
-                    {totalNotifications === 0 ? (
-                      <div className="px-2 py-4 text-sm text-slate-500">
-                        No pending alerts
-                      </div>
-                    ) : (
-                      <div className="mt-2 space-y-1">
-                        {notificationLinks
-                          .filter((item) => notificationCounts[item.key] > 0)
-                          .map((item) => (
-                            <Link
-                              key={item.key}
-                              href={item.href}
-                              className="flex items-center justify-between rounded-lg px-2 py-2 text-sm transition hover:bg-slate-50"
-                            >
-                              <span className="font-medium text-slate-700">
-                                {item.label}
-                              </span>
-                              <span className="rounded-full bg-slate-900 px-2 py-0.5 text-xs font-bold text-white">
-                                {notificationCounts[item.key]}
-                              </span>
-                            </Link>
-                          ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+              <NotificationCenter workflowCounts={notificationCounts} />
               <button
                 type="button"
                 onClick={() => window.location.reload()}
