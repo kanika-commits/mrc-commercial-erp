@@ -1089,9 +1089,9 @@ function EngineerDailyTable({ rows, openPhoto }: { rows: any[]; openPhoto: (phot
 function StandardAttendanceTable({ rows }: { rows: any[] }) {
   return (
     <div className="overflow-auto rounded-lg border bg-white shadow-sm">
-      <table className="min-w-[1500px] text-sm">
+      <table className="min-w-[1400px] text-sm">
         <thead className="sticky top-0 z-10 bg-slate-100 text-left text-xs uppercase text-slate-500">
-          <tr>{["Labour Code", "Labour Name", "Contractor", "Category / Trade", "Daily Rate", "Attendance Date", "Submitted By", "First Half", "Second Half", "OT Hours", "Bonus Hours", "Status"].map((heading) => <th key={heading} className="px-3 py-3">{heading}</th>)}</tr>
+          <tr>{["Labour Code", "Labour Name", "Contractor", "Category / Trade", "Daily Rate", "Attendance Date", "First Half", "Second Half", "OT Hours", "Bonus Hours", "Status"].map((heading) => <th key={heading} className="px-3 py-3">{heading}</th>)}</tr>
         </thead>
         <tbody className="divide-y">
           {rows.map((row, index) => {
@@ -1105,7 +1105,6 @@ function StandardAttendanceTable({ rows }: { rows: any[] }) {
                 <td className="px-3 py-2">{row.category || "-"}</td>
                 <td className="px-3 py-2">{row.daily_rate_label || "-"}</td>
                 <td className="px-3 py-2">{row.work_date || row.period_month || "-"}</td>
-                <td className="px-3 py-2">{firstPeriodRow ? row.submitted_by_name || row.submitted_by_email || "-" : ""}</td>
                 <td className="px-3 py-2">{shiftBadge(row.first_half_present)}</td>
                 <td className="px-3 py-2">{shiftBadge(row.second_half_present)}</td>
                 <td className="px-3 py-2">{hours(row.overtime_minutes)}</td>
@@ -1114,7 +1113,7 @@ function StandardAttendanceTable({ rows }: { rows: any[] }) {
               </tr>
             );
           })}
-          {!rows.length && <tr><td colSpan={12} className="px-3 py-8 text-center text-slate-500">No submitted Standard Attendance registers match these filters.</td></tr>}
+          {!rows.length && <tr><td colSpan={11} className="px-3 py-8 text-center text-slate-500">No submitted Standard Attendance registers match these filters.</td></tr>}
         </tbody>
       </table>
     </div>

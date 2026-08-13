@@ -80,7 +80,6 @@ export default function LabourDailyAttendancePage() {
   const { access } = useAccessContext();
   const permissions = access?.permissions || [];
   const global = hasGlobalAccess(access);
-  const canRecoverOlderAttendance = global || Boolean(access?.roleCodes?.includes("super_admin"));
   const todayDate = today();
   const earliestNormalEditDate = daysBefore(todayDate, 2);
   const canAddAttendance = global || can(permissions, "labour_attendance", "add");
@@ -837,7 +836,9 @@ export default function LabourDailyAttendancePage() {
             }} className="mt-1 h-11 w-full rounded-lg border px-3 text-sm font-normal normal-case tracking-normal text-slate-950 disabled:bg-slate-100">
               {Array.from(new Set([
                 ...reopenedAttendanceDates,
-                ...(canRecoverOlderAttendance ? [] : [earliestNormalEditDate, daysBefore(todayDate, 1), todayDate]),
+                earliestNormalEditDate,
+                daysBefore(todayDate, 1),
+                todayDate,
               ])).sort().map((date) => <option key={date} value={date}>{date}</option>)}
             </select>
           </label>

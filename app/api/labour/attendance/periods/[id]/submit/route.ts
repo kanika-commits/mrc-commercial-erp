@@ -73,6 +73,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const selectedStatus = period.summary?.date_statuses?.[attendanceDate]?.status || period.status;
       if (!["draft", "reopened"].includes(selectedStatus)) return jsonError("Only draft attendance can be submitted for this date.");
       const now = new Date().toISOString();
+      const submittedByName = access.auth.user.user_metadata?.full_name || access.auth.user.user_metadata?.name || access.auth.user.email || "Unknown User";
       const nextSummary = {
         ...(period.summary || {}),
         date_statuses: {
@@ -82,6 +83,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
             status: "submitted",
             submitted_at: now,
             submitted_by: access.auth.user.id,
+            submitted_by_name: submittedByName,
+            submitted_by_email: access.auth.user.email || null,
           },
         },
       };
@@ -91,7 +94,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           summary: nextSummary,
           submitted_at: now,
           submitted_by: access.auth.user.id,
-          submitted_by_name: access.auth.user.user_metadata?.full_name || access.auth.user.user_metadata?.name || access.auth.user.email || "Unknown User",
+          submitted_by_name: submittedByName,
           submitted_by_email: access.auth.user.email || null,
           updated_at: now,
           ...actorFields(access.auth, "updated"),
