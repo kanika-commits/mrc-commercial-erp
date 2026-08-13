@@ -717,8 +717,8 @@ function compactStandardPeriod(period: any, attendanceRows: any[], workDate?: st
   const totalOtMinutes = realRows.reduce((sum: number, row: any) => sum + Number(row.overtime_minutes || row.approved_overtime_minutes || 0), 0);
   const totalBonusMinutes = realRows.reduce((sum: number, row: any) => sum + Number(row.bonus_minutes || 0), 0);
   const attendanceExceptions = realRows.filter((row: any) =>
-    row.first_half_present !== true ||
-    row.second_half_present !== true ||
+    row.first_half_present === null || row.first_half_present === undefined ||
+    row.second_half_present === null || row.second_half_present === undefined ||
     Number(row.overtime_minutes || row.approved_overtime_minutes || 0) > 0 ||
     Number(row.bonus_minutes || 0) > 0,
   ).length;
@@ -848,7 +848,7 @@ function photosForGroup(snapshot: any, groupId?: string | null) {
 }
 
 function attendanceException(row: any) {
-  if (row.first_half_present !== true || row.second_half_present !== true) return true;
+  if (row.first_half_present === null || row.first_half_present === undefined || row.second_half_present === null || row.second_half_present === undefined) return true;
   if (Number(row.overtime_minutes || 0) > 0) return true;
   if (Number(row.bonus_minutes || 0) > 0) return true;
   return false;
@@ -1134,7 +1134,7 @@ export async function loadStandardApprovalRows(access: any, input: {
         submitted_by_email: period.submitted_by_email,
         submitted_at: period.submitted_at,
         status,
-        attendance_exception: attendance.first_half_present !== true || attendance.second_half_present !== true || Number(attendance.overtime_minutes || attendance.approved_overtime_minutes || 0) > 0 || Number(attendance.bonus_minutes || 0) > 0,
+        attendance_exception: attendance.first_half_present === null || attendance.first_half_present === undefined || attendance.second_half_present === null || attendance.second_half_present === undefined || Number(attendance.overtime_minutes || attendance.approved_overtime_minutes || 0) > 0 || Number(attendance.bonus_minutes || 0) > 0,
       }];
     });
   });
@@ -2217,7 +2217,7 @@ export async function GET(request: Request) {
       submissionHeaders = submissionHeaders.filter((row: any) => matchingSubmissionIds.has(row.id));
     }
     if (attendanceExceptionFilter === "incomplete") {
-      registerRows = registerRows.filter((row: any) => row.first_half_present !== true || row.second_half_present !== true);
+      registerRows = registerRows.filter((row: any) => row.first_half_present === null || row.first_half_present === undefined || row.second_half_present === null || row.second_half_present === undefined);
     } else if (attendanceExceptionFilter === "absent") {
       registerRows = registerRows.filter((row: any) => row.first_half_present === false || row.second_half_present === false);
     } else if (attendanceExceptionFilter === "ot") {
