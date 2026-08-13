@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, ChevronDown, Image as ImageIcon, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { CheckCircle2, ChevronDown, FileText, Image as ImageIcon, RotateCcw, Search, Trash2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAccessContext } from "@/components/AccessContext";
@@ -495,6 +495,19 @@ export function LabourApprovalsPageContent({ historyMode = false }: { historyMod
     setPhotoModal({ ...photo, url: payload.url });
   }
 
+  async function openSupportingPdf(register: any) {
+    if (!register?.supporting_pdf) return;
+    const params = new URLSearchParams();
+    params.set("company_id", register.company_id || filters.company_id);
+    params.set("site_id", register.site_id || filters.site_id);
+    params.set("attendance_date", register.work_date || filters.work_date);
+    params.set("open", "true");
+    const response = await fetch(`/api/labour/attendance/date-document?${params.toString()}`, { headers: { Authorization: `Bearer ${await token()}` } });
+    const payload = await readPayload(response);
+    if (!response.ok || !payload.url) return showMessage("error", payload.error || "Could not open supporting PDF.");
+    window.open(payload.url, "_blank", "noopener,noreferrer");
+  }
+
   async function openRegister(register: any) {
     const id = register.submission_id || register.id;
     if (!id) return;
@@ -713,6 +726,20 @@ export function LabourApprovalsPageContent({ historyMode = false }: { historyMod
                 <Summary label="Attendance Pending" value={activeRegisterTotals.pending || 0} />
                 <Summary label="OT Hours" value={activeRegisterTotals.otHours || 0} />
                 <Summary label="Bonus Hours" value={activeRegisterTotals.bonusHours || 0} />
+              </div>
+            )}
+            {isStandard && activeRegister.supporting_pdf && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-white p-3 text-sm shadow-sm">
+                <div className="min-w-0">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Supporting Attendance PDF</p>
+                  <p className="mt-1 flex min-w-0 items-center gap-2 font-semibold text-slate-800">
+                    <FileText className="h-4 w-4 shrink-0 text-slate-500" />
+                    <span className="truncate">{activeRegister.supporting_pdf.file_name || "Supporting PDF"}</span>
+                  </p>
+                </div>
+                <button type="button" onClick={() => openSupportingPdf(activeRegister)} className="inline-flex h-9 items-center gap-2 rounded-md border bg-white px-3 text-xs font-bold">
+                  <FileText className="h-4 w-4" />View
+                </button>
               </div>
             )}
             {activeRegister.status === "reopened" && activeRegister.send_back_reason && (

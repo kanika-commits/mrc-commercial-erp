@@ -44,11 +44,32 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         : { data: [], error: null };
       if (attendanceError) throw attendanceError;
       const attendanceByWorker = new Map((attendanceRows || []).map((row: any) => [row.labour_worker_id, row]));
-      const incompleteCount = workerIds.filter((workerId) => {
-        const row: any = attendanceByWorker.get(workerId);
-        return !row || typeof row.first_half_present !== "boolean" || typeof row.second_half_present !== "boolean";
-      }).length;
-      if (incompleteCount) return jsonError(`Attendance is incomplete for ${incompleteCount} labourers. Complete attendance before submitting.`, 409);
+      const incompleteWorkers = deployments.flatMap((deployment: any) => {
+        const row: any = attendanceByWorker.get(deployment.labour_worker_id);
+        const worker = Array.isArray(deployment.labour_workers) ? deployment.labour_workers[0] : deployment.labour_workers;
+        if (row && typeof row.first_half_present === "boolean" && typeof row.second_half_present === "boolean") return [];
+        return [{
+          labour_worker_id: deployment.labour_worker_id,
+          labour_code: worker?.labour_code || "-",
+          worker_name: worker?.worker_name || "-",
+          reason: row ? "incomplete_half" : "missing_attendance",
+        }];
+      });
+      if (incompleteWorkers.length) {
+        const missingWorkerCount = incompleteWorkers.filter((worker: any) => worker.reason === "missing_attendance").length;
+        const incompleteHalfCount = incompleteWorkers.length - missingWorkerCount;
+        const parts = [];
+        if (missingWorkerCount) parts.push(`${missingWorkerCount} labourers have no attendance`);
+        if (incompleteHalfCount) parts.push(`${incompleteHalfCount} labourers have incomplete shift attendance`);
+        return NextResponse.json({
+          error: `Attendance is incomplete. ${parts.join("; ")}. Complete attendance for every eligible labourer before submitting.`,
+          eligible_count: workerIds.length,
+          complete_count: workerIds.length - incompleteWorkers.length,
+          missing_worker_count: missingWorkerCount,
+          incomplete_half_count: incompleteHalfCount,
+          affected_workers: incompleteWorkers.slice(0, 10),
+        }, { status: 409 });
+      }
       const selectedStatus = period.summary?.date_statuses?.[attendanceDate]?.status || period.status;
       if (!["draft", "reopened"].includes(selectedStatus)) return jsonError("Only draft attendance can be submitted for this date.");
       const now = new Date().toISOString();

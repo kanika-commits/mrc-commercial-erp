@@ -10,7 +10,7 @@ import {
 } from "@/lib/serverOrganizationScope";
 import { insertErpAuditLog, type ErpAuditAction } from "@/lib/serverAudit";
 import { normalizeIdentifier, normalizeText } from "@/lib/labour/constants";
-import { isAfterLabourDayEndLockCutoff, isAfterLabourPolicyLockCutoff, monthStart, previousDate, todayInIst } from "@/lib/labour/operations";
+import { daysBefore, isAfterLabourDayEndLockCutoff, isAfterLabourPolicyLockCutoff, monthStart, todayInIst } from "@/lib/labour/operations";
 import { optionalFormattedAadhaar } from "@/lib/utils/aadhaar";
 import { hasActiveSiteHrAssignment } from "@/lib/serverSiteHr";
 
@@ -761,11 +761,12 @@ export function actorCanEditAttendanceDate(access: LabourAccess, attendanceDate:
   const today = todayInIst();
   if (attendanceDate > today) return { error: "Future labour attendance cannot be marked." };
   if (attendanceDate === today) return { ok: true };
-  const olderThanYesterday = attendanceDate < previousDate(today);
-  if (!isGlobalOrSuperAdmin(access) && olderThanYesterday) {
-    return { error: "Labour attendance can be edited only for today or yesterday." };
+  const oldestNormalEditDate = daysBefore(today, 2);
+  const olderThanNormalWindow = attendanceDate < oldestNormalEditDate;
+  if (!isGlobalOrSuperAdmin(access) && olderThanNormalWindow) {
+    return { error: "Labour attendance can be edited only for today, yesterday or the day before yesterday." };
   }
-  if (!olderThanYesterday) return { ok: true };
+  if (!olderThanNormalWindow) return { ok: true };
   if (!normalizeText(reason)) return { error: "Backdated attendance reason is required." };
   return { ok: true };
 }

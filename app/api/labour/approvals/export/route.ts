@@ -23,9 +23,12 @@ export async function GET(request: Request) {
       access.admin.from("companies").select("company_name, company_code").eq("id", first.company_id).maybeSingle(),
       access.admin.from("sites").select("site_name, site_code").eq("id", first.site_id).maybeSingle(),
     ]);
-    const rowStatuses = new Set(rows.map((row: any) => row.status).filter(Boolean));
-    const status = rowStatuses.size === 1 ? Array.from(rowStatuses)[0] : rowStatuses.has("submitted") ? "submitted" : rowStatuses.has("reopened") ? "reopened" : rowStatuses.has("finalized") ? "finalized" : first.status;
-    const context = { company_name: company?.company_name || company?.company_code || "-", site_name: site?.site_name || site?.site_code || "-", work_date: attendanceDate, status: status === "submitted" ? "Submitted" : status === "finalized" ? "Finalized" : status === "reopened" ? "Reopened" : status === "draft" ? "Draft" : status, submitted_by_name: periods.map((period) => period.submitted_by_name).filter(Boolean).join(", ") || first.submitted_by_email, submitted_at: formatAttendanceExportTimestamp(periods.map((period) => period.submitted_at).filter(Boolean).sort().reverse()[0]) };
+    const dateStatuses = periods.map((period) => period.summary?.date_statuses?.[attendanceDate]).filter(Boolean);
+    const statusSet = new Set(dateStatuses.map((entry: any) => entry.status).filter(Boolean));
+    const status = statusSet.size === 1 ? Array.from(statusSet)[0] : statusSet.has("submitted") ? "submitted" : statusSet.has("reopened") ? "reopened" : statusSet.has("finalized") ? "finalized" : "draft";
+    const submitters = dateStatuses.map((entry: any) => entry.submitted_by_name || entry.submitted_by_email).filter(Boolean);
+    const submittedTimes = dateStatuses.map((entry: any) => entry.submitted_at).filter(Boolean).sort().reverse();
+    const context = { company_name: company?.company_name || company?.company_code || "-", site_name: site?.site_name || site?.site_code || "-", work_date: attendanceDate, status: status === "submitted" ? "Submitted" : status === "finalized" ? "Finalized" : status === "reopened" ? "Reopened" : "Draft", submitted_by_name: submitters.join(", ") || "Not Submitted", submitted_at: submittedTimes.length ? formatAttendanceExportTimestamp(submittedTimes[0]) : "Not Submitted" };
     const body = format === "xlsx" ? labourAttendanceXlsx(context, rows) : labourAttendancePdf(context, rows);
     const extension = format === "xlsx" ? "xlsx" : "pdf";
     const filename = `Labour_Attendance_${sanitizeFilename(context.site_name)}_${context.work_date || "register"}.${extension}`;

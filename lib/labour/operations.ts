@@ -33,9 +33,13 @@ export function todayInIst(now = new Date()) {
 }
 
 export function previousDate(dateText: string) {
+  return daysBefore(dateText, 1);
+}
+
+export function daysBefore(dateText: string, days: number) {
   const [year, month, day] = dateText.split("-").map(Number);
   const date = new Date(Date.UTC(year, month - 1, day));
-  date.setUTCDate(date.getUTCDate() - 1);
+  date.setUTCDate(date.getUTCDate() - Math.max(0, Math.round(days)));
   return date.toISOString().slice(0, 10);
 }
 

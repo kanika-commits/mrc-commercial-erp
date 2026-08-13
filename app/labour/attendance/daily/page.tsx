@@ -1,12 +1,12 @@
 "use client";
 
-import { CheckCircle2, Lock, Save, Unlock } from "lucide-react";
+import { CheckCircle2, FileText, Lock, Save, Trash2, Unlock, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
 import { useAccessContext } from "@/components/AccessContext";
 import { clearSelectedLabourContext, labourContextFromLookup, readSelectedLabourContext, resolveSingleLabourSiteId, selectedLabourContextIsValid, selectedLabourSiteIsValid, subscribeLabourWorkspaceSummary, type LabourWorkspaceSummary, writeSelectedLabourContext } from "@/lib/labour/attendanceSystemContext";
-import { previousDate, todayInIst } from "@/lib/labour/operations";
+import { daysBefore, todayInIst } from "@/lib/labour/operations";
 
 const statuses = [
   ["present", "Present"],
@@ -82,7 +82,7 @@ export default function LabourDailyAttendancePage() {
   const global = hasGlobalAccess(access);
   const canRecoverOlderAttendance = global || Boolean(access?.roleCodes?.includes("super_admin"));
   const todayDate = today();
-  const earliestNormalEditDate = previousDate(todayDate);
+  const earliestNormalEditDate = daysBefore(todayDate, 2);
   const canAddAttendance = global || can(permissions, "labour_attendance", "add");
   const canEditAttendance = global || can(permissions, "labour_attendance", "edit");
   const canSave = canAddAttendance || canEditAttendance;
@@ -95,6 +95,7 @@ export default function LabourDailyAttendancePage() {
   const [filters, setFilters] = useState({ company_id: "", site_id: "", contractor_profile_id: "", labour_search: "", attendance_date: today() });
   const [rows, setRows] = useState<any[]>([]);
   const [period, setPeriod] = useState<any>(null);
+  const [supportingPdf, setSupportingPdf] = useState<any>(null);
   const [dayLock, setDayLock] = useState<any>(null);
   const [readOnlyReason, setReadOnlyReason] = useState("");
   const [policy, setPolicy] = useState<any>(null);
@@ -106,6 +107,7 @@ export default function LabourDailyAttendancePage() {
   const [rowLoading, setRowLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [documentBusy, setDocumentBusy] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [restoringContext, setRestoringContext] = useState(true);
   const [unlockDialogOpen, setUnlockDialogOpen] = useState(false);
@@ -113,6 +115,9 @@ export default function LabourDailyAttendancePage() {
   const [unsavedAction, setUnsavedAction] = useState<null | (() => void)>(null);
   const lookupAbortRef = useRef<AbortController | null>(null);
   const lookupRequestRef = useRef(0);
+  const rowAbortRef = useRef<AbortController | null>(null);
+  const rowRequestRef = useRef(0);
+  const filtersRef = useRef(filters);
 
   const filteredSites = useMemo(() => lookups.sites || [], [lookups.sites]);
   const displayedRows = useMemo(() => {
@@ -134,8 +139,9 @@ export default function LabourDailyAttendancePage() {
   const hasUnsavedChanges = Object.values(dirty).some(Boolean);
   const dateSummary = period?.summary?.date_statuses?.[filters.attendance_date] || {};
   const reopenedDate = dateSummary.status === "reopened";
-  const readOnly = dayLock?.is_locked || (!reopenedDate && ["submitted", "finalized"].includes(period?.status));
-  const sentBack = period?.status === "reopened" || dateSummary.status === "reopened";
+  const selectedDateStatus = dateSummary.status || "draft";
+  const readOnly = dayLock?.is_locked || ["submitted", "finalized"].includes(selectedDateStatus);
+  const sentBack = selectedDateStatus === "reopened";
   const filtersDisabled = rowLoading || saving || submitting;
   const attendanceSystem = lookups.attendance_system || null;
   const systemValue = attendanceSystem?.value || null;
@@ -191,40 +197,68 @@ export default function LabourDailyAttendancePage() {
   }
 
   async function loadRows(options: { skipDirtyConfirm?: boolean } = {}) {
-    if (rowLoading) return;
     if (!options.skipDirtyConfirm && hasUnsavedChanges) {
       setUnsavedAction(() => () => loadRows({ skipDirtyConfirm: true }));
       return;
     }
-    if (!filters.company_id) return setMessage("Select a company.");
-    if (!filters.site_id) return setMessage("Select a site.");
-    if (!filters.attendance_date) return setMessage("Select an attendance date.");
+    const requestContext = {
+      company_id: filters.company_id,
+      site_id: filters.site_id,
+      attendance_date: filters.attendance_date,
+    };
+    if (!requestContext.company_id) return setMessage("Select a company.");
+    if (!requestContext.site_id) return setMessage("Select a site.");
+    if (!requestContext.attendance_date) return setMessage("Select an attendance date.");
     if (policyMissing) return setMessage("Attendance system is not configured for this site.");
     if (siteInEngineerSite) return setMessage("This site uses Site-In & Engineer Daily Labour. Use Site-In and Engineer Daily Labour for attendance.");
+    rowAbortRef.current?.abort();
+    const requestId = rowRequestRef.current + 1;
+    rowRequestRef.current = requestId;
+    const controller = new AbortController();
+    rowAbortRef.current = controller;
     setSubmitSuccessMessage("");
     setMessage("");
     setSubmitted(false);
+    setRows([]);
+    setPeriod(null);
+    setSupportingPdf(null);
+    setDayLock(null);
+    setReadOnlyReason("");
     setRowLoading(true);
     try {
       const params = new URLSearchParams();
-      params.set("company_id", filters.company_id);
-      params.set("site_id", filters.site_id);
-      params.set("attendance_date", filters.attendance_date);
-      const response = await fetch(`/api/labour/attendance/daily?${params}`, { headers: { Authorization: `Bearer ${await token()}` } });
+      params.set("company_id", requestContext.company_id);
+      params.set("site_id", requestContext.site_id);
+      params.set("attendance_date", requestContext.attendance_date);
+      const response = await fetch(`/api/labour/attendance/daily?${params}`, {
+        headers: { Authorization: `Bearer ${await token()}` },
+        signal: controller.signal,
+      });
       const payload = await response.json();
+      if (
+        requestId !== rowRequestRef.current ||
+        controller.signal.aborted ||
+        requestContext.company_id !== filtersRef.current.company_id ||
+        requestContext.site_id !== filtersRef.current.site_id ||
+        requestContext.attendance_date !== filtersRef.current.attendance_date
+      ) {
+        return;
+      }
       if (!response.ok) return setMessage(payload.error || "Could not load attendance.");
       const nextRows = payload.rows || [];
       setRows(nextRows);
       setMessage(nextRows.length ? "" : "No eligible deployed labourers found for this Site/date.");
       setPeriod(payload.period || null);
+      setSupportingPdf(payload.supporting_pdf || null);
       setDayLock(payload.day_lock || null);
       setReadOnlyReason(payload.read_only_reason || "");
       setPolicy(payload.policy || null);
       setDirty({});
     } catch (loadError: any) {
+      if (loadError?.name === "AbortError") return;
       setMessage(loadError.message || "Could not load attendance.");
     } finally {
-      setRowLoading(false);
+      if (requestId === rowRequestRef.current) setRowLoading(false);
     }
   }
 
@@ -238,6 +272,7 @@ export default function LabourDailyAttendancePage() {
     if ("company_id" in patch || "site_id" in patch) clearSelectedLabourContext();
     setRows([]);
     setPeriod(null);
+    setSupportingPdf(null);
     setDayLock(null);
     setReadOnlyReason("");
     setPolicy(null);
@@ -431,7 +466,7 @@ export default function LabourDailyAttendancePage() {
     }
     setSubmitSuccessMessage("");
     setMessage("");
-    const backdated = filters.attendance_date < previousDate(today());
+    const backdated = filters.attendance_date < daysBefore(today(), 2);
     const backdated_reason = backdated ? prompt("Reason for backdated attendance change") : "";
     if (backdated && !backdated_reason) return false;
     try {
@@ -516,6 +551,95 @@ export default function LabourDailyAttendancePage() {
     }
   }
 
+  function supportingPdfParams() {
+    const params = new URLSearchParams();
+    params.set("company_id", filters.company_id);
+    params.set("site_id", filters.site_id);
+    params.set("attendance_date", filters.attendance_date);
+    return params;
+  }
+
+  async function openSupportingPdf() {
+    if (!supportingPdf) return;
+    setMessage("");
+    try {
+      const params = supportingPdfParams();
+      params.set("open", "true");
+      const response = await fetch(`/api/labour/attendance/date-document?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${await token()}` },
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.url) {
+        setMessage(payload.error || "Could not open supporting PDF.");
+        return;
+      }
+      window.open(payload.url, "_blank", "noopener,noreferrer");
+    } catch (error: any) {
+      setMessage(error.message || "Could not open supporting PDF.");
+    }
+  }
+
+  async function uploadSupportingPdf(file: File | null | undefined) {
+    if (!file) return;
+    if (file.type !== "application/pdf") {
+      setMessage("Only PDF files are allowed.");
+      return;
+    }
+    if (!filters.company_id || !filters.site_id || !filters.attendance_date) {
+      setMessage("Select company, site and attendance date before uploading.");
+      return;
+    }
+    setDocumentBusy(true);
+    setMessage("");
+    try {
+      const formData = new FormData();
+      formData.set("company_id", filters.company_id);
+      formData.set("site_id", filters.site_id);
+      formData.set("attendance_date", filters.attendance_date);
+      formData.set("file", file);
+      const response = await fetch("/api/labour/attendance/date-document", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${await token()}` },
+        body: formData,
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        setMessage(payload.error || "Could not upload supporting PDF.");
+        return;
+      }
+      setSupportingPdf(payload.document || null);
+      setMessage(supportingPdf ? "Supporting PDF replaced." : "Supporting PDF uploaded.");
+    } catch (error: any) {
+      setMessage(error.message || "Could not upload supporting PDF.");
+    } finally {
+      setDocumentBusy(false);
+    }
+  }
+
+  async function removeSupportingPdf() {
+    if (!supportingPdf) return;
+    if (!window.confirm("Remove the supporting PDF for this attendance date?")) return;
+    setDocumentBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch(`/api/labour/attendance/date-document?${supportingPdfParams().toString()}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${await token()}` },
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        setMessage(payload.error || "Could not remove supporting PDF.");
+        return;
+      }
+      setSupportingPdf(null);
+      setMessage("Supporting PDF removed.");
+    } catch (error: any) {
+      setMessage(error.message || "Could not remove supporting PDF.");
+    } finally {
+      setDocumentBusy(false);
+    }
+  }
+
   async function lockDay() {
     if (!filters.company_id) return setMessage("Select a company.");
     if (!filters.site_id) return setMessage("Select a site.");
@@ -562,9 +686,13 @@ export default function LabourDailyAttendancePage() {
   }
 
   useEffect(() => {
+    filtersRef.current = filters;
+  }, [filters]);
+  useEffect(() => {
     loadLookups();
     return () => lookupAbortRef.current?.abort();
   }, [filters.company_id, filters.site_id, filters.attendance_date]);
+  useEffect(() => () => rowAbortRef.current?.abort(), []);
   useEffect(() => {
     const savedContext = readSelectedLabourContext();
     if (savedContext) {
@@ -673,10 +801,10 @@ export default function LabourDailyAttendancePage() {
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 shadow-sm">
             <p className="text-base font-bold">Attendance Sent Back</p>
             <div className="mt-2 grid gap-1 md:grid-cols-2">
-              <p><span className="font-semibold">Reason:</span> {dateSummary.reason || period.transition_reason || "No reason recorded."}</p>
-              <p><span className="font-semibold">Sent Back By:</span> {dateSummary.reopened_by_name || period.reopened_by_name || period.reopened_by_email || period.updated_by_name || period.updated_by_email || "-"}</p>
-              <p><span className="font-semibold">Sent Back At:</span> {dateSummary.reopened_at ? new Date(dateSummary.reopened_at).toLocaleString("en-IN") : period.reopened_at ? new Date(period.reopened_at).toLocaleString("en-IN") : period.updated_at ? new Date(period.updated_at).toLocaleString("en-IN") : "-"}</p>
-              <p><span className="font-semibold">Previously Submitted:</span> {period.submitted_at ? new Date(period.submitted_at).toLocaleString("en-IN") : "-"}</p>
+              <p><span className="font-semibold">Reason:</span> {dateSummary.reason || "No reason recorded."}</p>
+              <p><span className="font-semibold">Sent Back By:</span> {dateSummary.reopened_by_name || dateSummary.reopened_by_email || "-"}</p>
+              <p><span className="font-semibold">Sent Back At:</span> {dateSummary.reopened_at ? new Date(dateSummary.reopened_at).toLocaleString("en-IN") : "-"}</p>
+              <p><span className="font-semibold">Previously Submitted:</span> {dateSummary.submitted_at ? new Date(dateSummary.submitted_at).toLocaleString("en-IN") : "-"}</p>
             </div>
             <p className="mt-2 font-semibold">Correct the Labour attendance for this site/date and resubmit it for approval.</p>
           </div>
@@ -709,7 +837,7 @@ export default function LabourDailyAttendancePage() {
             }} className="mt-1 h-11 w-full rounded-lg border px-3 text-sm font-normal normal-case tracking-normal text-slate-950 disabled:bg-slate-100">
               {Array.from(new Set([
                 ...reopenedAttendanceDates,
-                ...(canRecoverOlderAttendance ? [] : [earliestNormalEditDate, todayDate]),
+                ...(canRecoverOlderAttendance ? [] : [earliestNormalEditDate, daysBefore(todayDate, 1), todayDate]),
               ])).sort().map((date) => <option key={date} value={date}>{date}</option>)}
             </select>
           </label>
@@ -729,6 +857,44 @@ export default function LabourDailyAttendancePage() {
           </label>
           <button onClick={() => loadRows()} disabled={filtersDisabled || lookupLoading || standardBlocked} className="h-11 w-full self-end rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white disabled:opacity-60">{rowLoading ? "Loading attendance..." : "Load Attendance"}</button>
         </div>
+
+        {filters.company_id && filters.site_id && filters.attendance_date && !standardBlocked && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-white p-3 shadow-sm">
+            <div className="min-w-0">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Supporting Attendance PDF</p>
+              {supportingPdf ? (
+                <p className="mt-1 flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-800">
+                  <FileText className="h-4 w-4 shrink-0 text-slate-500" />
+                  <span className="truncate">{supportingPdf.file_name || "Supporting PDF"}</span>
+                </p>
+              ) : (
+                <p className="mt-1 text-sm text-slate-500">No PDF uploaded for this attendance date.</p>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {supportingPdf && (
+                <button type="button" onClick={openSupportingPdf} disabled={documentBusy} className="inline-flex h-9 items-center gap-2 rounded-md border bg-white px-3 text-xs font-bold disabled:opacity-60">
+                  <FileText className="h-4 w-4" />View
+                </button>
+              )}
+              {canEditAttendance && !readOnly && (
+                <label className={`inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border bg-white px-3 text-xs font-bold ${documentBusy ? "pointer-events-none opacity-60" : ""}`}>
+                  <Upload className="h-4 w-4" />{supportingPdf ? "Replace" : "Upload PDF"}
+                  <input type="file" accept="application/pdf" disabled={documentBusy} className="hidden" onChange={(event) => {
+                    const file = event.target.files?.[0] || null;
+                    event.currentTarget.value = "";
+                    void uploadSupportingPdf(file);
+                  }} />
+                </label>
+              )}
+              {supportingPdf && canEditAttendance && !readOnly && (
+                <button type="button" onClick={removeSupportingPdf} disabled={documentBusy} className="inline-flex h-9 items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 text-xs font-bold text-red-700 disabled:opacity-60">
+                  <Trash2 className="h-4 w-4" />Remove
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {displayedRows.length > 0 && canSave && !readOnly && (
           <div className="flex flex-wrap gap-2 rounded-lg border bg-white p-3 shadow-sm">

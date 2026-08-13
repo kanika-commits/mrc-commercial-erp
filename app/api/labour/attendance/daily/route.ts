@@ -18,7 +18,7 @@ import {
   validateTrade,
   validateWorkOrder,
 } from "@/app/api/labour/_shared";
-import { buildLabourAttendanceUpsertPayload, isoDate, previousDate, todayInIst } from "@/lib/labour/operations";
+import { buildLabourAttendanceUpsertPayload, daysBefore, isoDate, todayInIst } from "@/lib/labour/operations";
 import { labelFromCode, normalizeText } from "@/lib/labour/constants";
 import { hasActiveSiteHrAssignment } from "@/lib/serverSiteHr";
 
@@ -65,6 +65,19 @@ function moneyLabel(value: unknown) {
   const amount = Number(value);
   if (!Number.isFinite(amount) || amount <= 0) return "Not Set";
   return `₹${amount.toLocaleString("en-IN")}`;
+}
+
+function publicSupportingPdf(row: any) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    file_name: row.original_file_name,
+    mime_type: row.mime_type,
+    file_size: row.size_bytes,
+    uploaded_at: row.uploaded_at,
+    uploaded_by_name: row.uploaded_by_name,
+    uploaded_by_email: row.uploaded_by_email,
+  };
 }
 
 function activeMwoRate(deployment: any, attendanceDate: string) {
@@ -492,10 +505,23 @@ export async function GET(request: Request) {
         remarks: saved?.remarks || "",
       };
     });
+    const { data: supportingPdf, error: supportingPdfError } = period
+      ? await access.admin
+          .from("labour_attendance_date_documents")
+          .select("id, original_file_name, mime_type, size_bytes, uploaded_at, uploaded_by_name, uploaded_by_email")
+          .eq("period_id", period.id)
+          .eq("attendance_date", attendanceDate)
+          .eq("is_active", true)
+          .order("uploaded_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+      : { data: null, error: null };
+    if (supportingPdfError) throw supportingPdfError;
 
     return NextResponse.json({
       rows,
       period: period ? { ...period, status: selectedStatus, period_status: period.status } : period,
+      supporting_pdf: publicSupportingPdf(supportingPdf),
       day_lock: dayLock,
       policy: policy ? {
         shift_start_time: policy.shift_start_time,
@@ -648,7 +674,7 @@ export async function POST(request: Request) {
         overtimeMinutes: overtime,
         remarks: text(change.remarks),
         source: "manual",
-        backdatedReason: attendanceDate < previousDate(todayInIst()) ? backdatedReason : null,
+        backdatedReason: attendanceDate < daysBefore(todayInIst(), 2) ? backdatedReason : null,
         actorId: access.auth.user.id,
         actorName: access.auth.user.user_metadata?.full_name || access.auth.user.user_metadata?.name || access.auth.user.email || "Unknown User",
         actorEmail: access.auth.user.email || null,

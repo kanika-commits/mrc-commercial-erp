@@ -7,6 +7,7 @@ import {
   isAssignedMusterPm,
   isGlobalOrSuperAdmin,
   jsonError,
+  loadEligibleDeployments,
   loadResolvedLabourSitePairs,
   originatingAttendanceSystem,
   requireLabourPermission,
@@ -150,8 +151,7 @@ function normalizeStandardStatus(status: unknown) {
 
 function standardDateStatus(period: any, workDate?: string | null, hasRows = true) {
   const date = dateText(workDate);
-  const dateStatus = date ? normalizeStandardStatus(period?.summary?.date_statuses?.[date]?.status) : null;
-  if (dateStatus) return dateStatus;
+  if (date) return normalizeStandardStatus(period?.summary?.date_statuses?.[date]?.status) || "draft";
   const periodStatus = normalizeStandardStatus(period?.status) || "draft";
   if (date && !hasRows && ["submitted", "finalized"].includes(periodStatus)) return "draft";
   return periodStatus;
@@ -722,6 +722,7 @@ function compactStandardPeriod(period: any, attendanceRows: any[], workDate?: st
     Number(row.overtime_minutes || row.approved_overtime_minutes || 0) > 0 ||
     Number(row.bonus_minutes || 0) > 0,
   ).length;
+  const dateSummary = period?.summary?.date_statuses?.[dateText(workDate) || ""] || {};
   return {
     id: period.id,
     submission_id: period.id,
@@ -737,13 +738,13 @@ function compactStandardPeriod(period: any, attendanceRows: any[], workDate?: st
     period_month: period.period_month,
     submission_type: "Standard Attendance",
     status: standardDateStatus(period, workDate, realRows.length > 0),
-    submitted_by_name: period.submitted_by_name,
-    submitted_by_email: period.submitted_by_email,
-    submitted_at: period.submitted_at,
-    send_back_reason: period.transition_reason || null,
-    sent_back_by_name: period.reopened_by_name || period.updated_by_name || null,
-    sent_back_by_email: period.reopened_by_email || period.updated_by_email || null,
-    sent_back_at: period.reopened_at || period.updated_at || null,
+    submitted_by_name: dateSummary.submitted_by_name || null,
+    submitted_by_email: dateSummary.submitted_by_email || null,
+    submitted_at: dateSummary.submitted_at || null,
+    send_back_reason: dateSummary.reason || null,
+    sent_back_by_name: dateSummary.reopened_by_name || null,
+    sent_back_by_email: dateSummary.reopened_by_email || null,
+    sent_back_at: dateSummary.reopened_at || null,
     labourers_count: realRows.length,
     present_count: presentCount,
     absent_count: absentCount,
@@ -760,11 +761,7 @@ function compactStandardPeriod(period: any, attendanceRows: any[], workDate?: st
 function compactStandardSiteRegister(periods: any[], attendanceRows: any[], workDate?: string | null) {
   const first = periods[0] || {};
   const periodIds = periods.map((period) => period.id).filter(Boolean);
-  const submittedTimes = periods.map((period) => period.submitted_at).filter(Boolean).sort().reverse();
-  const submitters = periods.map((period) => period.submitted_by_name || period.submitted_by_email).filter(Boolean);
   const registerDate = dateText(workDate) || dateText(attendanceRows.find((row: any) => row.attendance_date)?.attendance_date) || first.period_month;
-  const sentBackPeriods = periods.filter((period) => standardDateStatus(period, registerDate, true) === "reopened" && period.transition_reason);
-  const latestSentBack = sentBackPeriods.sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")))[0] || null;
   const statuses = new Set(periods.map((period) => standardDateStatus(period, registerDate, true)).filter(Boolean));
   const aggregateStatus = statuses.size === 1 ? Array.from(statuses)[0] : statuses.has("submitted") ? "submitted" : statuses.has("reopened") ? "reopened" : statuses.has("finalized") ? "finalized" : first.status;
   const compacted = compactStandardPeriod(first, attendanceRows, registerDate);
@@ -778,13 +775,26 @@ function compactStandardSiteRegister(periods: any[], attendanceRows: any[], work
     contractor_name: "All Contractors",
     work_date: registerDate,
     status: aggregateStatus,
-    submitted_by_name: Array.from(new Set(submitters)).join(", ") || "-",
-    submitted_by_email: null,
-    submitted_at: submittedTimes[0] || first.submitted_at,
-    send_back_reason: latestSentBack?.transition_reason || compacted.send_back_reason || null,
-    sent_back_by_name: latestSentBack?.reopened_by_name || latestSentBack?.updated_by_name || compacted.sent_back_by_name || null,
-    sent_back_by_email: latestSentBack?.reopened_by_email || latestSentBack?.updated_by_email || compacted.sent_back_by_email || null,
-    sent_back_at: latestSentBack?.reopened_at || latestSentBack?.updated_at || compacted.sent_back_at || null,
+    submitted_by_name: compacted.submitted_by_name || "-",
+    submitted_by_email: compacted.submitted_by_email || null,
+    submitted_at: compacted.submitted_at || null,
+    send_back_reason: compacted.send_back_reason || null,
+    sent_back_by_name: compacted.sent_back_by_name || null,
+    sent_back_by_email: compacted.sent_back_by_email || null,
+    sent_back_at: compacted.sent_back_at || null,
+  };
+}
+
+function publicStandardSupportingPdf(row: any) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    file_name: row.original_file_name,
+    mime_type: row.mime_type,
+    file_size: row.size_bytes,
+    uploaded_at: row.uploaded_at,
+    uploaded_by_name: row.uploaded_by_name,
+    uploaded_by_email: row.uploaded_by_email,
   };
 }
 
@@ -1021,6 +1031,69 @@ export async function loadStandardApprovalRows(access: any, input: {
   const rowsByPeriod = new Map<string, any[]>();
   for (const row of attendanceRows || []) {
     rowsByPeriod.set(row.period_id, [...(rowsByPeriod.get(row.period_id) || []), row]);
+  }
+  if (input.workDate) {
+    const primaryPeriod = (periods || [])[0];
+    const attendanceByWorker = new Map<string, any>((attendanceRows || []).map((attendance: any) => [attendance.labour_worker_id, attendance]));
+    const eligibleDeployments = await loadEligibleDeployments(access, {
+      organizationId: input.organizationId,
+      companyId: input.companyId,
+      siteId: input.siteId,
+      contractorProfileId: input.contractorProfileId || null,
+      attendanceDate: input.workDate,
+    });
+    const flattened = eligibleDeployments.flatMap((deployment: any) => {
+      const period = primaryPeriod;
+      if (!period) return [];
+      const status = standardDateStatus(period, input.workDate, true);
+      if (requestedStatus && status !== requestedStatus) return [];
+      const attendance = attendanceByWorker.get(deployment.labour_worker_id) || null;
+      const worker = Array.isArray(deployment.labour_workers) ? deployment.labour_workers[0] : deployment.labour_workers;
+      if (!worker?.id) return [];
+      const trade: any = deployment.labour_trade_id ? tradeById.get(deployment.labour_trade_id) : null;
+      const contractorProfile = contractorById.get(attendance?.contractor_profile_id)
+        || contractorById.get(deployment.contractor_profile_id)
+        || deployment.labour_contractor_profiles
+        || period.labour_contractor_profiles;
+      const contractorName = contractorProfile?.vendors?.vendor_name || contractorProfile?.contractor_code || "-";
+      const firstHalfPresent = attendance ? attendance.first_half_present : null;
+      const secondHalfPresent = attendance ? attendance.second_half_present : null;
+      return [{
+        id: attendance?.id ? `${period.id}:${attendance.id}` : `${period.id}:draft:${deployment.labour_worker_id}`,
+        submission_id: period.id,
+        attendance_period_id: period.id,
+        company_id: period.company_id,
+        site_id: period.site_id,
+        contractor_profile_id: attendance?.contractor_profile_id || deployment.contractor_profile_id || period.contractor_profile_id || null,
+        company_name: period.companies?.company_name || "-",
+        site_name: period.sites?.site_name || "-",
+        contractor_name: contractorName,
+        period_month: period.period_month,
+        work_date: input.workDate,
+        labour_worker_id: deployment.labour_worker_id,
+        labour_code: worker.labour_code || "-",
+        labour_name: worker.worker_name || "-",
+        category: trade?.trade_name || deployment.trade || "-",
+        daily_rate: deployment.wage_rate ?? null,
+        daily_rate_label: rupeeRateLabel(deployment.wage_rate),
+        first_half_present: firstHalfPresent,
+        second_half_present: secondHalfPresent,
+        overtime_minutes: attendance ? Number(attendance.overtime_minutes || attendance.approved_overtime_minutes || 0) : 0,
+        bonus_minutes: attendance ? Number(attendance.bonus_minutes || 0) : 0,
+        remarks: attendance?.remarks || null,
+        submitted_by_name: period.submitted_by_name,
+        submitted_by_email: period.submitted_by_email,
+        submitted_at: period.submitted_at,
+        status: attendance?.status || "draft",
+        register_status: status,
+        attendance_exception: firstHalfPresent !== true || secondHalfPresent !== true || Number(attendance?.overtime_minutes || attendance?.approved_overtime_minutes || 0) > 0 || Number(attendance?.bonus_minutes || 0) > 0,
+      }];
+    });
+    const realRows = flattened.filter((row: any) => row.labour_worker_id && row.labour_code && row.labour_name);
+    if (!input.search) return realRows;
+    const needle = input.search.toUpperCase();
+    return realRows.filter((row: any) => [row.labour_code, row.labour_name, row.contractor_name, row.category, row.status, row.submitted_by_name, row.submitted_by_email]
+      .some((value) => String(value || "").toUpperCase().includes(needle)));
   }
   const flattened = (periods || []).flatMap((period: any) => {
     const rows = rowsByPeriod.get(period.id) || [];
@@ -1893,8 +1966,21 @@ export async function GET(request: Request) {
               .in("id", standardIds)
           : { data: [period], error: null };
         if (periodsError) throw periodsError;
+        const periodIds = (periods || [period]).map((item: any) => item.id).filter(Boolean);
+        const { data: supportingPdf, error: supportingPdfError } = requestedWorkDate && periodIds.length
+          ? await access.admin
+              .from("labour_attendance_date_documents")
+              .select("id, original_file_name, mime_type, size_bytes, uploaded_at, uploaded_by_name, uploaded_by_email")
+              .in("period_id", periodIds)
+              .eq("attendance_date", requestedWorkDate)
+              .eq("is_active", true)
+              .order("uploaded_at", { ascending: false })
+              .limit(1)
+              .maybeSingle()
+          : { data: null, error: null };
+        if (supportingPdfError) throw supportingPdfError;
         return NextResponse.json({
-          submission: compactStandardSiteRegister(periods || [period], rows, requestedWorkDate),
+          submission: { ...compactStandardSiteRegister(periods || [period], rows, requestedWorkDate), supporting_pdf: publicStandardSupportingPdf(supportingPdf) },
           snapshot: { attendance_rows: rows },
           live: { attendance_rows: rows },
           events: [],
