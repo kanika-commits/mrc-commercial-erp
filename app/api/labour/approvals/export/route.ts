@@ -1,4 +1,4 @@
-import { loadStandardApprovalRows, loadStandardPeriod } from "@/app/api/labour/approvals/route";
+import { enrichStandardSubmitterSnapshots, loadStandardApprovalRows, loadStandardPeriod } from "@/app/api/labour/approvals/route";
 import { formatAttendanceExportTimestamp, labourAttendancePdf, labourAttendanceXlsx, sanitizeFilename } from "@/lib/labour/attendanceExport";
 import { requireLabourPermission } from "@/app/api/labour/_shared";
 
@@ -14,7 +14,8 @@ export async function GET(request: Request) {
     if (!ids.length) return new Response("Attendance register is required.", { status: 400 });
     const attendanceDate = String(searchParams.get("attendance_date") || "").trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate)) return new Response("A valid attendance date is required.", { status: 400 });
-    const periods = (await Promise.all(ids.map((id) => loadStandardPeriod(access, id)))).filter(Boolean) as any[];
+    const loadedPeriods = (await Promise.all(ids.map((id) => loadStandardPeriod(access, id)))).filter(Boolean) as any[];
+    const periods = await enrichStandardSubmitterSnapshots(access, loadedPeriods);
     if (!periods.length) return new Response("Attendance register not found.", { status: 404 });
     const first = periods[0];
     if (periods.some((period) => String(period.period_month || "").slice(0, 7) !== attendanceDate.slice(0, 7))) return new Response("Attendance date is outside the selected register period.", { status: 400 });

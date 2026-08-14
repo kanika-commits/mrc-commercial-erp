@@ -74,33 +74,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       if (!["draft", "reopened"].includes(selectedStatus)) return jsonError("Only draft attendance can be submitted for this date.");
       const now = new Date().toISOString();
       const submittedByName = access.auth.user.user_metadata?.full_name || access.auth.user.user_metadata?.name || access.auth.user.email || "Unknown User";
-      const nextSummary = {
-        ...(period.summary || {}),
-        date_statuses: {
-          ...(period.summary?.date_statuses || {}),
-          [attendanceDate]: {
-            ...(period.summary?.date_statuses?.[attendanceDate] || {}),
-            status: "submitted",
-            submitted_at: now,
-            submitted_by: access.auth.user.id,
-            submitted_by_name: submittedByName,
-            submitted_by_email: access.auth.user.email || null,
-          },
-        },
-      };
-      const { error } = await access.admin
-        .from("labour_attendance_periods")
-        .update({
-          summary: nextSummary,
-          submitted_at: now,
-          submitted_by: access.auth.user.id,
-          submitted_by_name: submittedByName,
-          submitted_by_email: access.auth.user.email || null,
-          updated_at: now,
-          ...actorFields(access.auth, "updated"),
-        })
-        .eq("id", id);
-      if (error) throw error;
+      const { data: snapshot, error: snapshotError } = await access.admin.rpc("create_labour_attendance_submission_snapshot", {
+        p_period_id: id,
+        p_attendance_date: attendanceDate,
+        p_actor: { user_id: access.auth.user.id, name: submittedByName, email: access.auth.user.email || null },
+      });
+      if (snapshotError) throw snapshotError;
       await audit(access, request, {
         moduleCode: "labour_attendance",
         action: "approve",
@@ -111,9 +90,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         siteId: period.site_id,
         description: `Submitted labour attendance for ${attendanceDate}.`,
         oldValues: { status: selectedStatus, summary: period.summary },
-        newValues: { attendance_date: attendanceDate, status: "submitted", summary: nextSummary },
+        newValues: { attendance_date: attendanceDate, status: "submitted", snapshot },
       });
-      return NextResponse.json({ submitted: true });
+      return NextResponse.json({ submitted: true, snapshot });
     }
     if (!["draft", "reopened"].includes(period.status)) return jsonError("Only draft attendance periods can be submitted.");
     const updatePayload = {

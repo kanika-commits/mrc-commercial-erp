@@ -758,7 +758,7 @@ function compactStandardPeriod(period: any, attendanceRows: any[], workDate?: st
   };
 }
 
-async function enrichStandardSubmitterSnapshots(access: any, periods: any[]) {
+export async function enrichStandardSubmitterSnapshots(access: any, periods: any[]) {
   const submitterIds = Array.from(new Set((periods || []).flatMap((period: any) => {
     const statuses = period?.summary?.date_statuses;
     if (!statuses || typeof statuses !== "object" || Array.isArray(statuses)) return [];
@@ -804,6 +804,41 @@ function compactStandardSiteRegister(periods: any[], attendanceRows: any[], work
     sent_back_by_name: compacted.sent_back_by_name || null,
     sent_back_by_email: compacted.sent_back_by_email || null,
     sent_back_at: compacted.sent_back_at || null,
+  };
+}
+
+function compactStandardSnapshot(period: any, snapshot: any) {
+  return {
+    id: `standard:${period.organization_id}:${period.company_id}:${period.site_id}:${snapshot.attendance_date}`,
+    submission_id: snapshot.id,
+    attendance_period_id: period.id,
+    period_ids: [period.id],
+    organization_id: snapshot.organization_id,
+    company_id: snapshot.company_id,
+    site_id: snapshot.site_id,
+    contractor_profile_id: snapshot.contractor_profile_id,
+    company_name: period.companies?.company_name || "-",
+    site_name: period.sites?.site_name || "-",
+    contractor_name: period.labour_contractor_profiles?.vendors?.vendor_name || period.labour_contractor_profiles?.contractor_code || "All Contractors",
+    work_date: snapshot.attendance_date,
+    period_month: period.period_month,
+    submission_type: "Standard Attendance",
+    status: "submitted",
+    submitted_by_name: snapshot.submitted_by_name || "-",
+    submitted_by_email: snapshot.submitted_by_email || null,
+    submitted_at: snapshot.submitted_at,
+    labourers_count: snapshot.eligible_worker_count,
+    present_count: snapshot.present_count,
+    absent_count: snapshot.absent_count,
+    half_day_count: snapshot.half_day_count,
+    pending_count: snapshot.incomplete_count,
+    ot_count: snapshot.overtime_minutes_total > 0 ? 1 : 0,
+    bonus_count: snapshot.bonus_minutes_total > 0 ? 1 : 0,
+    total_ot_minutes: snapshot.overtime_minutes_total,
+    total_bonus_minutes: snapshot.bonus_minutes_total,
+    attendance_exceptions: 0,
+    submission_version: snapshot.submission_version,
+    has_submission_snapshot: true,
   };
 }
 
@@ -1012,6 +1047,37 @@ export async function loadStandardApprovalRows(access: any, input: {
   const enrichedPeriods = await enrichStandardSubmitterSnapshots(access, periods || []);
   const periodIds = enrichedPeriods.map((period: any) => period.id).filter(Boolean);
   if (!periodIds.length) return [];
+  if (input.workDate) {
+    const { data: snapshot, error: snapshotError } = await access.admin
+      .from("labour_attendance_submission_versions")
+      .select("*")
+      .in("period_id", periodIds)
+      .eq("attendance_date", input.workDate)
+      .eq("status", "submitted")
+      .order("submission_version", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (snapshotError && snapshotError.code !== "42P01") throw snapshotError;
+    if (snapshot) {
+      const snapshotPeriod = enrichedPeriods.find((period: any) => period.id === snapshot.period_id) || enrichedPeriods[0];
+      const snapshotRows = await access.admin.from("labour_attendance_submission_version_rows").select("*").eq("submission_version_id", snapshot.id).order("labour_code_snapshot");
+      if (snapshotRows.error && snapshotRows.error.code !== "42P01") throw snapshotRows.error;
+      const rows = (snapshotRows.data || []).map((row: any) => ({
+        id: `${snapshot.id}:${row.id}`, submission_id: snapshot.id, attendance_period_id: snapshotPeriod.id,
+        company_id: snapshot.company_id, site_id: snapshot.site_id, contractor_profile_id: snapshot.contractor_profile_id,
+        company_name: snapshotPeriod.companies?.company_name || "-", site_name: snapshotPeriod.sites?.site_name || "-",
+        contractor_name: row.contractor_name_snapshot || "-", period_month: snapshotPeriod.period_month, work_date: snapshot.attendance_date,
+        labour_worker_id: row.labour_worker_id, labour_code: row.labour_code_snapshot, labour_name: row.worker_name_snapshot,
+        category: row.trade_snapshot || "-", first_half_present: row.first_half_present, second_half_present: row.second_half_present,
+        overtime_minutes: row.overtime_minutes, bonus_minutes: row.bonus_minutes, status: row.derived_status,
+        register_status: "submitted", submitted_by_name: snapshot.submitted_by_name, submitted_by_email: snapshot.submitted_by_email,
+        submitted_at: snapshot.submitted_at, attendance_exception: false,
+      }));
+      if (!input.search) return rows;
+      const needle = input.search.toUpperCase();
+      return rows.filter((row: any) => [row.labour_code, row.labour_name, row.contractor_name, row.category].some((value) => String(value || "").toUpperCase().includes(needle)));
+    }
+  }
   let attendanceQuery = access.admin
     .from("labour_attendance")
     .select(`
@@ -1218,6 +1284,18 @@ async function loadStandardApprovalRegisters(access: any, input: {
   const enrichedPeriods = await enrichStandardSubmitterSnapshots(access, periods || []);
   const periodIds = enrichedPeriods.map((period: any) => period.id).filter(Boolean);
   if (!periodIds.length) return [];
+  const { data: snapshots, error: snapshotsError } = await access.admin
+    .from("labour_attendance_submission_versions")
+    .select("*")
+    .in("period_id", periodIds)
+    .eq("status", "submitted")
+    .order("submission_version", { ascending: false });
+  if (snapshotsError && snapshotsError.code !== "42P01") throw snapshotsError;
+  const snapshotByKey = new Map<string, any>();
+  for (const snapshot of snapshots || []) {
+    const key = [snapshot.organization_id, snapshot.company_id, snapshot.site_id, snapshot.attendance_date].join(":");
+    if (!snapshotByKey.has(key)) snapshotByKey.set(key, snapshot);
+  }
   const attendanceRows: any[] = [];
   const attendancePageSize = 1000;
   for (let offset = 0; ; offset += attendancePageSize) {
@@ -1263,7 +1341,11 @@ async function loadStandardApprovalRegisters(access: any, input: {
     group.rows = group.rows.filter((attendance: any) => eligibleWorkerIds.has(attendance.labour_worker_id));
   }
   let registers = Array.from(groups.values())
-    .map((group) => compactStandardSiteRegister(group.periods, group.rows, group.workDate))
+    .map((group) => {
+      const key = [group.periods[0]?.organization_id, group.periods[0]?.company_id, group.periods[0]?.site_id, group.workDate].join(":");
+      const snapshot = snapshotByKey.get(key);
+      return snapshot ? compactStandardSnapshot(group.periods[0], snapshot) : compactStandardSiteRegister(group.periods, group.rows, group.workDate);
+    })
     .filter((register: any) => !requestedStatus || register.status === requestedStatus);
   if (input.contractorProfileId) {
     const allowedPeriodIds = new Set(enrichedPeriods.filter((period: any) => period.contractor_profile_id === input.contractorProfileId).map((period: any) => period.id));
@@ -1317,6 +1399,26 @@ async function loadStandardMonthlyRegister(access: any, input: {
     },
   ])).values()).filter((item: any) => item.id);
   if (!periodIds.length) return { rows: [], days, contractors, categories: [] };
+  const { data: monthlySnapshots, error: monthlySnapshotsError } = await access.admin
+    .from("labour_attendance_submission_versions")
+    .select("*")
+    .in("period_id", periodIds)
+    .eq("status", "submitted")
+    .gte("attendance_date", fromDate)
+    .lte("attendance_date", toDate)
+    .order("submission_version", { ascending: false });
+  if (monthlySnapshotsError && monthlySnapshotsError.code !== "42P01") throw monthlySnapshotsError;
+  const latestSnapshotByPeriodDate = new Map<string, any>();
+  for (const snapshot of monthlySnapshots || []) {
+    const key = `${snapshot.period_id}:${snapshot.attendance_date}`;
+    if (!latestSnapshotByPeriodDate.has(key)) latestSnapshotByPeriodDate.set(key, snapshot);
+  }
+  const monthlySnapshotIds = Array.from(latestSnapshotByPeriodDate.values()).map((snapshot: any) => snapshot.id);
+  const { data: monthlySnapshotRows, error: monthlySnapshotRowsError } = monthlySnapshotIds.length
+    ? await access.admin.from("labour_attendance_submission_version_rows").select("*").in("submission_version_id", monthlySnapshotIds)
+    : { data: [], error: null };
+  if (monthlySnapshotRowsError && monthlySnapshotRowsError.code !== "42P01") throw monthlySnapshotRowsError;
+  const monthlySnapshotById = new Map((monthlySnapshots || []).map((snapshot: any) => [snapshot.id, snapshot]));
   const attendanceRows: any[] = [];
   const attendancePageSize = 1000;
   for (let offset = 0; ; offset += attendancePageSize) {
@@ -1373,6 +1475,7 @@ async function loadStandardMonthlyRegister(access: any, input: {
   for (const attendance of attendanceRows || []) {
     if (!attendance.labour_worker_id) continue;
     const period: any = periodById.get(attendance.period_id);
+    if (latestSnapshotByPeriodDate.has(`${attendance.period_id}:${attendance.attendance_date}`)) continue;
     const statusMatches = standardDateStatusMatches(period, attendance.attendance_date, requestedStatus, true);
     if (!statusMatches) continue;
     const deployment: any = deploymentById.get(attendance.deployment_id);
@@ -1408,6 +1511,29 @@ async function loadStandardMonthlyRegister(access: any, input: {
     current.total_ot_minutes += Number(attendance.overtime_minutes || attendance.approved_overtime_minutes || 0);
     current.total_bonus_minutes += Number(attendance.bonus_minutes || 0);
     workers.set(attendance.labour_worker_id, current);
+  }
+  for (const snapshotRow of monthlySnapshotRows || []) {
+    const snapshot: any = monthlySnapshotById.get(snapshotRow.submission_version_id);
+    if (!snapshot || (requestedStatus && requestedStatus !== "submitted")) continue;
+    const period: any = periodById.get(snapshot.period_id);
+    const current = workers.get(snapshotRow.labour_worker_id) || {
+      labour_worker_id: snapshotRow.labour_worker_id,
+      labour_code: snapshotRow.labour_code_snapshot,
+      labour_name: snapshotRow.worker_name_snapshot,
+      contractor_profile_id: snapshot.contractor_profile_id || "",
+      contractor_name: snapshotRow.contractor_name_snapshot || "-",
+      category: snapshotRow.trade_snapshot || "-",
+      days: {}, rate_values: new Set<string>(), present: 0, absent: 0, half_day: 0, total_ot_minutes: 0, total_bonus_minutes: 0,
+    };
+    const day = String(Number(String(snapshot.attendance_date).slice(8, 10)));
+    const code = snapshotRow.derived_status === "present" ? "P" : snapshotRow.derived_status === "absent" ? "A" : snapshotRow.derived_status === "half_day" ? "HD" : "-";
+    current.days[day] = code;
+    if (code === "P") current.present += 1;
+    if (code === "A") current.absent += 1;
+    if (code === "HD") current.half_day += 1;
+    current.total_ot_minutes += Number(snapshotRow.overtime_minutes || snapshotRow.approved_overtime_minutes || 0);
+    current.total_bonus_minutes += Number(snapshotRow.bonus_minutes || 0);
+    workers.set(snapshotRow.labour_worker_id, current);
   }
   let rows = Array.from(workers.values()).map((row: any) => {
     const { rate_values: rateValues, ...rest } = row;
