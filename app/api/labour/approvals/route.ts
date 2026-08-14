@@ -758,6 +758,28 @@ function compactStandardPeriod(period: any, attendanceRows: any[], workDate?: st
   };
 }
 
+async function enrichStandardSubmitterSnapshots(access: any, periods: any[]) {
+  const submitterIds = Array.from(new Set((periods || []).flatMap((period: any) => {
+    const statuses = period?.summary?.date_statuses;
+    if (!statuses || typeof statuses !== "object" || Array.isArray(statuses)) return [];
+    return Object.values(statuses).map((entry: any) => entry?.submitted_by_name ? null : text(entry?.submitted_by)).filter(Boolean);
+  }))) as string[];
+  if (!submitterIds.length) return periods;
+  const { data: profiles, error } = await access.admin.from("profiles").select("id, full_name, email").in("id", submitterIds);
+  if (error) throw error;
+  const profileById = new Map<string, any>((profiles || []).map((profile: any) => [profile.id, profile]));
+  return (periods || []).map((period: any) => {
+    const statuses = period?.summary?.date_statuses;
+    if (!statuses || typeof statuses !== "object" || Array.isArray(statuses)) return period;
+    const nextStatuses = Object.fromEntries(Object.entries(statuses).map(([date, entry]: [string, any]) => {
+      if (entry?.submitted_by_name || !entry?.submitted_by) return [date, entry];
+      const profile = profileById.get(entry.submitted_by);
+      return [date, profile ? { ...entry, submitted_by_name: profile.full_name || profile.email || null, submitted_by_email: profile.email || null } : entry];
+    }));
+    return { ...period, summary: { ...(period.summary || {}), date_statuses: nextStatuses } };
+  });
+}
+
 function compactStandardSiteRegister(periods: any[], attendanceRows: any[], workDate?: string | null) {
   const first = periods[0] || {};
   const periodIds = periods.map((period) => period.id).filter(Boolean);
@@ -987,7 +1009,8 @@ export async function loadStandardApprovalRows(access: any, input: {
   if (!periodQuery) return [];
   const { data: periods, error } = await periodQuery;
   if (error) throw error;
-  const periodIds = (periods || []).map((period: any) => period.id).filter(Boolean);
+  const enrichedPeriods = await enrichStandardSubmitterSnapshots(access, periods || []);
+  const periodIds = enrichedPeriods.map((period: any) => period.id).filter(Boolean);
   if (!periodIds.length) return [];
   let attendanceQuery = access.admin
     .from("labour_attendance")
@@ -998,8 +1021,23 @@ export async function loadStandardApprovalRows(access: any, input: {
     .in("period_id", periodIds)
     .order("attendance_date", { ascending: true });
   if (input.workDate) attendanceQuery = attendanceQuery.eq("attendance_date", input.workDate);
-  const { data: attendanceRows, error: attendanceError } = await attendanceQuery;
+  const { data: fetchedAttendanceRows, error: attendanceError } = await attendanceQuery;
   if (attendanceError) throw attendanceError;
+  const eligibleWorkersByDate = new Map<string, Set<string>>();
+  for (const attendanceDate of new Set((fetchedAttendanceRows || []).map((row: any) => dateText(row.attendance_date)).filter(Boolean) as string[])) {
+    const eligibleDeployments = await loadEligibleDeployments(access, {
+      organizationId: input.organizationId,
+      companyId: input.companyId,
+      siteId: input.siteId,
+      contractorProfileId: input.contractorProfileId || null,
+      attendanceDate,
+    });
+    eligibleWorkersByDate.set(attendanceDate, new Set(eligibleDeployments.map((deployment: any) => deployment.labour_worker_id)));
+  }
+  const attendanceRows = (fetchedAttendanceRows || []).filter((row: any) => {
+    const attendanceDate = dateText(row.attendance_date);
+    return Boolean(attendanceDate && eligibleWorkersByDate.get(attendanceDate)?.has(row.labour_worker_id));
+  });
   const deploymentIds = Array.from(new Set((attendanceRows || []).map((row: any) => row.deployment_id).filter(Boolean)));
   const { data: deployments, error: deploymentError } = deploymentIds.length
     ? await access.admin
@@ -1011,7 +1049,7 @@ export async function loadStandardApprovalRows(access: any, input: {
   const contractorIds = Array.from(new Set([
     ...(attendanceRows || []).map((row: any) => row.contractor_profile_id),
     ...(deployments || []).map((deployment: any) => deployment.contractor_profile_id),
-    ...(periods || []).map((period: any) => period.contractor_profile_id),
+    ...enrichedPeriods.map((period: any) => period.contractor_profile_id),
   ].filter(Boolean)));
   const { data: contractors, error: contractorError } = contractorIds.length
     ? await access.admin
@@ -1033,7 +1071,7 @@ export async function loadStandardApprovalRows(access: any, input: {
     rowsByPeriod.set(row.period_id, [...(rowsByPeriod.get(row.period_id) || []), row]);
   }
   if (input.workDate) {
-    const primaryPeriod = (periods || [])[0];
+    const primaryPeriod = enrichedPeriods[0];
     const attendanceByWorker = new Map<string, any>((attendanceRows || []).map((attendance: any) => [attendance.labour_worker_id, attendance]));
     const eligibleDeployments = await loadEligibleDeployments(access, {
       organizationId: input.organizationId,
@@ -1095,7 +1133,7 @@ export async function loadStandardApprovalRows(access: any, input: {
     return realRows.filter((row: any) => [row.labour_code, row.labour_name, row.contractor_name, row.category, row.status, row.submitted_by_name, row.submitted_by_email]
       .some((value) => String(value || "").toUpperCase().includes(needle)));
   }
-  const flattened = (periods || []).flatMap((period: any) => {
+  const flattened = enrichedPeriods.flatMap((period: any) => {
     const rows = rowsByPeriod.get(period.id) || [];
     if (!rows.length) return [];
     return rows.flatMap((attendance: any) => {
@@ -1177,7 +1215,8 @@ async function loadStandardApprovalRegisters(access: any, input: {
   if (!periodQuery) return [];
   const { data: periods, error } = await periodQuery;
   if (error) throw error;
-  const periodIds = (periods || []).map((period: any) => period.id).filter(Boolean);
+  const enrichedPeriods = await enrichStandardSubmitterSnapshots(access, periods || []);
+  const periodIds = enrichedPeriods.map((period: any) => period.id).filter(Boolean);
   if (!periodIds.length) return [];
   const attendanceRows: any[] = [];
   const attendancePageSize = 1000;
@@ -1201,7 +1240,7 @@ async function loadStandardApprovalRegisters(access: any, input: {
     rowsByPeriod.set(row.period_id, [...(rowsByPeriod.get(row.period_id) || []), row]);
   }
   const groups = new Map<string, { periods: any[]; rows: any[]; workDate: string }>();
-  for (const period of periods || []) {
+  for (const period of enrichedPeriods) {
     for (const attendance of rowsByPeriod.get(period.id) || []) {
       const workDate = dateText(attendance.attendance_date);
       if (!workDate) continue;
@@ -1212,11 +1251,22 @@ async function loadStandardApprovalRegisters(access: any, input: {
       groups.set(key, current);
     }
   }
+  for (const group of groups.values()) {
+    const eligibleDeployments = await loadEligibleDeployments(access, {
+      organizationId: group.periods[0]?.organization_id || input.organizationId,
+      companyId: group.periods[0]?.company_id || input.companyId,
+      siteId: group.periods[0]?.site_id || input.siteId,
+      contractorProfileId: input.contractorProfileId || null,
+      attendanceDate: group.workDate,
+    });
+    const eligibleWorkerIds = new Set(eligibleDeployments.map((deployment: any) => deployment.labour_worker_id));
+    group.rows = group.rows.filter((attendance: any) => eligibleWorkerIds.has(attendance.labour_worker_id));
+  }
   let registers = Array.from(groups.values())
     .map((group) => compactStandardSiteRegister(group.periods, group.rows, group.workDate))
     .filter((register: any) => !requestedStatus || register.status === requestedStatus);
   if (input.contractorProfileId) {
-    const allowedPeriodIds = new Set((periods || []).filter((period: any) => period.contractor_profile_id === input.contractorProfileId).map((period: any) => period.id));
+    const allowedPeriodIds = new Set(enrichedPeriods.filter((period: any) => period.contractor_profile_id === input.contractorProfileId).map((period: any) => period.id));
     registers = registers.filter((register: any) => register.period_ids?.some((periodId: string) => allowedPeriodIds.has(periodId)));
   }
   if (input.search) {
@@ -1257,8 +1307,9 @@ async function loadStandardMonthlyRegister(access: any, input: {
   if (!periodQuery) return { rows: [], days, contractors: [], categories: [] };
   const { data: periods, error: periodError } = await periodQuery;
   if (periodError) throw periodError;
-  const periodIds = (periods || []).map((period: any) => period.id).filter(Boolean);
-  const contractors = Array.from(new Map((periods || []).map((period: any) => [
+  const enrichedPeriods = await enrichStandardSubmitterSnapshots(access, periods || []);
+  const periodIds = enrichedPeriods.map((period: any) => period.id).filter(Boolean);
+  const contractors = Array.from(new Map(enrichedPeriods.map((period: any) => [
     period.contractor_profile_id || "",
     {
       id: period.contractor_profile_id || "",
@@ -1282,6 +1333,22 @@ async function loadStandardMonthlyRegister(access: any, input: {
     attendanceRows.push(...(page || []));
     if (!page || page.length < attendancePageSize) break;
   }
+  const eligibleWorkersByDate = new Map<string, Set<string>>();
+  for (const attendanceDate of new Set(attendanceRows.map((row: any) => dateText(row.attendance_date)).filter(Boolean) as string[])) {
+    const eligibleDeployments = await loadEligibleDeployments(access, {
+      organizationId: input.organizationId,
+      companyId: input.companyId,
+      siteId: input.siteId,
+      contractorProfileId: input.contractorProfileId || null,
+      attendanceDate,
+    });
+    eligibleWorkersByDate.set(attendanceDate, new Set(eligibleDeployments.map((deployment: any) => deployment.labour_worker_id)));
+  }
+  const eligibleAttendanceRows = attendanceRows.filter((row: any) => {
+    const attendanceDate = dateText(row.attendance_date);
+    return Boolean(attendanceDate && eligibleWorkersByDate.get(attendanceDate)?.has(row.labour_worker_id));
+  });
+  attendanceRows.splice(0, attendanceRows.length, ...eligibleAttendanceRows);
   const deploymentIds = Array.from(new Set((attendanceRows || []).map((row: any) => row.deployment_id).filter(Boolean)));
   const { data: deployments, error: deploymentError } = deploymentIds.length
     ? await access.admin
@@ -1301,7 +1368,7 @@ async function loadStandardMonthlyRegister(access: any, input: {
     const trade: any = deployment.labour_trade_id ? tradeById.get(deployment.labour_trade_id) : null;
     return trade?.trade_name || deployment.trade || "";
   }).filter(Boolean))).sort();
-  const periodById = new Map<string, any>((periods || []).map((period: any) => [period.id, period]));
+  const periodById = new Map<string, any>(enrichedPeriods.map((period: any) => [period.id, period]));
   const workers = new Map<string, any>();
   for (const attendance of attendanceRows || []) {
     if (!attendance.labour_worker_id) continue;
@@ -1966,6 +2033,7 @@ export async function GET(request: Request) {
               .in("id", standardIds)
           : { data: [period], error: null };
         if (periodsError) throw periodsError;
+        const enrichedPeriods = await enrichStandardSubmitterSnapshots(access, periods || [period]);
         const periodIds = (periods || [period]).map((item: any) => item.id).filter(Boolean);
         const { data: supportingPdf, error: supportingPdfError } = requestedWorkDate && periodIds.length
           ? await access.admin
@@ -1980,7 +2048,7 @@ export async function GET(request: Request) {
           : { data: null, error: null };
         if (supportingPdfError) throw supportingPdfError;
         return NextResponse.json({
-          submission: { ...compactStandardSiteRegister(periods || [period], rows, requestedWorkDate), supporting_pdf: publicStandardSupportingPdf(supportingPdf) },
+          submission: { ...compactStandardSiteRegister(enrichedPeriods, rows, requestedWorkDate), supporting_pdf: publicStandardSupportingPdf(supportingPdf) },
           snapshot: { attendance_rows: rows },
           live: { attendance_rows: rows },
           events: [],

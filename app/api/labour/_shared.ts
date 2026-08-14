@@ -398,7 +398,7 @@ export async function loadEligibleDeployments(access: LabourAccess, input: {
       id, organization_id, labour_worker_id, contractor_profile_id, company_id, site_id,
       work_order_id, manpower_work_order_id, commercial_model, labour_trade_id, trade, skill_level, wage_type, wage_rate,
       effective_from, effective_to, status,
-      labour_workers(id, labour_code, worker_name, father_or_husband_name, skill_level, status, worker_type, date_of_joining, date_of_exit),
+      labour_workers(id, labour_code, worker_name, father_or_husband_name, skill_level, status, worker_type, date_of_joining, date_of_exit, created_at),
       labour_contractor_profiles(id, contractor_code, vendors(vendor_name)),
       work_orders(id, wo_number),
       manpower_work_orders(id, manpower_wo_number, title, status, manpower_work_order_rates(id, labour_trade_id, daily_rate, effective_from, effective_to, status)),
@@ -407,7 +407,7 @@ export async function loadEligibleDeployments(access: LabourAccess, input: {
     .eq("organization_id", input.organizationId)
     .eq("company_id", input.companyId)
     .eq("site_id", input.siteId)
-    .eq("status", "active")
+    .in("status", ["active", "ended"])
     .lte("effective_from", input.attendanceDate)
     .or(`effective_to.is.null,effective_to.gte.${input.attendanceDate}`)
     .order("effective_from", { ascending: false });
@@ -423,7 +423,11 @@ export async function loadEligibleDeployments(access: LabourAccess, input: {
   if (error) throw error;
   return (data || []).filter((deployment: any) => {
     const worker = Array.isArray(deployment.labour_workers) ? deployment.labour_workers[0] : deployment.labour_workers;
-    if (!worker || worker.status !== "active") return false;
+    if (!worker) return false;
+    if (worker.created_at) {
+      const registrationDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date(worker.created_at));
+      if (registrationDate > input.attendanceDate) return false;
+    }
     if (worker.date_of_joining && worker.date_of_joining > input.attendanceDate) return false;
     if (worker.date_of_exit && worker.date_of_exit < input.attendanceDate) return false;
     return true;
