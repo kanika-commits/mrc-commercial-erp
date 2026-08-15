@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { insertErpAuditLog } from "@/lib/serverAudit";
-import { hasActiveSiteHrAssignment } from "@/lib/serverSiteHr";
 import { actorName, buildAttendanceUpsertPayload, isAdminRecoveryRole, monthStart } from "@/lib/hr/attendance";
 import {
   adminClient,
@@ -138,13 +137,6 @@ export async function PUT(request: Request) {
     const admin = adminClient();
     const scope = await validateCompanySiteScope(admin, auth, params.companyId, params.siteId);
     if ("response" in scope) return scope.response;
-
-    if (!isAdminRecoveryRole(auth.roleCodes) && !(await hasActiveSiteHrAssignment(admin, {
-      userId: auth.user.id,
-      organizationId: scope.organizationId,
-      companyId: params.companyId,
-      siteId: params.siteId,
-    }))) return jsonError("You are not assigned as Site HR for this site.", 403);
 
     const month = monthStart(attendanceDate)!;
     const period = await ensurePeriod(admin, auth, {

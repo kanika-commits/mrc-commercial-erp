@@ -12,7 +12,7 @@ import { ATTENDANCE_STATUS_LABELS, PHASE1_ATTENDANCE_STATUSES, currentIndiaDate,
 
 type RowState = {
   employee_id: string;
-  status: string;
+  status: string | null;
   company_id?: string;
 };
 
@@ -80,12 +80,17 @@ export default function DailyAttendancePage() {
     return !["submitted", "approved", "cancelled"].includes(String(context.dailySubmission?.status || ""));
   };
   const hasEditableRows = rows.some(rowEditable);
-  const statusCounts = useMemo(() => rows.reduce((counts: { present: number; absent: number }, item: any) => {
-    const status = String((draft[item.employee.id]?.status || item.attendance?.status || "present")).toLowerCase();
-    if (status === "present") counts.present += 1;
-    if (status === "absent") counts.absent += 1;
+  const statusCounts = useMemo(() => rows.reduce((counts: { present: number; absent: number; incomplete: number }, item: any) => {
+    const status = draft[item.employee.id]?.status ?? item.attendance?.status ?? null;
+    if (!status) {
+      counts.incomplete += 1;
+      return counts;
+    }
+    const normalizedStatus = String(status).toLowerCase();
+    if (normalizedStatus === "present") counts.present += 1;
+    if (normalizedStatus === "absent") counts.absent += 1;
     return counts;
-  }, { present: 0, absent: 0 }), [draft, rows]);
+  }, { present: 0, absent: 0, incomplete: 0 }), [draft, rows]);
   const dailySubmissionInfo = Object.values(attendanceContexts).map((context: any) => context.dailySubmission).filter(Boolean);
   const submittedSubmission = dailySubmissionInfo.find((submission: any) => submission.status === "submitted");
   const approvedSubmission = dailySubmissionInfo.find((submission: any) => submission.status === "approved");
@@ -120,7 +125,7 @@ export default function DailyAttendancePage() {
     setSuccess("");
     try {
       const selectedSite = lookups.sites.find((item) => item.id === siteId);
-      const companyIds: string[] = (selectedSite?.company_ids || []).filter(Boolean) as string[];
+      const companyIds: string[] = (companyId ? [companyId] : selectedSite?.company_ids || []).filter(Boolean) as string[];
       if (!companyIds.length) {
         setMessage("No permitted companies are available for the selected site.");
         return;
@@ -142,7 +147,7 @@ export default function DailyAttendancePage() {
         nextDraft[item.employee.id] = {
           employee_id: item.employee.id,
           company_id: item.employee.company_id,
-          status: item.attendance?.status || "present",
+          status: item.attendance?.status || null,
         };
       }
       setDraft(nextDraft);
@@ -227,7 +232,7 @@ export default function DailyAttendancePage() {
       const groups = new Map<string, RowState[]>();
       for (const row of Object.values(draft)) {
         const item = rows.find((entry) => entry.employee.id === row.employee_id);
-        if (row.company_id && item && rowEditable(item)) groups.set(row.company_id, [...(groups.get(row.company_id) || []), row]);
+        if (row.status && row.company_id && item && rowEditable(item)) groups.set(row.company_id, [...(groups.get(row.company_id) || []), row]);
       }
       const outcomes = await Promise.all(Array.from(groups.entries()).map(async ([groupCompanyId, attendance]) => {
         try {
@@ -239,7 +244,9 @@ export default function DailyAttendancePage() {
       const failures = outcomes.filter((outcome: any) => outcome.error);
       if (failures.length) {
         const labels = failures.map((failure: any) => lookups.companies.find((company) => company.id === failure.companyId)?.label || failure.companyId);
-        throw new Error(`Attendance save failed for: ${labels.join(", ")}. Other company drafts may have been saved.`);
+        const details = failures.map((failure: any) => failure.error?.message).filter(Boolean);
+        const suffix = details.length ? ` ${details.join(" ")}` : "";
+        throw new Error(`Attendance save failed for: ${labels.join(", ")}.${suffix} Other company drafts may have been saved.`);
       }
       const results = outcomes.map((outcome: any) => outcome.result);
       if (!options.silent) setSuccess(`Draft saved for ${results.reduce((total, result) => total + Number(result.saved || 0), 0)} attendance rows.`);
@@ -255,6 +262,11 @@ export default function DailyAttendancePage() {
 
   async function performSubmitAttendance() {
     if (!rows.some(rowEditable) || !canSubmit) return;
+    const incompleteCount = rows.filter((item) => !(draft[item.employee.id]?.status ?? item.attendance?.status)).length;
+    if (incompleteCount > 0) {
+      setMessage(`Attendance is incomplete for ${incompleteCount} employee${incompleteCount === 1 ? "" : "s"}. Mark every employee before submitting.`);
+      return;
+    }
     const saved = await save({ silent: true });
     if (!saved) return;
     const periodIds = (saved.periods || periods).map((item: any) => item.id).filter(Boolean);
@@ -332,6 +344,7 @@ export default function DailyAttendancePage() {
           <Summary label="Employees" value={rows.length} />
           <Summary label="Present" value={statusCounts.present} />
           <Summary label="Absent" value={statusCounts.absent} />
+          <Summary label="Incomplete" value={statusCounts.incomplete} />
           <Summary label="Date" value={formatDate(date)} />
         </div>
       )}
@@ -368,7 +381,7 @@ export default function DailyAttendancePage() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
           <div>
             <h2 className="font-semibold text-slate-950">Mark Attendance</h2>
-            <p className="text-sm text-slate-500">Employees without saved attendance appear as Present until saved.</p>
+            <p className="text-sm text-slate-500">Employees without saved attendance remain Unmarked until you select a status.</p>
           </div>
           <label className="w-full sm:ml-auto sm:w-64">
             <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Search Employee</span>
@@ -395,16 +408,18 @@ export default function DailyAttendancePage() {
             {filteredRows.length === 0 ? (
               <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-500">No employees loaded.</td></tr>
             ) : filteredRows.map((item, index) => {
-              const current = draft[item.employee.id] || { employee_id: item.employee.id, status: "present", company_id: item.employee.company_id };
+              const current = draft[item.employee.id] || { employee_id: item.employee.id, status: item.attendance?.status || null, company_id: item.employee.company_id };
+              const incomplete = !current.status;
               return (
-                <tr key={item.employee.id}>
+                <tr key={item.employee.id} className={incomplete ? "bg-amber-50" : undefined}>
                   <td className="px-4 py-3 text-slate-500">{index + 1}</td>
                   <td className="px-3 py-3 font-medium text-slate-950">{item.employee.employee_name}</td>
                   <td className="px-3 py-3 text-slate-600">{item.employee.company_name || "-"}</td>
                   <td className="px-3 py-3 text-slate-600">{item.employee.department_name || "-"}</td>
                   <td className="px-3 py-3 text-slate-600">{item.employee.designation_name || "-"}</td>
                   <td className="px-3 py-3">
-                    <select disabled={!rowEditable(item)} value={current.status} onChange={(event) => updateRow(item.employee.id, { status: event.target.value })} className="h-9 rounded-xl border px-3 text-sm disabled:bg-slate-50">
+                    <select disabled={!rowEditable(item)} value={current.status || ""} onChange={(event) => updateRow(item.employee.id, { status: event.target.value || null })} className={`h-9 rounded-xl border px-3 text-sm disabled:bg-slate-50 ${incomplete ? "border-amber-300" : ""}`}>
+                      <option value="">Unmarked</option>
                       {PHASE1_ATTENDANCE_STATUSES.map((status) => <option key={status} value={status}>{ATTENDANCE_STATUS_LABELS[status]}</option>)}
                     </select>
                   </td>
