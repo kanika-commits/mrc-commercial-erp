@@ -23,7 +23,7 @@ function wholeHours(value: unknown) {
   const raw = String(value ?? "").trim();
   if (!/^\d+$/.test(raw)) return null;
   const hours = Number(raw);
-  return Number.isSafeInteger(hours) && hours >= 0 && hours <= 168 ? hours : null;
+  return Number.isSafeInteger(hours) && hours >= 0 ? hours : null;
 }
 
 function attendanceSystemValue(value: unknown) {

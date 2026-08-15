@@ -523,6 +523,7 @@ export default function LabourMusterConfigurationPage() {
                 Attendance Lock After Hours
                 <input className={field} type="number" min="0" step="1" value={form.attendance_lock_hours} disabled={saving || !canEditPolicy} onChange={(event) => setForm({ ...form, attendance_lock_hours: event.target.value })} />
               </label>
+              <p className="text-xs text-slate-500">Enter a non-negative whole number of hours.</p>
               <p className="rounded-md bg-slate-50 p-3 text-sm text-slate-700">
                 Attendance locks <span className="font-semibold">{form.attendance_lock_hours || "X"}</span> whole hours after the attendance date ends at 11:59 PM.
               </p>
