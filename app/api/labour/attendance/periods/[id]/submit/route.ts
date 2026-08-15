@@ -70,7 +70,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           affected_workers: incompleteWorkers.slice(0, 10),
         }, { status: 409 });
       }
-      const selectedStatus = period.summary?.date_statuses?.[attendanceDate]?.status || period.status;
+      const selectedStatus = period.summary?.date_statuses?.[attendanceDate]?.status || "draft";
       if (!["draft", "reopened"].includes(selectedStatus)) return jsonError("Only draft attendance can be submitted for this date.");
       const now = new Date().toISOString();
       const submittedByName = access.auth.user.user_metadata?.full_name || access.auth.user.user_metadata?.name || access.auth.user.email || "Unknown User";

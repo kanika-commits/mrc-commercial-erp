@@ -101,6 +101,7 @@ export default function LabourDailyAttendancePage() {
   const reopenedAttendanceDates: string[] = lookups.reopened_attendance_dates || [];
   const [dirty, setDirty] = useState<Record<string, boolean>>({});
   const [message, setMessage] = useState("");
+  const [submitError, setSubmitError] = useState("");
   const [submitSuccessMessage, setSubmitSuccessMessage] = useState("");
   const [lookupLoading, setLookupLoading] = useState(false);
   const [rowLoading, setRowLoading] = useState(false);
@@ -117,6 +118,7 @@ export default function LabourDailyAttendancePage() {
   const rowAbortRef = useRef<AbortController | null>(null);
   const rowRequestRef = useRef(0);
   const filtersRef = useRef(filters);
+  const incompleteRowRefs = useRef(new Map<string, HTMLElement>());
 
   const filteredSites = useMemo(() => lookups.sites || [], [lookups.sites]);
   const displayedRows = useMemo(() => {
@@ -129,6 +131,9 @@ export default function LabourDailyAttendancePage() {
       return contractorMatches && labourMatches;
     });
   }, [filters.contractor_profile_id, filters.labour_search, rows]);
+  const incompleteWorkerIds = useMemo(() => new Set(
+    rows.filter((row) => row.first_half_present == null || row.second_half_present == null).map((row) => row.labour_worker_id),
+  ), [rows]);
   const otErrors = useMemo(() => Object.fromEntries(
     rows
       .map((row) => [row.labour_worker_id, otValidationMessage(row.ot_hours)])
@@ -526,8 +531,16 @@ export default function LabourDailyAttendancePage() {
     if (saving || submitting) return;
     if (!period?.id) return setMessage("Load attendance before submitting.");
     if (!rows.length) return setMessage("Load attendance before submitting.");
+    const incompleteRows = displayedRows.filter((row) => incompleteWorkerIds.has(row.labour_worker_id));
+    if (incompleteRows.length) {
+      const countLabel = `${incompleteRows.length} labourer${incompleteRows.length === 1 ? "" : "s"}`;
+      setSubmitError(`Attendance is incomplete for ${countLabel}. ${incompleteRows.length === 1 ? "Complete both halves before submitting." : "Complete both halves for all incomplete labourers before submitting."}`);
+      incompleteRowRefs.current.get(incompleteRows[0].labour_worker_id)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
     setSubmitting(true);
     setSubmitted(false);
+    setSubmitError("");
     try {
       const saved = await persistRows("submit");
       if (!saved) return;
@@ -537,14 +550,17 @@ export default function LabourDailyAttendancePage() {
         body: JSON.stringify({ attendance_date: filters.attendance_date }),
       });
       const payload = await response.json();
-      if (!response.ok) return setMessage(payload.error || "Could not submit attendance.");
+      if (!response.ok) {
+        setSubmitError(payload.error || "Could not submit attendance.");
+        return;
+      }
       setDirty({});
       await loadRows({ skipDirtyConfirm: true });
       setSubmitted(true);
       setSubmitSuccessMessage(sentBack ? "Attendance resubmitted successfully." : "Attendance submitted successfully.");
       setMessage("");
     } catch (submitError: any) {
-      setMessage(submitError.message || "Could not submit attendance.");
+      setSubmitError(submitError.message || "Could not submit attendance.");
     } finally {
       setSubmitting(false);
     }
@@ -772,6 +788,7 @@ export default function LabourDailyAttendancePage() {
         </header>
 
         {message && <div className="rounded-lg border bg-white p-3 text-sm">{message}</div>}
+        {submitError && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-800">{submitError}</div>}
         {readOnly && readOnlyReason && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800">
             {readOnlyReason}
@@ -914,7 +931,7 @@ export default function LabourDailyAttendancePage() {
               {displayedRows.map((row, index) => {
                 const controlsDisabled = readOnly || saving || submitting || (row.attendance ? !canEditAttendance : !canAddAttendance);
                 return (
-                  <tr key={row.labour_worker_id}>
+                  <tr key={row.labour_worker_id} ref={(element) => { if (element) incompleteRowRefs.current.set(row.labour_worker_id, element); else incompleteRowRefs.current.delete(row.labour_worker_id); }} className={incompleteWorkerIds.has(row.labour_worker_id) ? "bg-red-50" : ""}>
                     <td className="px-3 py-3">{index + 1}</td>
                     <td className="px-3 py-3">{row.worker?.worker_name || "-"}</td>
                     <td className="px-3 py-3">{row.contractor?.vendors?.vendor_name || "Contractor not available"}</td>
@@ -955,7 +972,7 @@ export default function LabourDailyAttendancePage() {
           {displayedRows.map((row) => {
             const controlsDisabled = readOnly || saving || submitting || (row.attendance ? !canEditAttendance : !canAddAttendance);
             return (
-              <div key={row.labour_worker_id} className="rounded-lg border bg-white p-4 shadow-sm">
+              <div key={row.labour_worker_id} ref={(element) => { if (element) incompleteRowRefs.current.set(row.labour_worker_id, element); else incompleteRowRefs.current.delete(row.labour_worker_id); }} className={`rounded-lg border p-4 shadow-sm ${incompleteWorkerIds.has(row.labour_worker_id) ? "border-red-200 bg-red-50" : "bg-white"}`}>
                 <div className="flex items-start gap-3">
                   <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-100 text-sm font-bold text-slate-700">{initials(row.worker?.worker_name)}</div>
                   <div className="min-w-0 flex-1">

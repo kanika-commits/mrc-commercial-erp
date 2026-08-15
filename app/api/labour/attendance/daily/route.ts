@@ -147,9 +147,7 @@ function selectedDateRegisterStatus(period: any, attendanceRows: any[], attendan
   if (!period) return "draft";
   const dateStatus = period.summary?.date_statuses?.[attendanceDate]?.status;
   if (dateStatus) return dateStatus;
-  const hasRowsForSelectedDate = (attendanceRows || []).length > 0;
-  if (!hasRowsForSelectedDate && ["submitted", "finalized"].includes(period.status)) return "draft";
-  return period.status || "draft";
+  return "draft";
 }
 
 function selectedDateReadOnlyReason(period: any, dayLock: any, selectedStatus: string) {
