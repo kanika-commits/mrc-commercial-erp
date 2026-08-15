@@ -215,7 +215,7 @@ export async function PUT(request: Request) {
 
     const { data, error } = await admin
       .from("employee_attendance")
-      .upsert(upserts, { onConflict: "employee_id,attendance_date" })
+      .upsert(upserts, { onConflict: "employee_id,attendance_date", defaultToNull: false })
       .select("*");
     if (error) throw error;
 
