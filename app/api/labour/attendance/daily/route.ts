@@ -567,7 +567,7 @@ export async function POST(request: Request) {
 
     const existingPeriod = await loadExistingAttendancePeriod(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate });
     const reopenedDate = existingPeriod?.summary?.date_statuses?.[attendanceDate]?.status === "reopened";
-    const dateAccess = actorCanEditAttendanceDate(access, attendanceDate, reopenedDate ? backdatedReason || "sent_back" : backdatedReason);
+    const dateAccess = actorCanEditAttendanceDate(access, attendanceDate, backdatedReason, { reopened: reopenedDate });
     if ("error" in dateAccess) return jsonError(dateAccess.error || "You cannot edit attendance for this date.", 403);
     const originResult = await resolveAttendanceSystemForPeriod(access, { period: existingPeriod, organizationId, companyId, siteId, contractorProfileId, attendanceDate });
     if ("error" in originResult) return jsonError(originResult.error, originResult.status);

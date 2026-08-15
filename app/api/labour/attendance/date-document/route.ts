@@ -146,7 +146,12 @@ export async function POST(request: Request) {
     if (file.size > MAX_PDF_SIZE_BYTES) return jsonError("PDF must be 10 MB or smaller.");
     if (!resolved.period) return jsonError("Load attendance before uploading a supporting PDF.", 404);
     if (!canMutateDateDocument(resolved.period, resolved.attendanceDate)) return jsonError("Supporting PDF can be changed only while this date is Draft or Sent Back.", 403);
-    const dateAccess = actorCanEditAttendanceDate(access, resolved.attendanceDate, dateStatus(resolved.period, resolved.attendanceDate) === "reopened" ? "sent_back" : text(formData.get("backdated_reason")));
+    const dateAccess = actorCanEditAttendanceDate(
+      access,
+      resolved.attendanceDate,
+      text(formData.get("backdated_reason")),
+      { reopened: dateStatus(resolved.period, resolved.attendanceDate) === "reopened" },
+    );
     if ("error" in dateAccess) return jsonError(dateAccess.error || "You cannot edit attendance for this date.", 403);
     if (!isGlobalOrSuperAdmin(access) && !(await hasActiveSiteHrAssignment(access.admin, { organizationId: resolved.organizationId, companyId: resolved.companyId, siteId: resolved.siteId, userId: access.auth.user.id }))) {
       return jsonError("You are not assigned as Site HR for this site.", 403);
@@ -258,7 +263,12 @@ export async function DELETE(request: Request) {
     if ("error" in resolved) return jsonError(resolved.error || "Invalid attendance document request.", resolved.status || 400);
     if (!resolved.period) return jsonError("Attendance register not found.", 404);
     if (!canMutateDateDocument(resolved.period, resolved.attendanceDate)) return jsonError("Supporting PDF can be removed only while this date is Draft or Sent Back.", 403);
-    const dateAccess = actorCanEditAttendanceDate(access, resolved.attendanceDate, dateStatus(resolved.period, resolved.attendanceDate) === "reopened" ? "sent_back" : text(searchParams.get("backdated_reason")));
+    const dateAccess = actorCanEditAttendanceDate(
+      access,
+      resolved.attendanceDate,
+      text(searchParams.get("backdated_reason")),
+      { reopened: dateStatus(resolved.period, resolved.attendanceDate) === "reopened" },
+    );
     if ("error" in dateAccess) return jsonError(dateAccess.error || "You cannot edit attendance for this date.", 403);
     if (!isGlobalOrSuperAdmin(access) && !(await hasActiveSiteHrAssignment(access.admin, { organizationId: resolved.organizationId, companyId: resolved.companyId, siteId: resolved.siteId, userId: access.auth.user.id }))) {
       return jsonError("You are not assigned as Site HR for this site.", 403);

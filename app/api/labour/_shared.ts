@@ -761,13 +761,18 @@ export function isGlobalOrSuperAdmin(access: LabourAccess) {
   return access.organizationScope === null || access.auth.roleCodes.includes("super_admin");
 }
 
-export function actorCanEditAttendanceDate(access: LabourAccess, attendanceDate: string, reason?: string | null) {
+export function actorCanEditAttendanceDate(
+  access: LabourAccess,
+  attendanceDate: string,
+  reason?: string | null,
+  options: { reopened?: boolean } = {},
+) {
   const today = todayInIst();
   if (attendanceDate > today) return { error: "Future labour attendance cannot be marked." };
   if (attendanceDate === today) return { ok: true };
   const oldestNormalEditDate = daysBefore(today, 2);
   const olderThanNormalWindow = attendanceDate < oldestNormalEditDate;
-  if (!isGlobalOrSuperAdmin(access) && olderThanNormalWindow) {
+  if (!isGlobalOrSuperAdmin(access) && olderThanNormalWindow && !options.reopened) {
     return { error: "Labour attendance can be edited only for today, yesterday or the day before yesterday." };
   }
   if (!olderThanNormalWindow) return { ok: true };
