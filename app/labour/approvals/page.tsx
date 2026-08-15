@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, ChevronDown, FileText, Image as ImageIcon, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { CheckCircle2, ChevronDown, Download, FileText, Image as ImageIcon, RotateCcw, Search, Trash2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAccessContext } from "@/components/AccessContext";
@@ -88,7 +88,41 @@ function shiftBadge(value: unknown) {
 
 function formatDateTime(value?: string | null) {
   if (!value) return "-";
-  return new Date(value).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
+  return new Date(value).toLocaleString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
+}
+
+function formatAttendanceDate(value?: string | null) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : value || "-";
+}
+
+function displayMoney(value: number) {
+  const rounded = Math.round(value * 100) / 100;
+  return `Rs. ${rounded.toLocaleString("en-IN", { minimumFractionDigits: Number.isInteger(rounded) ? 0 : 2, maximumFractionDigits: 2 })}`;
+}
+
+function attendanceLabel(row: any) {
+  if (row.first_half_present === null || row.first_half_present === undefined || row.second_half_present === null || row.second_half_present === undefined) return "Incomplete";
+  if (row.first_half_present === true && row.second_half_present === true) return "Present";
+  if (row.first_half_present === false && row.second_half_present === false) return "Absent";
+  return "Half Day";
+}
+
+function calculateWage(row: any) {
+  const dailyRate = Number(row.daily_rate ?? 0);
+  const hourlyRate = dailyRate / 8;
+  const presentHalves = Number(row.first_half_present === true) + Number(row.second_half_present === true);
+  const attendanceWage = presentHalves === 2 ? dailyRate : presentHalves === 1 ? dailyRate / 2 : 0;
+  const otHours = Number(row.overtime_minutes || 0) / 60;
+  const bonusHours = Number(row.bonus_minutes || 0) / 60;
+  const otAmount = otHours * hourlyRate;
+  const bonusAmount = bonusHours * hourlyRate;
+  return { dailyRate, attendanceWage, otHours, bonusHours, otAmount, bonusAmount, total: attendanceWage + otAmount + bonusAmount };
+}
+
+function calculateRegisterWages(rows: any[]) {
+  const items = rows.map((row) => ({ row, ...calculateWage(row), attendance: attendanceLabel(row) }));
+  return { items, totals: items.reduce((total, item) => ({ labour: total.labour + 1, attendanceWage: total.attendanceWage + item.attendanceWage, otHours: total.otHours + item.otHours, bonusHours: total.bonusHours + item.bonusHours, otAmount: total.otAmount + item.otAmount, bonusAmount: total.bonusAmount + item.bonusAmount, total: total.total + item.total }), { labour: 0, attendanceWage: 0, otHours: 0, bonusHours: 0, otAmount: 0, bonusAmount: 0, total: 0 }) };
 }
 
 function formatTime(value?: string | null) {
@@ -240,6 +274,26 @@ export function LabourApprovalsPageContent({ historyMode = false }: { historyMod
       bonusHours: Math.round((Number(register.total_bonus_minutes ?? rows.reduce((sum, row) => sum + Number(row.bonus_minutes || 0), 0)) / 60) * 100) / 100,
     };
   }, [activeRegister, rows]);
+  const registerWages = useMemo(() => calculateRegisterWages(rows), [rows]);
+  const contractorWages = useMemo(() => {
+    const groups = new Map<string, any[]>();
+    for (const item of registerWages.items) {
+      const contractor = item.row.contractor_name || "Unassigned";
+      groups.set(contractor, [...(groups.get(contractor) || []), item]);
+    }
+    return Array.from(groups.entries()).map(([contractor, items]) => ({
+      contractor,
+      ...items.reduce((total, item) => ({
+        labour: total.labour + 1,
+        attendanceWage: total.attendanceWage + item.attendanceWage,
+        otHours: total.otHours + item.otHours,
+        bonusHours: total.bonusHours + item.bonusHours,
+        otAmount: total.otAmount + item.otAmount,
+        bonusAmount: total.bonusAmount + item.bonusAmount,
+        total: total.total + item.total,
+      }), { labour: 0, attendanceWage: 0, otHours: 0, bonusHours: 0, otAmount: 0, bonusAmount: 0, total: 0 }),
+    }));
+  }, [registerWages.items]);
   const optionalFilters = useMemo(() => {
     const chips: Array<{ key: keyof typeof filters | "photo_status_missing"; label: string; value: string }> = [];
     const labelFor = (items: any[], id: string) => items.find((item: any) => item.id === id)?.name || id;
@@ -495,7 +549,7 @@ export function LabourApprovalsPageContent({ historyMode = false }: { historyMod
     setPhotoModal({ ...photo, url: payload.url });
   }
 
-  async function openSupportingPdf(register: any) {
+  async function openSupportingPdf(register: any, download = false) {
     if (!register?.supporting_pdf) return;
     const params = new URLSearchParams();
     params.set("company_id", register.company_id || filters.company_id);
@@ -505,6 +559,15 @@ export function LabourApprovalsPageContent({ historyMode = false }: { historyMod
     const response = await fetch(`/api/labour/attendance/date-document?${params.toString()}`, { headers: { Authorization: `Bearer ${await token()}` } });
     const payload = await readPayload(response);
     if (!response.ok || !payload.url) return showMessage("error", payload.error || "Could not open supporting PDF.");
+    if (download) {
+      const anchor = document.createElement("a");
+      anchor.href = payload.url;
+      anchor.download = register.supporting_pdf.file_name || "supporting-attendance.pdf";
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      anchor.click();
+      return;
+    }
     window.open(payload.url, "_blank", "noopener,noreferrer");
   }
 
@@ -699,10 +762,10 @@ export function LabourApprovalsPageContent({ historyMode = false }: { historyMod
                   <StatusBadge status={activeRegister.status} />
                 </div>
                 <div className="grid gap-x-6 gap-y-1 text-sm text-slate-600 sm:grid-cols-2 lg:grid-cols-4">
-                  <span><strong className="text-slate-800">Attendance Date:</strong> {activeRegister.work_date || activeRegister.period_month || "-"}</span>
+                  <span><strong className="text-slate-800">Attendance Date:</strong> {formatAttendanceDate(activeRegister.work_date || activeRegister.period_month)}</span>
                   <span><strong className="text-slate-800">Submitted By:</strong> {activeRegister.submitted_by_name || activeRegister.submitted_by_email || "-"}</span>
                   <span><strong className="text-slate-800">Submitted At:</strong> {formatDateTime(activeRegister.submitted_at)}</span>
-                  <span><strong className="text-slate-800">Status:</strong> {statusLabel(activeRegister.status)}</span>
+                  {activeRegister.status === "finalized" && (activeRegister.approved_by_name || activeRegister.approved_by_email || activeRegister.approved_at) && <><span><strong className="text-slate-800">Approved By:</strong> {activeRegister.approved_by_name || activeRegister.approved_by_email}</span><span><strong className="text-slate-800">Approved At:</strong> {formatDateTime(activeRegister.approved_at)}</span></>}
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -718,7 +781,7 @@ export function LabourApprovalsPageContent({ historyMode = false }: { historyMod
               </div>
             </div>
             {isStandard && (
-              <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-white p-3 text-sm shadow-sm">
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-white p-2 text-sm shadow-sm">
                 <Summary label="Total Labour" value={activeRegisterTotals.labourers || 0} />
                 <Summary label="Present" value={activeRegisterTotals.present || 0} />
                 <Summary label="Absent" value={activeRegisterTotals.absent || 0} />
@@ -728,18 +791,48 @@ export function LabourApprovalsPageContent({ historyMode = false }: { historyMod
                 <Summary label="Bonus Hours" value={activeRegisterTotals.bonusHours || 0} />
               </div>
             )}
-            {isStandard && activeRegister.supporting_pdf && (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-white p-3 text-sm shadow-sm">
+            {isStandard && (
+              <>
+                <div className="rounded-lg border bg-white p-2 shadow-sm">
+                  <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Financial Grand Totals</p>
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+                    <SummaryText label="Attendance Wage" value={displayMoney(registerWages.totals.attendanceWage)} />
+                    <SummaryText label="OT Hrs" value={registerWages.totals.otHours.toFixed(2)} />
+                    <SummaryText label="Bonus Hrs" value={registerWages.totals.bonusHours.toFixed(2)} />
+                    <SummaryText label="OT Amount" value={displayMoney(registerWages.totals.otAmount)} />
+                    <SummaryText label="Bonus Amount" value={displayMoney(registerWages.totals.bonusAmount)} />
+                    <SummaryText label="Total Earned" value={displayMoney(registerWages.totals.total)} />
+                  </div>
+                </div>
+                <div className="overflow-auto rounded-lg border bg-white shadow-sm">
+                  <p className="border-b px-3 py-2 text-xs font-bold uppercase tracking-wide text-slate-500">Contractor Summary</p>
+                  <table className="w-full min-w-[1050px] table-fixed text-sm">
+                    <colgroup>
+                      <col className="w-[26%]" />
+                      <col className="w-[10%]" />
+                      <col className="w-[13%]" />
+                      <col className="w-[8%]" />
+                      <col className="w-[9%]" />
+                      <col className="w-[13%]" />
+                      <col className="w-[13%]" />
+                      <col className="w-[14%]" />
+                    </colgroup>
+                    <thead className="bg-slate-100 text-left text-xs uppercase text-slate-500"><tr>{["Contractor", "Labour Count", "Attendance Wage", "OT Hrs", "Bonus Hrs", "OT Amount", "Bonus Amount", "Total Earned"].map((heading) => <th key={heading} className="px-3 py-3">{heading}</th>)}</tr></thead>
+                    <tbody className="divide-y">
+                      {contractorWages.map((item) => <tr key={item.contractor}><td className="px-3 py-1.5 font-semibold">{item.contractor}</td><td className="px-3 py-1.5">{item.labour}</td><td className="px-3 py-1.5">{displayMoney(item.attendanceWage)}</td><td className="px-3 py-1.5">{item.otHours.toFixed(2)}</td><td className="px-3 py-1.5">{item.bonusHours.toFixed(2)}</td><td className="px-3 py-1.5">{displayMoney(item.otAmount)}</td><td className="px-3 py-1.5">{displayMoney(item.bonusAmount)}</td><td className="px-3 py-1.5 font-semibold">{displayMoney(item.total)}</td></tr>)}
+                      <tr className="bg-slate-50 font-bold"><td className="px-3 py-1.5">Grand Total</td><td className="px-3 py-1.5">{registerWages.totals.labour}</td><td className="px-3 py-1.5">{displayMoney(registerWages.totals.attendanceWage)}</td><td className="px-3 py-1.5">{registerWages.totals.otHours.toFixed(2)}</td><td className="px-3 py-1.5">{registerWages.totals.bonusHours.toFixed(2)}</td><td className="px-3 py-1.5">{displayMoney(registerWages.totals.otAmount)}</td><td className="px-3 py-1.5">{displayMoney(registerWages.totals.bonusAmount)}</td><td className="px-3 py-1.5">{displayMoney(registerWages.totals.total)}</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+            {isStandard && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-white p-2 text-sm shadow-sm">
                 <div className="min-w-0">
                   <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Supporting Attendance PDF</p>
-                  <p className="mt-1 flex min-w-0 items-center gap-2 font-semibold text-slate-800">
-                    <FileText className="h-4 w-4 shrink-0 text-slate-500" />
-                    <span className="truncate">{activeRegister.supporting_pdf.file_name || "Supporting PDF"}</span>
-                  </p>
+                  {activeRegister.supporting_pdf ? <p className="mt-1 flex min-w-0 items-center gap-2 font-semibold text-slate-800"><FileText className="h-4 w-4 shrink-0 text-slate-500" /><span className="truncate">{activeRegister.supporting_pdf.file_name || "Supporting PDF"}</span></p> : <p className="mt-1 text-slate-500">No supporting attendance PDF uploaded.</p>}
                 </div>
-                <button type="button" onClick={() => openSupportingPdf(activeRegister)} className="inline-flex h-9 items-center gap-2 rounded-md border bg-white px-3 text-xs font-bold">
-                  <FileText className="h-4 w-4" />View
-                </button>
+                {activeRegister.supporting_pdf && <div className="flex gap-2"><button type="button" onClick={() => openSupportingPdf(activeRegister)} className="inline-flex h-9 items-center gap-2 rounded-md border bg-white px-3 text-xs font-bold"><FileText className="h-4 w-4" />View PDF</button><button type="button" onClick={() => openSupportingPdf(activeRegister, true)} className="inline-flex h-9 items-center gap-2 rounded-md border bg-white px-3 text-xs font-bold"><Download className="h-4 w-4" />Download</button></div>}
               </div>
             )}
             {activeRegister.status === "reopened" && activeRegister.send_back_reason && (
@@ -1089,31 +1182,39 @@ function EngineerDailyTable({ rows, openPhoto }: { rows: any[]; openPhoto: (phot
 function StandardAttendanceTable({ rows }: { rows: any[] }) {
   return (
     <div className="overflow-auto rounded-lg border bg-white shadow-sm">
-      <table className="min-w-[1400px] text-sm">
+      <table className="min-w-[1800px] text-sm">
         <thead className="sticky top-0 z-10 bg-slate-100 text-left text-xs uppercase text-slate-500">
-          <tr>{["Labour Code", "Labour Name", "Contractor", "Category / Trade", "Daily Rate", "Attendance Date", "First Half", "Second Half", "OT Hours", "Bonus Hours", "Status"].map((heading) => <th key={heading} className="px-3 py-3">{heading}</th>)}</tr>
+          <tr>
+            <th className="min-w-32 px-3 py-3">Labour Code</th>
+            <th className="min-w-56 px-3 py-3">Labour Name</th>
+            <th className="min-w-56 px-3 py-3">Contractor</th>
+            <th className="min-w-48 px-3 py-3">Category / Trade</th>
+            {['Attendance', 'First Half', 'Second Half', 'OT Hrs', 'Bonus Hrs', '8-Hr Rate', 'OT Amount', 'Bonus Amount', 'Total Earned'].map((heading) => <th key={heading} className="min-w-28 whitespace-nowrap px-3 py-3">{heading}</th>)}
+          </tr>
         </thead>
         <tbody className="divide-y">
-          {rows.map((row, index) => {
-            const previous = rows[index - 1];
-            const firstPeriodRow = !previous || previous.submission_id !== row.submission_id;
+          {rows.map((row) => {
+            const wage = calculateWage(row);
+            const attendance = attendanceLabel(row);
             return (
-              <tr key={row.id} className={firstPeriodRow ? "border-t-4 border-sky-200 bg-white" : "bg-white"}>
-                <td className="sticky left-0 z-[5] min-w-32 bg-inherit px-3 py-2 font-semibold">{row.labour_code || "-"}</td>
-                <td className="sticky left-32 z-[5] min-w-48 bg-inherit px-3 py-2 font-semibold">{row.labour_name || "-"}</td>
-                <td className="px-3 py-2">{row.contractor_name || "-"}</td>
-                <td className="px-3 py-2">{row.category || "-"}</td>
-                <td className="px-3 py-2">{row.daily_rate_label || "-"}</td>
-                <td className="px-3 py-2">{row.work_date || row.period_month || "-"}</td>
-                <td className="px-3 py-2">{shiftBadge(row.first_half_present)}</td>
-                <td className="px-3 py-2">{shiftBadge(row.second_half_present)}</td>
-                <td className="px-3 py-2">{hours(row.overtime_minutes)}</td>
-                <td className="px-3 py-2">{hours(row.bonus_minutes)}</td>
-                <td className="px-3 py-2">{firstPeriodRow ? <StatusBadge status={row.status} /> : ""}</td>
+              <tr key={row.id} className="bg-white">
+                <td className="sticky left-0 z-[5] min-w-32 whitespace-nowrap bg-inherit px-3 py-2 font-semibold">{row.labour_code || "-"}</td>
+                <td className="sticky left-32 z-[5] min-w-56 whitespace-nowrap bg-inherit px-3 py-2 font-semibold">{row.labour_name || "-"}</td>
+                <td className="min-w-56 whitespace-nowrap px-3 py-2">{row.contractor_name || "-"}</td>
+                <td className="min-w-48 whitespace-nowrap px-3 py-2">{row.category || "-"}</td>
+                <td className="whitespace-nowrap px-3 py-2 font-semibold">{attendance}</td>
+                <td className="whitespace-nowrap px-3 py-2">{shiftBadge(row.first_half_present)}</td>
+                <td className="whitespace-nowrap px-3 py-2">{shiftBadge(row.second_half_present)}</td>
+                <td className="whitespace-nowrap px-3 py-2">{hours(row.overtime_minutes)}</td>
+                <td className="whitespace-nowrap px-3 py-2">{hours(row.bonus_minutes)}</td>
+                <td className="whitespace-nowrap px-3 py-2">{displayMoney(wage.dailyRate)}</td>
+                <td className="whitespace-nowrap px-3 py-2">{displayMoney(wage.otAmount)}</td>
+                <td className="whitespace-nowrap px-3 py-2">{displayMoney(wage.bonusAmount)}</td>
+                <td className="whitespace-nowrap px-3 py-2 font-semibold">{displayMoney(wage.total)}</td>
               </tr>
             );
           })}
-          {!rows.length && <tr><td colSpan={11} className="px-3 py-8 text-center text-slate-500">No submitted Standard Attendance registers match these filters.</td></tr>}
+          {!rows.length && <tr><td colSpan={13} className="px-3 py-8 text-center text-slate-500">No submitted Standard Attendance registers match these filters.</td></tr>}
         </tbody>
       </table>
     </div>
@@ -1122,7 +1223,7 @@ function StandardAttendanceTable({ rows }: { rows: any[] }) {
 
 function RegisterDetailFilters({ filters, contractors, categories, onChange, onClear }: { filters: any; contractors: any[]; categories: string[]; onChange: (patch: any) => void; onClear: () => void }) {
   return (
-    <div className="grid gap-3 rounded-lg border bg-white p-3 shadow-sm md:grid-cols-2 xl:grid-cols-[minmax(180px,1fr)_minmax(180px,1fr)_minmax(180px,1fr)_minmax(220px,1.2fr)_auto]">
+    <div className="grid gap-2 rounded-lg border bg-white p-2 shadow-sm md:grid-cols-2 xl:grid-cols-[minmax(180px,1fr)_minmax(180px,1fr)_minmax(180px,1fr)_minmax(220px,1.2fr)_auto]">
       <FilterSelect label="Contractor" value={filters.contractor} onChange={(value) => onChange({ contractor: value })} options={contractors} empty="All Contractors" />
       <label className="text-xs font-bold uppercase tracking-wide text-slate-500">
         Category / Trade
@@ -1201,6 +1302,10 @@ function FilterSelect({ label, value, onChange, options, empty }: { label: strin
 
 function Summary({ label, value, tone = "slate" }: { label: string; value: number; tone?: "slate" | "amber" }) {
   return <div className={`rounded-md border px-3 py-2 ${tone === "amber" ? "border-amber-200 bg-amber-50 text-amber-800" : "bg-slate-50"}`}><span className="text-xs font-bold uppercase text-slate-500">{label}</span><span className="ml-2 text-base font-semibold">{value}</span></div>;
+}
+
+function SummaryText({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-md border bg-slate-50 px-3 py-2"><span className="block text-xs font-bold uppercase text-slate-500">{label}</span><span className="mt-1 block text-base font-semibold text-slate-900">{value}</span></div>;
 }
 
 function PhotoCell({ row, onOpen }: { row: any; onOpen: (photo: any) => void }) {
