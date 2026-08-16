@@ -1399,26 +1399,6 @@ async function loadStandardMonthlyRegister(access: any, input: {
     },
   ])).values()).filter((item: any) => item.id);
   if (!periodIds.length) return { rows: [], days, contractors, categories: [] };
-  const { data: monthlySnapshots, error: monthlySnapshotsError } = await access.admin
-    .from("labour_attendance_submission_versions")
-    .select("*")
-    .in("period_id", periodIds)
-    .eq("status", "submitted")
-    .gte("attendance_date", fromDate)
-    .lte("attendance_date", toDate)
-    .order("submission_version", { ascending: false });
-  if (monthlySnapshotsError && monthlySnapshotsError.code !== "42P01") throw monthlySnapshotsError;
-  const latestSnapshotByPeriodDate = new Map<string, any>();
-  for (const snapshot of monthlySnapshots || []) {
-    const key = `${snapshot.period_id}:${snapshot.attendance_date}`;
-    if (!latestSnapshotByPeriodDate.has(key)) latestSnapshotByPeriodDate.set(key, snapshot);
-  }
-  const monthlySnapshotIds = Array.from(latestSnapshotByPeriodDate.values()).map((snapshot: any) => snapshot.id);
-  const { data: monthlySnapshotRows, error: monthlySnapshotRowsError } = monthlySnapshotIds.length
-    ? await access.admin.from("labour_attendance_submission_version_rows").select("*").in("submission_version_id", monthlySnapshotIds)
-    : { data: [], error: null };
-  if (monthlySnapshotRowsError && monthlySnapshotRowsError.code !== "42P01") throw monthlySnapshotRowsError;
-  const monthlySnapshotById = new Map((monthlySnapshots || []).map((snapshot: any) => [snapshot.id, snapshot]));
   const attendanceRows: any[] = [];
   const attendancePageSize = 1000;
   for (let offset = 0; ; offset += attendancePageSize) {
@@ -1475,7 +1455,6 @@ async function loadStandardMonthlyRegister(access: any, input: {
   for (const attendance of attendanceRows || []) {
     if (!attendance.labour_worker_id) continue;
     const period: any = periodById.get(attendance.period_id);
-    if (latestSnapshotByPeriodDate.has(`${attendance.period_id}:${attendance.attendance_date}`)) continue;
     const statusMatches = standardDateStatusMatches(period, attendance.attendance_date, requestedStatus, true);
     if (!statusMatches) continue;
     const deployment: any = deploymentById.get(attendance.deployment_id);
@@ -1511,29 +1490,6 @@ async function loadStandardMonthlyRegister(access: any, input: {
     current.total_ot_minutes += Number(attendance.overtime_minutes || attendance.approved_overtime_minutes || 0);
     current.total_bonus_minutes += Number(attendance.bonus_minutes || 0);
     workers.set(attendance.labour_worker_id, current);
-  }
-  for (const snapshotRow of monthlySnapshotRows || []) {
-    const snapshot: any = monthlySnapshotById.get(snapshotRow.submission_version_id);
-    if (!snapshot || (requestedStatus && requestedStatus !== "submitted")) continue;
-    const period: any = periodById.get(snapshot.period_id);
-    const current = workers.get(snapshotRow.labour_worker_id) || {
-      labour_worker_id: snapshotRow.labour_worker_id,
-      labour_code: snapshotRow.labour_code_snapshot,
-      labour_name: snapshotRow.worker_name_snapshot,
-      contractor_profile_id: snapshot.contractor_profile_id || "",
-      contractor_name: snapshotRow.contractor_name_snapshot || "-",
-      category: snapshotRow.trade_snapshot || "-",
-      days: {}, rate_values: new Set<string>(), present: 0, absent: 0, half_day: 0, total_ot_minutes: 0, total_bonus_minutes: 0,
-    };
-    const day = String(Number(String(snapshot.attendance_date).slice(8, 10)));
-    const code = snapshotRow.derived_status === "present" ? "P" : snapshotRow.derived_status === "absent" ? "A" : snapshotRow.derived_status === "half_day" ? "HD" : "-";
-    current.days[day] = code;
-    if (code === "P") current.present += 1;
-    if (code === "A") current.absent += 1;
-    if (code === "HD") current.half_day += 1;
-    current.total_ot_minutes += Number(snapshotRow.overtime_minutes || snapshotRow.approved_overtime_minutes || 0);
-    current.total_bonus_minutes += Number(snapshotRow.bonus_minutes || 0);
-    workers.set(snapshotRow.labour_worker_id, current);
   }
   let rows = Array.from(workers.values()).map((row: any) => {
     const { rate_values: rateValues, ...rest } = row;
