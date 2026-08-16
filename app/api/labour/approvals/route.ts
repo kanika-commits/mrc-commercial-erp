@@ -1062,6 +1062,12 @@ export async function loadStandardApprovalRows(access: any, input: {
       const snapshotPeriod = enrichedPeriods.find((period: any) => period.id === snapshot.period_id) || enrichedPeriods[0];
       const snapshotRows = await access.admin.from("labour_attendance_submission_version_rows").select("*").eq("submission_version_id", snapshot.id).order("labour_code_snapshot");
       if (snapshotRows.error && snapshotRows.error.code !== "42P01") throw snapshotRows.error;
+      const snapshotDeploymentIds = Array.from(new Set((snapshotRows.data || []).map((row: any) => row.deployment_id).filter(Boolean)));
+      const { data: snapshotDeployments, error: snapshotDeploymentError } = snapshotDeploymentIds.length
+        ? await access.admin.from("labour_deployments").select("id, wage_rate").in("id", snapshotDeploymentIds)
+        : { data: [], error: null };
+      if (snapshotDeploymentError) throw snapshotDeploymentError;
+      const snapshotDeploymentById = new Map<string, any>((snapshotDeployments || []).map((deployment: any) => [deployment.id, deployment]));
       const rows = (snapshotRows.data || []).map((row: any) => ({
         id: `${snapshot.id}:${row.id}`, submission_id: snapshot.id, attendance_period_id: snapshotPeriod.id,
         company_id: snapshot.company_id, site_id: snapshot.site_id, contractor_profile_id: snapshot.contractor_profile_id,
@@ -1069,6 +1075,7 @@ export async function loadStandardApprovalRows(access: any, input: {
         contractor_name: row.contractor_name_snapshot || "-", period_month: snapshotPeriod.period_month, work_date: snapshot.attendance_date,
         labour_worker_id: row.labour_worker_id, labour_code: row.labour_code_snapshot, labour_name: row.worker_name_snapshot,
         category: row.trade_snapshot || "-", first_half_present: row.first_half_present, second_half_present: row.second_half_present,
+        deployment_id: row.deployment_id, daily_rate: snapshotDeploymentById.get(row.deployment_id)?.wage_rate ?? null,
         overtime_minutes: row.overtime_minutes, bonus_minutes: row.bonus_minutes, status: row.derived_status,
         register_status: "submitted", submitted_by_name: snapshot.submitted_by_name, submitted_by_email: snapshot.submitted_by_email,
         submitted_at: snapshot.submitted_at, attendance_exception: false,
