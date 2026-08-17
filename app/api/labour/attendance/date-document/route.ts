@@ -58,14 +58,16 @@ function canMutateDateDocument(period: any, attendanceDate: string) {
   return ["draft", "reopened"].includes(dateStatus(period, attendanceDate));
 }
 
-async function resolveContext(access: any, input: { organizationId?: string | null; companyId?: string | null; siteId?: string | null; attendanceDate?: string | null }) {
+async function resolveContext(access: any, input: { organizationId?: string | null; companyId?: string | null; siteId?: string | null; attendanceDate?: string | null; requireSiteHr?: boolean }) {
   const attendanceDate = isoDate(input.attendanceDate);
   if (!input.companyId || !input.siteId || !attendanceDate) return { error: "Company, site and attendance date are required.", status: 400 } as const;
   const scopeCheck = await validateLabourCompanySiteIndependent(access, input.organizationId || null, input.companyId, input.siteId);
   if ("error" in scopeCheck) return { error: scopeCheck.error || "Selected company/site is not available.", status: 403 } as const;
   const organizationId = scopeCheck.organizationId;
-  const blocker = await loadMusterSiteHrBlocker(access, { organizationId, companyId: input.companyId, siteId: input.siteId });
-  if (blocker) return { error: blocker, status: 403 } as const;
+  if (input.requireSiteHr !== false) {
+    const blocker = await loadMusterSiteHrBlocker(access, { organizationId, companyId: input.companyId, siteId: input.siteId });
+    if (blocker) return { error: blocker, status: 403 } as const;
+  }
   const period = await loadPeriod(access, { organizationId, companyId: input.companyId, siteId: input.siteId, attendanceDate });
   if (period && originatingAttendanceSystem(period.originating_attendance_system) !== "standard") {
     return { error: "This attendance period is not a Standard Attendance register.", status: 403 } as const;
@@ -102,7 +104,8 @@ function publicDocument(row: any) {
 
 export async function GET(request: Request) {
   try {
-    const access = await requireLabourPermission(request, "labour_attendance", "view");
+    let access = await requireLabourPermission(request, "labour_attendance", "view");
+    if ("response" in access) access = await requireLabourPermission(request, "labour_daily_submission", "view");
     if ("response" in access) return access.response;
     const { searchParams } = new URL(request.url);
     const resolved = await resolveContext(access, {
@@ -110,6 +113,7 @@ export async function GET(request: Request) {
       companyId: text(searchParams.get("company_id")),
       siteId: text(searchParams.get("site_id")),
       attendanceDate: text(searchParams.get("attendance_date")),
+      requireSiteHr: false,
     });
     if ("error" in resolved) return jsonError(resolved.error || "Invalid attendance document request.", resolved.status || 400);
     if (!resolved.period) return NextResponse.json({ document: null });
