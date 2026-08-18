@@ -11,6 +11,7 @@ import {
   loadMusterSiteHrBlocker,
   isGlobalOrSuperAdmin,
   loadEligibleDeployments,
+  loadFrozenAttendanceDeploymentIds,
   requireLabourPermission,
   originatingAttendanceSystem,
   resolveSiteAttendanceSystem,
@@ -366,6 +367,8 @@ async function loadStandardPopulation(access: any, input: {
   siteId: string;
   contractorProfileId?: string | null;
   attendanceDate: string;
+  deploymentIds?: string[] | null;
+  ignoreWorkerCreatedAt?: boolean;
 }) {
   const deployments = await loadEligibleDeployments(access, {
     organizationId: input.organizationId,
@@ -373,6 +376,8 @@ async function loadStandardPopulation(access: any, input: {
     siteId: input.siteId,
     contractorProfileId: input.contractorProfileId || null,
     attendanceDate: input.attendanceDate,
+    deploymentIds: input.deploymentIds,
+    ignoreWorkerCreatedAt: input.ignoreWorkerCreatedAt,
   });
   return { deployments };
 }
@@ -416,9 +421,11 @@ export async function GET(request: Request) {
     const tradeCheck = await validateTrade(access, organizationId, tradeId);
     if ("error" in tradeCheck) return jsonError(tradeCheck.error || "Selected labour category is not available.", 403);
 
-    const [population, period, dayLock, policy] = await Promise.all([
-      loadStandardPopulation(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate }),
-      findOrCreateAttendancePeriod(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate, originatingAttendanceSystem: "standard" }),
+    const period = await findOrCreateAttendancePeriod(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate, originatingAttendanceSystem: "standard" });
+    const dateStatusForPopulation = selectedDateRegisterStatus(period, [], attendanceDate);
+    const frozenDeploymentIds = await loadFrozenAttendanceDeploymentIds(access, period, attendanceDate, dateStatusForPopulation);
+    const [population, dayLock, policy] = await Promise.all([
+      loadStandardPopulation(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate, deploymentIds: frozenDeploymentIds, ignoreWorkerCreatedAt: !frozenDeploymentIds }),
       getDayLock(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate }),
       getActiveAttendancePolicy(access, { organizationId, companyId, siteId }),
     ]);
@@ -583,7 +590,17 @@ export async function POST(request: Request) {
 
     const changes = Array.isArray(payload.rows) ? payload.rows : [];
     if (!changes.length) return NextResponse.json({ saved: 0 });
-    const population = await loadStandardPopulation(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate });
+    const populationStatus = selectedDateRegisterStatus(period, [], attendanceDate);
+    const frozenDeploymentIds = await loadFrozenAttendanceDeploymentIds(access, period, attendanceDate, populationStatus);
+    const population = await loadStandardPopulation(access, {
+      organizationId,
+      companyId,
+      siteId,
+      contractorProfileId,
+      attendanceDate,
+      deploymentIds: frozenDeploymentIds,
+      ignoreWorkerCreatedAt: !frozenDeploymentIds,
+    });
     const deploymentByWorker = new Map((population.deployments || []).map((deployment: any) => [deployment.labour_worker_id, deployment]));
     const workerIds = changes.map((change: any) => text(change.labour_worker_id)).filter(Boolean) as string[];
     const { data: existingRows, error: existingError } = workerIds.length

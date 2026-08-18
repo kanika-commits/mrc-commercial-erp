@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { actorFields, applyCompanySiteScope, audit, isGlobalOrSuperAdmin, jsonError, loadEligibleDeployments, originatingAttendanceSystem, requireLabourPermission } from "@/app/api/labour/_shared";
+import { actorFields, applyCompanySiteScope, audit, isGlobalOrSuperAdmin, jsonError, loadEligibleDeployments, loadFrozenAttendanceDeploymentIds, originatingAttendanceSystem, requireLabourPermission } from "@/app/api/labour/_shared";
 import { applyOrganizationScope } from "@/lib/serverOrganizationScope";
 import { isoDate } from "@/lib/labour/operations";
 import { hasActiveSiteHrAssignment } from "@/lib/serverSiteHr";
@@ -31,12 +31,16 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (!workflow) return jsonError("This attendance period has no originating attendance workflow. Confirm the historical workflow before submitting it.", 409);
     if (workflow === "site_in_engineer") return jsonError("This attendance period belongs to Site-In & Engineer Daily Labour. Use Engineer Daily Labour for this existing record.", 403);
     if (attendanceDate) {
+      const selectedStatus = period.summary?.date_statuses?.[attendanceDate]?.status || "draft";
+      const frozenDeploymentIds = await loadFrozenAttendanceDeploymentIds(access, period, attendanceDate, selectedStatus);
       const deployments = await loadEligibleDeployments(access, {
         organizationId: period.organization_id,
         companyId: period.company_id,
         siteId: period.site_id,
         contractorProfileId: period.contractor_profile_id,
         attendanceDate,
+        deploymentIds: frozenDeploymentIds,
+        ignoreWorkerCreatedAt: !frozenDeploymentIds,
       });
       const workerIds = Array.from(new Set(deployments.map((deployment: any) => deployment.labour_worker_id).filter(Boolean)));
       const { data: attendanceRows, error: attendanceError } = workerIds.length
@@ -70,7 +74,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           affected_workers: incompleteWorkers.slice(0, 10),
         }, { status: 409 });
       }
-      const selectedStatus = period.summary?.date_statuses?.[attendanceDate]?.status || "draft";
       if (!["draft", "reopened"].includes(selectedStatus)) return jsonError("Only draft attendance can be submitted for this date.");
       const now = new Date().toISOString();
       const submittedByName = access.auth.user.user_metadata?.full_name || access.auth.user.user_metadata?.name || access.auth.user.email || "Unknown User";

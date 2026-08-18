@@ -391,6 +391,8 @@ export async function loadEligibleDeployments(access: LabourAccess, input: {
   workOrderId?: string | null;
   manpowerWorkOrderId?: string | null;
   tradeId?: string | null;
+  deploymentIds?: string[] | null;
+  ignoreWorkerCreatedAt?: boolean;
 }) {
   let query = access.admin
     .from("labour_deployments")
@@ -408,9 +410,16 @@ export async function loadEligibleDeployments(access: LabourAccess, input: {
     .eq("company_id", input.companyId)
     .eq("site_id", input.siteId)
     .in("status", ["active", "ended"])
-    .lte("effective_from", input.attendanceDate)
-    .or(`effective_to.is.null,effective_to.gte.${input.attendanceDate}`)
     .order("effective_from", { ascending: false });
+
+  if (input.deploymentIds) {
+    if (!input.deploymentIds.length) return [];
+    query = query.in("id", input.deploymentIds);
+  } else {
+    query = query
+      .lte("effective_from", input.attendanceDate)
+      .or(`effective_to.is.null,effective_to.gte.${input.attendanceDate}`);
+  }
 
   if (input.contractorProfileId) query = query.eq("contractor_profile_id", input.contractorProfileId);
   if (input.workOrderId) query = query.eq("work_order_id", input.workOrderId);
@@ -424,7 +433,7 @@ export async function loadEligibleDeployments(access: LabourAccess, input: {
   return (data || []).filter((deployment: any) => {
     const worker = Array.isArray(deployment.labour_workers) ? deployment.labour_workers[0] : deployment.labour_workers;
     if (!worker) return false;
-    if (worker.created_at) {
+    if (!input.ignoreWorkerCreatedAt && worker.created_at) {
       const registrationDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date(worker.created_at));
       if (registrationDate > input.attendanceDate) return false;
     }
@@ -432,6 +441,39 @@ export async function loadEligibleDeployments(access: LabourAccess, input: {
     if (worker.date_of_exit && worker.date_of_exit < input.attendanceDate) return false;
     return true;
   });
+}
+
+export async function loadFrozenAttendanceDeploymentIds(access: LabourAccess, period: any, attendanceDate: string, status: string) {
+  if (!period || !["submitted", "approved", "finalized", "reopened"].includes(status)) return null;
+
+  const { data: version, error: versionError } = await access.admin
+    .from("labour_attendance_submission_versions")
+    .select("id")
+    .eq("period_id", period.id)
+    .eq("attendance_date", attendanceDate)
+    .order("submission_version", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (versionError) throw versionError;
+
+  if (version) {
+    const { data: snapshotRows, error: snapshotError } = await access.admin
+      .from("labour_attendance_submission_version_rows")
+      .select("deployment_id")
+      .eq("submission_version_id", version.id)
+      .not("deployment_id", "is", null);
+    if (snapshotError) throw snapshotError;
+    return Array.from(new Set((snapshotRows || []).map((row: any) => row.deployment_id).filter(Boolean))) as string[];
+  }
+
+  const { data: attendanceRows, error: attendanceError } = await access.admin
+    .from("labour_attendance")
+    .select("deployment_id")
+    .eq("period_id", period.id)
+    .eq("attendance_date", attendanceDate)
+    .not("deployment_id", "is", null);
+  if (attendanceError) throw attendanceError;
+  return Array.from(new Set((attendanceRows || []).map((row: any) => row.deployment_id).filter(Boolean))) as string[];
 }
 
 export async function findOrCreateAttendancePeriod(access: LabourAccess, input: {
