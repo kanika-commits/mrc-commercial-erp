@@ -741,6 +741,9 @@ function compactStandardPeriod(period: any, attendanceRows: any[], workDate?: st
     submitted_by_name: dateSummary.submitted_by_name || null,
     submitted_by_email: dateSummary.submitted_by_email || null,
     submitted_at: dateSummary.submitted_at || null,
+    approved_by_name: dateSummary.finalized_by_name || null,
+    approved_by_email: dateSummary.finalized_by_email || null,
+    approved_at: dateSummary.finalized_at || null,
     send_back_reason: dateSummary.reason || null,
     sent_back_by_name: dateSummary.reopened_by_name || null,
     sent_back_by_email: dateSummary.reopened_by_email || null,
@@ -762,7 +765,10 @@ export async function enrichStandardSubmitterSnapshots(access: any, periods: any
   const submitterIds = Array.from(new Set((periods || []).flatMap((period: any) => {
     const statuses = period?.summary?.date_statuses;
     if (!statuses || typeof statuses !== "object" || Array.isArray(statuses)) return [];
-    return Object.values(statuses).map((entry: any) => entry?.submitted_by_name ? null : text(entry?.submitted_by)).filter(Boolean);
+    return Object.values(statuses).flatMap((entry: any) => [
+      entry?.submitted_by_name ? null : text(entry?.submitted_by),
+      entry?.finalized_by_name ? null : text(entry?.finalized_by),
+    ]).filter(Boolean);
   }))) as string[];
   if (!submitterIds.length) return periods;
   const { data: profiles, error } = await access.admin.from("profiles").select("id, full_name, email").in("id", submitterIds);
@@ -772,9 +778,16 @@ export async function enrichStandardSubmitterSnapshots(access: any, periods: any
     const statuses = period?.summary?.date_statuses;
     if (!statuses || typeof statuses !== "object" || Array.isArray(statuses)) return period;
     const nextStatuses = Object.fromEntries(Object.entries(statuses).map(([date, entry]: [string, any]) => {
-      if (entry?.submitted_by_name || !entry?.submitted_by) return [date, entry];
-      const profile = profileById.get(entry.submitted_by);
-      return [date, profile ? { ...entry, submitted_by_name: profile.full_name || profile.email || null, submitted_by_email: profile.email || null } : entry];
+      const nextEntry = { ...entry };
+      if (!entry?.submitted_by_name && entry?.submitted_by) {
+        const profile = profileById.get(entry.submitted_by);
+        if (profile) Object.assign(nextEntry, { submitted_by_name: profile.full_name || profile.email || null, submitted_by_email: profile.email || null });
+      }
+      if (!entry?.finalized_by_name && entry?.finalized_by) {
+        const profile = profileById.get(entry.finalized_by);
+        if (profile) Object.assign(nextEntry, { finalized_by_name: profile.full_name || profile.email || null, finalized_by_email: profile.email || null });
+      }
+      return [date, nextEntry];
     }));
     return { ...period, summary: { ...(period.summary || {}), date_statuses: nextStatuses } };
   });
@@ -1291,18 +1304,6 @@ async function loadStandardApprovalRegisters(access: any, input: {
   const enrichedPeriods = await enrichStandardSubmitterSnapshots(access, periods || []);
   const periodIds = enrichedPeriods.map((period: any) => period.id).filter(Boolean);
   if (!periodIds.length) return [];
-  const { data: snapshots, error: snapshotsError } = await access.admin
-    .from("labour_attendance_submission_versions")
-    .select("*")
-    .in("period_id", periodIds)
-    .eq("status", "submitted")
-    .order("submission_version", { ascending: false });
-  if (snapshotsError && snapshotsError.code !== "42P01") throw snapshotsError;
-  const snapshotByKey = new Map<string, any>();
-  for (const snapshot of snapshots || []) {
-    const key = [snapshot.organization_id, snapshot.company_id, snapshot.site_id, snapshot.attendance_date].join(":");
-    if (!snapshotByKey.has(key)) snapshotByKey.set(key, snapshot);
-  }
   const attendanceRows: any[] = [];
   const attendancePageSize = 1000;
   for (let offset = 0; ; offset += attendancePageSize) {
@@ -1349,9 +1350,9 @@ async function loadStandardApprovalRegisters(access: any, input: {
   }
   let registers = Array.from(groups.values())
     .map((group) => {
-      const key = [group.periods[0]?.organization_id, group.periods[0]?.company_id, group.periods[0]?.site_id, group.workDate].join(":");
-      const snapshot = snapshotByKey.get(key);
-      return snapshot ? compactStandardSnapshot(group.periods[0], snapshot) : compactStandardSiteRegister(group.periods, group.rows, group.workDate);
+      // Submission snapshots remain the source for historical detail, but the
+      // current approval register's status comes from the date-level period state.
+      return compactStandardSiteRegister(group.periods, group.rows, group.workDate);
     })
     .filter((register: any) => !requestedStatus || register.status === requestedStatus);
   if (input.contractorProfileId) {
@@ -1657,14 +1658,11 @@ async function transitionStandardPeriod(access: any, request: Request, payload: 
   if (periods.some((period: any) => !periodIdsWithRows.has(period.id))) return jsonError("Selected attendance periods do not all contain rows for this date register.", 400);
   const now = new Date().toISOString();
   if (action === "standard_approve") {
-    if (periods.some((period: any) => standardDateStatus(period, workDate, true) !== "submitted")) return jsonError("Submit all attendance periods before finalizing the site register.");
     for (const period of periods) {
+      if (standardDateStatus(period, workDate, true) !== "submitted") return jsonError(`Attendance for ${workDate} is not submitted and cannot be approved.`);
       const patch = {
-      status: "finalized",
       summary: standardSummaryWithDateStatus(period, workDate, "finalized", { finalized_at: now, finalized_by: access.auth.user.id }),
-      finalized_at: now,
       updated_at: now,
-      ...actorFields(access.auth, "finalized" as any),
       ...actorFields(access.auth, "updated"),
       };
       const { error } = await access.admin.from("labour_attendance_periods").update(patch).eq("id", period.id);
@@ -1677,7 +1675,7 @@ async function transitionStandardPeriod(access: any, request: Request, payload: 
         organizationId: period.organization_id,
         companyId: period.company_id,
         siteId: period.site_id,
-        description: "Finalized standard labour attendance period.",
+        description: "Approved standard labour attendance date.",
         oldValues: period,
         newValues: patch,
       });
