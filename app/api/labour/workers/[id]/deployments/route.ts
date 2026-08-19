@@ -44,6 +44,7 @@ async function validateCommercialWorkOrderForContractor(access: LabourAccess, in
   siteId: string;
   contractorProfileId?: string | null;
   workOrderId?: string | null;
+  effectiveFrom?: string | null;
 }) {
   const workOrderId = text(input.workOrderId);
   if (!workOrderId) return { workOrder: null };
@@ -63,7 +64,7 @@ async function validateCommercialWorkOrderForContractor(access: LabourAccess, in
 
   const { data: workOrder, error: workOrderError } = await access.admin
     .from("work_orders")
-    .select("id, organization_id, company_id, site_id, status, approval_status")
+    .select("id, organization_id, company_id, site_id, status, approval_status, wo_type, start_date, end_date")
     .eq("id", workOrderId)
     .maybeSingle();
   if (workOrderError) throw workOrderError;
@@ -74,6 +75,8 @@ async function validateCommercialWorkOrderForContractor(access: LabourAccess, in
     workOrder.site_id !== input.siteId ||
     workOrder.status !== "active" ||
     workOrder.approval_status !== "approved"
+    || (input.effectiveFrom && workOrder.start_date && workOrder.start_date > input.effectiveFrom)
+    || (input.effectiveFrom && workOrder.end_date && workOrder.end_date < input.effectiveFrom)
   ) {
     return { error: "Selected Commercial Work Order is not available for this contractor, company and site." };
   }
@@ -123,25 +126,27 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const tradeCheck = await validateTrade(access, worker.organization_id, labourTradeId);
     if ("error" in tradeCheck) return jsonError(tradeCheck.error || "Selected Labour Category is not available.", 403);
 
-    const workOrderCheck = (commercialModel === "contract_basis" || (isReactivation && commercialModel === "daily_wage"))
+    const workOrderCheck = (commercialModel === "contract_basis" || commercialModel === "daily_wage")
       ? await validateCommercialWorkOrderForContractor(access, {
         organizationId: worker.organization_id,
         companyId,
         siteId,
         contractorProfileId,
         workOrderId: payload.work_order_id,
+        effectiveFrom,
       })
       : { workOrder: null };
     if ("error" in workOrderCheck) return jsonError(workOrderCheck.error || "Selected Commercial Work Order is not available.", 403);
     if (!isReactivation && commercialModel === "contract_basis" && !workOrderCheck.workOrder) return jsonError("Contract-basis deployment requires a Commercial Work Order.");
-    if (isReactivation && commercialModel === "daily_wage" && (!workOrderCheck.workOrder || !Number.isFinite(Number(payload.wage_rate)) || Number(payload.wage_rate) <= 0)) return jsonError("Commercial Work Order and a positive Daily Rate are required to reactivate a labourer.");
+    if (!isReactivation && commercialModel === "daily_wage" && !workOrderCheck.workOrder) return jsonError("Daily-wage deployment requires an approved Daily Wage Work Order.");
+    if (commercialModel === "daily_wage" && workOrderCheck.workOrder?.wo_type !== "Daily Wage") return jsonError("Selected Work Order is not a Daily Wage Work Order.", 403);
+    if (commercialModel === "daily_wage" && (!workOrderCheck.workOrder || !Number.isFinite(Number(payload.wage_rate)) || Number(payload.wage_rate) <= 0)) return jsonError("Commercial Work Order and a positive Daily Rate are required for Daily Wage deployment.");
     if (isReactivation && !text(payload.deployment_reason)) {
       return jsonError("Reactivation Reason is required.");
     }
-    if (isReactivation && commercialModel === "contract_basis" && !manpowerWorkOrderId) return jsonError("Contractual Labour requires an Approved Manpower Work Order.");
-    if (!isReactivation && commercialModel === "daily_wage" && !manpowerWorkOrderId) return jsonError("Daily-wage deployment requires a Manpower Work Order.");
+    if (commercialModel === "contract_basis" && !manpowerWorkOrderId) return jsonError("Contractual Labour requires an Approved Manpower Work Order.");
     let resolvedMwoRate: any = null;
-    if (commercialModel === "daily_wage" && !isReactivation) {
+    if (commercialModel === "daily_wage" && isReactivation && manpowerWorkOrderId) {
       const { data: mwo, error: mwoError } = await access.admin
         .from("manpower_work_orders")
         .select("id, organization_id, company_id, site_id, contractor_profile_id, status")
@@ -213,14 +218,14 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       contractor_profile_id: contractorProfileId,
       company_id: companyId,
       site_id: siteId,
-      work_order_id: (commercialModel === "contract_basis" && !isReactivation) || (isReactivation && commercialModel === "daily_wage") ? text(payload.work_order_id) : null,
+      work_order_id: (commercialModel === "contract_basis" && !isReactivation) || (isReactivation && commercialModel === "daily_wage") || (commercialModel === "daily_wage" && !isReactivation) ? text(payload.work_order_id) : null,
       manpower_work_order_id: isReactivation && commercialModel === "contract_basis" ? manpowerWorkOrderId : (!isReactivation ? manpowerWorkOrderId : null),
       commercial_model: commercialModel,
       trade: tradeCheck.trade?.trade_name || null,
       labour_trade_id: tradeCheck.trade?.id || null,
       skill_level: skillLevel,
       wage_type: commercialModel === "daily_wage" ? "daily" : (isReactivation ? "daily" : wageType),
-      wage_rate: isReactivation ? (commercialModel === "daily_wage" ? Number(payload.wage_rate) : resolvedMwoRate?.daily_rate) : (commercialModel === "daily_wage" ? resolvedMwoRate?.daily_rate : text(payload.wage_rate)),
+      wage_rate: isReactivation ? (commercialModel === "daily_wage" ? Number(payload.wage_rate) : resolvedMwoRate?.daily_rate) : (commercialModel === "daily_wage" ? Number(payload.wage_rate) : text(payload.wage_rate)),
       effective_from: effectiveFrom,
       effective_to: text(payload.effective_to),
       status: text(payload.effective_to) ? "ended" : "active",

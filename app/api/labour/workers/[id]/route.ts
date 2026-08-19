@@ -221,6 +221,15 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
     const current = await loadScopedWorker(access, id);
     if (!current) return jsonError("Labourer not found.", 404);
 
+    const { data: activeDeployment, error: activeDeploymentError } = await access.admin
+      .from("labour_deployments")
+      .select("id, contractor_profile_id, labour_trade_id, work_order_id, company_id, site_id")
+      .eq("labour_worker_id", id)
+      .eq("status", "active")
+      .is("effective_to", null)
+      .maybeSingle();
+    if (activeDeploymentError) throw activeDeploymentError;
+
     const payload = await request.json().catch(() => ({}));
     const status = text(payload.status) || current.status;
     const requestedWorkerType = text(payload.worker_type);
@@ -283,9 +292,17 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
 
     const contractorProfileId = text(payload.current_contractor_profile_id);
     if (!contractorProfileId) return jsonError("Contractor is required.");
+    const requestedWorkOrderId = text(payload.current_work_order_id);
+    const requestedTradeId = text(payload.labour_trade_id) || text(payload.default_labour_category_id);
+    const assignmentChanged = contractorProfileId !== current.current_contractor_profile_id
+      || requestedWorkOrderId !== current.current_work_order_id
+      || requestedTradeId !== current.labour_trade_id;
+    if (assignmentChanged && (activeDeployment || current.status === "active")) {
+      return jsonError("Contractor / Site / Assignment changes must be made through Transfer / Change Deployment.", 409);
+    }
     const contractorCheck = await validateContractorProfile(access, current.organization_id, contractorProfileId);
     if ("error" in contractorCheck) return jsonError(contractorCheck.error || "Selected contractor is not available.", 403);
-    const workOrderId = text(payload.current_work_order_id);
+    const workOrderId = requestedWorkOrderId;
     if (workOrderId && workOrderId !== current.current_work_order_id) {
       if (!current.current_company_id || !current.current_site_id) return jsonError("Company and site are required before selecting a Labour Work Order.");
       const workOrderCheck = await validateLabourWorkOrderForContractor(access, {
@@ -297,7 +314,7 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
       });
       if ("error" in workOrderCheck) return jsonError(workOrderCheck.error || "Selected Labour Work Order is not available.", 403);
     }
-    const labourTradeId = text(payload.labour_trade_id) || text(payload.default_labour_category_id);
+    const labourTradeId = requestedTradeId;
     if (!labourTradeId) return jsonError("Labour Category is required.");
     const tradeCheck = await validateTrade(access, current.organization_id, labourTradeId);
     if ("error" in tradeCheck) return jsonError(tradeCheck.error || "Selected Labour Category is not available.", 403);
