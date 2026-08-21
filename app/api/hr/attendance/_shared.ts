@@ -646,12 +646,23 @@ export async function loadEligibleEmployees(
 
     const histories = historyByEmployee.get(employee.id) || [];
     const effectiveHistories = histories.filter((history) => rowAppliesToDateRange(history, values.startDate, values.endDate));
-    const matchingHistory = effectiveHistories.find((history) =>
-      history.company_id === values.companyId &&
-      history.site_id === values.siteId &&
-      String(history.employment_status || employee.status || "").toLowerCase() !== "deleted"
-    );
-    if (matchingHistory) return true;
+    if (values.startDate === values.endDate) {
+      const latestHistory = effectiveHistories[0] || null;
+      if (latestHistory) {
+        return (
+          latestHistory.company_id === values.companyId &&
+          latestHistory.site_id === values.siteId &&
+          String(latestHistory.employment_status || employee.status || "").toLowerCase() !== "deleted"
+        );
+      }
+    } else {
+      const matchingHistory = effectiveHistories.find((history) =>
+        history.company_id === values.companyId &&
+        history.site_id === values.siteId &&
+        String(history.employment_status || employee.status || "").toLowerCase() !== "deleted"
+      );
+      if (matchingHistory) return true;
+    }
 
     if (effectiveHistories.length > 0) {
       return false;

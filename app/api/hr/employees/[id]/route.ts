@@ -479,6 +479,8 @@ export async function PUT(
     const noticePeriodTo = dateValue(payload.notice_period_to);
     const resignationDate = dateValue(payload.resignation_date);
     const relievingDate = dateValue(payload.date_of_exit);
+    const transferEffectiveDate = dateValue(payload.transfer_effective_date);
+    const assignmentChanged = existing.company_id !== companyId || existing.site_id !== siteId;
 
     if (!employeeName) {
       return NextResponse.json({ error: "Employee name is required." }, { status: 400 });
@@ -508,6 +510,19 @@ export async function PUT(
 
     if (dateError) {
       return NextResponse.json({ error: dateError }, { status: 400 });
+    }
+
+    if (assignmentChanged) {
+      if (!transferEffectiveDate) {
+        return NextResponse.json({ error: "Transfer effective date is required when Company or Site changes." }, { status: 400 });
+      }
+      const today = new Date().toISOString().slice(0, 10);
+      if (isAfterDate(transferEffectiveDate, today)) {
+        return NextResponse.json({ error: "Future-dated transfers are not supported. Use today or an earlier date." }, { status: 400 });
+      }
+      if (dateOfJoining && isAfterDate(dateOfJoining, transferEffectiveDate)) {
+        return NextResponse.json({ error: "Transfer effective date cannot be before the employee's joining date." }, { status: 400 });
+      }
     }
 
     const companyResult = await validateCompanyAndSite(admin, auth, companyId, siteId);
@@ -607,6 +622,20 @@ export async function PUT(
       updated_at: new Date().toISOString(),
     };
 
+    if (assignmentChanged) {
+      const { error: transferError } = await admin.rpc("transfer_hr_employee_atomic", {
+        p_employee_id: id,
+        p_organization_id: companyResult.organizationId,
+        p_company_id: companyId,
+        p_site_id: siteId,
+        p_transfer_effective_date: transferEffectiveDate,
+        p_actor_id: auth.user.id,
+        p_actor_name: userName(auth),
+        p_actor_email: auth.user.email || null,
+      });
+      if (transferError) throw transferError;
+    }
+
     const { error } = await admin
       .from("hr_employees")
       .update(updatePayload)
@@ -622,7 +651,10 @@ export async function PUT(
 
     if (changedFields.length > 0) {
       const today = new Date().toISOString().slice(0, 10);
-      const historyRows = changedFields.map((field) => {
+      const historyFields = assignmentChanged
+        ? changedFields.filter((field) => field !== "company_id" && field !== "site_id")
+        : changedFields;
+      const historyRows = historyFields.map((field) => {
         const eventType = mapEmploymentEventType(field, previousState[field], nextState[field]);
         return {
           organization_id: companyResult.organizationId,
@@ -652,9 +684,9 @@ export async function PUT(
         };
       });
 
-      const { error: historyError } = await admin
-        .from("employee_employment_history")
-        .insert(historyRows);
+      const { error: historyError } = historyRows.length
+        ? await admin.from("employee_employment_history").insert(historyRows)
+        : { error: null };
 
       if (historyError) throw historyError;
     }

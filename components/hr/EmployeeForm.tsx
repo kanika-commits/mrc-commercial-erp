@@ -55,6 +55,7 @@ type EmployeeFormValues = {
   date_of_exit: string;
   exit_remark: string;
   status: string;
+  transfer_effective_date: string;
 };
 
 type Props = {
@@ -124,6 +125,7 @@ const emptyValues: EmployeeFormValues = {
   date_of_exit: "",
   exit_remark: "",
   status: "active",
+  transfer_effective_date: "",
 };
 
 export default function EmployeeForm({
@@ -198,6 +200,7 @@ export default function EmployeeForm({
       date_of_exit: initialEmployee.date_of_exit || "",
       exit_remark: initialEmployee.exit_remark || "",
       status: initialEmployee.status || "active",
+      transfer_effective_date: "",
     });
   }, [initialEmployee]);
 
@@ -240,6 +243,10 @@ export default function EmployeeForm({
     : sites;
   const selectedCompany = companies.find((company) => company.id === form.company_id)?.label || null;
   const selectedSite = visibleSites.find((site) => site.id === form.site_id)?.label || null;
+  const previousCompany = companies.find((company) => company.id === initialEmployee?.company_id)?.label || initialEmployee?.company_id || "-";
+  const previousSite = sites.find((site) => site.id === initialEmployee?.site_id)?.label || initialEmployee?.site_id || "-";
+  const isTransfer = mode === "edit" && Boolean(initialEmployee) &&
+    (form.company_id !== initialEmployee?.company_id || form.site_id !== initialEmployee?.site_id);
   const selectedDepartment = departments.find((department) => department.id === form.department_id)?.department_name || null;
   const selectedDesignation = designations.find((designation) => designation.id === form.designation_id)?.designation_name || null;
   const selectedManager = managers.find((manager) => manager.id === form.reporting_manager_id);
@@ -364,6 +371,22 @@ export default function EmployeeForm({
                   ))}
                 </select>
               </Field>
+              {mode === "edit" && initialEmployee && isTransfer && (
+                <div className="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <h3 className="text-sm font-semibold text-amber-950">Company / Site Transfer</h3>
+                  <p className="mt-1 text-sm text-amber-800">
+                    Attendance before this date remains under the previous assignment. Attendance from this date onward follows the new Company/Site.
+                  </p>
+                  <div className="mt-4 grid gap-4 md:grid-cols-3">
+                    <ReadOnlyItem label="Previous Company" value={previousCompany} />
+                    <ReadOnlyItem label="Previous Site" value={previousSite} />
+                    <Field label="Transfer Effective Date *">
+                      <input name="transfer_effective_date" type="date" value={form.transfer_effective_date} onChange={handleChange} className={inputClass} required />
+                    </Field>
+                  </div>
+                  <p className="mt-3 text-xs text-amber-800">New Company: {selectedCompany || "-"} · New Site: {selectedSite || "-"}</p>
+                </div>
+              )}
               <Field label="Department *">
                 <select name="department_id" value={form.department_id} onChange={handleChange} className={inputClass}>
                   <option value="">Select department</option>
