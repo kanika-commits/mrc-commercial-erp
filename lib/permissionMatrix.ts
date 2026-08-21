@@ -3,6 +3,7 @@ export const PERMISSION_ACTIONS = [
   "create",
   "add",
   "edit",
+  "issue",
   "delete",
   "approve",
   "reject",
@@ -27,6 +28,7 @@ export const PERMISSION_ACTIONS = [
   "override",
   "mark_paid",
   "export",
+  "take_up",
 ] as const;
 
 export type PermissionAction = (typeof PERMISSION_ACTIONS)[number];
@@ -36,6 +38,7 @@ const ACTION_LABELS: Record<PermissionAction, string> = {
   create: "Create",
   add: "Add",
   edit: "Edit",
+  issue: "Issue",
   delete: "Delete",
   approve: "Approve",
   reject: "Reject",
@@ -60,6 +63,7 @@ const ACTION_LABELS: Record<PermissionAction, string> = {
   override: "Override",
   mark_paid: "Mark Paid",
   export: "Export",
+  take_up: "Take Up",
 };
 
 const MODULE_ACTIONS: Record<string, PermissionAction[]> = {
@@ -75,9 +79,17 @@ const MODULE_ACTIONS: Record<string, PermissionAction[]> = {
   sites: ["view", "add", "edit", "delete"],
   vendors: ["view", "add", "edit", "delete"],
   company_bank_accounts: ["view", "add", "edit", "delete"],
+  procurement_items: ["view", "add", "edit", "delete", "export"],
+  procurement_purchase_queue: ["view", "take_up"],
 
   work_orders: ["view", "add", "edit", "delete", "export"],
   wo_approval: ["view", "edit", "approve", "reject", "upload"],
+  purchase_requisitions: ["view", "add", "edit", "delete", "submit", "export"],
+  purchase_requisition_approval: ["view", "approve", "reject"],
+  procurement_rfqs: ["view", "add", "edit", "delete", "issue", "export"],
+  procurement_purchase_orders: ["view", "add", "edit", "approve", "reject", "export"],
+  procurement_goods_receipts: ["view", "add", "edit", "approve", "export"],
+  procurement_material_approvals: ["view", "add", "edit", "delete", "upload"],
   ra_bills: ["view", "add", "delete"],
   ra_approval: ["view", "approve", "reject"],
   invoices: ["view", "add", "delete"],
