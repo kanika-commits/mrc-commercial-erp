@@ -4,12 +4,15 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import {
-  PERMISSION_ACTIONS as actions,
   availableActionsForModule,
   permissionActionLabel,
 } from "@/lib/permissionMatrix";
 import type { PermissionAction } from "@/lib/permissionMatrix";
-import { prepareVisiblePermissionModules } from "@/lib/permissionVisibility";
+import {
+  normalPermissionActions,
+  prepareVisiblePermissionModules,
+  specializedPermissionActions,
+} from "@/lib/permissionVisibility";
 
 export default function PermissionsPage() {
   const searchParams = useSearchParams();
@@ -340,9 +343,19 @@ export default function PermissionsPage() {
                 Clear All Permissions
               </button>
             </div>
+            <p className="mb-4 text-xs text-slate-500">
+              Permission source: checked controls are granted to this role; unsupported actions are shown as —.
+            </p>
 
             <div className="space-y-8 overflow-x-auto">
-              {Object.entries(groupedModules).map(([groupName, items]) => (
+              {Object.entries(groupedModules).map(([groupName, items]) => {
+                const specializedItems = items.filter((module) => specializedPermissionActions(module).length > 0);
+                const normalItems = items.filter((module) => specializedPermissionActions(module).length === 0 && normalPermissionActions(module).length > 0);
+                const groupActions = Array.from(
+                  new Set(normalItems.flatMap((module) => normalPermissionActions(module))),
+                ) as PermissionAction[];
+
+                return (
                 <div key={groupName}>
                   <div className="mb-3 flex items-center justify-between gap-4">
                     <h3 className="font-semibold text-gray-700">
@@ -367,78 +380,69 @@ export default function PermissionsPage() {
                       </button>
                     </div>
                   </div>
-
-                  <table className="w-full min-w-[1050px] text-sm">
-                    <thead className="bg-gray-100">
-                      <tr>
-                        <th className="p-2 text-left">Module</th>
-                        <th className="p-2 text-center">All</th>
-                        {actions.map((action) => (
-                          <th
-                            key={action}
-                            className="p-2 text-center"
-                          >
-                            {permissionActionLabel(action)}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-
-                    <tbody>
-                      {items.map((module) => {
-                        const availableActions = availableActionsForDisplayModule(module);
-                        const effectiveModuleCode = permissionModuleCode(module);
-
-                        return (
-                          <tr key={module.id} className="border-t">
-                            <td className="p-2 font-medium">
-                              {module.module_name}
-                              {module.permission_note && (
-                                <div className="mt-0.5 text-xs font-normal text-slate-500">
-                                  {module.permission_note}
-                                </div>
-                              )}
-                            </td>
-
-                            <td className="p-2 text-center">
-                              <input
-                                type="checkbox"
-                                checked={isRowAllChecked(module)}
-                                disabled={availableActions.length === 0}
-                                onChange={(e) =>
-                                  setRowPermissions(
-                                    module,
-                                    e.target.checked
-                                  )
-                                }
-                              />
-                            </td>
-
-                            {actions.map((action) => (
-                              <td key={action} className="p-2 text-center">
-                                {availableActions.includes(action) ? (
-                                  <input
-                                    type="checkbox"
-                                    checked={isAllowed(effectiveModuleCode, action)}
-                                    onChange={() =>
-                                      togglePermission(
-                                        effectiveModuleCode,
-                                        action
-                                      )
-                                    }
-                                  />
-                                ) : (
-                                  <span className="text-slate-300">-</span>
-                                )}
+                  <div className="overflow-x-auto rounded-md border">
+                    <table className="w-full min-w-max text-sm">
+                      <thead className="bg-gray-100">
+                        <tr>
+                          <th className="p-2 text-left">Module</th>
+                          <th className="p-2 text-center">All</th>
+                          {groupActions.map((action) => (
+                            <th key={action} className="p-2 text-center">{permissionActionLabel(action)}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {normalItems.map((module) => {
+                          const availableActions = normalPermissionActions(module);
+                          const effectiveModuleCode = permissionModuleCode(module);
+                          return (
+                            <tr key={module.id} className="border-t">
+                              <td className="p-2 font-medium">
+                                {module.module_name}
+                                {module.permission_note && <div className="text-xs font-normal text-slate-500">{module.permission_note}</div>}
                               </td>
-                            ))}
-                          </tr>
+                              <td className="p-2 text-center">
+                                <input type="checkbox" checked={isRowAllChecked(module)} disabled={availableActions.length === 0} onChange={(e) => setRowPermissions(module, e.target.checked)} />
+                              </td>
+                              {groupActions.map((action) => (
+                                <td key={action} className="p-2 text-center">
+                                  {availableActions.includes(action) ? <input type="checkbox" checked={isAllowed(effectiveModuleCode, action)} onChange={() => togglePermission(effectiveModuleCode, action)} /> : <span className="text-slate-300">—</span>}
+                                </td>
+                              ))}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {specializedItems.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      {specializedItems.map((module) => {
+                          const actions = availableActionsForDisplayModule(module);
+                        const effectiveModuleCode = permissionModuleCode(module);
+                        return (
+                          <div key={module.id} className="rounded-md border bg-slate-50 p-2">
+                            <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+                              <span className="font-medium">{module.module_name}</span>
+                              {module.permission_note && <span className="text-xs text-slate-500">{module.permission_note}</span>}
+                            </div>
+                            <div className="flex flex-wrap gap-3">
+                              {actions.map((action) => (
+                                <label key={action} className="flex items-center gap-1.5 text-sm">
+                                  <input type="checkbox" checked={isAllowed(effectiveModuleCode, action)} onChange={() => togglePermission(effectiveModuleCode, action)} />
+                                  {permissionActionLabel(action)}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
                         );
                       })}
-                    </tbody>
-                  </table>
+                    </div>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </section>
 
