@@ -187,26 +187,35 @@ export default function ModulePage({
       )
       .sort((first, second) => first.sort_order - second.sort_order);
 
-    if (groupCode !== "settings" || (!globalAccess && !can(permissions, "hr_employee_attendance_policy", "view"))) {
+    if (groupCode !== "settings" || (!globalAccess && !can(permissions, "hr_employee_attendance_policy", "view") && !can(permissions, "labour_attendance_unlock", "approve"))) {
       return moduleRows;
     }
 
     const hasEmployeeAttendancePolicy = moduleRows.some(
       (page) => page.route === "/settings/policies/employee-attendance",
     );
-    if (hasEmployeeAttendancePolicy) return moduleRows;
-
-    return [
-      ...moduleRows,
-      {
+    const additionalRows = [];
+    if (!hasEmployeeAttendancePolicy) {
+      additionalRows.push({
         id: "settings-employee-attendance-policy",
         module_group: "settings",
         module_code: "hr_employee_attendance_policy",
         module_name: "Employee Attendance Policy",
         route: "/settings/policies/employee-attendance",
         sort_order: 8,
-      },
-    ].sort((first, second) => first.sort_order - second.sort_order);
+      });
+    }
+    if ((globalAccess || can(permissions, "labour_attendance_unlock", "approve")) && !moduleRows.some((page) => page.route === "/settings/policies/attendance-date-access")) {
+      additionalRows.push({
+        id: "settings-attendance-date-access",
+        module_group: "settings",
+        module_code: "labour_attendance_unlock",
+        module_name: "Attendance Date Access",
+        route: "/settings/policies/attendance-date-access",
+        sort_order: 9.5,
+      });
+    }
+    return [...moduleRows, ...additionalRows].sort((first, second) => first.sort_order - second.sort_order);
   }, [access, groupCode, moduleNavigation]);
 
   if (loading) {
@@ -254,7 +263,7 @@ function SettingsSections({ pages }: { pages: ModuleRow[] }) {
     },
     {
       title: "Policies",
-      codes: ["hr_employee_attendance_policy", "labour_muster_configuration"],
+      codes: ["hr_employee_attendance_policy", "labour_muster_configuration", "labour_attendance_unlock"],
     },
     {
       title: "Change Password",
