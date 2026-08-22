@@ -5,6 +5,7 @@ import {
   audit,
   findOrCreateAttendancePeriod,
   getActiveAttendancePolicy,
+  getActiveHistoricalAttendanceAccess,
   getDayLock,
   jsonError,
   loadLabourEditLockBlocker,
@@ -439,6 +440,7 @@ export async function GET(request: Request) {
       : { data: [], error: null };
     if (attendanceError) throw attendanceError;
     const selectedStatus = selectedDateRegisterStatus(period, attendanceRows || [], attendanceDate);
+    const historicalAccess = await getActiveHistoricalAttendanceAccess(access, { organizationId, siteId, attendanceDate, attendanceType: "labour" });
     const attendanceByWorker = new Map((attendanceRows || []).map((row: any) => [row.labour_worker_id, row]));
     const { data: workerRates, error: workerRatesError } = workerIds.length
       ? await access.admin
@@ -536,6 +538,7 @@ export async function GET(request: Request) {
       attendance_system: "standard",
       read_only: Boolean(selectedDateReadOnlyReason(period, dayLock, selectedStatus)),
       read_only_reason: selectedDateReadOnlyReason(period, dayLock, selectedStatus),
+      historical_access: historicalAccess,
     });
   } catch (error: any) {
     return jsonError(error.message || "Failed to load labour attendance.", 500);
@@ -574,7 +577,8 @@ export async function POST(request: Request) {
 
     const existingPeriod = await loadExistingAttendancePeriod(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate });
     const reopenedDate = existingPeriod?.summary?.date_statuses?.[attendanceDate]?.status === "reopened";
-    const dateAccess = actorCanEditAttendanceDate(access, attendanceDate, backdatedReason, { reopened: reopenedDate });
+    const historicalAccess = await getActiveHistoricalAttendanceAccess(access, { organizationId, siteId, attendanceDate, attendanceType: "labour" });
+    const dateAccess = actorCanEditAttendanceDate(access, attendanceDate, backdatedReason, { reopened: reopenedDate, historicallyOpened: Boolean(historicalAccess) && !reopenedDate });
     if ("error" in dateAccess) return jsonError(dateAccess.error || "You cannot edit attendance for this date.", 403);
     const originResult = await resolveAttendanceSystemForPeriod(access, { period: existingPeriod, organizationId, companyId, siteId, contractorProfileId, attendanceDate });
     if ("error" in originResult) return jsonError(originResult.error, originResult.status);

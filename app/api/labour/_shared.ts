@@ -564,6 +564,32 @@ export async function getActiveUnlockWindow(access: LabourAccess, input: {
   return data?.[0] || null;
 }
 
+export async function getActiveHistoricalAttendanceAccess(access: LabourAccess, input: {
+  organizationId: string;
+  siteId: string;
+  attendanceDate: string;
+  attendanceType: "labour" | "employee";
+}) {
+  const now = new Date().toISOString();
+  const { data, error } = await access.admin
+    .from("attendance_historical_access")
+    .select("id, attendance_type, from_date, to_date, reason, opened_by_name, opened_at, expires_at")
+    .eq("organization_id", input.organizationId)
+    .eq("site_id", input.siteId)
+    .eq("attendance_type", input.attendanceType)
+    .eq("status", "open")
+    .is("closed_at", null)
+    .lte("opens_at", now)
+    .lte("from_date", input.attendanceDate)
+    .gte("to_date", input.attendanceDate)
+    .or(`expires_at.is.null,expires_at.gt.${now}`)
+    .order("opened_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
 export async function getActiveAttendancePolicy(access: LabourAccess, input: {
   organizationId: string;
   companyId: string;
@@ -807,18 +833,18 @@ export function actorCanEditAttendanceDate(
   access: LabourAccess,
   attendanceDate: string,
   reason?: string | null,
-  options: { reopened?: boolean } = {},
+  options: { reopened?: boolean; historicallyOpened?: boolean } = {},
 ) {
   const today = todayInIst();
   if (attendanceDate > today) return { error: "Future labour attendance cannot be marked." };
   if (attendanceDate === today) return { ok: true };
   const oldestNormalEditDate = daysBefore(today, 2);
   const olderThanNormalWindow = attendanceDate < oldestNormalEditDate;
-  if (!isGlobalOrSuperAdmin(access) && olderThanNormalWindow && !options.reopened) {
+  if (!isGlobalOrSuperAdmin(access) && olderThanNormalWindow && !options.reopened && !options.historicallyOpened) {
     return { error: "Labour attendance can be edited only for today, yesterday or the day before yesterday." };
   }
   if (!olderThanNormalWindow) return { ok: true };
-  if (!normalizeText(reason)) return { error: "Backdated attendance reason is required." };
+  if (!options.historicallyOpened && !normalizeText(reason)) return { error: "Backdated attendance reason is required." };
   return { ok: true };
 }
 

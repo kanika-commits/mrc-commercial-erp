@@ -369,6 +369,7 @@ export async function GET(request: Request) {
       let siteInContractors: { contractors: any[] } = { contractors: [] };
       let attendanceSystem: any = null;
       let reopenedAttendanceDates: string[] = [];
+      let historicalAttendanceDates: string[] = [];
 
       if (selectedCompanyId && selectedSiteId) {
         const scopeCheck = await validateLabourOperationalCompanySite(access, null, selectedCompanyId, selectedSiteId);
@@ -392,6 +393,42 @@ export async function GET(request: Request) {
               .map(([date]) => date),
           ))).filter((date): date is string => /^\d{4}-\d{2}-\d{2}$/.test(date)).sort();
         }
+        const now = new Date().toISOString();
+        const { data: accessRows, error: accessError } = await access.admin
+          .from("attendance_historical_access")
+          .select("from_date, to_date")
+          .eq("organization_id", scopeCheck.organizationId)
+          .eq("site_id", selectedSiteId)
+          .eq("attendance_type", "labour")
+          .eq("status", "open")
+          .is("closed_at", null)
+          .lte("opens_at", now)
+          .or(`expires_at.is.null,expires_at.gt.${now}`);
+        if (accessError && accessError.code !== "42P01") throw accessError;
+        for (const row of accessRows || []) {
+          const cursor = new Date(`${row.from_date}T00:00:00Z`);
+          const end = new Date(`${row.to_date}T00:00:00Z`);
+          while (cursor <= end) {
+            historicalAttendanceDates.push(cursor.toISOString().slice(0, 10));
+            cursor.setUTCDate(cursor.getUTCDate() + 1);
+          }
+        }
+        const statusByDate = new Map<string, string>();
+        const { data: statusPeriods, error: statusPeriodsError } = await access.admin
+          .from("labour_attendance_periods")
+          .select("summary")
+          .eq("organization_id", scopeCheck.organizationId)
+          .eq("company_id", selectedCompanyId)
+          .eq("site_id", selectedSiteId)
+          .eq("originating_attendance_system", "standard");
+        if (statusPeriodsError) throw statusPeriodsError;
+        for (const period of statusPeriods || []) {
+          for (const [date, value] of Object.entries(period.summary?.date_statuses || {})) {
+            const status = String((value as any)?.status || "draft").toLowerCase();
+            statusByDate.set(date, status);
+          }
+        }
+        historicalAttendanceDates = historicalAttendanceDates.filter((date) => ["draft", "reopened"].includes(statusByDate.get(date) || "draft"));
         deployments = await loadEligibleDeployments(access, {
           organizationId: scopeCheck.organizationId,
           companyId: selectedCompanyId,
@@ -438,6 +475,7 @@ export async function GET(request: Request) {
         vendors: [],
         contractors: siteInContractors.contractors,
         reopened_attendance_dates: reopenedAttendanceDates,
+        historical_attendance_dates: Array.from(new Set(historicalAttendanceDates)).sort(),
         attendance_system: attendanceSystem,
         trades: Array.from(tradeMap.values()).sort(byName("trade_name")),
         manpower_work_orders: Array.from(manpowerWorkOrderMap.values()).sort(byName("manpower_wo_number")),

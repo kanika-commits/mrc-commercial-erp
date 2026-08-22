@@ -32,6 +32,7 @@ const approvedNavigationModuleNames: Record<string, string> = {
   labour_work_logs: "Daily Work",
   labour_daily_submission: "Labour Approval",
   labour_muster_configuration: "Labour Attendance Policy",
+  labour_attendance_unlock: "Attendance Date Access",
 };
 
 const approvedNavigationRoutes: Record<string, string> = {
@@ -511,6 +512,15 @@ export const DEFAULT_MODULE_NAVIGATION = filterVisibleModuleNavigation({
       module_name: "Labour Attendance Policy",
       route: "/labour/configuration",
       sort_order: 9,
+      status: "active",
+    },
+    {
+      id: "default-labour-attendance-date-access",
+      module_group: "settings",
+      module_code: "labour_attendance_unlock",
+      module_name: "Attendance Date Access",
+      route: "/settings/policies/attendance-date-access",
+      sort_order: 9.5,
       status: "active",
     },
     {

@@ -9,6 +9,7 @@ import {
   jsonError,
   loadAttendanceRows,
   loadDailySubmission,
+  loadActiveHistoricalAttendanceAccess,
   loadDayLock,
   loadEligibleEmployees,
   loadEmployeeAttendancePolicyForScope,
@@ -29,12 +30,17 @@ export async function GET(request: Request) {
 
     const params = parseDailyParams(request.url);
     if ("error" in params) return jsonError(String(params.error), 400);
-    const dateAllowed = assertDateSelectable(auth, params.attendanceDate);
-    if (!dateAllowed.allowed) return jsonError(dateAllowed.error || "Attendance date cannot be loaded.", 403);
-
     const admin = adminClient();
     const scope = await validateCompanySiteScope(admin, auth, params.companyId, params.siteId);
     if ("response" in scope) return scope.response;
+    const historicalAccess = await loadActiveHistoricalAttendanceAccess(admin, {
+      organizationId: scope.organizationId,
+      siteId: params.siteId,
+      attendanceDate: params.attendanceDate,
+      attendanceType: "employee",
+    });
+    const dateAllowed = assertDateSelectable(auth, params.attendanceDate, Boolean(historicalAccess));
+    if (!dateAllowed.allowed) return jsonError(dateAllowed.error || "Attendance date cannot be loaded.", 403);
 
     const month = monthStart(params.attendanceDate)!;
     const [employees, rows, period, dayLock, policy, dailySubmission] = await Promise.all([
@@ -107,6 +113,7 @@ export async function GET(request: Request) {
       daily_submission: dailySubmission,
       policy,
       day_lock: dayLock,
+      historical_access: historicalAccess,
       can_admin_backdate: isAdminRecoveryRole(auth.roleCodes),
     });
   } catch (error: any) {
@@ -131,12 +138,17 @@ export async function PUT(request: Request) {
     const validationError = validateDailyPayload(payload);
     if (validationError) return jsonError(validationError, 400);
 
-    const editAllowed = assertDateEditAllowed(auth, attendanceDate, payload.backdated_reason);
-    if (!editAllowed.allowed) return jsonError(editAllowed.error || "Attendance date is not editable.", 403);
-
     const admin = adminClient();
     const scope = await validateCompanySiteScope(admin, auth, params.companyId, params.siteId);
     if ("response" in scope) return scope.response;
+    const historicalAccess = await loadActiveHistoricalAttendanceAccess(admin, {
+      organizationId: scope.organizationId,
+      siteId: params.siteId,
+      attendanceDate,
+      attendanceType: "employee",
+    });
+    const editAllowed = assertDateEditAllowed(auth, attendanceDate, payload.backdated_reason, Boolean(historicalAccess));
+    if (!editAllowed.allowed) return jsonError(editAllowed.error || "Attendance date is not editable.", 403);
 
     const month = monthStart(attendanceDate)!;
     const period = await ensurePeriod(admin, auth, {
@@ -205,7 +217,7 @@ export async function PUT(request: Request) {
         attendanceDate,
         status: row.status as any,
         remarks: row.remarks,
-        backdatedReason: editAllowed.backdated ? String(payload.backdated_reason || "").trim() : null,
+        backdatedReason: editAllowed.backdated && !historicalAccess ? String(payload.backdated_reason || "").trim() : null,
         actorId: auth.user.id,
         actorName: actorName(auth.user),
         actorEmail: auth.user.email || null,
@@ -258,7 +270,7 @@ export async function PUT(request: Request) {
           ? `Locked attendance corrected for ${attendanceDate}.`
           : `Attendance saved for ${attendanceDate}.`,
       oldValues: existing,
-      newValues: { attendance: data, locked_correction: Boolean(dayLock || lockedByPolicy), reason: String(payload.backdated_reason || "").trim() || null },
+      newValues: { attendance: data, locked_correction: Boolean(dayLock || lockedByPolicy), historical_access_id: historicalAccess?.id || null, reason: String(payload.backdated_reason || "").trim() || null },
       source: "system",
     }, request);
 

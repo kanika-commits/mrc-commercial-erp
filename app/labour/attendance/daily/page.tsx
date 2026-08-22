@@ -96,6 +96,7 @@ export default function LabourDailyAttendancePage() {
   const [period, setPeriod] = useState<any>(null);
   const [supportingPdf, setSupportingPdf] = useState<any>(null);
   const [dayLock, setDayLock] = useState<any>(null);
+  const [historicalAccess, setHistoricalAccess] = useState<any>(null);
   const [readOnlyReason, setReadOnlyReason] = useState("");
   const [policy, setPolicy] = useState<any>(null);
   const reopenedAttendanceDates: string[] = lookups.reopened_attendance_dates || [];
@@ -227,6 +228,7 @@ export default function LabourDailyAttendancePage() {
     setPeriod(null);
     setSupportingPdf(null);
     setDayLock(null);
+    setHistoricalAccess(null);
     setReadOnlyReason("");
     setRowLoading(true);
     try {
@@ -255,6 +257,7 @@ export default function LabourDailyAttendancePage() {
       setPeriod(payload.period || null);
       setSupportingPdf(payload.supporting_pdf || null);
       setDayLock(payload.day_lock || null);
+      setHistoricalAccess(payload.historical_access || null);
       setReadOnlyReason(payload.read_only_reason || "");
       setPolicy(payload.policy || null);
       setDirty({});
@@ -472,7 +475,7 @@ export default function LabourDailyAttendancePage() {
     setSubmitSuccessMessage("");
     setMessage("");
     const backdated = filters.attendance_date < daysBefore(today(), 2);
-    const backdated_reason = backdated ? prompt("Reason for backdated attendance change") : "";
+    const backdated_reason = backdated && (!historicalAccess || selectedDateStatus === "reopened") ? prompt("Reason for backdated attendance change") : "";
     if (backdated && !backdated_reason) return false;
     try {
       const response = await fetch("/api/labour/attendance/daily", {
@@ -795,6 +798,15 @@ export default function LabourDailyAttendancePage() {
             {readOnlyReason}
           </div>
         )}
+        {historicalAccess && selectedDateStatus === "draft" && !readOnly && (
+          <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+            <p className="font-semibold">Historical Attendance Access Enabled</p>
+            <p>{historicalAccess.from_date} – {historicalAccess.to_date}</p>
+            <p><span className="font-semibold">Reason:</span> {historicalAccess.reason}</p>
+            <p><span className="font-semibold">Opened by:</span> {historicalAccess.opened_by_name || "Administrator"}</p>
+            {historicalAccess.expires_at && <p><span className="font-semibold">Expires:</span> {new Date(historicalAccess.expires_at).toLocaleString("en-IN")}</p>}
+          </div>
+        )}
         {filters.company_id && filters.site_id && attendanceSystem && (
           <div className={`rounded-lg border bg-white p-3 text-sm ${standardBlocked ? "border-amber-200 text-amber-800" : "border-emerald-200 text-emerald-800"}`}>
             <p className="font-semibold">{attendanceSystemMessage(attendanceSystem)}</p>
@@ -854,6 +866,7 @@ export default function LabourDailyAttendancePage() {
             }} className="mt-1 h-11 w-full rounded-lg border px-3 text-sm font-normal normal-case tracking-normal text-slate-950 disabled:bg-slate-100">
               {Array.from(new Set([
                 ...reopenedAttendanceDates,
+                ...(lookups.historical_attendance_dates || []),
                 earliestNormalEditDate,
                 daysBefore(todayDate, 1),
                 todayDate,

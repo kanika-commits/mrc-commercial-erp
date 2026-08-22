@@ -24,7 +24,7 @@ export default function DailyAttendancePage() {
   const canSubmit = can(permissions, "hr_attendance", "submit");
   const isAdminRecovery = Boolean(access?.roleCodes.includes("platform_owner") || access?.roleCodes.includes("super_admin"));
   const today = currentIndiaDate();
-  const [lookups, setLookups] = useState<{ companies: any[]; sites: any[]; error: string }>({ companies: [], sites: [], error: "" });
+  const [lookups, setLookups] = useState<{ companies: any[]; sites: any[]; error: string; historical_attendance_dates?: Record<string, string[]> }>({ companies: [], sites: [], error: "", historical_attendance_dates: {} });
   const [companyId, setCompanyId] = useState("");
   const [siteId, setSiteId] = useState("");
   const [date, setDate] = useState(today);
@@ -45,6 +45,11 @@ export default function DailyAttendancePage() {
   const [submitConfirmationOpen, setSubmitConfirmationOpen] = useState(false);
 
   const visibleSites = lookups.sites;
+  const selectableDates = useMemo(() => Array.from(new Set([
+    previousDate(today),
+    today,
+    ...(lookups.historical_attendance_dates?.[siteId] || []),
+  ])).filter((value) => value <= today).sort(), [lookups.historical_attendance_dates, siteId, today]);
   const visibleCompanies = useMemo(() => {
     const site = lookups.sites.find((item) => item.id === siteId);
     const allowed = new Set(site?.company_ids || []);
@@ -57,12 +62,24 @@ export default function DailyAttendancePage() {
   const dailyStates = Object.values(attendanceContexts).map((context: any) => context.dailySubmission?.status).filter(Boolean);
   const dailyStatus = dailyStates.length === 0 ? "not_submitted" : new Set(dailyStates).size === 1 ? dailyStates[0] : "mixed";
   const sentBack = dailyStatus === "reopened";
+  const contextHasHistoricalDraftAccess = (context: any) => Boolean(
+    context?.historicalAccess &&
+    !context.dayLock &&
+    !["submitted", "approved", "reopened", "cancelled"].includes(String(context.dailySubmission?.status || "").toLowerCase()),
+  );
+  const hasHistoricalAccess = companyId
+    ? contextHasHistoricalDraftAccess(attendanceContexts[companyId])
+    : rows.some((item) => contextHasHistoricalDraftAccess(attendanceContexts[item.employee.company_id || ""]));
+  const historicalAccess = companyId
+    ? (contextHasHistoricalDraftAccess(attendanceContexts[companyId]) ? attendanceContexts[companyId]?.historicalAccess : null)
+    : Object.values(attendanceContexts).map((context: any) => contextHasHistoricalDraftAccess(context) ? context.historicalAccess : null).find(Boolean);
+  const requiresBackdatedReason = isOlderThanYesterday && isAdminRecovery && rows.some((item) => !contextHasHistoricalDraftAccess(attendanceContexts[item.employee.company_id || ""]));
   const readOnlyReason = useMemo(() => {
     if (!canEdit) return "You do not have permission to edit attendance.";
     if (isFuture) return "Future attendance cannot be created or edited.";
-    if (isOlderThanYesterday && !isAdminRecovery) return "Attendance can be edited only for today or yesterday.";
+    if (isOlderThanYesterday && !isAdminRecovery && !hasHistoricalAccess) return "Attendance can be edited only for today or yesterday.";
     return "";
-  }, [canEdit, isAdminRecovery, isFuture, isOlderThanYesterday]);
+  }, [canEdit, hasHistoricalAccess, isAdminRecovery, isFuture, isOlderThanYesterday]);
   const editable = canEdit && !readOnlyReason;
   const visibleRows = useMemo(
     () => companyId ? rows.filter((item) => item.employee.company_id === companyId) : rows,
@@ -74,7 +91,7 @@ export default function DailyAttendancePage() {
     return visibleRows.filter((item) => String(item.employee?.employee_name || "").toLowerCase().includes(query));
   }, [employeeSearch, visibleRows]);
   const rowEditable = (item: any) => {
-    if (!canEdit || isFuture || (isOlderThanYesterday && !isAdminRecovery)) return false;
+    if (!canEdit || isFuture || (isOlderThanYesterday && !isAdminRecovery && !contextHasHistoricalDraftAccess(attendanceContexts[item.employee.company_id || ""]))) return false;
     const context = attendanceContexts[item.employee.company_id || ""];
     if (!context || context.dayLock) return false;
     return !["submitted", "approved", "cancelled"].includes(String(context.dailySubmission?.status || ""));
@@ -97,10 +114,13 @@ export default function DailyAttendancePage() {
 
   useEffect(() => {
     let active = true;
-    apiFetch("/api/hr/attendance/lookups")
+    const params = new URLSearchParams();
+    if (siteId) params.set("site_id", siteId);
+    if (companyId) params.set("company_id", companyId);
+    apiFetch(`/api/hr/attendance/lookups${params.toString() ? `?${params}` : ""}`)
       .then((payload) => {
         if (!active) return;
-        setLookups({ companies: payload.companies || [], sites: payload.sites || [], error: "" });
+        setLookups({ companies: payload.companies || [], sites: payload.sites || [], historical_attendance_dates: payload.historical_attendance_dates || {}, error: "" });
       })
       .catch((error: any) => {
         if (!active) return;
@@ -109,7 +129,7 @@ export default function DailyAttendancePage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [companyId, siteId]);
 
   async function load(options: { skipDirtyGuard?: boolean } = {}) {
     if (!siteId || !date) {
@@ -134,7 +154,7 @@ export default function DailyAttendancePage() {
       const merged = results.flatMap((result, index) => (result.attendance || []).map((item: any) => ({ ...item, employee: { ...item.employee, company_id: companyIds[index], company_name: lookups.companies.find((company) => company.id === companyIds[index])?.label || companyIds[index] } })));
       const nextContexts: Record<string, any> = {};
       results.forEach((result, index) => {
-        nextContexts[companyIds[index]] = { period: result.period, policy: result.policy, dayLock: result.day_lock, dailySubmission: result.daily_submission };
+        nextContexts[companyIds[index]] = { period: result.period, policy: result.policy, dayLock: result.day_lock, dailySubmission: result.daily_submission, historicalAccess: result.historical_access };
       });
       setRows(merged);
       setPeriods(results.map((result) => result.period).filter(Boolean));
@@ -217,7 +237,7 @@ export default function DailyAttendancePage() {
 
   async function save(options: { silent?: boolean } = {}) {
     if (!rows.some(rowEditable)) return null;
-    const requiresReason = isOlderThanYesterday && isAdminRecovery;
+    const requiresReason = requiresBackdatedReason;
     const reason = requiresReason ? window.prompt("Enter reason for backdated attendance correction:") : "";
     if (requiresReason && !reason?.trim()) {
       setMessage("Backdated attendance reason is required.");
@@ -329,7 +349,13 @@ export default function DailyAttendancePage() {
           <Select label="Company" value={companyId} disabled={loading || saving} onChange={setCompanyId} options={visibleCompanies} allLabel="All Companies" />
           <label className="block">
             <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Date</span>
-            <input type="date" value={date} min={isAdminRecovery ? undefined : earliestNormalEditDate} max={today} disabled={loading || saving} onChange={(event) => updateAttendanceContext(() => setDate(event.target.value))} className="h-10 w-full rounded-xl border px-3 text-sm disabled:bg-slate-100" />
+            {isAdminRecovery ? (
+              <input type="date" value={date} min={undefined} max={today} disabled={loading || saving} onChange={(event) => updateAttendanceContext(() => setDate(event.target.value))} className="h-10 w-full rounded-xl border px-3 text-sm disabled:bg-slate-100" />
+            ) : (
+              <select value={date} disabled={loading || saving} onChange={(event) => updateAttendanceContext(() => setDate(event.target.value))} className="h-10 w-full rounded-xl border px-3 text-sm disabled:bg-slate-100">
+                {selectableDates.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            )}
           </label>
           <div className="flex items-end gap-2">
             <button type="button" onClick={() => load()} disabled={loading || saving} className="h-10 rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white disabled:opacity-60">
@@ -372,6 +398,14 @@ export default function DailyAttendancePage() {
             <p><span className="font-semibold">Previously Submitted:</span> {period.submitted_at ? new Date(period.submitted_at).toLocaleString("en-IN") : "-"}</p>
           </div>
           <p className="mt-2 font-semibold">Correct the attendance and resubmit it for approval.</p>
+        </section>
+      )}
+
+      {historicalAccess && (
+        <section className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900 shadow-sm">
+          <p className="text-base font-bold">Historical Employee Attendance Access Enabled</p>
+          <p className="mt-1">{date} is open for authorized Employee Attendance entry under the active administrative access window.</p>
+          <p className="mt-1"><span className="font-semibold">Reason:</span> {historicalAccess.reason || "-"}</p>
         </section>
       )}
 

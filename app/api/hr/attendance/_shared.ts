@@ -145,6 +145,7 @@ function policyScopeMatchesAccess(
 export async function loadEmployeeAttendanceLookups(
   admin: ReturnType<typeof adminClient>,
   auth: ServerPermissionContext,
+  selected: { siteId?: string | null; companyId?: string | null } = {},
 ) {
   const organizationScope = await loadActorOrganizationScope(admin, auth);
   const assignments = isGlobalScope(organizationScope)
@@ -272,6 +273,42 @@ export async function loadEmployeeAttendanceLookups(
     company_ids: Array.from(new Set(visiblePairs.filter((pair) => pair.site_id === site.site_id).map((pair) => pair.company_id))),
   }));
 
+  const historicalQuery = applyOrganizationScope(
+    admin
+      .from("attendance_historical_access")
+      .select("site_id, from_date, to_date")
+      .eq("attendance_type", "employee")
+      .eq("status", "open")
+      .is("closed_at", null)
+      .lte("opens_at", new Date().toISOString())
+      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`),
+    organizationScope,
+  );
+  const historicalResult = historicalQuery ? await historicalQuery : { data: [], error: null };
+  if (historicalResult.error && historicalResult.error.code !== "42P01") throw historicalResult.error;
+  let submissionQuery = admin
+    .from("employee_attendance_daily_submissions")
+    .select("company_id, site_id, attendance_date, status")
+    .in("status", ["submitted", "approved"]);
+  if (selected.siteId) submissionQuery = submissionQuery.eq("site_id", selected.siteId);
+  if (selected.companyId) submissionQuery = submissionQuery.eq("company_id", selected.companyId);
+  const submissionResult = await submissionQuery;
+  if (submissionResult.error && submissionResult.error.code !== "42P01") throw submissionResult.error;
+  const protectedDates = new Set((submissionResult.data || []).map((row: any) => `${row.site_id}:${row.attendance_date}`));
+  const historicalDatesBySite: Record<string, string[]> = {};
+  for (const row of historicalResult.data || []) {
+    if (!uniqueSites.some((site) => site.id === row.site_id)) continue;
+    const dates = historicalDatesBySite[row.site_id] || [];
+    const cursor = new Date(`${row.from_date}T00:00:00Z`);
+    const end = new Date(`${row.to_date}T00:00:00Z`);
+    while (cursor <= end) {
+      const date = cursor.toISOString().slice(0, 10);
+      if (!protectedDates.has(`${row.site_id}:${date}`)) dates.push(date);
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    historicalDatesBySite[row.site_id] = dates;
+  }
+
   return {
     pairs: visiblePairs,
     companies: companyIds
@@ -279,6 +316,7 @@ export async function loadEmployeeAttendanceLookups(
       .map((id) => ({ id, label: companyNames.get(id) || id }))
       .sort((left, right) => left.label.localeCompare(right.label)),
     sites: uniqueSites,
+    historical_attendance_dates: Object.fromEntries(Object.entries(historicalDatesBySite).map(([siteId, dates]) => [siteId, Array.from(new Set(dates)).sort()])),
   };
 }
 
@@ -786,6 +824,30 @@ export function parseMonthlyParams(url: string) {
   return { companyId, siteId, month } as const;
 }
 
+export async function loadActiveHistoricalAttendanceAccess(
+  admin: ReturnType<typeof adminClient>,
+  input: { organizationId: string; siteId: string; attendanceDate: string; attendanceType: "labour" | "employee" },
+) {
+  const now = new Date().toISOString();
+  const { data, error } = await admin
+    .from("attendance_historical_access")
+    .select("id, attendance_type, from_date, to_date, reason, opened_by_name, opened_at, expires_at")
+    .eq("organization_id", input.organizationId)
+    .eq("site_id", input.siteId)
+    .eq("attendance_type", input.attendanceType)
+    .eq("status", "open")
+    .is("closed_at", null)
+    .lte("opens_at", now)
+    .lte("from_date", input.attendanceDate)
+    .gte("to_date", input.attendanceDate)
+    .or(`expires_at.is.null,expires_at.gt.${now}`)
+    .order("opened_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error && error.code !== "42P01") throw error;
+  return data || null;
+}
+
 export function validateEditablePeriod(period: any) {
   if (period.status === "submitted") return "Submitted attendance is read-only.";
   if (period.status === "level_1_approved" || period.status === "level_2_approved") return "Attendance pending approval is read-only.";
@@ -809,11 +871,13 @@ export function validateDailyPayload(payload: any) {
   return null;
 }
 
-export function assertDateEditAllowed(auth: ServerPermissionContext, attendanceDate: string, reason?: string | null) {
+export function assertDateEditAllowed(auth: ServerPermissionContext, attendanceDate: string, reason?: string | null, historicallyOpened = false) {
+  if (historicallyOpened && attendanceDate < currentIndiaDate()) return { allowed: true, backdated: false };
   return canEditAttendanceDate(attendanceDate, isAdminRecoveryRole(auth.roleCodes), reason);
 }
 
-export function assertDateSelectable(auth: ServerPermissionContext, attendanceDate: string) {
+export function assertDateSelectable(auth: ServerPermissionContext, attendanceDate: string, historicallyOpened = false) {
+  if (historicallyOpened && attendanceDate < currentIndiaDate()) return { allowed: true };
   return canSelectAttendanceDate(attendanceDate, isAdminRecoveryRole(auth.roleCodes));
 }
 
