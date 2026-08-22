@@ -336,12 +336,13 @@ export default function LabourDailyAttendancePage() {
     const existingField = shift === "first" ? "first_half_present" : "second_half_present";
     const reasonField = shift === "first" ? "first_shift_override_reason" : "second_shift_override_reason";
     const label = shift === "first" ? "First Shift" : "Second Shift";
-    if (row?.attendance?.[existingField] === false && status === "present" && !canOverride) {
+    const requiresOverride = selectedDateStatus !== "draft";
+    if (requiresOverride && row?.attendance?.[existingField] === false && status === "present" && !canOverride) {
       setMessage(`You need attendance override permission to change ${label} from Absent to Present.`);
       return;
     }
     let overrideReason = row?.[reasonField] || "";
-    if (row?.attendance?.[existingField] === false && status === "present" && canOverride && !overrideReason) {
+    if (requiresOverride && row?.attendance?.[existingField] === false && status === "present" && canOverride && !overrideReason) {
       overrideReason = window.prompt(`Reason for changing ${label} from Absent to Present`)?.trim() || "";
       if (overrideReason.length < 10) {
         setMessage("Enter an override reason of at least 10 characters.");

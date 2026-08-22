@@ -613,6 +613,7 @@ export async function POST(request: Request) {
     if (existingError) throw existingError;
     const selectedStatus = selectedDateRegisterStatus(period, existingRows || [], attendanceDate);
     if (["submitted", "finalized"].includes(selectedStatus)) return jsonError("Attendance is locked for editing for this date.", 403);
+    const requiresOverride = selectedStatus !== "draft";
     const { data: wagePeriod, error: wageError } = await access.admin
       .from("labour_wage_periods")
       .select("id, status")
@@ -651,12 +652,12 @@ export async function POST(request: Request) {
       const secondHalfPresent = shiftStatusToBoolean(secondShiftStatus as "present" | "absent" | null);
       const firstOverrideReason = text(change.first_shift_override_reason || change.override_reason);
       const secondOverrideReason = text(change.second_shift_override_reason || change.override_reason);
-      if (existing?.first_half_present === false && firstHalfPresent === true) {
+      if (requiresOverride && existing?.first_half_present === false && firstHalfPresent === true) {
         if (!canOverrideAbsentToPresent) return jsonError("You do not have permission to change First Shift from Absent to Present.", 403);
         if (!firstOverrideReason || firstOverrideReason.length < 10) return jsonError("Enter an override reason of at least 10 characters for First Shift.");
         overrideAudits.push({ workerId, shift: "first_shift", previous: "absent", next: "present", reason: firstOverrideReason, attendanceId: existing?.id });
       }
-      if (existing?.second_half_present === false && secondHalfPresent === true) {
+      if (requiresOverride && existing?.second_half_present === false && secondHalfPresent === true) {
         if (!canOverrideAbsentToPresent) return jsonError("You do not have permission to change Second Shift from Absent to Present.", 403);
         if (!secondOverrideReason || secondOverrideReason.length < 10) return jsonError("Enter an override reason of at least 10 characters for Second Shift.");
         overrideAudits.push({ workerId, shift: "second_shift", previous: "absent", next: "present", reason: secondOverrideReason, attendanceId: existing?.id });

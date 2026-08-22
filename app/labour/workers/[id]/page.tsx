@@ -342,6 +342,7 @@ export default function LabourWorkerDetailPage() {
   const documents = data?.documents || [];
   const wageRates = data?.wage_rates || [];
   const currentDeployment = deployments.find((deployment: any) => deployment.status === "active" && !deployment.effective_to);
+  const previousDeployment = currentDeployment || deployments[0] || null;
   const inactiveLog = (data?.activity || []).find((log: any) => {
     const values = log.new_values || {};
     return values.status === "inactive" || values.new_status === "inactive";
@@ -392,12 +393,14 @@ export default function LabourWorkerDetailPage() {
     setRateForm(emptyRateForm);
     setDeploymentForm({
       ...emptyDeploymentForm,
-      contractor_profile_id: worker.current_contractor_profile_id || "",
-      company_id: currentDeployment?.company_id || "",
-      site_id: currentDeployment?.site_id || "",
-      labour_trade_id: currentDeployment?.labour_trade_id || worker.labour_trade_id || "",
-      skill_level: currentDeployment?.skill_level || worker.skill_level || "",
+      contractor_profile_id: worker.current_contractor_profile_id || previousDeployment?.contractor_profile_id || "",
+      company_id: previousDeployment?.company_id || "",
+      site_id: previousDeployment?.site_id || "",
+      work_order_id: worker.status === "inactive" ? previousDeployment?.work_order_id || "" : "",
+      labour_trade_id: previousDeployment?.labour_trade_id || worker.labour_trade_id || "",
+      skill_level: previousDeployment?.skill_level || worker.skill_level || "",
       commercial_model: worker.status === "inactive" ? "daily_wage" : currentDeployment?.commercial_model || "contract_basis",
+      wage_rate: worker.status === "inactive" && previousDeployment?.wage_rate ? String(previousDeployment.wage_rate) : "",
       effective_from: "",
       deployment_reason: "",
     });
