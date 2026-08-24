@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { actorFields, audit, jsonError, loadScopedWorker, requireLabourPermission } from "@/app/api/labour/_shared";
+import { actorFields, jsonError, loadScopedWorker, requireLabourPermission } from "@/app/api/labour/_shared";
 import { normalizeText } from "@/lib/labour/constants";
 import { overlapsDateRange } from "@/lib/labour/operations";
 
@@ -15,12 +15,6 @@ function wholeRupee(value: unknown) {
   return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
 }
 
-function previousDay(value: string) {
-  const date = new Date(`${value}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() - 1);
-  return date.toISOString().slice(0, 10);
-}
-
 function rateApplies(rate: any, date: string) {
   if (!rate || rate.status === "cancelled") return false;
   if (rate.effective_from && rate.effective_from > date) return false;
@@ -33,16 +27,29 @@ async function buildPreviewRow(access: any, workerId: string, effectiveFrom: str
   if (!worker) return { error: "Labourer not found." };
   if (worker.status !== "active") return { error: `${worker.labour_code || worker.worker_name} is not active.` };
 
-  const { data: deployment, error: deploymentError } = await access.admin
+  const { data: deployments, error: deploymentError } = await access.admin
     .from("labour_deployments")
-    .select("id, labour_worker_id, contractor_profile_id, company_id, site_id, work_order_id, labour_trade_id, skill_level, wage_rate, commercial_model, status, effective_from, effective_to, labour_trades(trade_name)")
+    .select("id, labour_worker_id, contractor_profile_id, company_id, site_id, work_order_id, labour_trade_id, skill_level, wage_rate, commercial_model, wage_type, status, effective_from, effective_to, labour_trades(trade_name), work_orders(id, wo_number, wo_type, status, approval_status, is_deleted)")
     .eq("labour_worker_id", workerId)
     .eq("status", "active")
-    .is("effective_to", null)
-    .maybeSingle();
+    .is("effective_to", null);
   if (deploymentError) throw deploymentError;
+  const currentRows = deployments || [];
+  const deployment = currentRows.length === 1 ? currentRows[0] : null;
+  if (currentRows.length > 1) return { error: `${worker.labour_code || worker.worker_name} has multiple active deployments.` };
   if (!deployment) return { error: `${worker.labour_code || worker.worker_name} has no active deployment.` };
-  if (deployment.commercial_model !== "daily_wage") return { error: `${worker.labour_code || worker.worker_name} is Contractual Labour and cannot receive a Daily Rate update.` };
+  const workOrder = deployment.work_orders || null;
+  const conversionRequired = deployment.commercial_model !== "daily_wage";
+  const approvedDailyWageWorkOrder = Boolean(
+    workOrder &&
+    workOrder.wo_type === "Daily Wage" &&
+    workOrder.status === "active" &&
+    workOrder.approval_status === "approved" &&
+    workOrder.is_deleted === false,
+  );
+  if (conversionRequired && !approvedDailyWageWorkOrder) {
+    return { error: `${worker.labour_code || worker.worker_name} is not linked to an approved Daily Wage Work Order.` };
+  }
 
   const { data: existing, error: existingError } = await access.admin
     .from("labour_wage_rates")
@@ -61,6 +68,8 @@ async function buildPreviewRow(access: any, workerId: string, effectiveFrom: str
   return {
     worker,
     deployment,
+    conversion_required: conversionRequired,
+    current_work_order_type: workOrder?.wo_type || null,
     current_rate: currentAmount,
     new_rate: newRate,
     effective_from: effectiveFrom,
@@ -97,6 +106,8 @@ export async function POST(request: Request) {
         new_rate: result.new_rate,
         effective_from: result.effective_from,
         deployment_id: result.deployment.id,
+        conversion_required: result.conversion_required,
+        current_work_order_type: result.current_work_order_type,
       }));
 
     if (errors.length) {
@@ -106,57 +117,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, selected: workerIds.length, will_update: previewRows.length, unchanged: 0, errors: [], rows: previewRows });
     }
 
-    const insertedIds: string[] = [];
-    for (const result of results as any[]) {
-      if (result.close_previous_rate) {
-        const { error: closeError } = await access.admin
-          .from("labour_wage_rates")
-          .update({ effective_to: previousDay(effectiveFrom), updated_at: new Date().toISOString(), ...actorFields(access.auth, "updated") })
-          .eq("id", result.close_previous_rate.id);
-        if (closeError) throw closeError;
-      }
-      const insertPayload = {
-        organization_id: result.worker.organization_id,
-        labour_worker_id: result.worker.id,
-        deployment_id: result.deployment.id,
-        contractor_profile_id: result.deployment.contractor_profile_id || result.worker.current_contractor_profile_id,
-        company_id: result.deployment.company_id || result.worker.current_company_id,
-        site_id: result.deployment.site_id || result.worker.current_site_id,
-        work_order_id: result.deployment.work_order_id || result.worker.current_work_order_id,
-        trade_id: result.deployment.labour_trade_id || result.worker.labour_trade_id,
-        skill_level: result.deployment.skill_level || result.worker.skill_level,
-        wage_type: "daily",
-        base_rate: result.new_rate,
-        overtime_rate_type: null,
-        overtime_rate: null,
-        weekly_off_paid: false,
-        holiday_paid: false,
-        effective_from: effectiveFrom,
-        effective_to: null,
-        status: "active",
-        reason,
-        ...actorFields(access.auth, "created"),
-      };
-      const { data, error } = await access.admin.from("labour_wage_rates").insert(insertPayload).select("id").single();
-      if (error) throw error;
-      insertedIds.push(data.id);
-      await audit(access, request, {
-        moduleCode: "labour_wage_rates",
-        action: "create",
-        entityType: "labour_wage_rate",
-        recordId: data.id,
-        parentEntityType: "labour_worker",
-        parentRecordId: result.worker.id,
-        organizationId: result.worker.organization_id,
-        companyId: result.deployment.company_id,
-        siteId: result.deployment.site_id,
-        description: "Bulk changed labour daily rate.",
-        oldValues: result.close_previous_rate ? { closed_previous_rate: result.close_previous_rate, effective_to: previousDay(effectiveFrom) } : { previous_rate: result.current_rate },
-        newValues: insertPayload,
-      });
-    }
-
-    return NextResponse.json({ ok: true, updated: insertedIds.length, wage_rate_ids: insertedIds, rows: previewRows });
+    const actor = actorFields(access.auth, "created");
+    const { data: committed, error: commitError } = await access.admin.rpc("bulk_update_labour_daily_rates_atomic", {
+      p_worker_ids: workerIds,
+      p_base_rate: newRate,
+      p_effective_from: effectiveFrom,
+      p_reason: reason,
+      p_actor_id: actor.created_by,
+      p_actor_name: actor.created_by_name,
+      p_actor_email: actor.created_by_email,
+    });
+    if (commitError) throw commitError;
+    return NextResponse.json({ ok: true, updated: committed?.updated || workerIds.length, wage_rate_ids: committed?.wage_rate_ids || [], rows: previewRows });
   } catch (error: any) {
     return jsonError(error.message || "Failed to update Daily Rates.", 500);
   }

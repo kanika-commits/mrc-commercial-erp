@@ -166,24 +166,24 @@ export async function GET(request: Request) {
     if (workOrderIds.length) {
       const { data: workOrders } = await access.admin
         .from("work_orders")
-        .select("id, wo_number")
+        .select("id, wo_number, wo_type, status, approval_status, is_deleted")
         .in("id", workOrderIds);
       workOrdersById = new Map((workOrders || []).map((workOrder: any) => [workOrder.id, workOrder]));
     }
 
-    let deploymentsByWorker = new Map<string, any>();
+    let deploymentsByWorker = new Map<string, any[]>();
     if (workerIds.length) {
       const { data: deployments } = await access.admin
         .from("labour_deployments")
-        .select("id, labour_worker_id, contractor_profile_id, company_id, site_id, work_order_id, labour_trade_id, skill_level, wage_rate, commercial_model, effective_from, effective_to, status, companies(company_name, company_code), sites(site_name, site_code), work_orders(wo_number), manpower_work_orders(manpower_wo_number, title), labour_trades(trade_name, trade_code)")
+        .select("id, labour_worker_id, contractor_profile_id, company_id, site_id, work_order_id, labour_trade_id, skill_level, wage_rate, commercial_model, wage_type, effective_from, effective_to, status, companies(company_name, company_code), sites(site_name, site_code), work_orders(id, wo_number, wo_type, status, approval_status, is_deleted), manpower_work_orders(manpower_wo_number, title), labour_trades(trade_name, trade_code)")
         .in("labour_worker_id", workerIds)
         .eq("status", "active")
         .is("effective_to", null)
         .order("effective_from", { ascending: false });
       for (const deployment of deployments || []) {
-        if (!deploymentsByWorker.has(deployment.labour_worker_id)) {
-          deploymentsByWorker.set(deployment.labour_worker_id, deployment);
-        }
+        const current = deploymentsByWorker.get(deployment.labour_worker_id) || [];
+        current.push(deployment);
+        deploymentsByWorker.set(deployment.labour_worker_id, current);
       }
     }
 
@@ -221,7 +221,22 @@ export async function GET(request: Request) {
         const company = companiesById.get(worker.current_company_id) || null;
         const site = sitesById.get(worker.current_site_id) || null;
         const workOrder = workOrdersById.get(worker.current_work_order_id) || null;
-        const deployment = deploymentsByWorker.get(worker.id) || null;
+        const currentDeployments = deploymentsByWorker.get(worker.id) || [];
+        const deployment = currentDeployments[0] || null;
+        const linkedWorkOrder = deployment?.work_orders || (deployment?.work_order_id ? workOrdersById.get(deployment.work_order_id) : null);
+        const approvedDailyWageWorkOrder = Boolean(
+          linkedWorkOrder &&
+          linkedWorkOrder.wo_type === "Daily Wage" &&
+          linkedWorkOrder.status === "active" &&
+          linkedWorkOrder.approval_status === "approved" &&
+          linkedWorkOrder.is_deleted === false,
+        );
+        const dailyRateUpdateEligible = Boolean(
+          worker.status === "active" &&
+          currentDeployments.length === 1 &&
+          deployment &&
+          (deployment.commercial_model === "daily_wage" || approvedDailyWageWorkOrder),
+        );
         const photo = photosByWorker.get(worker.id) || null;
         const assignmentNumber = deployment
           ? deployment.commercial_model === "daily_wage"
@@ -242,6 +257,10 @@ export async function GET(request: Request) {
           current_site_name: deployment?.sites?.site_name || site?.site_name || null,
           current_assignment_number: assignmentNumber,
           current_payment_model: deployment?.commercial_model || null,
+          current_work_order_type: linkedWorkOrder?.wo_type || null,
+          current_deployment_count: currentDeployments.length,
+          daily_rate_update_eligible: dailyRateUpdateEligible,
+          daily_rate_conversion_required: dailyRateUpdateEligible && deployment?.commercial_model !== "daily_wage",
           photo_url: photo?.url || null,
           photo_file_name: photo?.original_file_name || null,
         };

@@ -17,6 +17,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+const MAX_BULK_HARD_DELETE = 200;
+
 function initials(name: string | null | undefined) {
   return String(name || "L")
     .trim()
@@ -40,11 +42,12 @@ export default function LabourWorkersPage() {
   const canAdd = global || can(permissions, "labour_workers", "add");
   const canEdit = global || can(permissions, "labour_workers", "edit");
   const canDelete = global || can(permissions, "labour_workers", "delete");
+  const canHardDelete = global || can(permissions, "labour_workers", "hard_delete");
   const canImport = global || can(permissions, "labour_workers", "import");
   const canExport = global || can(permissions, "labour_workers", "export");
   const canChangeRate = global || can(permissions, "labour_workers", "change_rate");
-  const hasSecondaryActions = canImport || canExport || canChangeRate || canEdit;
-  const [selectionMode, setSelectionMode] = useState<"rate" | "status" | null>(null);
+  const hasSecondaryActions = canImport || canExport || canChangeRate || canEdit || canHardDelete;
+  const [selectionMode, setSelectionMode] = useState<"rate" | "status" | "delete" | null>(null);
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<Record<string, boolean>>({});
   const [rateModalOpen, setRateModalOpen] = useState(false);
   const [rateForm, setRateForm] = useState({ base_rate: "", effective_from: "", reason: "" });
@@ -56,6 +59,11 @@ export default function LabourWorkersPage() {
   const [statusPreview, setStatusPreview] = useState<any>(null);
   const [statusError, setStatusError] = useState("");
   const [statusSaving, setStatusSaving] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteForm, setDeleteForm] = useState({ reason: "", confirmation: "" });
+  const [deletePreview, setDeletePreview] = useState<any>(null);
+  const [deleteError, setDeleteError] = useState("");
+  const [deleteSaving, setDeleteSaving] = useState(false);
   const duplicateCodes = workers.reduce<Record<string, number>>((acc, worker) => {
     const code = normalizeLabourCode(worker.labour_code);
     if (code) acc[code] = (acc[code] || 0) + 1;
@@ -106,12 +114,13 @@ export default function LabourWorkersPage() {
   }
 
   function isDailyWageWorker(worker: any) {
-    return worker.status === "active" && worker.current_payment_model === "daily_wage";
+    return worker.status === "active" && worker.daily_rate_update_eligible === true;
   }
 
   function isSelectableWorker(worker: any) {
     if (selectionMode === "rate") return isDailyWageWorker(worker);
     if (selectionMode === "status") return worker.status === "active";
+    if (selectionMode === "delete") return worker.status !== "deleted";
     return false;
   }
 
@@ -146,6 +155,16 @@ export default function LabourWorkersPage() {
     setSelectionMode("status");
   }
 
+  function enterDeleteSelection() {
+    setError("");
+    setSuccess("");
+    setDeleteError("");
+    setDeletePreview(null);
+    setDeleteForm({ reason: "", confirmation: "" });
+    setSelectedWorkerIds({});
+    setSelectionMode("delete");
+  }
+
   function cancelSelection() {
     setSelectionMode(null);
     setSelectedWorkerIds({});
@@ -155,6 +174,9 @@ export default function LabourWorkersPage() {
     setRateError("");
     setStatusPreview(null);
     setStatusError("");
+    setDeleteModalOpen(false);
+    setDeletePreview(null);
+    setDeleteError("");
   }
 
   function toggleWorkerSelection(worker: any) {
@@ -188,6 +210,52 @@ export default function LabourWorkersPage() {
     if (!selectedIds().length) return;
     if (selectionMode === "rate") setRateModalOpen(true);
     if (selectionMode === "status") setStatusModalOpen(true);
+    if (selectionMode === "delete") setDeleteModalOpen(true);
+  }
+
+  async function previewBulkDelete() {
+    if (selectedIds().length > MAX_BULK_HARD_DELETE) {
+      setDeleteError(`Bulk hard delete supports a maximum of ${MAX_BULK_HARD_DELETE} workers at a time.`);
+      return;
+    }
+    setDeleteSaving(true);
+    setDeleteError("");
+    try {
+      const response = await fetch("/api/labour/workers/bulk-delete/preview", { method: "POST", headers: { Authorization: `Bearer ${await token()}`, "Content-Type": "application/json" }, body: JSON.stringify({ labour_worker_ids: selectedIds() }) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) setDeleteError(payload.error || "Could not preview hard delete.");
+      setDeletePreview(payload);
+    } catch (previewError: any) {
+      setDeleteError(previewError.message || "Could not preview hard delete.");
+    } finally {
+      setDeleteSaving(false);
+    }
+  }
+
+  async function executeBulkDelete() {
+    const safeIds = (deletePreview?.rows || []).filter((row: any) => row.safe).map((row: any) => row.labour_worker_id);
+    if (safeIds.length > MAX_BULK_HARD_DELETE) {
+      setDeleteError(`Bulk hard delete supports a maximum of ${MAX_BULK_HARD_DELETE} workers at a time.`);
+      return;
+    }
+    if (!safeIds.length || deleteForm.confirmation !== `DELETE ${safeIds.length}` || !deleteForm.reason.trim()) return;
+    setDeleteSaving(true);
+    setDeleteError("");
+    try {
+      const response = await fetch("/api/labour/workers/bulk-delete", { method: "POST", headers: { Authorization: `Bearer ${await token()}`, "Content-Type": "application/json" }, body: JSON.stringify({ labour_worker_ids: safeIds, reason: deleteForm.reason.trim() }) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setDeleteError(payload.error || "Could not hard-delete selected Labour.");
+        return;
+      }
+      setSuccess(`${payload.workers_deleted || safeIds.length} Labour records permanently deleted.`);
+      cancelSelection();
+      loadWorkers();
+    } catch (deleteError: any) {
+      setDeleteError(deleteError.message || "Could not hard-delete selected Labour.");
+    } finally {
+      setDeleteSaving(false);
+    }
   }
 
   async function exportLabourRegister() {
@@ -399,9 +467,14 @@ export default function LabourWorkersPage() {
                       <UserX className="h-4 w-4" /> Bulk Update Status
                     </DropdownMenuItem>
                   )}
+                  {canHardDelete && (
+                    <DropdownMenuItem onClick={enterDeleteSelection} className="flex items-center gap-2 text-red-700">
+                      <Trash2 className="h-4 w-4" /> Delete Selected Permanently
+                    </DropdownMenuItem>
+                  )}
                   {canExport && (
                     <>
-                      {(canImport || canChangeRate || canEdit) && <DropdownMenuSeparator />}
+                      {(canImport || canChangeRate || canEdit || canHardDelete) && <DropdownMenuSeparator />}
                       <DropdownMenuItem onClick={exportLabourRegister} className="flex items-center gap-2">
                         <Download className="h-4 w-4" /> Export Labour Register
                       </DropdownMenuItem>
@@ -440,8 +513,8 @@ export default function LabourWorkersPage() {
           {selectionMode && (
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-200 bg-sky-50 p-3">
               <div>
-                <p className="text-sm font-bold text-slate-900">{selectionMode === "rate" ? "Bulk Update Daily Rates" : "Bulk Update Status"}</p>
-                <p className="text-xs font-semibold text-slate-600">{selectionMode === "rate" ? "Select active Daily Wage labourers whose rates you want to update." : "Select active labourers whose status you want to update."}</p>
+                <p className="text-sm font-bold text-slate-900">{selectionMode === "rate" ? "Bulk Update Daily Rates" : selectionMode === "status" ? "Bulk Update Status" : "Delete Selected Permanently"}</p>
+                <p className="text-xs font-semibold text-slate-600">{selectionMode === "rate" ? "Select active Daily Wage labourers whose rates you want to update." : selectionMode === "status" ? "Select active labourers whose status you want to update." : "Select Labour records to review for permanent deletion."}</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-700">Selected: {selectedIds().length}</span>
@@ -668,6 +741,57 @@ export default function LabourWorkersPage() {
                 <button type="button" onClick={() => setStatusModalOpen(false)} className="h-10 rounded-lg border px-4 text-sm font-semibold">Cancel</button>
                 <button type="button" onClick={previewBulkStatus} disabled={statusSaving} className="h-10 rounded-lg border bg-white px-4 text-sm font-semibold disabled:opacity-60">Preview</button>
                 <button type="button" onClick={saveBulkStatus} disabled={statusSaving || !statusPreview?.ok} className="h-10 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300">Confirm Update</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {deleteModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4 py-6">
+            <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-lg bg-white p-5 shadow-xl">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.22em] text-red-600">Destructive Labour Action</p>
+                  <h2 className="text-xl font-semibold">Delete Selected Permanently</h2>
+                  <p className="mt-1 text-sm text-slate-600">This permanently deletes selected Labour Master records and eligible deployments. This action cannot be undone.</p>
+                </div>
+                <button type="button" onClick={() => setDeleteModalOpen(false)} className="rounded-full border p-2 text-slate-500"><X className="h-4 w-4" /></button>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <label className="text-sm font-semibold text-slate-700 md:col-span-2">
+                  Mandatory reason
+                  <textarea value={deleteForm.reason} onChange={(event) => { setDeleteForm((current) => ({ ...current, reason: event.target.value })); setDeletePreview(null); }} className="mt-1 min-h-24 w-full rounded-lg border px-3 py-2 text-sm" placeholder="Why are these Labour records being permanently deleted?" />
+                </label>
+              </div>
+              {deleteError && <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{deleteError}</div>}
+              {deletePreview && (
+                <div className="mt-4 rounded-lg border">
+                  <div className="flex flex-wrap gap-2 border-b bg-slate-50 p-3 text-xs font-bold text-slate-700">
+                    <span>Selected: {deletePreview.selected}</span>
+                    <span className="text-green-700">Safe to Hard Delete: {deletePreview.safe}</span>
+                    <span className="text-red-700">Blocked: {deletePreview.blocked}</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-white text-left text-xs uppercase text-slate-500"><tr>{["Labour Code", "Worker Name", "Contractor", "Company", "Site", "Result"].map((heading) => <th key={heading} className="px-3 py-2">{heading}</th>)}</tr></thead>
+                      <tbody className="divide-y">
+                        {(deletePreview.rows || []).map((row: any) => <tr key={row.labour_worker_id}>
+                          <td className="px-3 py-2 font-semibold">{formatLabourCode(row.labour_code)}</td>
+                          <td className="px-3 py-2">{row.worker_name || "-"}</td>
+                          <td className="px-3 py-2">{row.contractor || "-"}</td>
+                          <td className="px-3 py-2">{row.company || "-"}</td>
+                          <td className="px-3 py-2">{row.site || "-"}</td>
+                          <td className={`px-3 py-2 font-semibold ${row.safe ? "text-green-700" : "text-red-700"}`}>{row.safe ? "Safe" : (row.reasons || []).join(", ")}</td>
+                        </tr>)}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {deletePreview?.safe > 0 && <label className="mt-4 block text-sm font-semibold text-slate-700">Type <span className="font-mono">DELETE {deletePreview.safe}</span> to confirm<input value={deleteForm.confirmation} onChange={(event) => setDeleteForm((current) => ({ ...current, confirmation: event.target.value }))} className="mt-1 h-11 w-full rounded-lg border px-3 font-mono text-sm" placeholder={`DELETE ${deletePreview.safe}`} /></label>}
+              <div className="mt-5 flex flex-wrap justify-end gap-2">
+                <button type="button" onClick={() => setDeleteModalOpen(false)} className="h-10 rounded-lg border px-4 text-sm font-semibold">Cancel</button>
+                <button type="button" onClick={previewBulkDelete} disabled={deleteSaving || !deleteForm.reason.trim()} className="h-10 rounded-lg border bg-white px-4 text-sm font-semibold disabled:opacity-60">Preview Safety</button>
+                <button type="button" onClick={executeBulkDelete} disabled={deleteSaving || !deletePreview?.safe || deleteForm.confirmation !== `DELETE ${deletePreview?.safe}`} className="h-10 rounded-lg bg-red-700 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-red-300">Permanently Delete {deletePreview?.safe || 0} Labour</button>
               </div>
             </div>
           </div>
