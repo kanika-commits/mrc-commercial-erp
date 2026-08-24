@@ -339,31 +339,7 @@ const [documents, setDocuments] = useState<any[]>([]);
             },
           }
         ),
-        supabase
-          .from("work_order_changes")
-          .select(`
-            id,
-            organization_id,
-            work_order_id,
-            change_type,
-            change_number,
-            change_date,
-            applicable_date,
-            additional_work_value,
-            gst_percent,
-            gst_amount,
-            updated_wo_basic_value,
-            updated_total_wo_value,
-            description,
-            file_id,
-            file_url,
-            file_name,
-            file_mime_type,
-            created_by,
-            created_at
-          `)
-          .eq("work_order_id", workOrderId)
-          .order("created_at", { ascending: true }),
+        fetch(`/api/work-orders/${workOrderId}/changes`, { headers: { Authorization: `Bearer ${token}` } }),
       ]);
 
       if (raResult.error) throw raResult.error;
@@ -377,9 +353,8 @@ const [documents, setDocuments] = useState<any[]>([]);
         throw new Error(vendorResult.error || "Failed to load Work Order vendors.");
       }
 
-      if (changeResult.error && !isMissingWorkOrderChangesTable(changeResult.error)) {
-        throw changeResult.error;
-      }
+      const changeResponse = await changeResult.json();
+      if (!changeResult.ok) throw new Error(changeResponse.error || "Failed to load Work Order changes.");
 
       const raData = raResult.data || [];
       const invoiceData = invoiceResult.data || [];
@@ -430,7 +405,7 @@ const [documents, setDocuments] = useState<any[]>([]);
         vendor_name: row.vendor_id ? vendorNameMap.get(row.vendor_id) || "-" : "-",
       }));
 
-      setWorkOrderChanges(changeResult.error ? [] : changeResult.data || []);
+      setWorkOrderChanges(changeResponse.changes || []);
       setVendors(linkedVendors);
       setRaBills(enrichedRaBills);
       setInvoices(enrichedInvoices);
@@ -800,6 +775,8 @@ const [documents, setDocuments] = useState<any[]>([]);
     setShowChangeModal(true);
   }
 
+  const [creationRequestId, setCreationRequestId] = useState<string | null>(null);
+
   async function saveWorkOrderChange() {
     setStatusMessage("");
 
@@ -849,8 +826,10 @@ const [documents, setDocuments] = useState<any[]>([]);
       if (!session?.access_token) {
         throw new Error("Your session expired. Please log in again.");
       }
+      const accessToken = session.access_token;
 
       const formData = new FormData();
+      formData.append("creation_request_id", creationRequestId || crypto.randomUUID());
       formData.append("change_type", changeType);
       formData.append("change_date", changeDate);
       formData.append("description", changeDescription.trim());
@@ -865,22 +844,33 @@ const [documents, setDocuments] = useState<any[]>([]);
         formData.append("gst_percent", additionalWorkGstPercent);
       }
 
-      const response = await fetch(`/api/work-orders/${workOrderId}/changes`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: formData,
-      });
+      async function submitChange(confirmSimilar = false) {
+        if (confirmSimilar) formData.set("confirm_similar", "true");
+        return fetch(`/api/work-orders/${workOrderId}/changes`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}` },
+          body: formData,
+        });
+      }
+      let response = await submitChange();
       const result = await response.json().catch(() => ({}));
+
+      if (response.status === 409 && result.similar_change) {
+        const confirmed = window.confirm(result.error || "A similar Work Order change already exists. Continue?");
+        if (!confirmed) return;
+        response = await submitChange(true);
+        Object.assign(result, await response.json().catch(() => ({})));
+      }
 
       if (!response.ok) {
         throw new Error(result.error || "Failed to save Work Order change.");
       }
 
+      const savedChange = result.change;
       setShowChangeModal(false);
-      await loadRelatedData(workOrder);
-      setStatusMessage(`${CHANGE_TYPES[changeType].title} saved.`);
+      setCreationRequestId(null);
+      setWorkOrderChanges((current) => current.some((row) => row.id === savedChange?.id) ? current : [...current, savedChange]);
+      setStatusMessage(`${CHANGE_TYPES[changeType].title} ${savedChange?.change_number || ""} added successfully.${result.similar_change ? ` A similar change already exists as ${result.similar_change.change_number}; please review it.` : ""}`);
     } catch (error: any) {
       setStatusMessage(error.message || "Failed to save Work Order change.");
     } finally {
@@ -1415,14 +1405,14 @@ function downloadWOLedger(workOrderId: string) {
               <div className="flex flex-wrap gap-3">
                 <button
                   type="button"
-                  onClick={() => openChangeModal("rate_terms_revision")}
+                  onClick={() => { setCreationRequestId(crypto.randomUUID()); openChangeModal("rate_terms_revision"); }}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
                 >
                   Add Rate/Terms Revision
                 </button>
                 <button
                   type="button"
-                  onClick={() => openChangeModal("additional_work")}
+                  onClick={() => { setCreationRequestId(crypto.randomUUID()); openChangeModal("additional_work"); }}
                   className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
                 >
                   Add Additional Work
@@ -1504,7 +1494,7 @@ function downloadWOLedger(workOrderId: string) {
                           "-"
                         )}
                       </td>
-                      <td className="p-3">{change.created_by || "-"}</td>
+                      <td className="p-3">{change.created_by_name || change.created_by_email || change.created_by || "-"}</td>
                       <td className="p-3">{formatIstTimestamp(change.created_at)}</td>
                     </tr>
                   ))

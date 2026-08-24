@@ -7,6 +7,7 @@ import {
   createWorkOrderDriveFolder,
   uploadDriveFile,
 } from "@/src/lib/googleDrive";
+import { isInOrganizationScope, loadOrganizationScopeForUser } from "@/lib/serverOrganizationScope";
 
 const MODULE_CODE = "work_orders";
 
@@ -36,7 +37,29 @@ function adminClient() {
   return createClient(supabaseUrl, serviceRoleKey);
 }
 
-async function requireEditPermission(request: Request) {
+async function loadScopedWorkOrder(admin: ReturnType<typeof adminClient>, user: any, id: string) {
+  const { data: workOrder, error } = await admin
+    .from("work_orders")
+    .select("id, organization_id, company_id, site_id, wo_number, status, approval_status, wo_value, gst_percent")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw error;
+  if (!workOrder) return null;
+  const organizationScope = await loadOrganizationScopeForUser(admin, user.id);
+  if (!isInOrganizationScope(organizationScope, workOrder.organization_id)) return "forbidden" as const;
+  const { data: assignments, error: assignmentError } = await admin
+    .from("user_access_assignments")
+    .select("company_id, site_id")
+    .eq("user_id", user.id);
+  if (assignmentError) throw assignmentError;
+  const siteIds = (assignments || []).map((row) => row.site_id).filter(Boolean);
+  const companyIds = (assignments || []).map((row) => row.company_id).filter(Boolean);
+  if (siteIds.length && !siteIds.includes(workOrder.site_id)) return "forbidden" as const;
+  if (!siteIds.length && companyIds.length && !companyIds.includes(workOrder.company_id)) return "forbidden" as const;
+  return workOrder;
+}
+
+async function requireWorkOrderPermission(request: Request, actionCode: "view" | "edit") {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -106,17 +129,56 @@ async function requireEditPermission(request: Request) {
     (permission) =>
       permission.allowed === true &&
       ((permission.module_code === "*" && permission.action_code === "*") ||
-        (permission.module_code === MODULE_CODE && permission.action_code === "edit"))
+        (permission.module_code === MODULE_CODE && permission.action_code === actionCode))
   );
 
   if (!allowed) {
     return {
-      error: "You do not have permission to edit Work Orders.",
+      error: `You do not have permission to ${actionCode} Work Orders.`,
       status: 403,
     } as const;
   }
 
   return { user } as const;
+}
+
+async function requireEditPermission(request: Request) {
+  return requireWorkOrderPermission(request, "edit");
+}
+
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const access = await requireWorkOrderPermission(request, "view");
+    if ("error" in access) return NextResponse.json({ error: access.error }, { status: access.status });
+    const { id } = await params;
+    const admin = adminClient();
+    const workOrder = await loadScopedWorkOrder(admin, access.user, id);
+    if (workOrder === "forbidden") return NextResponse.json({ error: "You do not have access to this Work Order." }, { status: 403 });
+    if (!workOrder) return NextResponse.json({ error: "Work Order was not found." }, { status: 404 });
+    const { data, error } = await admin
+      .from("work_order_changes")
+      .select("id, organization_id, work_order_id, change_type, change_number, change_date, applicable_date, additional_work_value, gst_percent, gst_amount, updated_wo_basic_value, updated_total_wo_value, description, file_id, file_url, file_name, file_mime_type, created_by, created_at")
+      .eq("organization_id", workOrder.organization_id)
+      .eq("work_order_id", id)
+      .order("created_at", { ascending: true });
+    if (error) throw error;
+    const creatorIds = Array.from(new Set((data || []).map((row: any) => row.created_by).filter(Boolean)));
+    const { data: profiles, error: profilesError } = creatorIds.length
+      ? await admin.from("profiles").select("id, full_name, email").in("id", creatorIds)
+      : { data: [], error: null };
+    if (profilesError) throw profilesError;
+    const profileMap = new Map((profiles || []).map((profile: any) => [profile.id, profile]));
+    return NextResponse.json({ changes: (data || []).map((row: any) => ({
+      ...row,
+      created_by_name: profileMap.get(row.created_by)?.full_name || null,
+      created_by_email: profileMap.get(row.created_by)?.email || null,
+    })) });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message || "Failed to load Work Order changes." }, { status: 500 });
+  }
 }
 
 async function fileToOptimizedDrivePayload(file: File) {
@@ -192,6 +254,11 @@ export async function POST(
     const gstPercent = Number(gstPercentRaw || 0);
     const description = String(formData.get("description") || "").trim();
     const file = formData.get("file");
+    const creationRequestId = String(formData.get("creation_request_id") || "").trim();
+    const confirmSimilar = String(formData.get("confirm_similar") || "") === "true";
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(creationRequestId)) {
+      return NextResponse.json({ error: "A valid creation request id is required." }, { status: 400 });
+    }
 
     if (!CHANGE_CONFIG[changeType]) {
       return NextResponse.json(
@@ -249,19 +316,48 @@ export async function POST(
     }
 
     const admin = adminClient();
-    const { data: workOrder, error: workOrderError } = await admin
-      .from("work_orders")
-      .select("id, organization_id, company_id, site_id, wo_number, status, approval_status, wo_value, gst_percent")
-      .eq("id", id)
-      .maybeSingle();
-
-    if (workOrderError) throw workOrderError;
+    const workOrder = await loadScopedWorkOrder(admin, access.user, id);
+    if (workOrder === "forbidden") return NextResponse.json({ error: "You do not have access to this Work Order." }, { status: 403 });
 
     if (!workOrder) {
       return NextResponse.json(
         { error: "Work Order was not found." },
         { status: 404 }
       );
+    }
+
+    const { data: existingChange, error: existingChangeError } = await admin
+      .from("work_order_changes")
+      .select("*")
+      .eq("organization_id", workOrder.organization_id)
+      .eq("work_order_id", id)
+      .eq("creation_request_id", creationRequestId)
+      .maybeSingle();
+    if (existingChangeError) throw existingChangeError;
+    if (existingChange) return NextResponse.json({ change: existingChange, idempotent: true });
+
+    const { data: recentChanges, error: recentChangesError } = await admin
+      .from("work_order_changes")
+      .select("id, change_number, change_type, additional_work_value, gst_percent, description, file_name, change_date, created_at")
+      .eq("organization_id", workOrder.organization_id)
+      .eq("work_order_id", id)
+      .eq("change_type", changeType)
+      .gte("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+      .order("created_at", { ascending: false });
+    if (recentChangesError) throw recentChangesError;
+    const similarChange = (recentChanges || []).find((row: any) =>
+      changeType === "additional_work" &&
+      Number(row.additional_work_value) === additionalWorkValue &&
+      Number(row.gst_percent) === gstPercent &&
+      String(row.description || "").trim().toLowerCase() === description.toLowerCase() &&
+      String(row.file_name || "").trim().toLowerCase() === String(file.name || "").trim().toLowerCase() &&
+      row.change_date === changeDate
+    ) || null;
+    if (similarChange && !confirmSimilar) {
+      return NextResponse.json({
+        error: `A similar ${CHANGE_CONFIG[changeType].label} already exists as ${similarChange.change_number}. Please review it before creating another.`,
+        similar_change: similarChange,
+      }, { status: 409 });
     }
 
     const workOrderStatus = String(workOrder.status || "").trim().toLowerCase();
@@ -294,7 +390,7 @@ export async function POST(
 
     if (countError) throw countError;
 
-    const changeNumber = `${CHANGE_CONFIG[changeType].prefix}${(count || 0) + 1}`;
+    let changeNumber = `${CHANGE_CONFIG[changeType].prefix}${(count || 0) + 1}`;
     const originalWoBasicValue = Number(workOrder.wo_value || 0);
     const { data: existingAdditionalWorks, error: additionalWorksError } = await admin
       .from("work_order_changes")
@@ -339,13 +435,11 @@ export async function POST(
       base64: optimizedFile.base64,
     });
 
-    const { data: change, error: insertError } = await admin
-      .from("work_order_changes")
-      .insert({
+    const insertPayload = (number: string) => ({
         organization_id: workOrder.organization_id,
         work_order_id: id,
         change_type: changeType,
-        change_number: changeNumber,
+        change_number: number,
         change_date: changeDate,
         applicable_date: changeType === "rate_terms_revision" ? applicableDate : null,
         additional_work_value:
@@ -360,11 +454,39 @@ export async function POST(
         file_name: uploadedFile.file_name || optimizedFile.fileName,
         file_mime_type: optimizedFile.mimeType,
         created_by: access.user.id,
-      })
+        creation_request_id: creationRequestId,
+      });
+    let { data: change, error: insertError } = await admin
+      .from("work_order_changes")
+      .insert(insertPayload(changeNumber))
       .select("*")
       .single();
 
-    if (insertError) throw insertError;
+    if (insertError) {
+      if (insertError.code === "23505") {
+        const { data: retryChange } = await admin
+          .from("work_order_changes")
+          .select("*")
+          .eq("organization_id", workOrder.organization_id)
+          .eq("work_order_id", id)
+          .eq("creation_request_id", creationRequestId)
+          .maybeSingle();
+        if (retryChange) return NextResponse.json({ change: retryChange, idempotent: true });
+        const { count: latestCount, error: latestCountError } = await admin
+          .from("work_order_changes")
+          .select("id", { count: "exact", head: true })
+          .eq("work_order_id", id)
+          .eq("change_type", changeType);
+        if (latestCountError) throw latestCountError;
+        changeNumber = `${CHANGE_CONFIG[changeType].prefix}${(latestCount || 0) + 1}`;
+        ({ data: change, error: insertError } = await admin
+          .from("work_order_changes")
+          .insert(insertPayload(changeNumber))
+          .select("*")
+          .single());
+      }
+      if (insertError) throw insertError;
+    }
 
     try {
       await recordAuditEvent(admin, access.user, {
@@ -396,7 +518,7 @@ export async function POST(
       console.error("[Commercial Audit] Work Order change audit failed", auditError);
     }
 
-    return NextResponse.json({ change });
+    return NextResponse.json({ change, similar_change: similarChange });
   } catch (error: any) {
     return NextResponse.json(
       { error: error.message || "Failed to save Work Order change." },
