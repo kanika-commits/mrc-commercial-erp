@@ -435,6 +435,7 @@ export async function GET(request: Request) {
           siteId: selectedSiteId,
           contractorProfileId: null,
           attendanceDate,
+          allowHistoricallyInactiveWorker: true,
         });
         if (system.ok && system.attendanceSystem === "standard") {
           const contractorMap = new Map<string, any>();

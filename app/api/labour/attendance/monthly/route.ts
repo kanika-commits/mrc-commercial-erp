@@ -50,7 +50,7 @@ async function loadMuster(request: Request, action: "view" | "export" = "view") 
   const deploymentsByWorker = new Map<string, any>();
   for (let day = 1; day <= dayCount; day += 1) {
     const date = `${periodMonth.slice(0, 8)}${String(day).padStart(2, "0")}`;
-    const deployments = await loadEligibleDeployments(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate: date, workOrderId, tradeId });
+    const deployments = await loadEligibleDeployments(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate: date, workOrderId, tradeId, allowHistoricallyInactiveWorker: true });
     for (const deployment of deployments) {
       if (!deploymentsByWorker.has(deployment.labour_worker_id)) deploymentsByWorker.set(deployment.labour_worker_id, deployment);
     }

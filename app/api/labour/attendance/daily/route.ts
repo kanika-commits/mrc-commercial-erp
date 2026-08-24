@@ -379,6 +379,7 @@ async function loadStandardPopulation(access: any, input: {
     attendanceDate: input.attendanceDate,
     deploymentIds: input.deploymentIds,
     ignoreWorkerCreatedAt: input.ignoreWorkerCreatedAt,
+    allowHistoricallyInactiveWorker: true,
   });
   return { deployments };
 }

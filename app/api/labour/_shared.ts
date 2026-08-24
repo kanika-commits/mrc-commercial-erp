@@ -393,6 +393,7 @@ export async function loadEligibleDeployments(access: LabourAccess, input: {
   tradeId?: string | null;
   deploymentIds?: string[] | null;
   ignoreWorkerCreatedAt?: boolean;
+  allowHistoricallyInactiveWorker?: boolean;
 }) {
   let query = access.admin
     .from("labour_deployments")
@@ -433,7 +434,9 @@ export async function loadEligibleDeployments(access: LabourAccess, input: {
   return (data || []).filter((deployment: any) => {
     const worker = Array.isArray(deployment.labour_workers) ? deployment.labour_workers[0] : deployment.labour_workers;
     if (!worker) return false;
-    if (!input.ignoreWorkerCreatedAt && worker.created_at) {
+    const historicalDate = input.allowHistoricallyInactiveWorker && input.attendanceDate < todayInIst();
+    if (!historicalDate && worker.status !== "active") return false;
+    if (!historicalDate && !input.ignoreWorkerCreatedAt && worker.created_at) {
       const registrationDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date(worker.created_at));
       if (registrationDate > input.attendanceDate) return false;
     }
