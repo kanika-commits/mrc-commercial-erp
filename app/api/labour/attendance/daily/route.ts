@@ -13,6 +13,7 @@ import {
   isGlobalOrSuperAdmin,
   loadEligibleDeployments,
   loadFrozenAttendanceDeploymentIds,
+  loadAttendanceRowsForWorkers,
   requireLabourPermission,
   originatingAttendanceSystem,
   resolveSiteAttendanceSystem,
@@ -152,8 +153,9 @@ function selectedDateRegisterStatus(period: any, attendanceRows: any[], attendan
   return "draft";
 }
 
-function selectedDateReadOnlyReason(period: any, dayLock: any, selectedStatus: string) {
+function selectedDateReadOnlyReason(period: any, dayLock: any, selectedStatus: string, explicitlyOpen = false) {
   if (dayLock?.is_locked) return "Attendance is locked for this date.";
+  if (explicitlyOpen) return null;
   if (selectedStatus === "reopened") return null;
   if (selectedStatus === "submitted") return "Attendance has been submitted for this date.";
   if (selectedStatus === "finalized") return "Attendance has been approved for this date.";
@@ -182,6 +184,7 @@ async function loadExistingAttendancePeriod(access: any, input: {
     .eq("company_id", input.companyId)
     .eq("site_id", input.siteId)
     .eq("period_month", periodMonth)
+    .is("contractor_profile_id", null)
     .order("contractor_profile_id", { ascending: true, nullsFirst: true })
     .order("created_at", { ascending: true })
     .limit(1);
@@ -426,8 +429,8 @@ export async function GET(request: Request) {
     const period = await findOrCreateAttendancePeriod(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate, originatingAttendanceSystem: "standard" });
     const dateStatusForPopulation = selectedDateRegisterStatus(period, [], attendanceDate);
     const frozenDeploymentIds = await loadFrozenAttendanceDeploymentIds(access, period, attendanceDate, dateStatusForPopulation);
-    const [population, dayLock, policy] = await Promise.all([
-      loadStandardPopulation(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate, deploymentIds: frozenDeploymentIds, ignoreWorkerCreatedAt: !frozenDeploymentIds }),
+    const population = await loadStandardPopulation(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate, deploymentIds: frozenDeploymentIds, ignoreWorkerCreatedAt: !frozenDeploymentIds });
+    const [dayLock, policy] = await Promise.all([
       getDayLock(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate }),
       getActiveAttendancePolicy(access, { organizationId, companyId, siteId }),
     ]);
@@ -436,24 +439,33 @@ export async function GET(request: Request) {
     if (workOrderId) deployments = deployments.filter((deployment: any) => deployment.work_order_id === workOrderId);
     if (tradeId) deployments = deployments.filter((deployment: any) => deployment.labour_trade_id === tradeId);
     const workerIds = deployments.map((row: any) => row.labour_worker_id);
-    const { data: attendanceRows, error: attendanceError } = workerIds.length
-      ? await access.admin.from("labour_attendance").select("*").eq("attendance_date", attendanceDate).in("labour_worker_id", workerIds)
-      : { data: [], error: null };
-    if (attendanceError) throw attendanceError;
+    const attendanceRows = await loadAttendanceRowsForWorkers(access, {
+      periodId: period.id,
+      organizationId,
+      companyId,
+      siteId,
+      attendanceDate,
+      workerIds,
+    });
     const selectedStatus = selectedDateRegisterStatus(period, attendanceRows || [], attendanceDate);
     const historicalAccess = await getActiveHistoricalAttendanceAccess(access, { organizationId, siteId, attendanceDate, attendanceType: "labour" });
+    const explicitlyOpen = selectedStatus === "reopened" || Boolean(historicalAccess);
     const attendanceByWorker = new Map((attendanceRows || []).map((row: any) => [row.labour_worker_id, row]));
-    const { data: workerRates, error: workerRatesError } = workerIds.length
+    const workerIdSet = new Set(workerIds);
+    const { data: scopedWorkerRates, error: workerRatesError } = workerIds.length
       ? await access.admin
           .from("labour_wage_rates")
           .select("labour_worker_id, trade_id, wage_type, base_rate, effective_from, effective_to, status")
-          .in("labour_worker_id", workerIds)
+          .eq("organization_id", organizationId)
+          .eq("company_id", companyId)
+          .eq("site_id", siteId)
           .neq("status", "cancelled")
           .lte("effective_from", attendanceDate)
           .or(`effective_to.is.null,effective_to.gte.${attendanceDate}`)
           .order("effective_from", { ascending: false })
       : { data: [], error: null };
     if (workerRatesError) throw workerRatesError;
+    const workerRates = (scopedWorkerRates || []).filter((rate: any) => workerIdSet.has(rate.labour_worker_id));
     const workerRatesByWorker = new Map<string, any[]>();
     for (const rate of workerRates || []) {
       const rates = workerRatesByWorker.get(rate.labour_worker_id) || [];
@@ -537,8 +549,8 @@ export async function GET(request: Request) {
         max_daily_ot_minutes: policy.max_daily_ot_minutes,
       } : null,
       attendance_system: "standard",
-      read_only: Boolean(selectedDateReadOnlyReason(period, dayLock, selectedStatus)),
-      read_only_reason: selectedDateReadOnlyReason(period, dayLock, selectedStatus),
+      read_only: Boolean(selectedDateReadOnlyReason(period, dayLock, selectedStatus, explicitlyOpen)),
+      read_only_reason: selectedDateReadOnlyReason(period, dayLock, selectedStatus, explicitlyOpen),
       historical_access: historicalAccess,
     });
   } catch (error: any) {
@@ -588,7 +600,10 @@ export async function POST(request: Request) {
       return jsonError("This attendance period belongs to Site-In & Engineer Daily Labour. Use Engineer Daily Labour for this existing record.", 403);
     }
     const period = originResult.period || await findOrCreateAttendancePeriod(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate, originatingAttendanceSystem: "standard" });
-    const lockBlocker = await loadLabourEditLockBlocker(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate });
+    const explicitlyOpen = reopenedDate || Boolean(historicalAccess);
+    const lockBlocker = explicitlyOpen
+      ? null
+      : await loadLabourEditLockBlocker(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate });
     if (lockBlocker) return jsonError(lockBlocker, 403);
     const policy = await getActiveAttendancePolicy(access, { organizationId, companyId, siteId });
     const canOverrideAbsentToPresent = hasServerPermission(access, "labour_attendance", "override");
@@ -608,16 +623,16 @@ export async function POST(request: Request) {
     });
     const deploymentByWorker = new Map((population.deployments || []).map((deployment: any) => [deployment.labour_worker_id, deployment]));
     const workerIds = changes.map((change: any) => text(change.labour_worker_id)).filter(Boolean) as string[];
-    const { data: existingRows, error: existingError } = workerIds.length
-      ? await access.admin
-          .from("labour_attendance")
-          .select("*")
-          .eq("attendance_date", attendanceDate)
-          .in("labour_worker_id", workerIds)
-      : { data: [], error: null };
-    if (existingError) throw existingError;
+    const existingRows = await loadAttendanceRowsForWorkers(access, {
+      periodId: period.id,
+      organizationId,
+      companyId,
+      siteId,
+      attendanceDate,
+      workerIds,
+    });
     const selectedStatus = selectedDateRegisterStatus(period, existingRows || [], attendanceDate);
-    if (["submitted", "finalized"].includes(selectedStatus)) return jsonError("Attendance is locked for editing for this date.", 403);
+    if (["submitted", "finalized"].includes(selectedStatus) && !explicitlyOpen) return jsonError("Attendance is locked for editing for this date.", 403);
     const requiresOverride = selectedStatus !== "draft";
     const { data: wagePeriod, error: wageError } = await access.admin
       .from("labour_wage_periods")
@@ -625,7 +640,7 @@ export async function POST(request: Request) {
       .eq("attendance_period_id", period.id)
       .maybeSingle();
     if (wageError) throw wageError;
-    if (wagePeriod?.status === "finalized" && (existingRows || []).length > 0) return jsonError("Reopen the finalized wage period before changing attendance.", 403);
+    if (wagePeriod?.status === "finalized" && (existingRows || []).length > 0 && !explicitlyOpen) return jsonError("Reopen the finalized wage period before changing attendance.", 403);
     const existingByWorker = new Map((existingRows || []).map((row: any) => [row.labour_worker_id, row]));
 
     const now = new Date().toISOString();

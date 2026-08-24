@@ -93,6 +93,7 @@ export default function LabourDailyAttendancePage() {
   const [labourWorkspace, setLabourWorkspace] = useState<LabourWorkspaceSummary>({ pairs: [], attendance_systems: [] });
   const [filters, setFilters] = useState({ company_id: "", site_id: "", contractor_profile_id: "", labour_search: "", attendance_date: today() });
   const [rows, setRows] = useState<any[]>([]);
+  const [loadedContextKey, setLoadedContextKey] = useState<string | null>(null);
   const [period, setPeriod] = useState<any>(null);
   const [supportingPdf, setSupportingPdf] = useState<any>(null);
   const [dayLock, setDayLock] = useState<any>(null);
@@ -100,7 +101,7 @@ export default function LabourDailyAttendancePage() {
   const [readOnlyReason, setReadOnlyReason] = useState("");
   const [policy, setPolicy] = useState<any>(null);
   const reopenedAttendanceDates: string[] = lookups.reopened_attendance_dates || [];
-  const [dirty, setDirty] = useState<Record<string, boolean>>({});
+  const [dirtyWorkerIds, setDirtyWorkerIds] = useState<Set<string>>(() => new Set());
   const [message, setMessage] = useState("");
   const [submitError, setSubmitError] = useState("");
   const [submitSuccessMessage, setSubmitSuccessMessage] = useState("");
@@ -141,11 +142,13 @@ export default function LabourDailyAttendancePage() {
       .filter(([, message]) => Boolean(message)),
   ) as Record<string, string>, [rows]);
 
-  const hasUnsavedChanges = Object.values(dirty).some(Boolean);
+  const hasUnsavedChanges = dirtyWorkerIds.size > 0;
+  const currentContextKey = [filters.company_id, filters.site_id, filters.attendance_date, filters.contractor_profile_id].join("|");
+  const attendanceLoaded = Boolean(rows.length && loadedContextKey === currentContextKey);
   const dateSummary = period?.summary?.date_statuses?.[filters.attendance_date] || {};
   const reopenedDate = dateSummary.status === "reopened";
   const selectedDateStatus = dateSummary.status || "draft";
-  const readOnly = dayLock?.is_locked || ["submitted", "finalized"].includes(selectedDateStatus);
+  const readOnly = period?.server_read_only ?? (dayLock?.is_locked || ["submitted", "finalized"].includes(selectedDateStatus));
   const sentBack = selectedDateStatus === "reopened";
   const filtersDisabled = rowLoading || saving || submitting;
   const attendanceSystem = lookups.attendance_system || null;
@@ -210,6 +213,7 @@ export default function LabourDailyAttendancePage() {
       company_id: filters.company_id,
       site_id: filters.site_id,
       attendance_date: filters.attendance_date,
+      contractor_profile_id: filters.contractor_profile_id,
     };
     if (!requestContext.company_id) return setMessage("Select a company.");
     if (!requestContext.site_id) return setMessage("Select a site.");
@@ -246,21 +250,23 @@ export default function LabourDailyAttendancePage() {
         controller.signal.aborted ||
         requestContext.company_id !== filtersRef.current.company_id ||
         requestContext.site_id !== filtersRef.current.site_id ||
-        requestContext.attendance_date !== filtersRef.current.attendance_date
+        requestContext.attendance_date !== filtersRef.current.attendance_date ||
+        requestContext.contractor_profile_id !== filtersRef.current.contractor_profile_id
       ) {
         return;
       }
       if (!response.ok) return setMessage(payload.error || "Could not load attendance.");
       const nextRows = payload.rows || [];
       setRows(nextRows);
+      setLoadedContextKey(nextRows.length ? [requestContext.company_id, requestContext.site_id, requestContext.attendance_date, requestContext.contractor_profile_id].join("|") : null);
       setMessage(nextRows.length ? "" : "No eligible deployed labourers found for this Site/date.");
-      setPeriod(payload.period || null);
+      setPeriod(payload.period ? { ...payload.period, server_read_only: payload.read_only } : null);
       setSupportingPdf(payload.supporting_pdf || null);
       setDayLock(payload.day_lock || null);
       setHistoricalAccess(payload.historical_access || null);
       setReadOnlyReason(payload.read_only_reason || "");
       setPolicy(payload.policy || null);
-      setDirty({});
+      setDirtyWorkerIds(new Set());
     } catch (loadError: any) {
       if (loadError?.name === "AbortError") return;
       setMessage(loadError.message || "Could not load attendance.");
@@ -272,18 +278,23 @@ export default function LabourDailyAttendancePage() {
   function updateRow(workerId: string, patch: Record<string, any>) {
     setMessage("");
     setRows((current) => current.map((row) => row.labour_worker_id === workerId ? { ...row, ...patch } : row));
-    setDirty((current) => ({ ...current, [workerId]: true }));
+    setDirtyWorkerIds((current) => {
+      const next = new Set(current);
+      next.add(workerId);
+      return next;
+    });
   }
 
   function applyFilterChange(patch: Partial<typeof filters>, options: { clearContractors?: boolean } = {}) {
     if ("company_id" in patch || "site_id" in patch) clearSelectedLabourContext();
     setRows([]);
+    setLoadedContextKey(null);
     setPeriod(null);
     setSupportingPdf(null);
     setDayLock(null);
     setReadOnlyReason("");
     setPolicy(null);
-    setDirty({});
+    setDirtyWorkerIds(new Set());
     setSubmitted(false);
     if (options.clearContractors) {
       setLookups((current: any) => ({ ...current, contractors: [], attendance_system: null }));
@@ -293,7 +304,7 @@ export default function LabourDailyAttendancePage() {
 
   function updateFilters(patch: Partial<typeof filters>, options: { clearContractors?: boolean } = {}) {
     if ("contractor_profile_id" in patch && Object.keys(patch).length === 1) {
-      setFilters((current) => ({ ...current, contractor_profile_id: patch.contractor_profile_id || "" }));
+      applyFilterChange({ contractor_profile_id: patch.contractor_profile_id || "" });
       return;
     }
     if ("labour_search" in patch && Object.keys(patch).length === 1) {
@@ -325,7 +336,7 @@ export default function LabourDailyAttendancePage() {
   function continueWithoutSaving() {
     if (!unsavedAction) return;
     const action = unsavedAction;
-    setDirty({});
+    setDirtyWorkerIds(new Set());
     setMessage("");
     setSubmitSuccessMessage("");
     setSubmitted(false);
@@ -379,7 +390,7 @@ export default function LabourDailyAttendancePage() {
       first_shift_override_reason: "",
       second_shift_override_reason: "",
     } : row));
-    setDirty((current) => ({ ...current, ...Object.fromEntries(displayedRows.map((row) => [row.labour_worker_id, true])) }));
+    setDirtyWorkerIds((current) => new Set([...current, ...displayedRows.map((row) => row.labour_worker_id)]));
   }
 
   function clearChanges() {
@@ -397,7 +408,7 @@ export default function LabourDailyAttendancePage() {
       first_shift_override_reason: "",
       second_shift_override_reason: "",
     } : row));
-    setDirty((current) => ({ ...current, ...Object.fromEntries(displayedRows.map((row) => [row.labour_worker_id, true])) }));
+    setDirtyWorkerIds((current) => new Set([...current, ...displayedRows.map((row) => row.labour_worker_id)]));
     setMessage("");
     setSubmitted(false);
   }
@@ -405,7 +416,7 @@ export default function LabourDailyAttendancePage() {
   async function markWorkerInactive(row: any) {
     if (!canEditAttendance) return setMessage("You do not have permission to edit labour attendance.");
     if (readOnly) return setMessage("Attendance is submitted, approved or locked for this date.");
-    if (dirty[row.labour_worker_id]) {
+    if (dirtyWorkerIds.has(row.labour_worker_id)) {
       const discard = window.confirm("This labourer has unsaved attendance values. Marking them inactive will remove this row from the current grid and discard those unsaved values. Continue?");
       if (!discard) return;
     }
@@ -436,9 +447,9 @@ export default function LabourDailyAttendancePage() {
         return;
       }
       setRows((current) => current.filter((item) => item.labour_worker_id !== row.labour_worker_id));
-      setDirty((current) => {
-        const next = { ...current };
-        delete next[row.labour_worker_id];
+      setDirtyWorkerIds((current) => {
+        const next = new Set(current);
+        next.delete(row.labour_worker_id);
         return next;
       });
       setMessage("Labourer marked inactive and removed from this attendance grid.");
@@ -461,7 +472,7 @@ export default function LabourDailyAttendancePage() {
       setMessage("This site uses Site-In & Engineer Daily Labour. Use Site-In and Engineer Daily Labour for attendance.");
       return false;
     }
-    const changed = mode === "submit" ? rows : rows.filter((row) => dirty[row.labour_worker_id]);
+    const changed = mode === "submit" ? rows : rows.filter((row) => dirtyWorkerIds.has(row.labour_worker_id));
     if (!changed.length) {
       setMessage(mode === "submit" ? "Load attendance before submitting." : "No changes to save.");
       return false;
@@ -475,8 +486,11 @@ export default function LabourDailyAttendancePage() {
     setSubmitSuccessMessage("");
     setMessage("");
     const backdated = filters.attendance_date < daysBefore(today(), 2);
-    const backdated_reason = backdated && (!historicalAccess || selectedDateStatus === "reopened") ? prompt("Reason for backdated attendance change") : "";
-    if (backdated && !backdated_reason) return false;
+    const backdated_reason = backdated && !historicalAccess ? prompt("Reason for backdated attendance change") : "";
+    if (backdated && !historicalAccess && !backdated_reason) {
+      setMessage("A reason is required for backdated attendance changes.");
+      return false;
+    }
     try {
       const response = await fetch("/api/labour/attendance/daily", {
         method: "POST",
@@ -512,7 +526,7 @@ export default function LabourDailyAttendancePage() {
         return false;
       }
       setMessage(`Saved ${payload.saved} attendance rows.`);
-      setDirty({});
+      setDirtyWorkerIds(new Set());
       return true;
     } catch (saveError: any) {
       setMessage(saveError.message || "Could not save attendance.");
@@ -558,7 +572,7 @@ export default function LabourDailyAttendancePage() {
         setSubmitError(payload.error || "Could not submit attendance.");
         return;
       }
-      setDirty({});
+      setDirtyWorkerIds(new Set());
       await loadRows({ skipDirtyConfirm: true });
       setSubmitted(true);
       setSubmitSuccessMessage(sentBack ? "Attendance resubmitted successfully." : "Attendance submitted successfully.");
@@ -769,17 +783,17 @@ export default function LabourDailyAttendancePage() {
           </div>
           <div className="flex flex-wrap gap-2">
             {canSave && !readOnly && (
-              <button onClick={saveRows} disabled={saving || submitting || !hasUnsavedChanges} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+              <button type="button" onClick={saveRows} disabled={!attendanceLoaded || saving || submitting} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
                 <Save className="h-4 w-4" /> {saving ? "Saving attendance..." : "Save Draft"}
               </button>
             )}
             {canSubmit && !readOnly && (
-              <button onClick={submitRows} disabled={saving || submitting || rowLoading || !rows.length} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-sky-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+              <button onClick={submitRows} disabled={!attendanceLoaded || saving || submitting || rowLoading} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-sky-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
                 <CheckCircle2 className="h-4 w-4" /> {submitting ? "Submitting attendance..." : sentBack ? "Resubmit Attendance" : "Submit Attendance"}
               </button>
             )}
             {canLock && (
-              <button onClick={lockDay} disabled={!rows.length || hasUnsavedChanges || readOnly || saving || submitting} className="inline-flex min-h-11 items-center gap-2 rounded-lg border bg-white px-4 py-2 text-sm font-semibold disabled:opacity-60">
+              <button onClick={lockDay} disabled={!attendanceLoaded || hasUnsavedChanges || readOnly || saving || submitting} className="inline-flex min-h-11 items-center gap-2 rounded-lg border bg-white px-4 py-2 text-sm font-semibold disabled:opacity-60">
                 <Lock className="h-4 w-4" /> Lock Day
               </button>
             )}
@@ -910,9 +924,9 @@ export default function LabourDailyAttendancePage() {
                 </button>
               )}
               {canEditAttendance && !readOnly && (
-                <label className={`inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border bg-white px-3 text-xs font-bold ${documentBusy ? "pointer-events-none opacity-60" : ""}`}>
+                <label className={`inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border bg-white px-3 text-xs font-bold ${documentBusy || !attendanceLoaded ? "pointer-events-none opacity-60" : ""}`}>
                   <Upload className="h-4 w-4" />{supportingPdf ? "Replace" : "Upload PDF"}
-                  <input type="file" accept="application/pdf" disabled={documentBusy} className="hidden" onChange={(event) => {
+                  <input type="file" accept="application/pdf" disabled={documentBusy || !attendanceLoaded} className="hidden" onChange={(event) => {
                     const file = event.target.files?.[0] || null;
                     event.currentTarget.value = "";
                     void uploadSupportingPdf(file);

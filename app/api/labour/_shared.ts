@@ -479,6 +479,28 @@ export async function loadFrozenAttendanceDeploymentIds(access: LabourAccess, pe
   return Array.from(new Set((attendanceRows || []).map((row: any) => row.deployment_id).filter(Boolean))) as string[];
 }
 
+export async function loadAttendanceRowsForWorkers(access: LabourAccess, input: {
+  periodId: string;
+  organizationId: string;
+  companyId: string;
+  siteId: string;
+  attendanceDate: string;
+  workerIds?: string[];
+}): Promise<any[]> {
+  if (!input.workerIds?.length) return [];
+  const { data, error } = await access.admin
+    .from("labour_attendance")
+    .select("*")
+    .eq("period_id", input.periodId)
+    .eq("organization_id", input.organizationId)
+    .eq("company_id", input.companyId)
+    .eq("site_id", input.siteId)
+    .eq("attendance_date", input.attendanceDate);
+  if (error) throw error;
+  const eligibleWorkerIds = new Set(input.workerIds);
+  return (data || []).filter((row: any) => eligibleWorkerIds.has(row.labour_worker_id));
+}
+
 export async function findOrCreateAttendancePeriod(access: LabourAccess, input: {
   organizationId: string;
   companyId: string;
@@ -497,6 +519,7 @@ export async function findOrCreateAttendancePeriod(access: LabourAccess, input: 
     .eq("company_id", input.companyId)
     .eq("site_id", input.siteId)
     .eq("period_month", periodMonth)
+    .is("contractor_profile_id", null)
     .order("contractor_profile_id", { ascending: true, nullsFirst: true })
     .order("created_at", { ascending: true })
     .limit(1);

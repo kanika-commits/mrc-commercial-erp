@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { actorFields, applyCompanySiteScope, audit, isGlobalOrSuperAdmin, jsonError, loadEligibleDeployments, loadFrozenAttendanceDeploymentIds, originatingAttendanceSystem, requireLabourPermission } from "@/app/api/labour/_shared";
+import { actorFields, applyCompanySiteScope, audit, isGlobalOrSuperAdmin, jsonError, loadAttendanceRowsForWorkers, loadEligibleDeployments, loadFrozenAttendanceDeploymentIds, originatingAttendanceSystem, requireLabourPermission } from "@/app/api/labour/_shared";
 import { applyOrganizationScope } from "@/lib/serverOrganizationScope";
 import { isoDate } from "@/lib/labour/operations";
 import { hasActiveSiteHrAssignment } from "@/lib/serverSiteHr";
@@ -41,12 +41,17 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         attendanceDate,
         deploymentIds: frozenDeploymentIds,
         ignoreWorkerCreatedAt: !frozenDeploymentIds,
+        allowHistoricallyInactiveWorker: true,
       });
-      const workerIds = Array.from(new Set(deployments.map((deployment: any) => deployment.labour_worker_id).filter(Boolean)));
-      const { data: attendanceRows, error: attendanceError } = workerIds.length
-        ? await access.admin.from("labour_attendance").select("labour_worker_id, first_half_present, second_half_present").eq("period_id", period.id).eq("attendance_date", attendanceDate).in("labour_worker_id", workerIds)
-        : { data: [], error: null };
-      if (attendanceError) throw attendanceError;
+      const workerIds = Array.from(new Set(deployments.map((deployment: any) => deployment.labour_worker_id).filter(Boolean))) as string[];
+      const attendanceRows = await loadAttendanceRowsForWorkers(access, {
+        periodId: period.id,
+        organizationId: period.organization_id,
+        companyId: period.company_id,
+        siteId: period.site_id,
+        attendanceDate,
+        workerIds,
+      });
       const attendanceByWorker = new Map((attendanceRows || []).map((row: any) => [row.labour_worker_id, row]));
       const incompleteWorkers = deployments.flatMap((deployment: any) => {
         const row: any = attendanceByWorker.get(deployment.labour_worker_id);
