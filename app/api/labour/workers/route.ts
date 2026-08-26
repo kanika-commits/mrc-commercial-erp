@@ -93,7 +93,8 @@ export async function GET(request: Request) {
         current_company_id, current_site_id, current_work_order_id, created_at
       `, { count: "exact" })
       .neq("status", "deleted")
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true });
 
     const orgScoped = applyOrganizationScope(query, access.organizationScope);
     if (!orgScoped) return NextResponse.json({ workers: [], total: 0, page, limit });
@@ -269,6 +270,12 @@ export async function GET(request: Request) {
       total: count || 0,
       page,
       limit,
+      pagination: {
+        page,
+        limit,
+        total: count || 0,
+        totalPages: Math.max(Math.ceil((count || 0) / limit), 1),
+      },
     });
   } catch (error: any) {
     return jsonError(error.message || "Failed to load labourers.", 500);

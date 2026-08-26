@@ -34,6 +34,8 @@ export default function LabourWorkersPage() {
   const permissions = access?.permissions || [];
   const global = hasGlobalAccess(access);
   const [workers, setWorkers] = useState<any[]>([]);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState({ page: 1, limit: 100, total: 0, totalPages: 1 });
   const [lookups, setLookups] = useState<any>({ contractors: [], trades: [], sites: [] });
   const [filters, setFilters] = useState({ search: "", contractor_profile_id: "", labour_trade_id: "", site_id: "", status: "" });
   const [loading, setLoading] = useState(false);
@@ -82,11 +84,11 @@ export default function LabourWorkersPage() {
     if (response.ok) setLookups(payload);
   }
 
-  async function loadWorkers(nextFilters = filters) {
+  async function loadWorkers(nextFilters = filters, nextPage = page) {
     setLoading(true);
     setError("");
     setSuccess("");
-    const params = new URLSearchParams({ limit: "100" });
+    const params = new URLSearchParams({ page: String(nextPage), limit: "100" });
     if (nextFilters.search.trim()) params.set("search", nextFilters.search.trim());
     if (nextFilters.contractor_profile_id) params.set("contractor_profile_id", nextFilters.contractor_profile_id);
     if (nextFilters.labour_trade_id) params.set("labour_trade_id", nextFilters.labour_trade_id);
@@ -100,6 +102,9 @@ export default function LabourWorkersPage() {
         return;
       }
       setWorkers(payload.workers || []);
+      const nextPagination = payload.pagination || { page: nextPage, limit: 100, total: payload.total || 0, totalPages: Math.max(Math.ceil((payload.total || 0) / 100), 1) };
+      setPage(nextPagination.page);
+      setPagination(nextPagination);
     } catch (fetchError: any) {
       setError(fetchError.message || "Failed to load labourers.");
     } finally {
@@ -110,7 +115,14 @@ export default function LabourWorkersPage() {
   function applyFilter(patch: Partial<typeof filters>) {
     const next = { ...filters, ...patch };
     setFilters(next);
-    loadWorkers(next);
+    setPage(1);
+    loadWorkers(next, 1);
+  }
+
+  function changePage(nextPage: number) {
+    if (nextPage < 1 || nextPage > pagination.totalPages || nextPage === page) return;
+    setPage(nextPage);
+    loadWorkers(filters, nextPage);
   }
 
   function isDailyWageWorker(worker: any) {
@@ -491,7 +503,7 @@ export default function LabourWorkersPage() {
           <div className="mb-4 grid gap-3 md:grid-cols-[1.4fr_1fr_1fr_1fr_0.8fr]">
             <label className="flex h-11 items-center gap-2 rounded-lg border px-3 text-sm">
               <Search className="h-4 w-4 text-slate-400" />
-              <input value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} onKeyDown={(event) => event.key === "Enter" && loadWorkers()} placeholder="Search code, name, father/husband, mobile or Aadhaar" className="flex-1 outline-none" />
+              <input value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} onKeyDown={(event) => event.key === "Enter" && (setPage(1), loadWorkers(filters, 1))} placeholder="Search code, name, father/husband, mobile or Aadhaar" className="flex-1 outline-none" />
             </label>
             <select value={filters.contractor_profile_id} onChange={(event) => applyFilter({ contractor_profile_id: event.target.value })} className="h-11 rounded-lg border px-3 text-sm">
               <option value="">All Contractors</option>
@@ -524,9 +536,14 @@ export default function LabourWorkersPage() {
               </div>
             </div>
           )}
-          <p className="mb-3 text-sm text-slate-500">
-            Showing {workers.length} Labourers
-          </p>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
+            <p>Showing {pagination.total ? `${(page - 1) * pagination.limit + 1}–${(page - 1) * pagination.limit + workers.length} of ${pagination.total}` : "0"} Labourers</p>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => changePage(page - 1)} disabled={loading || page <= 1} className="rounded-lg border bg-white px-3 py-2 font-semibold disabled:cursor-not-allowed disabled:opacity-50">Previous</button>
+              <span className="min-w-24 text-center font-semibold text-slate-700">Page {page} of {pagination.totalPages}</span>
+              <button type="button" onClick={() => changePage(page + 1)} disabled={loading || page >= pagination.totalPages} className="rounded-lg border bg-white px-3 py-2 font-semibold disabled:cursor-not-allowed disabled:opacity-50">Next</button>
+            </div>
+          </div>
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
