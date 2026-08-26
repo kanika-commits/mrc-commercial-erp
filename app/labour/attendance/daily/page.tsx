@@ -143,7 +143,7 @@ export default function LabourDailyAttendancePage() {
   ) as Record<string, string>, [rows]);
 
   const hasUnsavedChanges = dirtyWorkerIds.size > 0;
-  const currentContextKey = [filters.company_id, filters.site_id, filters.attendance_date, filters.contractor_profile_id].join("|");
+  const currentContextKey = [filters.company_id, filters.site_id, filters.attendance_date].join("|");
   const attendanceLoaded = Boolean(rows.length && loadedContextKey === currentContextKey);
   const dateSummary = period?.summary?.date_statuses?.[filters.attendance_date] || {};
   const reopenedDate = dateSummary.status === "reopened";
@@ -250,15 +250,14 @@ export default function LabourDailyAttendancePage() {
         controller.signal.aborted ||
         requestContext.company_id !== filtersRef.current.company_id ||
         requestContext.site_id !== filtersRef.current.site_id ||
-        requestContext.attendance_date !== filtersRef.current.attendance_date ||
-        requestContext.contractor_profile_id !== filtersRef.current.contractor_profile_id
+        requestContext.attendance_date !== filtersRef.current.attendance_date
       ) {
         return;
       }
       if (!response.ok) return setMessage(payload.error || "Could not load attendance.");
       const nextRows = payload.rows || [];
       setRows(nextRows);
-      setLoadedContextKey(nextRows.length ? [requestContext.company_id, requestContext.site_id, requestContext.attendance_date, requestContext.contractor_profile_id].join("|") : null);
+      setLoadedContextKey(nextRows.length ? [requestContext.company_id, requestContext.site_id, requestContext.attendance_date].join("|") : null);
       setMessage(nextRows.length ? "" : "No eligible deployed labourers found for this Site/date.");
       setPeriod(payload.period ? { ...payload.period, server_read_only: payload.read_only } : null);
       setSupportingPdf(payload.supporting_pdf || null);
@@ -287,15 +286,17 @@ export default function LabourDailyAttendancePage() {
 
   function applyFilterChange(patch: Partial<typeof filters>, options: { clearContractors?: boolean } = {}) {
     if ("company_id" in patch || "site_id" in patch) clearSelectedLabourContext();
-    setRows([]);
-    setLoadedContextKey(null);
-    setPeriod(null);
-    setSupportingPdf(null);
-    setDayLock(null);
-    setReadOnlyReason("");
-    setPolicy(null);
-    setDirtyWorkerIds(new Set());
-    setSubmitted(false);
+    if (!("contractor_profile_id" in patch)) {
+      setRows([]);
+      setLoadedContextKey(null);
+      setPeriod(null);
+      setSupportingPdf(null);
+      setDayLock(null);
+      setReadOnlyReason("");
+      setPolicy(null);
+      setDirtyWorkerIds(new Set());
+      setSubmitted(false);
+    }
     if (options.clearContractors) {
       setLookups((current: any) => ({ ...current, contractors: [], attendance_system: null }));
     }
@@ -304,7 +305,7 @@ export default function LabourDailyAttendancePage() {
 
   function updateFilters(patch: Partial<typeof filters>, options: { clearContractors?: boolean } = {}) {
     if ("contractor_profile_id" in patch && Object.keys(patch).length === 1) {
-      applyFilterChange({ contractor_profile_id: patch.contractor_profile_id || "" });
+      setFilters((current) => ({ ...current, contractor_profile_id: patch.contractor_profile_id || "" }));
       return;
     }
     if ("labour_search" in patch && Object.keys(patch).length === 1) {
@@ -549,7 +550,7 @@ export default function LabourDailyAttendancePage() {
     if (saving || submitting) return;
     if (!period?.id) return setMessage("Load attendance before submitting.");
     if (!rows.length) return setMessage("Load attendance before submitting.");
-    const incompleteRows = displayedRows.filter((row) => incompleteWorkerIds.has(row.labour_worker_id));
+    const incompleteRows = rows.filter((row) => incompleteWorkerIds.has(row.labour_worker_id));
     if (incompleteRows.length) {
       const countLabel = `${incompleteRows.length} labourer${incompleteRows.length === 1 ? "" : "s"}`;
       setSubmitError(`Attendance is incomplete for ${countLabel}. ${incompleteRows.length === 1 ? "Complete both halves before submitting." : "Complete both halves for all incomplete labourers before submitting."}`);
