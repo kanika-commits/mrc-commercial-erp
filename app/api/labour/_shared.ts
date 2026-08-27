@@ -454,7 +454,10 @@ export async function loadFrozenAttendanceDeploymentIds(access: LabourAccess, pe
     .select("id")
     .eq("period_id", period.id)
     .eq("attendance_date", attendanceDate)
+    .eq("status", "submitted")
     .order("submission_version", { ascending: false })
+    .order("submitted_at", { ascending: false })
+    .order("id", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (versionError) throw versionError;
