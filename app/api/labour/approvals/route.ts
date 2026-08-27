@@ -700,7 +700,7 @@ function compactSubmission(submission: any, employeeById: Map<string, any>) {
 
 function compactStandardPeriod(period: any, attendanceRows: any[], workDate?: string | null) {
   const realRows = attendanceRows.filter((row: any) => row.labour_worker_id);
-  const presentCount = realRows.filter((row: any) => row.first_half_present === true || row.second_half_present === true).length;
+  const presentCount = realRows.filter((row: any) => row.first_half_present === true && row.second_half_present === true).length;
   const absentCount = realRows.filter((row: any) => row.first_half_present === false && row.second_half_present === false).length;
   const halfDayCount = realRows.filter((row: any) =>
     (row.first_half_present === true && row.second_half_present === false) ||
@@ -723,6 +723,7 @@ function compactStandardPeriod(period: any, attendanceRows: any[], workDate?: st
     Number(row.bonus_minutes || 0) > 0,
   ).length;
   const dateSummary = period?.summary?.date_statuses?.[dateText(workDate) || ""] || {};
+  const snapshotRow = realRows.find((row: any) => row.register_status || row.submitted_by_name || row.submitted_at);
   return {
     id: period.id,
     submission_id: period.id,
@@ -737,10 +738,12 @@ function compactStandardPeriod(period: any, attendanceRows: any[], workDate?: st
     work_date: dateText(workDate) || period.period_month,
     period_month: period.period_month,
     submission_type: "Standard Attendance",
-    status: standardDateStatus(period, workDate, realRows.length > 0),
-    submitted_by_name: dateSummary.submitted_by_name || null,
-    submitted_by_email: dateSummary.submitted_by_email || null,
-    submitted_at: dateSummary.submitted_at || null,
+    status: realRows.find((row: any) => normalizeStandardStatus(row.register_status))?.register_status
+      || standardDateStatus(period, workDate, realRows.length > 0),
+    submitted_by_name: snapshotRow?.submitted_by_name || dateSummary.submitted_by_name || null,
+    submitted_by_email: snapshotRow?.submitted_by_email || dateSummary.submitted_by_email || null,
+    submitted_at: snapshotRow?.submitted_at || dateSummary.submitted_at || null,
+    submission_version: snapshotRow?.submission_version || dateSummary.submission_version || null,
     approved_by_name: dateSummary.finalized_by_name || null,
     approved_by_email: dateSummary.finalized_by_email || null,
     approved_at: dateSummary.finalized_at || null,
@@ -797,8 +800,10 @@ function compactStandardSiteRegister(periods: any[], attendanceRows: any[], work
   const first = periods[0] || {};
   const periodIds = periods.map((period) => period.id).filter(Boolean);
   const registerDate = dateText(workDate) || dateText(attendanceRows.find((row: any) => row.attendance_date)?.attendance_date) || first.period_month;
-  const statuses = new Set(periods.map((period) => standardDateStatus(period, registerDate, true)).filter(Boolean));
-  const aggregateStatus = statuses.size === 1 ? Array.from(statuses)[0] : statuses.has("submitted") ? "submitted" : statuses.has("reopened") ? "reopened" : statuses.has("finalized") ? "finalized" : first.status;
+  const canonicalStatuses = new Set(periods.map((period) => normalizeStandardStatus(period?.summary?.date_statuses?.[registerDate]?.status)).filter(Boolean));
+  const snapshotStatuses = new Set(attendanceRows.map((row: any) => normalizeStandardStatus(row.register_status)).filter(Boolean));
+  const statuses = canonicalStatuses.size ? canonicalStatuses : snapshotStatuses;
+  const aggregateStatus = statuses.size === 1 ? Array.from(statuses)[0] : statuses.has("reopened") ? "reopened" : statuses.has("finalized") ? "finalized" : statuses.has("cancelled") ? "cancelled" : statuses.has("submitted") ? "submitted" : first.status;
   const compacted = compactStandardPeriod(first, attendanceRows, registerDate);
   return {
     ...compacted,
