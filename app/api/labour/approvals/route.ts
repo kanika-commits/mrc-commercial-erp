@@ -855,6 +855,44 @@ function compactStandardSnapshot(period: any, snapshot: any) {
   };
 }
 
+function snapshotCanonicalStatus(period: any, attendanceDate: string) {
+  return normalizeStandardStatus(period?.summary?.date_statuses?.[attendanceDate]?.status) || "submitted";
+}
+
+function compactStandardSnapshotAggregate(periods: any[], snapshots: any[], workDate: string) {
+  const first = periods[0] || {};
+  const latest = [...snapshots].sort((a, b) => Number(b.submission_version || 0) - Number(a.submission_version || 0))[0] || {};
+  const sum = (field: string) => snapshots.reduce((total, snapshot) => total + Number(snapshot[field] || 0), 0);
+  const statuses = new Set(periods.map((period: any) => snapshotCanonicalStatus(period, workDate)));
+  const status = statuses.size === 1 ? Array.from(statuses)[0]
+    : statuses.has("reopened") ? "reopened"
+    : statuses.has("finalized") ? "finalized"
+    : statuses.has("cancelled") ? "cancelled"
+    : "submitted";
+  return {
+    ...compactStandardSnapshot(first, latest),
+    id: `standard:${first.organization_id}:${first.company_id}:${first.site_id}:${workDate}`,
+    submission_id: `standard:${first.organization_id}:${first.company_id}:${first.site_id}:${workDate}`,
+    attendance_period_id: null,
+    period_ids: periods.map((period: any) => period.id).filter(Boolean),
+    contractor_profile_id: null,
+    contractor_name: "All Contractors",
+    work_date: workDate,
+    status,
+    submitted_by_name: latest.submitted_by_name || "-",
+    submitted_by_email: latest.submitted_by_email || null,
+    submitted_at: latest.submitted_at || null,
+    labourers_count: sum("eligible_worker_count"),
+    present_count: sum("present_count"),
+    absent_count: sum("absent_count"),
+    half_day_count: sum("half_day_count"),
+    pending_count: sum("incomplete_count"),
+    total_ot_minutes: sum("overtime_minutes_total"),
+    total_bonus_minutes: sum("bonus_minutes_total"),
+    has_submission_snapshot: true,
+  };
+}
+
 function publicStandardSupportingPdf(row: any) {
   if (!row) return null;
   return {
@@ -1090,7 +1128,7 @@ export async function loadStandardApprovalRows(access: any, input: {
         category: row.trade_snapshot || "-", first_half_present: row.first_half_present, second_half_present: row.second_half_present,
         deployment_id: row.deployment_id, daily_rate: snapshotDeploymentById.get(row.deployment_id)?.wage_rate ?? null,
         overtime_minutes: row.overtime_minutes, bonus_minutes: row.bonus_minutes, status: row.derived_status,
-        register_status: "submitted", submitted_by_name: snapshot.submitted_by_name, submitted_by_email: snapshot.submitted_by_email,
+        register_status: snapshotCanonicalStatus(snapshotPeriod, input.workDate || snapshot.attendance_date), submitted_by_name: snapshot.submitted_by_name, submitted_by_email: snapshot.submitted_by_email,
         submitted_at: snapshot.submitted_at, attendance_exception: false,
       }));
       if (!input.search) return rows;
@@ -1304,6 +1342,25 @@ async function loadStandardApprovalRegisters(access: any, input: {
   const enrichedPeriods = await enrichStandardSubmitterSnapshots(access, periods || []);
   const periodIds = enrichedPeriods.map((period: any) => period.id).filter(Boolean);
   if (!periodIds.length) return [];
+  let submittedSnapshotQuery = access.admin
+    .from("labour_attendance_submission_versions")
+    .select("*")
+    .in("period_id", periodIds)
+    .eq("status", "submitted")
+    .order("submission_version", { ascending: false });
+  if (input.workDate) submittedSnapshotQuery = submittedSnapshotQuery.gte("attendance_date", input.workDate);
+  if (input.toDate) submittedSnapshotQuery = submittedSnapshotQuery.lte("attendance_date", input.toDate);
+  const { data: submittedSnapshots, error: submittedSnapshotError } = await submittedSnapshotQuery;
+  if (submittedSnapshotError && submittedSnapshotError.code !== "42P01") throw submittedSnapshotError;
+  const snapshotsByDate = new Map<string, any[]>();
+  for (const snapshot of submittedSnapshots || []) {
+    const date = dateText(snapshot.attendance_date);
+    if (!date) continue;
+    const current = snapshotsByDate.get(date) || [];
+    if (!current.some((item: any) => item.period_id === snapshot.period_id)) current.push(snapshot);
+    snapshotsByDate.set(date, current);
+  }
+  const periodByIdForSnapshots = new Map<string, any>(enrichedPeriods.map((period: any) => [period.id, period]));
   const attendanceRows: any[] = [];
   const attendancePageSize = 1000;
   for (let offset = 0; ; offset += attendancePageSize) {
@@ -1337,6 +1394,17 @@ async function loadStandardApprovalRegisters(access: any, input: {
       groups.set(key, current);
     }
   }
+  const snapshotRegisters = Array.from(snapshotsByDate.entries()).map(([workDate, snapshots]) =>
+    compactStandardSnapshotAggregate(
+      snapshots.map((snapshot: any) => periodByIdForSnapshots.get(snapshot.period_id)).filter(Boolean),
+      snapshots,
+      workDate,
+    )
+  );
+  const snapshotDates = new Set(snapshotRegisters.map((register: any) => register.work_date));
+  for (const [key, group] of groups) {
+    if (snapshotDates.has(group.workDate)) groups.delete(key);
+  }
   for (const group of groups.values()) {
     const eligibleDeployments = await loadEligibleDeployments(access, {
       organizationId: group.periods[0]?.organization_id || input.organizationId,
@@ -1348,12 +1416,11 @@ async function loadStandardApprovalRegisters(access: any, input: {
     const eligibleWorkerIds = new Set(eligibleDeployments.map((deployment: any) => deployment.labour_worker_id));
     group.rows = group.rows.filter((attendance: any) => eligibleWorkerIds.has(attendance.labour_worker_id));
   }
-  let registers = Array.from(groups.values())
-    .map((group) => {
+  let registers = [...snapshotRegisters, ...Array.from(groups.values()).map((group) => {
       // Submission snapshots remain the source for historical detail, but the
       // current approval register's status comes from the date-level period state.
       return compactStandardSiteRegister(group.periods, group.rows, group.workDate);
-    })
+    })]
     .filter((register: any) => !requestedStatus || register.status === requestedStatus);
   if (input.contractorProfileId) {
     const allowedPeriodIds = new Set(enrichedPeriods.filter((period: any) => period.contractor_profile_id === input.contractorProfileId).map((period: any) => period.id));
