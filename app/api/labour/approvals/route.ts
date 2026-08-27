@@ -723,7 +723,7 @@ function compactStandardPeriod(period: any, attendanceRows: any[], workDate?: st
     Number(row.bonus_minutes || 0) > 0,
   ).length;
   const dateSummary = period?.summary?.date_statuses?.[dateText(workDate) || ""] || {};
-  const snapshotRow = realRows.find((row: any) => row.register_status || row.submitted_by_name || row.submitted_at);
+  const snapshotRow = realRows.find((row: any) => normalizeStandardStatus(row.register_status));
   return {
     id: period.id,
     submission_id: period.id,
@@ -1249,9 +1249,6 @@ export async function loadStandardApprovalRows(access: any, input: {
         overtime_minutes: attendance ? Number(attendance.overtime_minutes || attendance.approved_overtime_minutes || 0) : 0,
         bonus_minutes: attendance ? Number(attendance.bonus_minutes || 0) : 0,
         remarks: attendance?.remarks || null,
-        submitted_by_name: period.submitted_by_name,
-        submitted_by_email: period.submitted_by_email,
-        submitted_at: period.submitted_at,
         status: attendance?.status || "draft",
         register_status: status,
         attendance_exception: firstHalfPresent !== true || secondHalfPresent !== true || Number(attendance?.overtime_minutes || attendance?.approved_overtime_minutes || 0) > 0 || Number(attendance?.bonus_minutes || 0) > 0,
@@ -1298,9 +1295,6 @@ export async function loadStandardApprovalRows(access: any, input: {
         overtime_minutes: Number(attendance.overtime_minutes || attendance.approved_overtime_minutes || 0),
         bonus_minutes: Number(attendance.bonus_minutes || 0),
         remarks: attendance.remarks || null,
-        submitted_by_name: period.submitted_by_name,
-        submitted_by_email: period.submitted_by_email,
-        submitted_at: period.submitted_at,
         status,
         attendance_exception: attendance.first_half_present === null || attendance.first_half_present === undefined || attendance.second_half_present === null || attendance.second_half_present === undefined || Number(attendance.overtime_minutes || attendance.approved_overtime_minutes || 0) > 0 || Number(attendance.bonus_minutes || 0) > 0,
       }];
