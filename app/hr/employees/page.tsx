@@ -74,10 +74,7 @@ export default function EmployeesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyFilter, siteFilter, departmentFilter, designationFilter, employeeTypeFilter, statusFilter, page, pageSize, reloadKey]);
 
-  const visibleSites = useMemo(
-    () => companyFilter ? lookups.sites.filter((site) => !site.meta || site.meta === companyFilter) : lookups.sites,
-    [companyFilter, lookups.sites],
-  );
+  const visibleSites = useMemo(() => lookups.sites, [lookups.sites]);
   const hasActiveFilters = Boolean(search.trim() || companyFilter || siteFilter || departmentFilter || designationFilter || employeeTypeFilter || statusFilter);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const startRow = total === 0 ? 0 : (page - 1) * pageSize + 1;

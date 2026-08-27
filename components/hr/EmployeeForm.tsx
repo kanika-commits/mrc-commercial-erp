@@ -238,9 +238,7 @@ export default function EmployeeForm({
     }));
   }
 
-  const visibleSites = form.company_id
-    ? sites.filter((site) => !site.meta || site.meta === form.company_id)
-    : sites;
+  const visibleSites = sites;
   const selectedCompany = companies.find((company) => company.id === form.company_id)?.label || null;
   const selectedSite = visibleSites.find((site) => site.id === form.site_id)?.label || null;
   const previousCompany = companies.find((company) => company.id === initialEmployee?.company_id)?.label || initialEmployee?.company_id || "-";

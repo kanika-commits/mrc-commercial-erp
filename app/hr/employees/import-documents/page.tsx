@@ -123,10 +123,7 @@ export default function EmployeeDocumentImportPage() {
   const [message, setMessage] = useState("");
   const [success, setSuccess] = useState("");
 
-  const visibleSites = useMemo(
-    () => companyId ? lookups.sites.filter((site) => !site.meta || site.meta === companyId) : lookups.sites,
-    [companyId, lookups.sites],
-  );
+  const visibleSites = useMemo(() => lookups.sites, [lookups.sites]);
   const employeeGroups = useMemo<EmployeePreviewGroup[]>(() => {
     const grouped = new Map<string, Row[]>();
     for (const row of rows) grouped.set(groupKey(row), [...(grouped.get(groupKey(row)) || []), row]);
