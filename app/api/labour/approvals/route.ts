@@ -860,15 +860,16 @@ function compactStandardSnapshot(period: any, snapshot: any) {
   };
 }
 
-function snapshotCanonicalStatus(period: any, attendanceDate: string) {
-  return normalizeStandardStatus(period?.summary?.date_statuses?.[attendanceDate]?.status) || "submitted";
+function resolveStandardApprovalStatus(period: any, attendanceDate: string, hasSubmittedSnapshot = false) {
+  return normalizeStandardStatus(period?.summary?.date_statuses?.[attendanceDate]?.status)
+    || (hasSubmittedSnapshot ? "submitted" : "draft");
 }
 
 function compactStandardSnapshotAggregate(periods: any[], snapshots: any[], workDate: string) {
   const first = periods[0] || {};
   const latest = [...snapshots].sort((a, b) => Number(b.submission_version || 0) - Number(a.submission_version || 0))[0] || {};
   const sum = (field: string) => snapshots.reduce((total, snapshot) => total + Number(snapshot[field] || 0), 0);
-  const statuses = new Set(periods.map((period: any) => snapshotCanonicalStatus(period, workDate)));
+  const statuses = new Set(periods.map((period: any) => resolveStandardApprovalStatus(period, workDate, true)));
   const status = statuses.size === 1 ? Array.from(statuses)[0]
     : statuses.has("reopened") ? "reopened"
     : statuses.has("finalized") ? "finalized"
@@ -1133,7 +1134,7 @@ export async function loadStandardApprovalRows(access: any, input: {
         category: row.trade_snapshot || "-", first_half_present: row.first_half_present, second_half_present: row.second_half_present,
         deployment_id: row.deployment_id, daily_rate: snapshotDeploymentById.get(row.deployment_id)?.wage_rate ?? null,
         overtime_minutes: row.overtime_minutes, bonus_minutes: row.bonus_minutes, status: row.derived_status,
-        register_status: snapshotCanonicalStatus(snapshotPeriod, input.workDate || snapshot.attendance_date), submitted_by_name: snapshot.submitted_by_name, submitted_by_email: snapshot.submitted_by_email,
+        register_status: resolveStandardApprovalStatus(snapshotPeriod, input.workDate || snapshot.attendance_date, true), submitted_by_name: snapshot.submitted_by_name, submitted_by_email: snapshot.submitted_by_email,
         submitted_at: snapshot.submitted_at, attendance_exception: false,
       }));
       if (!input.search) return rows;
@@ -1728,10 +1729,25 @@ async function transitionStandardPeriod(access: any, request: Request, payload: 
   const periodIdsWithRows = new Set((attendanceRows || []).map((row: any) => row.period_id).filter(Boolean));
   if (!periodIdsWithRows.size) return jsonError("No attendance rows were found for the selected attendance date.", 404);
   if (periods.some((period: any) => !periodIdsWithRows.has(period.id))) return jsonError("Selected attendance periods do not all contain rows for this date register.", 400);
+  const { data: submittedSnapshots, error: submittedSnapshotError } = await access.admin
+    .from("labour_attendance_submission_versions")
+    .select("period_id, submission_version, submitted_at, id")
+    .in("period_id", periodIds)
+    .eq("attendance_date", workDate)
+    .eq("status", "submitted")
+    .order("submission_version", { ascending: false })
+    .order("submitted_at", { ascending: false })
+    .order("id", { ascending: false });
+  if (submittedSnapshotError && submittedSnapshotError.code !== "42P01") throw submittedSnapshotError;
+  const submittedPeriodIds = new Set<string>();
+  for (const snapshot of submittedSnapshots || []) {
+    if (!submittedPeriodIds.has(snapshot.period_id)) submittedPeriodIds.add(snapshot.period_id);
+  }
+  const approvalStatus = (period: any) => resolveStandardApprovalStatus(period, workDate, submittedPeriodIds.has(period.id));
   const now = new Date().toISOString();
   if (action === "standard_approve") {
     for (const period of periods) {
-      if (standardDateStatus(period, workDate, true) !== "submitted") return jsonError(`Attendance for ${workDate} is not submitted and cannot be approved.`);
+      if (approvalStatus(period) !== "submitted") return jsonError(`Attendance for ${workDate} is not submitted and cannot be approved.`);
       const patch = {
       summary: standardSummaryWithDateStatus(period, workDate, "finalized", { finalized_at: now, finalized_by: access.auth.user.id }),
       updated_at: now,
@@ -1757,7 +1773,7 @@ async function transitionStandardPeriod(access: any, request: Request, payload: 
   if (action === "standard_send_back") {
     const reason = text(payload.reason);
     if (!reason || reason.length < 10) return jsonError("Enter a send-back reason of at least 10 characters.");
-    if (periods.some((period: any) => standardDateStatus(period, workDate, true) !== "submitted")) return jsonError("Only submitted attendance periods can be sent back.");
+    if (periods.some((period: any) => approvalStatus(period) !== "submitted")) return jsonError("Only submitted attendance periods can be sent back.");
     for (const period of periods) {
       const patch = {
       status: "reopened",
