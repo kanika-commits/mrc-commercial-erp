@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Download, FileSpreadsheet, Play } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { maskAadhaar, normalizeLookup } from "@/lib/labour/constants";
+import { labourImportMasterLookupKeys } from "@/lib/labour/import";
 
 const MASTER_MAPPING_KEY = "__master_mappings";
 const WORK_ORDER_MAPPING_KEY = "__work_order_mappings";
@@ -140,8 +141,12 @@ function optionMatchesSource(option: any, sourceValue: string) {
   return candidates.some((candidate) => normalizeLookup(candidate) === sourceKey);
 }
 
+function masterMappingKey(groupKey: string, sourceValue: string) {
+  return labourImportMasterLookupKeys(sourceValue, groupKey === "contractors" ? { splitCompound: true, stripParenthetical: true } : {})[0] || "";
+}
+
 function resolvedMasterOption(groupKey: string, sourceValue: string, options: any[], mapping: Record<string, Record<string, string>>) {
-  const sourceKey = normalizeLookup(sourceValue);
+  const sourceKey = masterMappingKey(groupKey, sourceValue);
   const mappedId = mapping[groupKey]?.[sourceKey] || "";
   if (mappedId) return options.find((option: any) => option.id === mappedId) || null;
   const matches = options.filter((option: any) => optionMatchesSource(option, sourceValue));
@@ -249,6 +254,7 @@ export default function LabourImportPage() {
       });
       const payload = await readPayload(response);
       if (!response.ok) return setMessage({ type: "error", text: payload.error || "Failed to save ERP master mappings." });
+      await validateBatch(batchId);
       setMessage({ type: "success", text: "ERP master mappings saved. Review worker document links before document access." });
       await loadPreview();
       setStep("preview");
@@ -373,7 +379,7 @@ export default function LabourImportPage() {
         mappingKey,
         contractorId: contractor.id,
         siteId: site.id,
-        contractorSourceKey: normalizeLookup(contractorText),
+        contractorSourceKey: masterMappingKey("contractors", contractorText),
         contractorName: optionDisplay(contractor) || contractorText,
         siteName: optionDisplay(site) || siteText,
         options: workOrderOptions.filter((option: any) => option.vendor_id === contractor.id && option.site_id === site.id),
@@ -524,7 +530,7 @@ export default function LabourImportPage() {
                     <div className="border-b bg-slate-50 px-3 py-2 text-sm font-semibold">{group.title}</div>
                     <div className="divide-y">
                       {values.map((sourceValue) => {
-                        const sourceKey = normalizeLookup(sourceValue);
+                        const sourceKey = masterMappingKey(group.key, sourceValue);
                         const currentValue = masterMappingDraft[group.key]?.[sourceKey] || "";
                         const workOrderPairsForContractor = group.key === "contractors"
                           ? contractorSitePairs.filter((pair) => pair.contractorSourceKey === sourceKey)
