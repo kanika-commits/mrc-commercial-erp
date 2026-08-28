@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   actorFields,
+  applyLabourWorkerScope,
   audit,
   jsonError,
   normalizeLabourIdentity,
@@ -100,11 +101,8 @@ export async function GET(request: Request) {
     if (!orgScoped) return NextResponse.json({ workers: [], total: 0, page, limit });
     query = orgScoped;
 
-    if (access.assignments.siteIds?.length && !access.assignments.companyIds?.length) {
-      query = query.in("current_site_id", access.assignments.siteIds);
-    } else if (access.assignments.companyIds?.length) {
-      query = query.or(`current_company_id.in.(${access.assignments.companyIds.join(",")}),current_company_id.is.null`);
-    } else if (access.assignments.companyIds && access.assignments.siteIds && !access.assignments.companyIds.length && !access.assignments.siteIds.length) {
+    query = applyLabourWorkerScope(query, access.assignments);
+    if (!query) {
       return NextResponse.json({ workers: [], total: 0, page, limit });
     }
 

@@ -45,9 +45,12 @@ function hasOverlap(existing, nextFrom, nextTo = null) {
 
 function scopedAllowed(assignments, companyId, siteId) {
   if (assignments.companyIds === null && assignments.siteIds === null) return true;
-  if (assignments.siteIds?.length) return assignments.siteIds.includes(siteId);
-  if (assignments.companyIds?.length) return assignments.companyIds.includes(companyId);
-  return false;
+  return Boolean(
+    assignments.companyIds?.length &&
+    assignments.siteIds?.length &&
+    assignments.companyIds.includes(companyId) &&
+    assignments.siteIds.includes(siteId),
+  );
 }
 
 assert.equal(normalizeIdentifier("0"), null, "Sentinel Aadhaar 0 should not be unique identity");
@@ -63,10 +66,11 @@ assert.equal(normalizeLabourCode(" ho-1 "), "HO-1", "Historical non-numeric Labo
 assert.equal(previousDay("2026-07-10"), "2026-07-09", "Transfer should close previous deployment the day before");
 assert.equal(hasOverlap([{ effective_from: "2026-07-01", effective_to: null }], "2026-07-10"), true, "Open deployment overlaps future date");
 assert.equal(hasOverlap([{ effective_from: "2026-07-01", effective_to: "2026-07-09" }], "2026-07-10"), false, "Closed deployment should not overlap next day");
-assert.equal(scopedAllowed({ companyIds: ["c1"], siteIds: [] }, "c1", "s2"), true, "Company-scoped user can access company sites");
-assert.equal(scopedAllowed({ companyIds: ["c1"], siteIds: [] }, "c2", "s2"), false, "Company scope blocks other companies");
-assert.equal(scopedAllowed({ companyIds: [], siteIds: ["s1"] }, "c1", "s1"), true, "Site-scoped user can access assigned site");
-assert.equal(scopedAllowed({ companyIds: [], siteIds: ["s1"] }, "c1", "s2"), false, "Site scope blocks other sites");
+assert.equal(scopedAllowed({ companyIds: ["c1"], siteIds: ["s1"] }, "c1", "s1"), true, "Users need both assigned company and site");
+assert.equal(scopedAllowed({ companyIds: ["c1"], siteIds: ["s1"] }, "c1", "s2"), false, "Unassigned sites are blocked");
+assert.equal(scopedAllowed({ companyIds: ["c1"], siteIds: ["s1"] }, "c2", "s1"), false, "Unassigned companies are blocked");
+assert.equal(scopedAllowed({ companyIds: ["c1"], siteIds: [] }, "c1", "s1"), false, "Company-only users receive no Labour workers");
+assert.equal(scopedAllowed({ companyIds: [], siteIds: ["s1"] }, "c1", "s1"), false, "Site-only users receive no Labour workers");
 
 const vendorOptionsRoute = fs.readFileSync("app/api/labour/contractors/vendor-options/route.ts", "utf8");
 assert.match(vendorOptionsRoute, /requireLabourPermission\(request,\s*"labour_contractors",\s*"add"\)/, "Vendor options must use labour_contractors:add");
@@ -117,8 +121,8 @@ assert.match(workerCreateRoute, /current_site_id: null/, "Worker master create l
 assert.match(workerCreateRoute, /current_work_order_id: null/, "Worker master create leaves current work-order snapshot empty");
 assert.doesNotMatch(workerCreateRoute, /applyCompanySiteScope\(query,\s*access\.assignments,\s*"current_company_id"/, "Worker list must not scope by nullable current deployment fields");
 assert.match(workerCreateRoute, /\.from\("labour_workers"\)[\s\S]+current_company_id, current_site_id, current_work_order_id, created_at[\s\S]+`, \{ count: "exact" \}\)/, "Worker list starts from Labourer Master rows");
-assert.match(workerCreateRoute, /current_company_id\.is\.null/, "Company-scoped Labour Master users can see undeployed workers");
-assert.match(workerCreateRoute, /query\.in\("current_site_id",\s*access\.assignments\.siteIds\)/, "Site-only users remain limited to deployed workers at assigned sites");
+assert.match(workerCreateRoute, /applyLabourWorkerScope\(query,\s*access\.assignments\)/, "Worker list requires both assigned company and site scope");
+assert.match(workerCreateRoute, /current_company_id.*current_site_id/, "Worker list uses current company and site fields for authorization");
 assert.match(workerCreateRoute, /current_deployment/, "Worker list API enriches workers with active deployment details");
 assert.match(workerCreateRoute, /labour_deployments/, "Worker list API loads active deployment rows separately");
 assert.match(workerCreateRoute, /contractor_name/, "Worker list API returns readable contractor name");
@@ -166,8 +170,7 @@ assert.match(workerRegisterRoute, /await nextLabourCode\(access\.admin, organiza
 assert.doesNotMatch(workerRegisterRoute, /normalizeLabourCode\(payload\.labour_code\) \|\| await nextLabourCode/, "Registration does not trust the client-predicted Labour Code for new workers");
 assert.match(workerRegisterRoute, /workerError\.code !== "23505"/, "Registration retries generated Labour Code inserts on unique conflicts");
 assert.match(workerRegisterRoute, /Could not generate a unique Labour Code\. Please try again\./, "Registration returns a clear error if automatic code generation cannot find a unique code");
-assert.match(workerRegisterRoute, /from\("labour_workers"\)[\s\S]+\.select\("labour_code"\)[\s\S]+\.eq\("organization_id", organizationId\);/, "Labour Code generation includes soft-deleted workers because the database unique code constraint still includes them");
-assert.doesNotMatch(workerRegisterRoute, /from\("labour_workers"\)[\s\S]+\.select\("labour_code"\)[\s\S]+\.neq\("status", "deleted"\);/, "Labour Code generation must not reuse soft-deleted LAB codes");
+assert.match(workerRegisterRoute, /from\("labour_workers"\)[\s\S]+\.select\("labour_code"\)[\s\S]+\.eq\("organization_id", organizationId\)[\s\S]+\.order\("labour_code", \{ ascending: false \}\)[\s\S]+\.limit\(1\)/, "Labour Code generation scopes all statuses and reads only the highest code");
 assert.match(workerCreateRoute, /normalizeLabourCode\(payload\.labour_code\)/, "Worker create stores canonical Labour Code");
 assert.match(workerCreateRoute, /assertUniqueLabourCode/, "Worker create checks canonical Labour Code duplicates");
 assert.match(workerCreateRoute, /A labourer with this code already exists\./, "Worker create returns the approved canonical duplicate message");

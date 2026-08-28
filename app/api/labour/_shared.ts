@@ -91,6 +91,12 @@ export function applyCompanySiteScope(query: any, assignments: { companyIds: str
   return null;
 }
 
+export function applyLabourWorkerScope(query: any, assignments: { companyIds: string[] | null; siteIds: string[] | null }) {
+  if (assignments.siteIds === null && assignments.companyIds === null) return query;
+  if (!assignments.companyIds?.length || !assignments.siteIds?.length) return null;
+  return query.in("current_company_id", assignments.companyIds).in("current_site_id", assignments.siteIds);
+}
+
 export async function resolveOrganizationId(access: LabourAccess, requested?: string | null) {
   return resolveWriteOrganizationId(access.organizationScope, requested);
 }
@@ -886,13 +892,8 @@ export async function loadScopedWorker(access: LabourAccess, workerId: string) {
   const scoped = applyOrganizationScope(query, access.organizationScope);
   if (!scoped) return null;
   query = scoped;
-  if (access.assignments.siteIds?.length && !access.assignments.companyIds?.length) {
-    query = query.in("current_site_id", access.assignments.siteIds);
-  } else if (access.assignments.companyIds?.length) {
-    query = query.or(`current_company_id.in.(${access.assignments.companyIds.join(",")}),current_company_id.is.null`);
-  } else if (access.assignments.companyIds && access.assignments.siteIds && !access.assignments.companyIds.length && !access.assignments.siteIds.length) {
-    return null;
-  }
+  query = applyLabourWorkerScope(query, access.assignments);
+  if (!query) return null;
   const { data, error } = await query.maybeSingle();
   if (error) throw error;
   return data;

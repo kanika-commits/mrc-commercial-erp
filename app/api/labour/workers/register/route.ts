@@ -389,14 +389,12 @@ async function nextLabourCode(admin: any, organizationId: string) {
   const { data, error } = await admin
     .from("labour_workers")
     .select("labour_code")
-    .eq("organization_id", organizationId);
+    .eq("organization_id", organizationId)
+    .order("labour_code", { ascending: false })
+    .limit(1);
   if (error) throw error;
-  const max = (data || []).reduce((current: number, worker: any) => {
-    const match = String(worker.labour_code || "").trim().toUpperCase().match(/^LAB(\d+)$/);
-    if (!match) return current;
-    return Math.max(current, Number(match[1]) || 0);
-  }, 0);
-  return `LAB${String(max + 1).padStart(6, "0")}`;
+  const max = String(data?.[0]?.labour_code || "").trim().toUpperCase().match(/^LAB(\d+)$/)?.[1];
+  return `LAB${String((Number(max) || 0) + 1).padStart(6, "0")}`;
 }
 
 async function ensureContractorProfile(access: any, request: Request, organizationId: string, vendorId: string) {
