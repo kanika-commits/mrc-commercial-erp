@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { actorFields, applyCompanySiteScope, audit, jsonError, originatingAttendanceSystem, requireLabourPermission } from "@/app/api/labour/_shared";
+import { applyCompanySiteScope, audit, jsonError, originatingAttendanceSystem, requireLabourPermission } from "@/app/api/labour/_shared";
 import { isMonthEnded } from "@/lib/labour/operations";
 import { applyOrganizationScope } from "@/lib/serverOrganizationScope";
 
@@ -24,20 +24,17 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const workflow = originatingAttendanceSystem(period.originating_attendance_system);
     if (!workflow) return jsonError("This attendance period has no originating attendance workflow. Confirm the historical workflow before finalizing it.", 409);
     if (workflow !== "standard") return jsonError("This approval action is available only for Standard Attendance records.", 403);
-    if (period.status !== "submitted") return jsonError("Submit the attendance period before finalizing.");
+    if (period.status !== "submitted") return jsonError("Submit the attendance period before closing.");
     if (!isMonthEnded(period.period_month)) return jsonError("Attendance period cannot be finalized before month end.");
     const { data: wagePeriod, error: wageError } = await access.admin.from("labour_wage_periods").select("id, status").eq("attendance_period_id", id).maybeSingle();
     if (wageError) throw wageError;
     if (wagePeriod && wagePeriod.status === "finalized") return jsonError("Reopen the finalized wage period before changing attendance.");
-    const updatePayload = {
-      status: "finalized",
-      finalized_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      ...actorFields(access.auth, "finalized" as any),
-      ...actorFields(access.auth, "updated"),
-    };
-    const { error } = await access.admin.from("labour_attendance_periods").update(updatePayload).eq("id", id);
+    const { data: result, error } = await access.admin.rpc("finalize_labour_attendance_period_atomic", {
+      p_period_id: id,
+      p_actor: { user_id: access.auth.user.id, name: access.auth.user.user_metadata?.full_name || access.auth.user.email, email: access.auth.user.email || null },
+    });
     if (error) throw error;
+    const updatePayload = { status: "finalized", atomic_result: result };
     await audit(access, request, {
       moduleCode: "labour_daily_submission",
       action: "approve",

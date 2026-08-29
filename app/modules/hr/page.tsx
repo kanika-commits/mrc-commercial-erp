@@ -125,7 +125,7 @@ export default function HrLauncherPage() {
     if (card.moduleCode === "labour_workspace") {
       return showLabourWorkspace && (can(permissions, "labour_workers", "view") || can(permissions, "labour_attendance", "view") || can(permissions, "labour_site_in", "view") || can(permissions, "labour_engineer_daily", "view") || can(permissions, "labour_daily_submission", "view") || can(permissions, "labour_muster_configuration", "view"));
     }
-    if (card.moduleCode === "labour_daily_submission" && !can(permissions, "labour_daily_submission", "view") && !can(permissions, "labour_attendance", "view")) return false;
+    if (card.moduleCode === "labour_daily_submission" && !can(permissions, "labour_daily_submission", "view")) return false;
     if (card.moduleCode !== "labour_daily_submission" && !can(permissions, card.moduleCode, "view")) return false;
     if (!isLabourRouteAllowedForAttendanceSystem(card.moduleCode, labourWorkflow)) return false;
     if (!isLabourRouteAllowedForAttendanceSystem(card.href, labourWorkflow)) return false;

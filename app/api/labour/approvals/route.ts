@@ -1112,6 +1112,8 @@ export async function loadStandardApprovalRows(access: any, input: {
       .eq("attendance_date", input.workDate)
       .eq("status", "submitted")
       .order("submission_version", { ascending: false })
+      .order("submitted_at", { ascending: false })
+      .order("id", { ascending: false })
       .limit(1)
       .maybeSingle();
     if (snapshotError && snapshotError.code !== "42P01") throw snapshotError;
@@ -1347,7 +1349,9 @@ async function loadStandardApprovalRegisters(access: any, input: {
     .select("*")
     .in("period_id", periodIds)
     .eq("status", "submitted")
-    .order("submission_version", { ascending: false });
+    .order("submission_version", { ascending: false })
+    .order("submitted_at", { ascending: false })
+    .order("id", { ascending: false });
   if (input.workDate) submittedSnapshotQuery = submittedSnapshotQuery.gte("attendance_date", input.workDate);
   if (input.toDate) submittedSnapshotQuery = submittedSnapshotQuery.lte("attendance_date", input.toDate);
   const { data: submittedSnapshots, error: submittedSnapshotError } = await submittedSnapshotQuery;
@@ -1587,6 +1591,200 @@ async function loadStandardMonthlyRegister(access: any, input: {
   return { rows, days, contractors, categories };
 }
 
+export async function loadApprovedStandardMonthlyRegister(access: any, input: {
+  organizationId: string;
+  companyId: string;
+  siteId: string;
+  month: string;
+  contractorProfileId?: string | null;
+  category?: string | null;
+  attendanceStatus?: string | null;
+  search?: string | null;
+}) {
+  const days = daysInMonth(input.month);
+  const fromDate = `${input.month}-01`;
+  const toDate = `${input.month}-${String(days).padStart(2, "0")}`;
+  let periodQuery = access.admin
+    .from("labour_attendance_periods")
+    .select("id, organization_id, company_id, site_id, contractor_profile_id, period_month, summary, companies(company_name), sites(site_name), labour_contractor_profiles(id, contractor_code, vendors(vendor_name))")
+    .eq("organization_id", input.organizationId)
+    .eq("company_id", input.companyId)
+    .eq("site_id", input.siteId)
+    .eq("period_month", `${input.month}-01`)
+    .eq("originating_attendance_system", "standard");
+  if (input.contractorProfileId) periodQuery = periodQuery.eq("contractor_profile_id", input.contractorProfileId);
+  periodQuery = applyCompanySiteScope(periodQuery, access.assignments);
+  if (!periodQuery) return { rows: [], days, contractors: [], categories: [], grand_totals: null, financial_complete: true, unverified_rows: 0 };
+  const { data: periods, error: periodError } = await periodQuery;
+  if (periodError) throw periodError;
+  const periodById = new Map<string, any>((periods || []).map((period: any) => [period.id, period]));
+  const periodIds = Array.from(periodById.keys());
+  if (!periodIds.length) return { rows: [], days, contractors: [], categories: [], grand_totals: null, financial_complete: true, unverified_rows: 0 };
+  const snapshots: any[] = [];
+  const snapshotPageSize = 1000;
+  for (let offset = 0; ; offset += snapshotPageSize) {
+    const { data: page, error: snapshotError } = await access.admin
+      .from("labour_attendance_submission_versions")
+      .select("id, organization_id, company_id, site_id, contractor_profile_id, period_id, attendance_date, submission_version, submitted_at, submitted_by_name, submitted_by_email, eligible_worker_count, present_count, absent_count, half_day_count, incomplete_count, overtime_minutes_total, bonus_minutes_total")
+      .in("period_id", periodIds)
+      .gte("attendance_date", fromDate)
+      .lte("attendance_date", toDate)
+      .eq("status", "submitted")
+      .order("attendance_date", { ascending: true })
+      .order("submission_version", { ascending: false })
+      .order("submitted_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(offset, offset + snapshotPageSize - 1);
+    if (snapshotError) throw snapshotError;
+    snapshots.push(...(page || []));
+    if (!page || page.length < snapshotPageSize) break;
+  }
+  const latestByDate = new Map<string, any>();
+  for (const snapshot of snapshots || []) {
+    const date = dateText(snapshot.attendance_date);
+    if (!date || latestByDate.has(`${snapshot.period_id}:${date}`)) continue;
+    const period = periodById.get(snapshot.period_id);
+    if (resolveStandardApprovalStatus(period, date, true) !== "finalized") continue;
+    latestByDate.set(`${snapshot.period_id}:${date}`, snapshot);
+  }
+  const latestSnapshots = Array.from(latestByDate.values());
+  const legacyDates = Array.from(periodById.values()).flatMap((period: any) => {
+    const dateStatuses = period.summary?.date_statuses;
+    if (!dateStatuses || typeof dateStatuses !== "object" || Array.isArray(dateStatuses)) return [];
+    return Object.entries(dateStatuses)
+      .filter(([date, value]: [string, any]) => value?.status === "finalized" && !latestByDate.has(`${period.id}:${date}`))
+      .map(([date]) => date);
+  }).sort();
+  const snapshotIds = latestSnapshots.map((snapshot) => snapshot.id).filter(Boolean);
+  const snapshotRows: any[] = [];
+  const snapshotRowPageSize = 1000;
+  if (snapshotIds.length) {
+    for (let offset = 0; ; offset += snapshotRowPageSize) {
+      const { data: page, error: rowsError } = await access.admin
+        .from("labour_attendance_submission_version_rows")
+        .select("id, submission_version_id, labour_worker_id, deployment_id, labour_code_snapshot, worker_name_snapshot, contractor_name_snapshot, trade_snapshot, first_half_present, second_half_present, derived_status, overtime_minutes, approved_overtime_minutes, bonus_minutes, daily_rate_snapshot, attendance_wage_snapshot, ot_amount_snapshot, bonus_amount_snapshot, total_earned_snapshot")
+        .in("submission_version_id", snapshotIds)
+        .order("submission_version_id", { ascending: true })
+        .order("labour_code_snapshot", { ascending: true })
+        .order("id", { ascending: true })
+        .range(offset, offset + snapshotRowPageSize - 1);
+      if (rowsError) throw rowsError;
+      snapshotRows.push(...(page || []));
+      if (!page || page.length < snapshotRowPageSize) break;
+    }
+  }
+  const deploymentIds = Array.from(new Set((snapshotRows || []).map((row: any) => row.deployment_id).filter(Boolean)));
+  const { data: historicalDeployments, error: deploymentError } = deploymentIds.length
+    ? await access.admin.from("labour_deployments").select("id, organization_id, labour_worker_id, contractor_profile_id, company_id, site_id, work_order_id, manpower_work_order_id, labour_trade_id, wage_rate, effective_from, effective_to").in("id", deploymentIds)
+    : { data: [], error: null };
+  if (deploymentError) throw deploymentError;
+  const deploymentById = new Map<string, any>((historicalDeployments || []).map((deployment: any) => [deployment.id, deployment]));
+  const { data: historicalRates, error: historicalRateError } = await access.admin
+    .from("labour_wage_rates")
+    .select("id, organization_id, labour_worker_id, deployment_id, contractor_profile_id, company_id, site_id, work_order_id, trade_id, wage_type, base_rate, effective_from, effective_to, status")
+    .eq("organization_id", input.organizationId)
+    .eq("company_id", input.companyId)
+    .eq("site_id", input.siteId)
+    .eq("wage_type", "daily")
+    .neq("status", "cancelled")
+    .lte("effective_from", toDate);
+  if (historicalRateError) throw historicalRateError;
+  const mwoIds = Array.from(new Set((historicalDeployments || []).map((deployment: any) => deployment.manpower_work_order_id).filter(Boolean)));
+  const { data: historicalMwoRates, error: historicalMwoRateError } = mwoIds.length
+    ? await access.admin.from("manpower_work_order_rates").select("id, manpower_work_order_id, labour_trade_id, daily_rate, effective_from, effective_to, status").in("manpower_work_order_id", mwoIds).eq("status", "active").lte("effective_from", toDate)
+    : { data: [], error: null };
+  if (historicalMwoRateError) throw historicalMwoRateError;
+  const snapshotById = new Map<string, any>(latestSnapshots.map((snapshot) => [snapshot.id, snapshot]));
+  const workerRows = new Map<string, any>();
+  const contractorRows = new Map<string, any>();
+  const includedDates = new Set<string>();
+  let unverifiedRows = 0;
+  const addTotals = (target: any, item: any) => {
+    target.unique_workers ??= new Set<string>();
+    target.unique_workers.add(item.labour_worker_id || item.labour_code);
+    target.present_days += item.present_days;
+    target.absent_days += item.absent_days;
+    target.half_days += item.half_days;
+    target.ot_minutes += item.ot_minutes;
+    target.bonus_minutes += item.bonus_minutes;
+    target.financial_unverified ||= item.financial_verified === false;
+    if (item.financial_verified) {
+      target.attendance_wage += item.attendance_wage;
+      target.ot_amount += item.ot_amount;
+      target.bonus_amount += item.bonus_amount;
+      target.total_earned += item.total_earned;
+    }
+  };
+  const emptyTotals = () => ({ unique_workers: new Set<string>(), present_days: 0, absent_days: 0, half_days: 0, ot_minutes: 0, bonus_minutes: 0, attendance_wage: 0, ot_amount: 0, bonus_amount: 0, total_earned: 0 });
+  for (const row of snapshotRows || []) {
+    const snapshot = snapshotById.get(row.submission_version_id);
+    if (!snapshot) continue;
+    const period = periodById.get(snapshot.period_id);
+    const date = dateText(snapshot.attendance_date);
+    if (!date) continue;
+    const contractor = row.contractor_name_snapshot || period?.labour_contractor_profiles?.vendors?.vendor_name || period?.labour_contractor_profiles?.contractor_code || "Unassigned";
+    const contractorProfileId = snapshot.contractor_profile_id || period?.contractor_profile_id || "";
+    const category = row.trade_snapshot || "-";
+    const code = row.derived_status === "present" ? "P" : row.derived_status === "absent" ? "A" : row.derived_status === "half_day" ? "HD" : "-";
+    if (input.category && category !== input.category) continue;
+    if (input.attendanceStatus && input.attendanceStatus !== "all" && row.derived_status !== input.attendanceStatus) continue;
+    if (input.search) {
+      const needle = input.search.toUpperCase();
+      if (![row.labour_code_snapshot, row.worker_name_snapshot, contractor, category].some((value) => String(value || "").toUpperCase().includes(needle))) continue;
+    }
+    includedDates.add(date);
+    const deployment = deploymentById.get(row.deployment_id);
+    const dateInRange = (from: string | null | undefined, to: string | null | undefined) => Boolean(from && from <= date && (!to || to >= date));
+    const workerRate = (historicalRates || []).filter((rate: any) => rate.labour_worker_id === row.labour_worker_id && (!rate.deployment_id || rate.deployment_id === row.deployment_id) && (!rate.contractor_profile_id || rate.contractor_profile_id === contractorProfileId) && (!rate.work_order_id || rate.work_order_id === deployment?.work_order_id) && (!rate.trade_id || !deployment?.labour_trade_id || rate.trade_id === deployment.labour_trade_id) && dateInRange(rate.effective_from, rate.effective_to)).sort((a: any, b: any) => String(b.effective_from).localeCompare(String(a.effective_from)) || String(b.id).localeCompare(String(a.id)))[0];
+    const mwoRate = (historicalMwoRates || []).filter((rate: any) => rate.manpower_work_order_id === deployment?.manpower_work_order_id && rate.labour_trade_id === deployment?.labour_trade_id && dateInRange(rate.effective_from, rate.effective_to)).sort((a: any, b: any) => String(b.effective_from).localeCompare(String(a.effective_from)) || String(b.id).localeCompare(String(a.id)))[0];
+    const resolvedLegacyRate = Number(workerRate?.base_rate) > 0 ? Number(workerRate.base_rate) : Number(mwoRate?.daily_rate) > 0 ? Number(mwoRate.daily_rate) : Number(deployment?.wage_rate) > 0 ? Number(deployment.wage_rate) : null;
+    const presentHalves = Number(row.first_half_present === true) + Number(row.second_half_present === true);
+    const legacyAttendanceWage = resolvedLegacyRate === null ? null : presentHalves === 2 ? resolvedLegacyRate : presentHalves === 1 ? resolvedLegacyRate / 2 : 0;
+    const legacyOtAmount = resolvedLegacyRate === null ? null : (Number(row.approved_overtime_minutes || row.overtime_minutes || 0) / 60) * (resolvedLegacyRate / 8);
+    const legacyBonusAmount = resolvedLegacyRate === null ? null : (Number(row.bonus_minutes || 0) / 60) * (resolvedLegacyRate / 8);
+    const legacyTotal = resolvedLegacyRate === null ? null : legacyAttendanceWage! + legacyOtAmount! + legacyBonusAmount!;
+    const financialVerified = [row.daily_rate_snapshot, row.attendance_wage_snapshot, row.ot_amount_snapshot, row.bonus_amount_snapshot, row.total_earned_snapshot].every((value) => value !== null && value !== undefined);
+    const financial = financialVerified ? { attendance_wage: Number(row.attendance_wage_snapshot), ot_amount: Number(row.ot_amount_snapshot), bonus_amount: Number(row.bonus_amount_snapshot), total_earned: Number(row.total_earned_snapshot) } : { attendance_wage: legacyAttendanceWage, ot_amount: legacyOtAmount, bonus_amount: legacyBonusAmount, total_earned: legacyTotal };
+    const hasFinancialBasis = financial.attendance_wage !== null && financial.ot_amount !== null && financial.bonus_amount !== null && financial.total_earned !== null;
+    if (!hasFinancialBasis) unverifiedRows += 1;
+    const item = {
+      labour_worker_id: row.labour_worker_id,
+      labour_code: row.labour_code_snapshot,
+      labour_name: row.worker_name_snapshot,
+      contractor_name: contractor,
+      contractor_profile_id: contractorProfileId,
+      category,
+      day: String(Number(date.slice(8, 10))),
+      code,
+      present_days: row.derived_status === "present" ? 1 : 0,
+      absent_days: row.derived_status === "absent" ? 1 : 0,
+      half_days: row.derived_status === "half_day" ? 1 : 0,
+      ot_minutes: Number(row.approved_overtime_minutes || row.overtime_minutes || 0),
+      bonus_minutes: Number(row.bonus_minutes || 0),
+      attendance_wage: financial.attendance_wage,
+      ot_amount: financial.ot_amount,
+      bonus_amount: financial.bonus_amount,
+      total_earned: financial.total_earned,
+      financial_verified: hasFinancialBasis,
+    };
+    const workerKey = `${row.labour_worker_id || row.labour_code_snapshot}:${contractor}`;
+    const worker = workerRows.get(workerKey) || { labour_worker_id: row.labour_worker_id, labour_code: row.labour_code_snapshot, labour_name: row.worker_name_snapshot, contractor_name: contractor, category, days: {}, ...emptyTotals() };
+    worker.days[item.day] = item.code;
+    addTotals(worker, item);
+    workerRows.set(workerKey, worker);
+    const contractorKey = `${contractorProfileId}:${contractor}`;
+    const contractorSummary = contractorRows.get(contractorKey) || { contractor, contractor_profile_id: contractorProfileId, ...emptyTotals() };
+    addTotals(contractorSummary, item);
+    contractorRows.set(contractorKey, contractorSummary);
+  }
+  const toPublicTotals = (value: any) => ({ unique_labour: value.unique_workers.size, present_days: value.present_days, absent_days: value.absent_days, half_days: value.half_days, ot_hours: numericHours(value.ot_minutes), bonus_hours: numericHours(value.bonus_minutes), attendance_wage: value.financial_unverified ? null : value.attendance_wage, ot_amount: value.financial_unverified ? null : value.ot_amount, bonus_amount: value.financial_unverified ? null : value.bonus_amount, total_earned: value.financial_unverified ? null : value.total_earned });
+  const grand = emptyTotals();
+  for (const item of workerRows.values()) addTotals(grand, item);
+  const rows = Array.from(workerRows.values()).map((item: any) => ({ ...toPublicTotals(item), labour_worker_id: item.labour_worker_id, labour_code: item.labour_code, labour_name: item.labour_name, contractor_name: item.contractor_name, category: item.category, days: item.days }));
+  const contractors = Array.from(contractorRows.values()).map((item: any) => ({ id: item.contractor_profile_id, name: item.contractor, contractor: item.contractor, unique_labour: item.unique_workers.size, attendance_wage: item.financial_unverified ? null : item.attendance_wage, ot_hours: numericHours(item.ot_minutes), bonus_hours: numericHours(item.bonus_minutes), ot_amount: item.financial_unverified ? null : item.ot_amount, bonus_amount: item.financial_unverified ? null : item.bonus_amount, total_earned: item.financial_unverified ? null : item.total_earned }));
+  return { rows, days, contractors, categories: Array.from(new Set(rows.map((row: any) => row.category).filter(Boolean))).sort(), legacy_dates: legacyDates, grand_totals: { ...toPublicTotals(grand), approved_attendance_dates: includedDates.size }, financial_complete: unverifiedRows === 0, unverified_rows: unverifiedRows };
+}
+
 async function enrichSubmissionForReview(access: any, submission: any) {
   if (submission.status === "final_approved") return submission;
   if (!snapshotNeedsApprovalDetail(submission.snapshot) && submission.status !== "final_approved") return submission;
@@ -1740,15 +1938,13 @@ async function transitionStandardPeriod(access: any, request: Request, payload: 
   const approvalStatus = (period: any) => resolveStandardApprovalStatus(period, workDate, submittedPeriodIds.has(period.id));
   const now = new Date().toISOString();
   if (action === "standard_approve") {
+    const { data: result, error } = await access.admin.rpc("finalize_labour_attendance_dates_atomic", {
+      p_period_ids: periodIds,
+      p_attendance_date: workDate,
+      p_actor: { user_id: access.auth.user.id, name: actorName(access), email: access.auth.user.email || null },
+    });
+    if (error) throw error;
     for (const period of periods) {
-      if (approvalStatus(period) !== "submitted") return jsonError(`Attendance for ${workDate} is not submitted and cannot be approved.`);
-      const patch = {
-      summary: standardSummaryWithDateStatus(period, workDate, "finalized", { finalized_at: now, finalized_by: access.auth.user.id }),
-      updated_at: now,
-      ...actorFields(access.auth, "updated"),
-      };
-      const { error } = await access.admin.from("labour_attendance_periods").update(patch).eq("id", period.id);
-      if (error) throw error;
       await audit(access, request, {
         moduleCode: "labour_attendance_approval",
         action: "approve",
@@ -1759,7 +1955,7 @@ async function transitionStandardPeriod(access: any, request: Request, payload: 
         siteId: period.site_id,
         description: "Approved standard labour attendance date.",
         oldValues: period,
-        newValues: patch,
+        newValues: { attendance_date: workDate, status: "finalized", atomic_result: result },
       });
     }
     return NextResponse.json({ updated: true, status: "finalized" });
@@ -2107,7 +2303,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const monthlyMode = text(searchParams.get("view")) === "monthly";
-    const access = await requireLabourPermission(request, monthlyMode ? "labour_attendance" : "labour_daily_submission", "view");
+    const access = await requireLabourPermission(request, "labour_daily_submission", "view");
     if ("response" in access) return access.response;
     if (monthlyMode) {
       const requestedOrganizationId = text(searchParams.get("organization_id")) || (Array.isArray(access.organizationScope) ? access.organizationScope[0] : null);
@@ -2147,12 +2343,11 @@ export async function GET(request: Request) {
       }
       const scopeCheck = await validateLabourOperationalCompanySite(access, requestedOrganizationId, companyId, siteId);
       if ("error" in scopeCheck) return jsonError(scopeCheck.error || "Selected company/site is not available.", 403);
-      const result = await loadStandardMonthlyRegister(access, {
+      const result = await loadApprovedStandardMonthlyRegister(access, {
         organizationId: scopeCheck.organizationId,
         companyId,
         siteId,
         month,
-        status: standardStatusFromFilter(text(searchParams.get("status")) || "submitted"),
         contractorProfileId: text(searchParams.get("contractor_profile_id")),
         category: text(searchParams.get("category")),
         attendanceStatus: text(searchParams.get("attendance_status")),

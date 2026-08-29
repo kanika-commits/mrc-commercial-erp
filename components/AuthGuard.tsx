@@ -198,7 +198,7 @@ function hasExplicitLabourRouteAccess(pathname: string, access: CurrentUserAcces
   }
 
   if (pathname === "/labour/approvals") {
-    return can(access.permissions, "labour_daily_submission", "view") || can(access.permissions, "labour_attendance", "view");
+    return can(access.permissions, "labour_daily_submission", "view");
   }
 
   if (pathname === "/labour/configuration") {

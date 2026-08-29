@@ -9,6 +9,7 @@ import { can, hasGlobalAccess } from "@/lib/accessControl";
 import { labelFromCode } from "@/lib/labour/constants";
 import { resolveSingleLabourSiteId, selectedLabourSiteIsValid, subscribeLabourWorkspaceSummary, type LabourWorkspaceSummary } from "@/lib/labour/attendanceSystemContext";
 import { supabase } from "@/lib/supabase";
+import { MonthlyLegacyAttendanceLegend, MonthlyLegacyAttendanceNotice, monthlyLegacyDayLabel } from "@/components/labour/MonthlyLegacyAttendanceNotice";
 
 type AlertTone = "error" | "warning" | "success" | "info";
 
@@ -27,10 +28,7 @@ const standardStatusOptions = [
 ];
 
 const monthlyRegisterStatusOptions = [
-  ["submitted", "Pending Approval"],
   ["finalized", "Approved"],
-  ["reopened", "Sent Back"],
-  ["all", "All"],
 ];
 
 const monthlyAttendanceOptions = [
@@ -169,7 +167,7 @@ export function LabourApprovalsPageContent({ historyMode = false }: { historyMod
   const global = hasGlobalAccess(access);
   const isPlatformOwner = Boolean(access?.roleCodes.includes("platform_owner"));
   const canViewDailyApproval = global || can(permissions, "labour_daily_submission", "view");
-  const canViewMonthly = global || can(permissions, "labour_attendance", "view");
+  const canViewMonthly = global || can(permissions, "labour_daily_submission", "view");
   const canPmApprove = global || can(permissions, "labour_daily_submission", "pm_approve");
   const canPmSendBack = global || can(permissions, "labour_daily_submission", "pm_send_back");
   const canHoApprove = global || can(permissions, "labour_daily_submission", "ho_approve");
@@ -920,14 +918,19 @@ function MonthlyLabourAttendanceView() {
     contractor_profile_id: "",
     category: "",
     attendance_status: "all",
-    status: "submitted",
+    status: "finalized",
     search: "",
   });
   const [rows, setRows] = useState<any[]>([]);
   const [lookups, setLookups] = useState<any>({ companies: [], sites: [], contractors: [], categories: [] });
+  const [contractors, setContractors] = useState<any[]>([]);
+  const [grandTotals, setGrandTotals] = useState<any>(null);
+  const [financialComplete, setFinancialComplete] = useState(true);
+  const [legacyDates, setLegacyDates] = useState<string[]>([]);
   const [days, setDays] = useState(31);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [exporting, setExporting] = useState(false);
 
   const dayNumbers = useMemo(() => Array.from({ length: days }, (_, index) => String(index + 1)), [days]);
 
@@ -957,6 +960,10 @@ function MonthlyLabourAttendanceView() {
       const payload = await readPayload(response);
       if (!response.ok) throw new Error(payload.error || "Could not load monthly Labour attendance.");
       setRows(payload.rows || []);
+      setContractors(payload.contractors || []);
+      setGrandTotals(payload.grand_totals || null);
+      setFinancialComplete(payload.financial_complete !== false);
+      setLegacyDates(payload.legacy_dates || []);
       setDays(payload.days || 31);
       setLookups({
         companies: payload.companies || [],
@@ -967,6 +974,9 @@ function MonthlyLabourAttendanceView() {
     } catch (error: any) {
       setMessage(error.message || "Could not load monthly Labour attendance.");
       setRows([]);
+      setContractors([]);
+      setGrandTotals(null);
+      setLegacyDates([]);
     } finally {
       setLoading(false);
     }
@@ -985,6 +995,20 @@ function MonthlyLabourAttendanceView() {
     }
     setFilters(next);
     if (autoLoad) loadMonthly(next);
+  }
+
+  async function exportMonthly() {
+    setExporting(true);
+    try {
+      const params = new URLSearchParams({ view: "monthly", format: "pdf", month: filters.month, company_id: filters.company_id, site_id: filters.site_id });
+      if (filters.contractor_profile_id) params.set("contractor_profile_id", filters.contractor_profile_id);
+      if (filters.category) params.set("category", filters.category);
+      if (filters.attendance_status) params.set("attendance_status", filters.attendance_status);
+      if (filters.search) params.set("search", filters.search);
+      const response = await fetch(`/api/labour/approvals/export?${params.toString()}`, { headers: { Authorization: `Bearer ${await token()}` } });
+      if (!response.ok) throw new Error(await response.text() || "Could not export monthly attendance.");
+      const blob = await response.blob(); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `Labour_Monthly_Attendance_${filters.month}.pdf`; link.click(); URL.revokeObjectURL(url);
+    } catch (error: any) { setMessage(error.message || "Could not export monthly attendance."); } finally { setExporting(false); }
   }
 
   return (
@@ -1027,7 +1051,8 @@ function MonthlyLabourAttendanceView() {
         </label>
         <div className="flex items-end gap-2">
           <button type="button" onClick={() => loadMonthly()} className="h-10 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white">Apply</button>
-          <button type="button" onClick={() => updateFilters({ contractor_profile_id: "", category: "", attendance_status: "all", status: "submitted", search: "" })} className="h-10 rounded-md border bg-white px-4 text-sm font-semibold">Clear</button>
+          <button type="button" disabled={exporting || !filters.company_id || !filters.site_id} onClick={() => void exportMonthly()} className="h-10 rounded-md border bg-white px-4 text-sm font-semibold disabled:opacity-50">{exporting ? "Exporting..." : "Monthly PDF"}</button>
+          <button type="button" onClick={() => updateFilters({ contractor_profile_id: "", category: "", attendance_status: "all", status: "finalized", search: "" })} className="h-10 rounded-md border bg-white px-4 text-sm font-semibold">Clear</button>
         </div>
       </div>
 
@@ -1037,7 +1062,10 @@ function MonthlyLabourAttendanceView() {
         <span><b>A</b> = Absent</span>
         <span><b>HD</b> = Half Day</span>
         <span><b>-</b> = No attendance record</span>
+        <MonthlyLegacyAttendanceLegend />
       </div>
+
+      <MonthlyLegacyAttendanceNotice dates={legacyDates} />
 
       {message && <Alert tone="error" onDismiss={() => setMessage("")}>{message}</Alert>}
 
@@ -1048,28 +1076,45 @@ function MonthlyLabourAttendanceView() {
               <th className="sticky left-0 z-30 min-w-[220px] bg-slate-100 px-3 py-3">Labour Name / Code</th>
               <th className="min-w-[180px] px-3 py-3">Contractor</th>
               <th className="min-w-[150px] px-3 py-3">Category / Trade</th>
-              <th className="min-w-[110px] px-3 py-3">Daily Rate</th>
-              {dayNumbers.map((day) => <th key={day} className="px-2 py-3 text-center">{day.padStart(2, "0")}</th>)}
+              {dayNumbers.map((day) => { const dayLabel = monthlyLegacyDayLabel(day, filters.month, legacyDates); return <th key={day} className="px-2 py-3 text-center" title={dayLabel.title}>{dayLabel.label}{dayLabel.legacy && <span className="ml-1 text-amber-700">L</span>}</th>; })}
             </tr>
           </thead>
           <tbody className="divide-y">
-            {loading && <tr><td colSpan={days + 4} className="px-3 py-8 text-center text-slate-500">Loading monthly attendance...</td></tr>}
+            {loading && <tr><td colSpan={days + 3} className="px-3 py-8 text-center text-slate-500">Loading monthly attendance...</td></tr>}
             {!loading && rows.map((row) => (
-              <tr key={row.labour_worker_id} className="bg-white">
+              <tr key={`${row.labour_worker_id}:${row.contractor_name}`} className="bg-white">
                 <td className="sticky left-0 z-10 bg-white px-3 py-3 font-semibold">
                   {row.labour_name || "-"}
                   <span className="block text-xs font-normal text-slate-500">{row.labour_code || "-"}</span>
                 </td>
                 <td className="px-3 py-3">{row.contractor_name || "-"}</td>
                 <td className="px-3 py-3">{row.category || "-"}</td>
-                <td className="px-3 py-3">{row.daily_rate_label || "-"}</td>
                 {dayNumbers.map((day) => <td key={day} className="px-2 py-3 text-center font-semibold">{row.days?.[day] || "-"}</td>)}
               </tr>
             ))}
-            {!loading && !rows.length && <tr><td colSpan={days + 4} className="px-3 py-8 text-center text-slate-500">No monthly Labour attendance records match these filters.</td></tr>}
+            {!loading && !rows.length && <tr><td colSpan={days + 3} className="px-3 py-8 text-center text-slate-500">No monthly Labour attendance records match these filters.</td></tr>}
           </tbody>
         </table>
       </div>
+
+      {grandTotals && <>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+          {[["Total Labour", grandTotals.unique_labour], ["Approved Dates", grandTotals.approved_attendance_dates], ["Present Days", grandTotals.present_days], ["Absent Days", grandTotals.absent_days], ["Half Days", grandTotals.half_days], ["OT Hours", grandTotals.ot_hours], ["Bonus Hours", grandTotals.bonus_hours]].map(([label, value]) => <Summary key={String(label)} label={String(label)} value={value as any} />)}
+        </div>
+        <div className="grid gap-3 rounded-lg border bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-4">
+          {[["Attendance Wage", grandTotals.attendance_wage], ["OT Amount", grandTotals.ot_amount], ["Bonus Amount", grandTotals.bonus_amount], ["Total Earned", grandTotals.total_earned]].map(([label, value]) => <SummaryText key={String(label)} label={String(label)} value={value === null || value === undefined ? "—" : displayMoney(Number(value))} />)}
+        </div>
+        {!financialComplete && <Alert tone="warning" onDismiss={() => setFinancialComplete(true)}>Some historical wage values could not be calculated.</Alert>}
+        <div className="overflow-auto rounded-lg border bg-white shadow-sm">
+          <p className="border-b px-3 py-2 text-xs font-bold uppercase tracking-wide text-slate-500">Contractor Summary</p>
+          <table className="min-w-[1050px] text-sm"><thead className="bg-slate-100 text-left text-xs uppercase text-slate-500"><tr>{["Contractor", "Labour Count", "Attendance Wage", "OT Hours", "Bonus Hours", "OT Amount", "Bonus Amount", "Total Earned"].map((heading) => <th key={heading} className="px-3 py-3">{heading}</th>)}</tr></thead><tbody className="divide-y">{contractors.map((item) => <tr key={item.contractor}><td className="px-3 py-2 font-semibold">{item.contractor}</td><td className="px-3 py-2">{item.unique_labour}</td><td className="px-3 py-2">{item.attendance_wage === null || item.attendance_wage === undefined ? "—" : displayMoney(item.attendance_wage)}</td><td className="px-3 py-2">{item.ot_hours}</td><td className="px-3 py-2">{item.bonus_hours}</td><td className="px-3 py-2">{item.ot_amount === null || item.ot_amount === undefined ? "—" : displayMoney(item.ot_amount)}</td><td className="px-3 py-2">{item.bonus_amount === null || item.bonus_amount === undefined ? "—" : displayMoney(item.bonus_amount)}</td><td className="px-3 py-2 font-semibold">{item.total_earned === null || item.total_earned === undefined ? "—" : displayMoney(item.total_earned)}</td></tr>)}</tbody></table>
+        </div>
+        <div className="overflow-auto rounded-lg border bg-white shadow-sm">
+          <p className="border-b px-3 py-2 text-xs font-bold uppercase tracking-wide text-slate-500">Labour-wise Monthly Summary</p>
+          <table className="min-w-[1050px] text-sm"><thead className="bg-slate-100 text-left text-xs uppercase text-slate-500"><tr>{["Labour", "Contractor", "Category / Trade", "Present Days", "Absent Days", "Half Days", "OT Hours", "Bonus Hours", "Attendance Wage", "OT Amount", "Bonus Amount", "Total Earned"].map((heading) => <th key={heading} className="px-3 py-3">{heading}</th>)}</tr></thead><tbody className="divide-y">{rows.map((item) => <tr key={`${item.labour_worker_id}:${item.contractor_name}`}><td className="px-3 py-2 font-semibold">{item.labour_name || item.labour_code || "-"}<span className="block text-xs font-normal text-slate-500">{item.labour_code || "-"}</span></td><td className="px-3 py-2">{item.contractor_name || "-"}</td><td className="px-3 py-2">{item.category || "-"}</td><td className="px-3 py-2">{item.present_days}</td><td className="px-3 py-2">{item.absent_days}</td><td className="px-3 py-2">{item.half_days}</td><td className="px-3 py-2">{item.ot_hours}</td><td className="px-3 py-2">{item.bonus_hours}</td><td className="px-3 py-2">{item.attendance_wage === null ? "—" : displayMoney(item.attendance_wage)}</td><td className="px-3 py-2">{item.ot_amount === null ? "—" : displayMoney(item.ot_amount)}</td><td className="px-3 py-2">{item.bonus_amount === null ? "—" : displayMoney(item.bonus_amount)}</td><td className="px-3 py-2 font-semibold">{item.total_earned === null ? "—" : displayMoney(item.total_earned)}</td></tr>)}</tbody></table>
+        </div>
+      </>}
+
     </section>
   );
 }

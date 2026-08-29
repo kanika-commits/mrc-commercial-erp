@@ -79,4 +79,46 @@ export function labourAttendancePdf(context: any, rows: any[]) {
   const contents = [makeSummaryPage(1, totalPages + 1), ...pages.map((pageRows, index) => makePage(pageRows, index + 2, totalPages + 1))];
   const fontId = 3 + contents.length * 2; const pageIds = contents.map((content) => { const pageId = objects.length + 1; pageObjectIds.push(pageId); objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${fontId} 0 R /F2 ${fontId + 1} 0 R >> >> /Contents ${pageId + 1} 0 R >>`, `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`); return pageId; }); objects[1] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pageIds.length} >>`; objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>"); let pdf = "%PDF-1.4\n", offsets: number[] = [0]; objects.forEach((object, index) => { offsets.push(Buffer.byteLength(pdf)); pdf += `${index + 1} 0 obj\n${object}\nendobj\n`; }); const xref = Buffer.byteLength(pdf); pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`; return Buffer.from(pdf);
 }
+
+export function labourMonthlyAttendancePdf(context: any, rows: any[]) {
+  const totals = context.grand_totals || {};
+  const money = (value: unknown) => value === null || value === undefined ? "-" : currency(Number(value));
+  const escape = (value: unknown) => String(value ?? "-").replace(/[()\\]/g, "\\$&").replace(/[^\x20-\x7e]/g, "?");
+  const text = (x: number, y: number, value: unknown, size = 7, bold = false) => `BT 0 0 0 rg /${bold ? "F2" : "F1"} ${size} Tf ${x.toFixed(1)} ${y.toFixed(1)} Td (${escape(value)}) Tj ET`;
+  const drawTable = (commands: string[], startY: number, headers: any[], values: any[][], widths: number[]) => {
+    let y = startY;
+    const drawRow = (cells: any[], header = false) => {
+      const wrapped = cells.map((cell, index) => wrap(cell, Math.max(5, Math.floor(widths[index] / (header ? 4.8 : 5)))));
+      const height = Math.max(header ? 24 : 18, Math.max(...wrapped.map((lines) => lines.length)) * 8 + 6);
+      let x = 32;
+      cells.forEach((_, index) => {
+        commands.push(`${header ? "0.78 0.84 0.92" : "1 1 1"} rg ${x.toFixed(1)} ${(y - height).toFixed(1)} ${widths[index]} ${height} re f 0.55 0.6 0.68 RG ${x.toFixed(1)} ${(y - height).toFixed(1)} ${widths[index]} ${height} re S`);
+        wrapped[index].forEach((line, lineIndex) => commands.push(text(x + 3, y - 10 - lineIndex * 8, line, 6.5, header)));
+        x += widths[index];
+      });
+      y -= height;
+    };
+    drawRow(headers, true);
+    values.forEach((row) => drawRow(row));
+    return y;
+  };
+  const contractorHeaders = ["Contractor", "Labour Count", "Attendance Wage", "OT Hours", "Bonus Hours", "OT Amount", "Bonus Amount", "Total Earned"];
+  const contractorRows = (context.contractors || []).map((item: any) => [item.contractor, item.unique_labour, money(item.attendance_wage), item.ot_hours, item.bonus_hours, money(item.ot_amount), money(item.bonus_amount), money(item.total_earned)]);
+  const labourHeaders = ["Labour Code", "Labour Name", "Contractor", "Category / Trade", "Present Days", "Absent Days", "Half Days", "OT Hours", "Bonus Hours", "Attendance Wage", "OT Amount", "Bonus Amount", "Total Earned"];
+  const labourRows = rows.map((row: any) => [row.labour_code, row.labour_name, row.contractor_name, row.category, row.present_days, row.absent_days, row.half_days, row.ot_hours, row.bonus_hours, money(row.attendance_wage), money(row.ot_amount), money(row.bonus_amount), money(row.total_earned)]);
+  const pages: string[] = [];
+  const pageWidth = 792, pageHeight = 612, bottom = 42;
+  const header = (commands: string[]) => {
+    commands.push(text(32, 574, "LABOUR MONTHLY ATTENDANCE REGISTER", 14, true), text(32, 554, `Company: ${context.company_name || "-"}`), text(32, 542, `Site: ${context.site_name || "-"}`), text(32, 530, `Month: ${context.month || "-"}`), text(32, 518, "Report Type: Approved Labour Attendance"));
+  };
+  const addPage = (commands: string[], pageNumber: number) => { commands.push(text(32, 22, `Page ${pageNumber}`, 7)); pages.push(commands.join("\n")); };
+  const first: string[] = []; header(first); let y = 492; if (context.legacy_dates?.length) { first.push(text(32, y, "Legacy finalized dates without immutable worker-level snapshots:", 8, true)); y -= 14; first.push(text(32, y, context.legacy_dates.join(", "), 8)); y -= 18; } if (!context.financial_complete) { first.push(text(32, y, `WARNING: ${context.unverified_rows || 0} legacy rows have unavailable historical financial basis.`, 8, true)); y -= 18; } first.push(text(32, y, "CONTRACTOR SUMMARY", 10, true)); drawTable(first, y - 16, contractorHeaders, contractorRows, [130, 55, 90, 52, 60, 80, 90, 95]); addPage(first, 1);
+  const labourWidths = [48, 72, 65, 55, 40, 40, 38, 40, 40, 60, 55, 60, 60];
+  const rowsPerPage = 20;
+  for (let offset = 0; offset < labourRows.length || offset === 0; offset += rowsPerPage) { const commands: string[] = []; header(commands); commands.push(text(32, 492, "LABOUR-WISE MONTHLY SUMMARY", 10, true)); drawTable(commands, 478, labourHeaders, labourRows.slice(offset, offset + rowsPerPage), labourWidths); addPage(commands, pages.length + 1); }
+  const objects: string[] = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [] /Count 0 >>"];
+  const pageIds = pages.map((content) => { const pageId = objects.length + 1; objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${3 + pages.length * 2} 0 R /F2 ${4 + pages.length * 2} 0 R >> >> /Contents ${pageId + 1} 0 R >>`, `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`); return pageId; });
+  objects[1] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pageIds.length} >>`; objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
+  let pdf = "%PDF-1.4\n", offsets: number[] = [0]; objects.forEach((object, index) => { offsets.push(Buffer.byteLength(pdf)); pdf += `${index + 1} 0 obj\n${object}\nendobj\n`; }); const xref = Buffer.byteLength(pdf); pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`; return Buffer.from(pdf);
+}
 export function sanitizeFilename(value: unknown) { return String(value || "register").replace(/[^a-z0-9_-]+/gi, "_").replace(/^_+|_+$/g, ""); }

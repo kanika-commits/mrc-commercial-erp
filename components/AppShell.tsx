@@ -122,7 +122,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const showStandardLabourWorkflow = isLabourRouteAllowedForAttendanceSystem("labour_attendance", labourWorkflow);
   const showEngineerLabourWorkflow = isLabourRouteAllowedForAttendanceSystem("labour_site_in", labourWorkflow);
   const showLabourWorkspace = shouldShowLabourWorkspace(labourWorkspace, globalAccess);
-  const canViewLabourApprovalPage = globalAccess || can(permissions, "labour_daily_submission", "view") || can(permissions, "labour_attendance", "view");
+  const canViewLabourApprovalPage = globalAccess || can(permissions, "labour_daily_submission", "view");
   const canViewSystemActivity = Boolean(access?.roleCodes?.includes("platform_owner") || access?.roleCodes?.includes("super_admin"));
   const moduleRouteByCode = useMemo(() => {
     const routeByCode = new Map<string, string>();

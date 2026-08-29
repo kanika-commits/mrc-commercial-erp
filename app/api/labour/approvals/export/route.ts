@@ -1,15 +1,31 @@
-import { enrichStandardSubmitterSnapshots, loadStandardApprovalRows, loadStandardPeriod } from "@/app/api/labour/approvals/route";
-import { formatAttendanceExportTimestamp, labourAttendancePdf, labourAttendanceXlsx, sanitizeFilename } from "@/lib/labour/attendanceExport";
-import { requireLabourPermission } from "@/app/api/labour/_shared";
+import { enrichStandardSubmitterSnapshots, loadApprovedStandardMonthlyRegister, loadStandardApprovalRows, loadStandardPeriod } from "@/app/api/labour/approvals/route";
+import { formatAttendanceExportTimestamp, labourAttendancePdf, labourAttendanceXlsx, labourMonthlyAttendancePdf, sanitizeFilename } from "@/lib/labour/attendanceExport";
+import { requireLabourPermission, validateLabourOperationalCompanySite } from "@/app/api/labour/_shared";
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const format = searchParams.get("format");
     if (format !== "xlsx" && format !== "pdf") return new Response("Unsupported export format.", { status: 400 });
-    let access = await requireLabourPermission(request, "labour_attendance", "view");
-    if ("response" in access) access = await requireLabourPermission(request, "labour_daily_submission", "view");
+    const access = await requireLabourPermission(request, "labour_daily_submission", "view");
     if ("response" in access) return access.response;
+    if (searchParams.get("view") === "monthly") {
+      const companyId = String(searchParams.get("company_id") || "");
+      const siteId = String(searchParams.get("site_id") || "");
+      const month = String(searchParams.get("month") || "");
+      if (!companyId || !siteId || !/^\d{4}-\d{2}$/.test(month)) return new Response("Company, site and month are required.", { status: 400 });
+      const requestedOrganizationId = access.organizationScope?.[0] || searchParams.get("organization_id");
+      const scopeCheck = await validateLabourOperationalCompanySite(access, requestedOrganizationId, companyId, siteId);
+      if ("error" in scopeCheck) return new Response(scopeCheck.error || "Selected company/site is not available.", { status: 403 });
+      const result = await loadApprovedStandardMonthlyRegister(access, { organizationId: scopeCheck.organizationId, companyId, siteId, month, contractorProfileId: searchParams.get("contractor_profile_id"), category: searchParams.get("category"), attendanceStatus: searchParams.get("attendance_status"), search: searchParams.get("search") });
+      const [{ data: company }, { data: site }] = await Promise.all([
+        access.admin.from("companies").select("company_name, company_code").eq("id", companyId).maybeSingle(),
+        access.admin.from("sites").select("site_name, site_code").eq("id", siteId).maybeSingle(),
+      ]);
+      const context = { company_name: company?.company_name || company?.company_code || "-", site_name: site?.site_name || site?.site_code || "-", month, financial_complete: result.financial_complete, unverified_rows: result.unverified_rows, grand_totals: result.grand_totals, contractors: result.contractors, legacy_dates: result.legacy_dates || [] };
+      const body = labourMonthlyAttendancePdf(context, result.rows);
+      return new Response(body as BodyInit, { headers: { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="Labour_Monthly_Attendance_${sanitizeFilename(context.site_name)}_${month}.pdf"`, "Cache-Control": "no-store" } });
+    }
     const ids = (searchParams.get("period_ids") || searchParams.get("period_id") || "").split(",").map((value) => value.trim()).filter(Boolean);
     if (!ids.length) return new Response("Attendance register is required.", { status: 400 });
     const attendanceDate = String(searchParams.get("attendance_date") || "").trim();
