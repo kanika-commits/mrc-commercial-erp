@@ -1,4 +1,5 @@
 import { deflateRawSync } from "node:zlib";
+import ExcelJS from "exceljs";
 
 function xml(value: unknown) { return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 function cellRef(column: number, row: number) { let name = "", n = column; while (n > 0) { const remainder = (n - 1) % 26; name = String.fromCharCode(65 + remainder) + name; n = Math.floor((n - 1) / 26); } return `${name}${row}`; }
@@ -121,4 +122,60 @@ export function labourMonthlyAttendancePdf(context: any, rows: any[]) {
   objects[1] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pageIds.length} >>`; objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
   let pdf = "%PDF-1.4\n", offsets: number[] = [0]; objects.forEach((object, index) => { offsets.push(Buffer.byteLength(pdf)); pdf += `${index + 1} 0 obj\n${object}\nendobj\n`; }); const xref = Buffer.byteLength(pdf); pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`; return Buffer.from(pdf);
 }
+export async function labourMonthlyAttendanceXlsx(context: any, rows: any[]) {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "ConstructIQ";
+  const days = Number(context.days || 31);
+  const dayHeaders = Array.from({ length: days }, (_, index) => String(index + 1).padStart(2, "0"));
+  const metadata = [
+    ["Company", context.company_name || "-"], ["Site", context.site_name || "-"],
+    ["Month", context.month || "-"], ["Report Type", "Approved Labour Attendance"],
+    ["Contractor Filter", context.contractor_filter || "All Contractors"],
+    ["Category / Trade Filter", context.category_filter || "All Categories"],
+    ["Attendance Status Filter", context.attendance_status_filter || "All"],
+    ["Register Status Filter", context.register_status_filter || "Finalized"],
+    ["Labour Search Filter", context.search_filter || "None"],
+  ];
+  const styleHeader = (row: ExcelJS.Row) => {
+    row.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1E3A5F" } };
+    row.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+  };
+  const addMetadata = (sheet: ExcelJS.Worksheet) => {
+    for (const [label, value] of metadata) {
+      const row = sheet.addRow([label, value]);
+      row.getCell(1).font = { bold: true };
+    }
+    if (context.legacy_dates?.length) sheet.addRow(["Legacy Dates", `Finalized attendance — historical snapshot unavailable for: ${context.legacy_dates.join(", ")}`]);
+    sheet.addRow([]);
+  };
+  const attendance = workbook.addWorksheet("Monthly Attendance");
+  attendance.addRow(["LABOUR MONTHLY ATTENDANCE REGISTER"]).font = { bold: true, size: 14 };
+  addMetadata(attendance);
+  const attendanceHeader = attendance.addRow(["Labour Name", "Labour Code", "Contractor", "Category / Trade", ...dayHeaders]);
+  styleHeader(attendanceHeader);
+  for (const row of rows) attendance.addRow([row.labour_name || "-", row.labour_code || "-", row.contractor_name || "-", row.category || "-", ...dayHeaders.map((day) => row.days?.[String(Number(day))] || "-")]);
+  attendance.views = [{ state: "frozen", ySplit: attendanceHeader.number, xSplit: 4 }];
+  attendance.columns = [{ width: 24 }, { width: 16 }, { width: 24 }, { width: 20 }, ...dayHeaders.map(() => ({ width: 6 }))];
+
+  const contractorSheet = workbook.addWorksheet("Contractor Summary");
+  contractorSheet.addRow(["CONTRACTOR SUMMARY"]).font = { bold: true, size: 14 };
+  addMetadata(contractorSheet);
+  const contractorHeader = contractorSheet.addRow(["Contractor", "Labour Count", "OT Hours", "Bonus Hours", "Attendance Wage", "OT Amount", "Bonus Amount", "Total Earned"]);
+  styleHeader(contractorHeader);
+  for (const item of context.contractors || []) contractorSheet.addRow([item.contractor || item.name || "-", item.unique_labour || 0, item.ot_hours || 0, item.bonus_hours || 0, item.attendance_wage ?? "-", item.ot_amount ?? "-", item.bonus_amount ?? "-", item.total_earned ?? "-"]);
+  contractorSheet.views = [{ state: "frozen", ySplit: contractorHeader.number }];
+  contractorSheet.columns = [{ width: 28 }, ...Array.from({ length: 7 }, () => ({ width: 16 }))];
+
+  const labourSheet = workbook.addWorksheet("Labour Monthly Summary");
+  labourSheet.addRow(["LABOUR-WISE MONTHLY SUMMARY"]).font = { bold: true, size: 14 };
+  addMetadata(labourSheet);
+  const labourHeader = labourSheet.addRow(["Labour Name", "Labour Code", "Contractor", "Category / Trade", "Present Days", "Absent Days", "Half Days", "OT Hours", "Bonus Hours", "Attendance Wage", "OT Amount", "Bonus Amount", "Total Earned"]);
+  styleHeader(labourHeader);
+  for (const row of rows) labourSheet.addRow([row.labour_name || "-", row.labour_code || "-", row.contractor_name || "-", row.category || "-", row.present_days || 0, row.absent_days || 0, row.half_days || 0, row.ot_hours || 0, row.bonus_hours || 0, row.attendance_wage ?? "-", row.ot_amount ?? "-", row.bonus_amount ?? "-", row.total_earned ?? "-"]);
+  labourSheet.views = [{ state: "frozen", ySplit: labourHeader.number, xSplit: 4 }];
+  labourSheet.columns = [{ width: 24 }, { width: 16 }, { width: 24 }, { width: 20 }, ...Array.from({ length: 9 }, () => ({ width: 16 }))];
+  return workbook.xlsx.writeBuffer();
+}
+
 export function sanitizeFilename(value: unknown) { return String(value || "register").replace(/[^a-z0-9_-]+/gi, "_").replace(/^_+|_+$/g, ""); }

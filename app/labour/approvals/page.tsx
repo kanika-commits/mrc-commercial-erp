@@ -997,17 +997,17 @@ function MonthlyLabourAttendanceView() {
     if (autoLoad) loadMonthly(next);
   }
 
-  async function exportMonthly() {
+  async function exportMonthly(format: "pdf" | "xlsx") {
     setExporting(true);
     try {
-      const params = new URLSearchParams({ view: "monthly", format: "pdf", month: filters.month, company_id: filters.company_id, site_id: filters.site_id });
+      const params = new URLSearchParams({ view: "monthly", format, month: filters.month, company_id: filters.company_id, site_id: filters.site_id, status: filters.status });
       if (filters.contractor_profile_id) params.set("contractor_profile_id", filters.contractor_profile_id);
       if (filters.category) params.set("category", filters.category);
       if (filters.attendance_status) params.set("attendance_status", filters.attendance_status);
       if (filters.search) params.set("search", filters.search);
       const response = await fetch(`/api/labour/approvals/export?${params.toString()}`, { headers: { Authorization: `Bearer ${await token()}` } });
       if (!response.ok) throw new Error(await response.text() || "Could not export monthly attendance.");
-      const blob = await response.blob(); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `Labour_Monthly_Attendance_${filters.month}.pdf`; link.click(); URL.revokeObjectURL(url);
+      const blob = await response.blob(); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `Labour_Monthly_Attendance_${filters.month}.${format}`; link.click(); URL.revokeObjectURL(url);
     } catch (error: any) { setMessage(error.message || "Could not export monthly attendance."); } finally { setExporting(false); }
   }
 
@@ -1051,7 +1051,8 @@ function MonthlyLabourAttendanceView() {
         </label>
         <div className="flex items-end gap-2">
           <button type="button" onClick={() => loadMonthly()} className="h-10 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white">Apply</button>
-          <button type="button" disabled={exporting || !filters.company_id || !filters.site_id} onClick={() => void exportMonthly()} className="h-10 rounded-md border bg-white px-4 text-sm font-semibold disabled:opacity-50">{exporting ? "Exporting..." : "Monthly PDF"}</button>
+          <button type="button" disabled={exporting || !filters.company_id || !filters.site_id} onClick={() => void exportMonthly("pdf")} className="h-10 rounded-md border bg-white px-4 text-sm font-semibold disabled:opacity-50">{exporting ? "Exporting..." : "Download PDF"}</button>
+          <button type="button" disabled={exporting || !filters.company_id || !filters.site_id} onClick={() => void exportMonthly("xlsx")} className="h-10 rounded-md border bg-white px-4 text-sm font-semibold disabled:opacity-50">{exporting ? "Exporting..." : "Download Excel"}</button>
           <button type="button" onClick={() => updateFilters({ contractor_profile_id: "", category: "", attendance_status: "all", status: "finalized", search: "" })} className="h-10 rounded-md border bg-white px-4 text-sm font-semibold">Clear</button>
         </div>
       </div>

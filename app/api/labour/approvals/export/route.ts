@@ -1,5 +1,5 @@
 import { enrichStandardSubmitterSnapshots, loadApprovedStandardMonthlyRegister, loadStandardApprovalRows, loadStandardPeriod } from "@/app/api/labour/approvals/route";
-import { formatAttendanceExportTimestamp, labourAttendancePdf, labourAttendanceXlsx, labourMonthlyAttendancePdf, sanitizeFilename } from "@/lib/labour/attendanceExport";
+import { formatAttendanceExportTimestamp, labourAttendancePdf, labourAttendanceXlsx, labourMonthlyAttendancePdf, labourMonthlyAttendanceXlsx, sanitizeFilename } from "@/lib/labour/attendanceExport";
 import { requireLabourPermission, validateLabourOperationalCompanySite } from "@/app/api/labour/_shared";
 
 export async function GET(request: Request) {
@@ -22,9 +22,12 @@ export async function GET(request: Request) {
         access.admin.from("companies").select("company_name, company_code").eq("id", companyId).maybeSingle(),
         access.admin.from("sites").select("site_name, site_code").eq("id", siteId).maybeSingle(),
       ]);
-      const context = { company_name: company?.company_name || company?.company_code || "-", site_name: site?.site_name || site?.site_code || "-", month, financial_complete: result.financial_complete, unverified_rows: result.unverified_rows, grand_totals: result.grand_totals, contractors: result.contractors, legacy_dates: result.legacy_dates || [] };
-      const body = labourMonthlyAttendancePdf(context, result.rows);
-      return new Response(body as BodyInit, { headers: { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="Labour_Monthly_Attendance_${sanitizeFilename(context.site_name)}_${month}.pdf"`, "Cache-Control": "no-store" } });
+      const context = { company_name: company?.company_name || company?.company_code || "-", site_name: site?.site_name || site?.site_code || "-", month, days: result.days, financial_complete: result.financial_complete, unverified_rows: result.unverified_rows, grand_totals: result.grand_totals, contractors: result.contractors, legacy_dates: result.legacy_dates || [], contractor_filter: searchParams.get("contractor_profile_id") || "All Contractors", category_filter: searchParams.get("category") || "All Categories", attendance_status_filter: searchParams.get("attendance_status") || "All", register_status_filter: searchParams.get("status") || "Finalized", search_filter: searchParams.get("search") || "None" };
+      const isExcel = format === "xlsx";
+      const body = isExcel ? await labourMonthlyAttendanceXlsx(context, result.rows) : labourMonthlyAttendancePdf(context, result.rows);
+      const extension = isExcel ? "xlsx" : "pdf";
+      const contentType = isExcel ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "application/pdf";
+      return new Response(body as BodyInit, { headers: { "Content-Type": contentType, "Content-Disposition": `attachment; filename="Labour_Monthly_Attendance_${sanitizeFilename(context.site_name)}_${month}.${extension}"`, "Cache-Control": "no-store" } });
     }
     const ids = (searchParams.get("period_ids") || searchParams.get("period_id") || "").split(",").map((value) => value.trim()).filter(Boolean);
     if (!ids.length) return new Response("Attendance register is required.", { status: 400 });
