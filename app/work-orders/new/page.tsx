@@ -314,21 +314,35 @@ setFieldErrors(errors);
   }
 
   async function parseApiResponse(response: Response) {
-    const contentType = response.headers.get("content-type") || "";
+    try {
+      return await response.json();
+    } catch {
+      if (response.status === 413) {
+        return {
+          error:
+            "The uploaded Work Order PDF is too large. Please compress the PDF or upload a smaller file and try again.",
+        };
+      }
 
-    if (contentType.includes("application/json")) {
-      return response.json();
+      if (response.status === 401) {
+        return { error: "Your session has expired. Please sign in again." };
+      }
+
+      if (response.status === 403) {
+        return { error: "You do not have permission to create this Work Order." };
+      }
+
+      if ([500, 502, 503, 504].includes(response.status)) {
+        return {
+          error:
+            "Unable to create the Work Order because the server encountered an error. Please try again or contact support.",
+        };
+      }
+
+      return {
+        error: "Unable to create the Work Order. Please try again or contact support.",
+      };
     }
-
-    const text = await response.text();
-    console.error(
-      "POST /api/work-orders returned non-JSON response:",
-      text.slice(0, 200)
-    );
-
-    return {
-      error: "Server returned an invalid response. Check API logs.",
-    };
   }
 
   async function handleSubmit(e?: React.FormEvent | React.MouseEvent) {
