@@ -1069,6 +1069,20 @@ function flattenSubmissionForRegister(submission: any, employeeById: Map<string,
   });
 }
 
+async function loadDeploymentsInChunks(admin: any, deploymentIds: string[], select: string) {
+  const uniqueIds = Array.from(new Set(deploymentIds));
+  const deployments: any[] = [];
+  for (let index = 0; index < uniqueIds.length; index += 100) {
+    const { data, error } = await admin
+      .from("labour_deployments")
+      .select(select)
+      .in("id", uniqueIds.slice(index, index + 100));
+    if (error) throw error;
+    deployments.push(...(data || []));
+  }
+  return { data: deployments, error: null };
+}
+
 export async function loadStandardApprovalRows(access: any, input: {
   organizationId: string;
   companyId: string;
@@ -1121,9 +1135,9 @@ export async function loadStandardApprovalRows(access: any, input: {
       const snapshotPeriod = enrichedPeriods.find((period: any) => period.id === snapshot.period_id) || enrichedPeriods[0];
       const snapshotRows = await access.admin.from("labour_attendance_submission_version_rows").select("*").eq("submission_version_id", snapshot.id).order("labour_code_snapshot");
       if (snapshotRows.error && snapshotRows.error.code !== "42P01") throw snapshotRows.error;
-      const snapshotDeploymentIds = Array.from(new Set((snapshotRows.data || []).map((row: any) => row.deployment_id).filter(Boolean)));
+      const snapshotDeploymentIds = Array.from(new Set((snapshotRows.data || []).map((row: any) => row.deployment_id as string).filter(Boolean))) as string[];
       const { data: snapshotDeployments, error: snapshotDeploymentError } = snapshotDeploymentIds.length
-        ? await access.admin.from("labour_deployments").select("id, wage_rate").in("id", snapshotDeploymentIds)
+        ? await loadDeploymentsInChunks(access.admin, snapshotDeploymentIds, "id, wage_rate")
         : { data: [], error: null };
       if (snapshotDeploymentError) throw snapshotDeploymentError;
       const snapshotDeploymentById = new Map<string, any>((snapshotDeployments || []).map((deployment: any) => [deployment.id, deployment]));
@@ -1170,12 +1184,9 @@ export async function loadStandardApprovalRows(access: any, input: {
     const attendanceDate = dateText(row.attendance_date);
     return Boolean(attendanceDate && eligibleWorkersByDate.get(attendanceDate)?.has(row.labour_worker_id));
   });
-  const deploymentIds = Array.from(new Set((attendanceRows || []).map((row: any) => row.deployment_id).filter(Boolean)));
+  const deploymentIds = Array.from(new Set((attendanceRows || []).map((row: any) => row.deployment_id as string).filter(Boolean))) as string[];
   const { data: deployments, error: deploymentError } = deploymentIds.length
-    ? await access.admin
-        .from("labour_deployments")
-        .select("id, contractor_profile_id, labour_trade_id, trade, wage_rate, labour_contractor_profiles(id, contractor_code, vendors(vendor_name))")
-        .in("id", deploymentIds)
+    ? await loadDeploymentsInChunks(access.admin, deploymentIds, "id, contractor_profile_id, labour_trade_id, trade, wage_rate, labour_contractor_profiles(id, contractor_code, vendors(vendor_name))")
     : { data: [], error: null };
   if (deploymentError) throw deploymentError;
   const contractorIds = Array.from(new Set([
