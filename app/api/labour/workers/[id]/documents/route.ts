@@ -56,7 +56,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   let stored: { bucket: string; key: string } | null = null;
   try {
-    const access = await requireLabourPermission(request, "labour_documents", "upload");
+    const access = await requireLabourPermission(request, "labour_workers", "upload");
     if ("response" in access) return access.response;
     const { id } = await context.params;
     const worker = await loadScopedWorker(access, id);

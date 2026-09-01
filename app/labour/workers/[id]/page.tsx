@@ -115,13 +115,17 @@ export default function LabourWorkerDetailPage() {
   const [commercialWorkOrders, setCommercialWorkOrders] = useState<any[]>([]);
   const [commercialWorkOrdersLoading, setCommercialWorkOrdersLoading] = useState(false);
   const [commercialWorkOrdersError, setCommercialWorkOrdersError] = useState("");
+  const [showDateCorrection, setShowDateCorrection] = useState(false);
+  const [dateCorrection, setDateCorrection] = useState({ effective_from: "", reason: "" });
+  const [dateCorrectionError, setDateCorrectionError] = useState("");
   const canEdit = global || can(permissions, "labour_workers", "edit");
   const canChangeDeployment = global || can(permissions, "labour_workers", "change_deployment");
   const canChangeRate = global || can(permissions, "labour_workers", "change_rate");
   const canDeploy = canChangeDeployment || canChangeRate;
-  const canUpload = global || can(permissions, "labour_documents", "upload");
+  const canUpload = global || can(permissions, "labour_workers", "upload");
   const canDeleteDocs = global || can(permissions, "labour_documents", "delete");
   const canDelete = global || can(permissions, "labour_workers", "delete");
+  const canCorrectDeploymentDate = Boolean(access?.roleCodes.includes("platform_owner") || access?.roleCodes.includes("super_admin"));
 
   async function token() {
     const { data: { session } } = await supabase.auth.getSession();
@@ -325,6 +329,24 @@ export default function LabourWorkerDetailPage() {
     await load();
   }
 
+  async function saveDateCorrection() {
+    setDateCorrectionError("");
+    if (!currentDeployment?.id) return setDateCorrectionError("No current deployment is available.");
+    if (!dateCorrection.effective_from) return setDateCorrectionError("Corrected effective date is required.");
+    if (dateCorrection.reason.trim().length < 10) return setDateCorrectionError("A correction reason of at least 10 characters is required.");
+    const response = await fetch(`/api/labour/workers/${params.id}/deployment-date-correction`, {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${await token()}` },
+      body: JSON.stringify({ deployment_id: currentDeployment.id, corrected_effective_from: dateCorrection.effective_from, reason: dateCorrection.reason }),
+    });
+    const payload = await parsePayload(response);
+    if (!response.ok) return setDateCorrectionError(payload.error || "Could not correct deployment date.");
+    setShowDateCorrection(false);
+    setDateCorrection({ effective_from: "", reason: "" });
+    setSuccess("Deployment effective date corrected successfully.");
+    await load();
+  }
+
   const worker = data?.worker;
   function closeDeploymentForm() {
     setShowDeploymentForm(false);
@@ -470,6 +492,7 @@ export default function LabourWorkerDetailPage() {
                     <Info label="Daily Rate" value={currentDeployment.commercial_model === "daily_wage" ? formatCurrency(currentDeployment.daily_rate) : "Not Applicable"} />
                     <Info label="Category" value={currentDeployment.labour_trades?.trade_name || currentDeployment.trade} />
                     <Info label="Effective From" value={formatDate(currentDeployment.effective_from)} />
+                    {canCorrectDeploymentDate && <button type="button" onClick={() => { setDateCorrectionError(""); setShowDateCorrection(true); }} className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">Correct Deployment Date</button>}
                   </>
                 ) : (
                   <p className="text-sm font-semibold text-slate-600">Not Deployed</p>
@@ -586,6 +609,16 @@ export default function LabourWorkerDetailPage() {
             {deploymentOperation === "deployment" && canChangeDeployment && <button onClick={saveDeployment} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white">{worker.status === "inactive" ? "Activate Labour" : currentDeployment ? "Save Transfer" : "Create Deployment"}</button>}
             {deploymentOperation === "rate" && canChangeRate && <button onClick={saveRateChange} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white">Update Daily Rate</button>}
           </div>
+        </div>
+      </div>}
+      {showDateCorrection && currentDeployment && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
+          <h2 className="text-xl font-semibold">Correct Deployment Date</h2>
+          <p className="mt-2 text-sm text-slate-600">Change {formatDate(currentDeployment.effective_from)} to the corrected effective date. This updates deployment master history only.</p>
+          {dateCorrectionError && <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{dateCorrectionError}</div>}
+          <label className="mt-4 block text-sm font-semibold text-slate-700">Corrected Effective Date<input type="date" value={dateCorrection.effective_from} onChange={(event) => setDateCorrection({ ...dateCorrection, effective_from: event.target.value })} className="mt-1 h-11 w-full rounded-lg border px-3" /></label>
+          <label className="mt-3 block text-sm font-semibold text-slate-700">Correction Reason *<textarea value={dateCorrection.reason} onChange={(event) => setDateCorrection({ ...dateCorrection, reason: event.target.value })} className="mt-1 min-h-24 w-full rounded-lg border px-3 py-2" /></label>
+          <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setShowDateCorrection(false)} className="rounded-lg border px-4 py-2 text-sm font-semibold">Cancel</button><button type="button" onClick={saveDateCorrection} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white">Save Correction</button></div>
         </div>
       </div>}
     </section>
