@@ -6,6 +6,7 @@ type EmployeeOption = {
   id: string;
   employee_code?: string | null;
   employee_name?: string | null;
+  site_name?: string | null;
   department_name?: string | null;
   already_linked?: boolean;
   selectable?: boolean;
@@ -23,7 +24,9 @@ type Props = {
 };
 
 function optionLabel(employee: EmployeeOption) {
-  return `${employee.employee_name || employee.employee_code || "Unnamed Employee"} — ${employee.department_name || "No Department"}`;
+  return [employee.employee_name || employee.employee_code || "Unnamed Employee", employee.site_name, employee.department_name]
+    .filter((part) => part && String(part).trim())
+    .join(" — ");
 }
 
 export default function LinkedEmployeeSelector({

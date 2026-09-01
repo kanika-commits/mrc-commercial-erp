@@ -18,7 +18,7 @@ export async function loadEmployeeLinkOptions(
 ) {
   let employeeQuery = admin
     .from("hr_employees")
-    .select("id, organization_id, employee_code, employee_name, department_id, user_id, status")
+    .select("id, organization_id, employee_code, employee_name, department_id, site_id, user_id, status")
     .eq("status", "active")
     .order("employee_name");
 
@@ -41,8 +41,20 @@ export async function loadEmployeeLinkOptions(
 
   if (departmentError) throw departmentError;
 
+  const siteIds = Array.from(
+    new Set((employees || []).map((employee: any) => employee.site_id).filter(Boolean)),
+  );
+  const { data: sites, error: siteError } = siteIds.length
+    ? await admin.from("sites").select("id, site_name, site_code").in("id", siteIds)
+    : { data: [], error: null };
+
+  if (siteError) throw siteError;
+
   const departmentById = new Map(
     (departments || []).map((department: any) => [department.id, department.department_name]),
+  );
+  const siteById = new Map(
+    (sites || []).map((site: any) => [site.id, site.site_name || site.site_code || null]),
   );
 
   return (employees || []).map((employee: any) => {
@@ -52,6 +64,7 @@ export async function loadEmployeeLinkOptions(
       employee_code: employee.employee_code,
       employee_name: employee.employee_name,
       department_name: departmentById.get(employee.department_id) || null,
+      site_name: siteById.get(employee.site_id) || null,
       user_id: employee.user_id || null,
       already_linked: linkedElsewhere,
       selectable: !linkedElsewhere,
