@@ -625,22 +625,26 @@ function normalizeDate(value: unknown) {
   const monthNameMatch = text.match(/^(\d{1,2})[-\s]([A-Za-z]{3,})[-\s](\d{2,4})$/);
   if (monthNameMatch) {
     const month = monthNames[monthNameMatch[2].slice(0, 3).toLowerCase()];
-    const year = monthNameMatch[3].length === 2 ? `20${monthNameMatch[3]}` : monthNameMatch[3];
+    if (monthNameMatch[3].length !== 4) return null;
+    const year = monthNameMatch[3];
     if (month) {
       const iso = `${year}-${month}-${monthNameMatch[1].padStart(2, "0")}`;
-      return isSentinelDate(iso) ? null : iso;
+      return isSentinelDate(iso) || Number(year) < 1000 ? null : iso;
     }
+  }
+  if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(text) && Number(text.slice(0, 4)) < 1000) return null;
+  const match = text.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/);
+  if (match) {
+    if (match[3].length !== 4 || Number(match[3]) < 1000) return null;
+    const iso = `${match[3]}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
+    return isSentinelDate(iso) ? null : iso;
   }
   const parsed = new Date(text);
   if (!Number.isNaN(parsed.getTime())) {
     const iso = parsed.toISOString().slice(0, 10);
-    return isSentinelDate(iso) ? null : iso;
+    return isSentinelDate(iso) || Number(iso.slice(0, 4)) < 1000 ? null : iso;
   }
-  const match = text.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/);
-  if (!match) return text;
-  const year = match[3].length === 2 ? `20${match[3]}` : match[3];
-  const iso = `${year}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
-  return isSentinelDate(iso) ? null : iso;
+  return null;
 }
 
 export function mappingFromHeaders(headers: string[], overrides: ImportMapping = {}) {
@@ -673,7 +677,16 @@ export function normalizeImportRow(raw: Record<string, string>, mapping: ImportM
     const targetValue = mapping[header] || mapping[normalizedHeaderName(header)] || "";
     const target = typeof targetValue === "string" ? targetValue : "";
     if (!target) continue;
-    normalized[target] = DATE_FIELDS.has(target) ? normalizeDate(value) : textValue(value);
+    if (DATE_FIELDS.has(target)) {
+      const parsedDate = normalizeDate(value);
+      normalized[target] = parsedDate;
+      if (String(value || "").trim() && parsedDate === null && !isSentinelDate(value)) {
+        const invalidDateFields = Array.isArray(normalized.__invalid_date_fields) ? normalized.__invalid_date_fields : [];
+        normalized.__invalid_date_fields = [...invalidDateFields, target];
+      }
+    } else {
+      normalized[target] = textValue(value);
+    }
   }
 
   if (!normalized.employment_type) normalized.employment_type = "full_time";
@@ -776,7 +789,7 @@ export async function loadImportMasterData(admin: ServiceClient, auth: ServerPer
   const siteQuery = admin.from("sites").select("id, organization_id, company_id, site_name, site_code, status").order("site_name");
   const departmentQuery = admin.from("hr_departments").select("id, organization_id, department_name, department_code, status").order("department_name");
   const designationQuery = admin.from("hr_designations").select("id, organization_id, department_id, designation_name, designation_code, status").order("designation_name");
-  const employeeQuery = admin.from("hr_employees").select("id, organization_id, employee_code, employee_name, status").order("employee_name");
+  const employeeQuery = admin.from("hr_employees").select("id, organization_id, company_id, site_id, employee_code, employee_name, status, phone, personal_phone, email, personal_email", { count: "exact" }).order("employee_name");
 
   const scopedCompanyQuery = isGlobalScope(organizationScope) ? companyQuery : companyQuery.in("organization_id", organizationScope);
   const scopedSiteQuery = isGlobalScope(organizationScope) ? siteQuery : siteQuery.in("organization_id", organizationScope);
@@ -784,20 +797,33 @@ export async function loadImportMasterData(admin: ServiceClient, auth: ServerPer
   const scopedDesignationQuery = isGlobalScope(organizationScope) ? designationQuery : designationQuery.in("organization_id", organizationScope);
   const scopedEmployeeQuery = isGlobalScope(organizationScope) ? employeeQuery : employeeQuery.in("organization_id", organizationScope);
 
-  const [companies, sites, departments, designations, employees] = await Promise.all([
+  const [companies, sites, departments, designations, employeePage] = await Promise.all([
     scopedCompanyQuery,
     scopedSiteQuery,
     scopedDepartmentQuery,
     scopedDesignationQuery,
-    scopedEmployeeQuery,
+    scopedEmployeeQuery.range(0, 999),
   ]);
 
-  for (const result of [companies, sites, departments, designations, employees]) {
+  for (const result of [companies, sites, departments, designations, employeePage]) {
     if (result.error) throw result.error;
   }
 
   const activeCompanies = (companies.data || []).filter((row: any) => row.status === "active");
   const activeSites = (sites.data || []).filter((row: any) => row.status === "active");
+
+  const employeeRows = employeePage.data || [];
+  if ((employeePage.count || 0) > employeeRows.length) {
+    const pages = [];
+    for (let from = employeeRows.length; from < employeePage.count; from += 1000) {
+      pages.push(scopedEmployeeQuery.range(from, Math.min(from + 999, employeePage.count - 1)));
+    }
+    const results = await Promise.all(pages);
+    for (const result of results) {
+      if (result.error) throw result.error;
+      employeeRows.push(...(result.data || []));
+    }
+  }
 
   return {
     companies: accountCompanyIds.length > 0
@@ -808,8 +834,83 @@ export async function loadImportMasterData(admin: ServiceClient, auth: ServerPer
       : activeSites,
     departments: (departments.data || []).filter((row: any) => row.status === "active"),
     designations: (designations.data || []).filter((row: any) => row.status === "active"),
-    employees: (employees.data || []).filter((row: any) => row.status !== "deleted"),
+    employees: employeeRows,
   };
+}
+
+async function loadOrganizationEmployees(admin: ServiceClient, organizationId: string) {
+  const query = () => admin
+    .from("hr_employees")
+    .select("id, organization_id, company_id, site_id, employee_code, employee_name, status, phone, personal_phone, email, personal_email", { count: "exact" })
+    .eq("organization_id", organizationId)
+    .order("employee_name");
+  const first = await query().range(0, 999);
+  if (first.error) throw first.error;
+  const rows = [...(first.data || [])];
+  for (let from = rows.length; from < (first.count || rows.length); from += 1000) {
+    const page = await query().range(from, Math.min(from + 999, first.count - 1));
+    if (page.error) throw page.error;
+    rows.push(...(page.data || []));
+  }
+  return rows;
+}
+
+export function normalizeIdentityEmail(value: unknown) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized || null;
+}
+
+export function normalizeIdentityPhone(value: unknown) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const digits = raw.replace(/\D/g, "");
+  if (!digits) return null;
+  if (digits.length === 10 && /^[6-9]\d{9}$/.test(digits)) return digits;
+  if (digits.length === 12 && digits.startsWith("91") && /^[6-9]\d{9}$/.test(digits.slice(2))) return digits.slice(2);
+  if (raw.startsWith("+") && digits.length === 12 && digits.startsWith("91") && /^[6-9]\d{9}$/.test(digits.slice(2))) return digits.slice(2);
+  return digits;
+}
+
+function identityPhones(employee: any) {
+  return [normalizeIdentityPhone(employee.phone), normalizeIdentityPhone(employee.personal_phone)].filter(Boolean) as string[];
+}
+
+function identityEmails(employee: any) {
+  return [normalizeIdentityEmail(employee.email), normalizeIdentityEmail(employee.personal_email)].filter(Boolean) as string[];
+}
+
+export type EmployeeIdentityDecision = {
+  kind: "none" | "match" | "review";
+  employee?: any;
+  message?: string;
+};
+
+export function resolveExistingEmployeeIdentity(row: Record<string, any>, existingEmployees: any[]): EmployeeIdentityDecision {
+  const normalized = row.normalized_data || row;
+  const organizationId = String(row.organization_id || normalized.organization_id || "").trim();
+  const code = normalizeLookup(normalized.employee_code);
+  const scoped = existingEmployees.filter((employee) => String(employee.organization_id || "") === organizationId);
+  const codeMatches = code ? scoped.filter((employee) => normalizeLookup(employee.employee_code) === code) : [];
+  if (codeMatches.length > 1) return { kind: "review", message: "Employee Code matches multiple existing employees. Review required." };
+  if (codeMatches.length === 1) return { kind: "match", employee: codeMatches[0], message: "Employee Code already exists." };
+
+  const phones = [normalized.phone, normalized.personal_phone].map(normalizeIdentityPhone).filter(Boolean) as string[];
+  const emails = [normalized.email, normalized.personal_email].map(normalizeIdentityEmail).filter(Boolean) as string[];
+  const phoneMatches = phones.length ? scoped.filter((employee) => identityPhones(employee).some((value) => phones.includes(value))) : [];
+  const emailMatches = emails.length ? scoped.filter((employee) => identityEmails(employee).some((value) => emails.includes(value))) : [];
+  const unique = (rows: any[]) => [...new Map(rows.map((employee) => [employee.id, employee])).values()];
+  if (phoneMatches.length > 1) return { kind: "review", message: "Phone matches multiple existing employees. Review required." };
+  if (emailMatches.length > 1) return { kind: "review", message: "Email matches multiple existing employees. Review required." };
+  if (phoneMatches.length && emailMatches.length && phoneMatches[0].id !== emailMatches[0].id) {
+    return { kind: "review", message: "Phone and email match different existing employees. Review required." };
+  }
+  const candidate = unique([...phoneMatches, ...emailMatches])[0];
+  if (!candidate) return { kind: "none" };
+  const inactive = /^(deleted|inactive|terminated|resigned|archived)$/i.test(String(candidate.status || ""));
+  const sameContext = candidate.company_id === (row.matched_company_id ?? normalized.company_id) && candidate.site_id === (row.matched_site_id ?? normalized.site_id);
+  if (inactive) return { kind: "review", employee: candidate, message: `Existing employee ${candidate.employee_code || candidate.employee_name || ""} is inactive or deleted. Review required.` };
+  if (!sameContext) return { kind: "review", employee: candidate, message: `Existing employee ${candidate.employee_code || candidate.employee_name || ""} matches this phone/email but is assigned to another site/company. Review required.` };
+  return { kind: "match", employee: candidate, message: "Existing employee identity already exists." };
 }
 
 function findUnique(rows: any[], value: unknown, nameFields: string[], codeFields: string[] = []) {
@@ -836,6 +937,12 @@ export function validateNormalizedRow(
     designation_id: null,
     reporting_manager_id: null,
   };
+
+  for (const field of ["date_of_birth", "date_of_joining"]) {
+    const source = normalized[field];
+    if (normalized.__invalid_date_fields?.includes(field)) errors.push(`${field.replace(/_/g, " ")} could not be safely interpreted; use a four-digit calendar year.`);
+    if (source && !/^\d{4}-\d{2}-\d{2}$/.test(String(source))) errors.push(`${field.replace(/_/g, " ")} must use an unambiguous four-digit calendar year.`);
+  }
 
   for (const field of REQUIRED_FIELDS) {
     if (!textValue(normalized[field])) errors.push(`${field.replace(/_/g, " ")} is required.`);
@@ -983,23 +1090,30 @@ export function isEmployeeImportReady(row: { validation_status?: string | null; 
 export function applyExistingEmployeeStatus(
   row: Record<string, any>,
   existingEmployeeByCode: Map<string, any>,
+  additionalEmployees: any[] = [],
 ) {
   if (row.import_status === "imported") return row;
+  if (row.validation_status === "invalid") return row;
   const code = normalizeLookup(row.normalized_data?.employee_code);
-  if (!code || row.validation_status === "invalid") return row;
   const existing = existingEmployeeByCode.get(code);
-  if (!existing) return row;
-  const message = "Employee Code already exists.";
+  const decision = resolveExistingEmployeeIdentity(row, [
+    ...existingEmployeeByCode.values(),
+    ...additionalEmployees,
+    ...(existing ? [existing] : []),
+  ]);
+  if (decision.kind === "none") return row;
+  const message = decision.message || "Existing employee identity requires review.";
   return {
     ...row,
-    import_status: "skipped",
-    imported_employee_id: existing.id,
+    import_status: decision.kind === "match" ? "skipped" : "pending",
+    imported_employee_id: decision.kind === "match" ? decision.employee?.id : null,
+    validation_status: decision.kind === "review" ? "invalid" : row.validation_status,
     import_result: {
-      status: "skipped",
-      employeeId: existing.id,
+      status: decision.kind === "match" ? "skipped" : "needs_review",
+      employeeId: decision.employee?.id,
       message,
     },
-    errors: row.errors || [],
+    errors: decision.kind === "review" ? [...(row.errors || []), message] : (row.errors || []),
     warnings: row.warnings || [],
   };
 }
@@ -1153,6 +1267,13 @@ export async function executeImportRow(
 
   if (!employeeName) {
     throw new Error("Employee name is required.");
+  }
+
+  const currentEmployees = await loadOrganizationEmployees(admin, String(row.organization_id || ""));
+  const identityDecision = resolveExistingEmployeeIdentity(row, currentEmployees);
+  if (identityDecision.kind === "review") throw new Error(identityDecision.message || "Existing employee identity requires review.");
+  if (identityDecision.kind === "match") {
+    return { status: "skipped", employeeId: identityDecision.employee?.id, message: identityDecision.message || "Employee already exists." };
   }
 
   const { data: generatedCode, error: codeError } = await admin.rpc("next_employee_code");

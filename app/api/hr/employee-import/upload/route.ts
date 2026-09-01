@@ -133,12 +133,29 @@ export async function POST(request: Request) {
           employee,
         ]),
     );
-    const rowPayloads = employeeRows.map((row) =>
-      applyExistingEmployeeStatus(
+    const batchIdentityRows: any[] = [];
+    const rowPayloads = employeeRows.map((row) => {
+      const payload = applyExistingEmployeeStatus(
         rowPayloadForInsert(row, mapping, masters, organizationId),
         existingEmployeeByCode,
-      ),
-    );
+        batchIdentityRows,
+      );
+      if (payload.import_status === "pending" && payload.validation_status !== "invalid") {
+        batchIdentityRows.push({
+          id: `batch:${payload.source_row_number}`,
+          organization_id: organizationId,
+          company_id: payload.matched_company_id,
+          site_id: payload.matched_site_id,
+          employee_name: payload.normalized_data?.employee_name,
+          phone: payload.normalized_data?.phone,
+          personal_phone: payload.normalized_data?.personal_phone,
+          email: payload.normalized_data?.email,
+          personal_email: payload.normalized_data?.personal_email,
+          status: payload.normalized_data?.status || "active",
+        });
+      }
+      return payload;
+    });
     const summary = summarizeRows(rowPayloads);
     const actor = importedBy(auth);
 
