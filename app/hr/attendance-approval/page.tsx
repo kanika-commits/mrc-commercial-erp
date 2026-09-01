@@ -16,6 +16,31 @@ const attendancePeriodStatusOptions = [
   ["all", "All"],
 ];
 
+function attendanceApprovalStatus(status: unknown) {
+  const value = String(status || "").toLowerCase().replace(/\s+/g, "_");
+  if (["pending", "pending_approval", "submitted"].includes(value)) {
+    return { label: "Submitted · Pending Approval", badge: "border-amber-200 bg-amber-50 text-amber-800", row: "bg-amber-50/30" };
+  }
+  if (["approved", "level_1_approved", "level_2_approved", "finalized"].includes(value)) {
+    return { label: "Approved", badge: "border-emerald-200 bg-emerald-50 text-emerald-800", row: "bg-emerald-50/30" };
+  }
+  if (["sent_back", "reopened"].includes(value)) {
+    return { label: "Sent Back", badge: "border-orange-200 bg-orange-50 text-orange-800", row: "bg-orange-50/30" };
+  }
+  if (["rejected", "cancelled"].includes(value)) {
+    return { label: "Rejected", badge: "border-red-200 bg-red-50 text-red-800", row: "bg-red-50/30" };
+  }
+  if (value === "draft") {
+    return { label: "Draft", badge: "border-slate-200 bg-slate-50 text-slate-700", row: "bg-slate-50/50" };
+  }
+  return { label: String(status || "-"), badge: "border-slate-200 bg-slate-50 text-slate-700", row: "" };
+}
+
+function AttendanceApprovalStatusBadge({ status }: { status: unknown }) {
+  const presentation = attendanceApprovalStatus(status);
+  return <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${presentation.badge}`}>{presentation.label}</span>;
+}
+
 function employeeEligibleForDate(employee: any, date: string) {
   if (!date) return true;
   if (employee?.date_of_joining && employee.date_of_joining > date) return false;
@@ -139,8 +164,8 @@ export default function EmployeeAttendanceApprovalPage() {
     setMessage("");
     try {
       const queueDates = rows.map((row: any) => row.attendance_date).filter(Boolean).sort();
-      const nextFrom = range?.from || appliedFromDate || queueDates[0] || group.attendance_date;
-      const nextTo = range?.to || appliedToDate || queueDates[queueDates.length - 1] || group.attendance_date;
+      const nextFrom = range?.from || fromDate || appliedFromDate || queueDates[0] || group.attendance_date;
+      const nextTo = range?.to || toDate || appliedToDate || queueDates[queueDates.length - 1] || group.attendance_date;
       const payload = await apiFetch(`/api/hr/attendance/approval-groups?period_status=${encodeURIComponent(appliedPeriodStatus)}&site_id=${encodeURIComponent(group.site_id)}&attendance_date=${encodeURIComponent(group.attendance_date)}&from_date=${encodeURIComponent(nextFrom)}&to_date=${encodeURIComponent(nextTo)}`);
       setDetail(payload);
       if (range || appliedFromDate || appliedToDate) {
@@ -283,8 +308,6 @@ export default function EmployeeAttendanceApprovalPage() {
           if (next) {
             setFromDate(next.attendance_date);
             setToDate(next.attendance_date);
-            setAppliedFromDate(next.attendance_date);
-            setAppliedToDate(next.attendance_date);
           }
         }} />}
       </section>
@@ -296,7 +319,7 @@ export default function EmployeeAttendanceApprovalPage() {
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Daily Attendance Register</p>
                 <h2 className="mt-1 text-xl font-bold text-slate-950">{selectedRow.site_name} · {formatDate(selectedRow.attendance_date)}</h2>
-                <p className="mt-1 text-sm text-slate-500">{selectedRow.total_employee_count} Employees · {selectedRow.company_count} Companies · {selectedRow.status_label}</p>
+                <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-500"><span>{selectedRow.total_employee_count} Employees · {selectedRow.company_count} Companies</span><AttendanceApprovalStatusBadge status={selectedRow.status_label} /></p>
                 <div className="mt-2 space-y-0.5 text-xs text-slate-500">
                   {(selectedRow.periods || []).map((period: any) => <p key={period.daily_submission_id}>{period.company_name} · {period.employee_count} employees</p>)}
                 </div>
@@ -304,12 +327,12 @@ export default function EmployeeAttendanceApprovalPage() {
               <div className="max-w-md text-sm text-slate-500">
                 Filters affect only the displayed employee rows. Approval applies only to submitted attendance dates in the selected range.
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button type="button" disabled={actionLoading || detailLoading || !hasPendingInRange} onClick={openSendBackModal} className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-slate-50 disabled:opacity-60">
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
+                <button type="button" disabled={actionLoading || detailLoading || !hasPendingInRange} onClick={openSendBackModal} className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60">
                   <RotateCcw className="h-4 w-4" />
                   Send Back
                 </button>
-                <button type="button" title="Approve submitted attendance dates" disabled={actionLoading || detailLoading || !hasPendingInRange} onClick={openApproveModal} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white outline-none transition focus:ring-2 focus:ring-slate-400 disabled:cursor-not-allowed disabled:opacity-60">
+                <button type="button" title="Approve submitted attendance dates" disabled={actionLoading || detailLoading || !hasPendingInRange} onClick={openApproveModal} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white outline-none transition hover:bg-emerald-800 focus:ring-2 focus:ring-emerald-400 disabled:cursor-not-allowed disabled:opacity-60">
                   <CheckCircle2 className="h-4 w-4" />
                   Approve
                 </button>
@@ -378,7 +401,7 @@ function MonthlyQueue({ rows, selectedId, onSelect }: { rows: any[]; selectedId:
         <thead className="border-b bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
           <tr><th className="px-4 py-3">Date</th><th className="px-4 py-3">Site</th><th className="px-4 py-3 text-center">Employees</th><th className="px-4 py-3 text-center">Companies</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Action</th></tr>
         </thead>
-        <tbody className="divide-y">{rows.map((row) => <tr key={row.id} className={row.id === selectedId ? "bg-slate-50" : ""}><td className="px-4 py-3 font-semibold text-slate-950">{row.period_label}</td><td className="px-4 py-3">{row.site_name}</td><td className="px-4 py-3 text-center font-semibold">{row.total_employee_count ?? "-"}</td><td className="px-4 py-3 text-center">{row.company_count ?? "-"}</td><td className="px-4 py-3">{row.status_label}</td><td className="px-4 py-3 text-right"><button type="button" onClick={() => onSelect(row.id)} className="rounded-xl border px-3 py-2 text-xs font-semibold outline-none hover:bg-white focus:ring-2 focus:ring-slate-400">Review</button></td></tr>)}</tbody>
+        <tbody className="divide-y">{rows.map((row) => { const presentation = attendanceApprovalStatus(row.status_label); return <tr key={row.id} className={`${row.id === selectedId ? "bg-slate-50" : presentation.row}`}><td className="px-4 py-3 font-semibold text-slate-950">{row.period_label}</td><td className="px-4 py-3">{row.site_name}</td><td className="px-4 py-3 text-center font-semibold">{row.total_employee_count ?? "-"}</td><td className="px-4 py-3 text-center">{row.company_count ?? "-"}</td><td className="px-4 py-3"><AttendanceApprovalStatusBadge status={row.status_label} /></td><td className="px-4 py-3 text-right"><button type="button" onClick={() => onSelect(row.id)} className="rounded-xl border px-3 py-2 text-xs font-semibold outline-none hover:bg-white focus:ring-2 focus:ring-slate-400">Review</button></td></tr>; })}</tbody>
       </table>
     </div>
   );
