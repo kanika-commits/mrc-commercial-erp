@@ -94,24 +94,51 @@ function groupRows(rows: any[], auth: any) {
   });
 }
 
-async function loadDailyDetail(admin: any, auth: any, group: any, states: any[], dates: string[]) {
+async function loadApprovalSites(admin: any, auth: any) {
+  const organizationScope = await loadActorOrganizationScope(admin, auth);
+  let query = admin
+    .from("sites")
+    .select("id, organization_id, site_name, site_code")
+    .neq("status", "deleted")
+    .order("site_name", { ascending: true });
+  query = applyOrganizationScope(query, organizationScope);
+  if (!query) return [];
+  const { data, error } = await query;
+  if (error) throw error;
+  if (isGlobalScope(organizationScope)) return (data || []).map((site: any) => ({ id: site.id, label: site.site_name || site.site_code || "Site", organization_id: site.organization_id }));
+
+  const assignments = await loadActorAssignments(admin, auth.user.id);
+  const explicitSiteIds = new Set(assignments.rows.map((assignment: any) => assignment.site_id).filter(Boolean));
+  return (data || [])
+    .filter((site: any) => explicitSiteIds.size
+      ? explicitSiteIds.has(site.id)
+      : assignments.rows.some((assignment: any) =>
+        (!assignment.organization_id || assignment.organization_id === site.organization_id) && !assignment.company_id,
+      ))
+    .map((site: any) => ({ id: site.id, label: site.site_name || site.site_code || "Site", organization_id: site.organization_id }));
+}
+
+async function loadDailyDetail(admin: any, auth: any, group: any, states: any[], dates: string[], eligibilityCache: Map<string, Promise<any[]>>) {
   const rowMap = new Map<string, any>();
   const periods: any[] = [];
   for (const state of states) {
-    const employees = await loadEligibleEmployees(admin, {
+    const eligibility = {
       organizationId: state.organization_id,
       companyId: state.company_id,
       siteId: state.site_id,
       startDate: state.attendance_date,
       endDate: state.attendance_date,
-    });
-    const attendance = await loadAttendanceRows(admin, {
+    };
+    const cacheKey = `${eligibility.organizationId}:${eligibility.companyId}:${eligibility.siteId}:${eligibility.startDate}:${eligibility.endDate}`;
+    const employeesPromise = eligibilityCache.get(cacheKey) || loadEligibleEmployees(admin, eligibility);
+    eligibilityCache.set(cacheKey, employeesPromise);
+    const [employees, attendance] = await Promise.all([employeesPromise, loadAttendanceRows(admin, {
       organizationId: state.organization_id,
       companyId: state.company_id,
       siteId: state.site_id,
       startDate: state.attendance_date,
       endDate: state.attendance_date,
-    });
+    })]);
     const attendanceByEmployee = new Map(attendance.map((row: any) => [row.employee_id, row]));
     const companyName = state.companies?.company_name || state.companies?.company_code || "Company";
     periods.push({ ...state, daily_submission_id: state.id, company_name: companyName, employee_count: employees.length, status_label: state.status, can_approve: state.status === "submitted", can_send_back: state.status === "submitted" });
@@ -145,6 +172,9 @@ export async function GET(request: Request) {
     const selectedSiteId = params.get("site_id");
     const filterFromDate = params.get("from_date");
     const filterToDate = params.get("to_date");
+    if (params.get("metadata_only") === "true") {
+      return NextResponse.json({ sites: await loadApprovalSites(admin, auth) });
+    }
     if ((filterFromDate && !/^\d{4}-\d{2}-\d{2}$/.test(filterFromDate)) || (filterToDate && !/^\d{4}-\d{2}-\d{2}$/.test(filterToDate)) || (filterFromDate && filterToDate && filterFromDate > filterToDate)) {
       return NextResponse.json({ error: "A valid date range is required." }, { status: 400 });
     }
@@ -155,9 +185,16 @@ export async function GET(request: Request) {
     const siteMap = new Map<string, any>();
     for (const pair of lookup.pairs || []) if (!siteMap.has(pair.site_id)) siteMap.set(pair.site_id, { id: pair.site_id, label: pair.site_name, organization_id: pair.organization_id });
     const sites = Array.from(siteMap.values());
+    const eligibilityCache = new Map<string, Promise<any[]>>();
     for (const group of groups) {
       const groupStates = states.filter((row: any) => row.organization_id === group.organization_id && row.site_id === group.site_id && row.attendance_date === group.attendance_date);
-      const counts = await Promise.all(groupStates.map((state: any) => loadEligibleEmployees(admin, { organizationId: state.organization_id, companyId: state.company_id, siteId: state.site_id, startDate: state.attendance_date, endDate: state.attendance_date }).then((rows) => rows.length)));
+      const counts = await Promise.all(groupStates.map((state: any) => {
+        const eligibility = { organizationId: state.organization_id, companyId: state.company_id, siteId: state.site_id, startDate: state.attendance_date, endDate: state.attendance_date };
+        const cacheKey = `${eligibility.organizationId}:${eligibility.companyId}:${eligibility.siteId}:${eligibility.startDate}:${eligibility.endDate}`;
+        const employeesPromise = eligibilityCache.get(cacheKey) || loadEligibleEmployees(admin, eligibility);
+        eligibilityCache.set(cacheKey, employeesPromise);
+        return employeesPromise.then((rows) => rows.length);
+      }));
       group.total_employee_count = counts.reduce((sum, count) => sum + count, 0);
       group.periods.forEach((period: any, index: number) => { period.employee_count = counts[index] || 0; });
     }
@@ -176,7 +213,7 @@ export async function GET(request: Request) {
       const rangeTo = toDate as string;
       const rangeDates = Array.from({ length: Math.max(0, Math.round((Date.parse(`${rangeTo}T00:00:00Z`) - Date.parse(`${rangeFrom}T00:00:00Z`)) / 86400000)) + 1 }, (_, index) => new Date(Date.parse(`${rangeFrom}T00:00:00Z`) + index * 86400000).toISOString().slice(0, 10));
       const selectedStates = rangeStates.filter((row: any) => row.site_id === group.site_id && row.attendance_date >= rangeFrom && row.attendance_date <= rangeTo);
-      return NextResponse.json(await loadDailyDetail(admin, auth, group, selectedStates, rangeDates));
+      return NextResponse.json(await loadDailyDetail(admin, auth, group, selectedStates, rangeDates, eligibilityCache));
     }
     return NextResponse.json({ groups, count: groups.length, sites });
   } catch (error: any) {

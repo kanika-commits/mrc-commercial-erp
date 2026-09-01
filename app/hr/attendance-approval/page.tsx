@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, RotateCcw } from "lucide-react";
 import AlertMessage from "@/components/AlertMessage";
 import { useAccessContext } from "@/components/AccessContext";
@@ -100,6 +100,10 @@ export default function EmployeeAttendanceApprovalPage() {
   const [sendBackIds, setSendBackIds] = useState<string[]>([]);
   const [sendBackReason, setSendBackReason] = useState("");
   const [approveOpen, setApproveOpen] = useState(false);
+  const [reviewMode, setReviewMode] = useState(false);
+  const reviewModeRef = useRef(false);
+  const queueRequestRef = useRef(0);
+  const detailRequestRef = useRef(0);
 
   const selectedRow = useMemo(() => rows.find((row) => row.id === selectedId) || null, [rows, selectedId]);
   const hasPendingInRange = Boolean(detail?.workflow_states?.some((state: any) => state.status === "submitted"));
@@ -131,6 +135,7 @@ export default function EmployeeAttendanceApprovalPage() {
   }, [companyFilter, departmentFilter, designationFilter, detail, employeeFilter, employeeSearch, fromDate, statusFilter, toDate]);
 
   async function loadQueue(preferredId = selectedId, nextPeriodStatus = appliedPeriodStatus, nextSiteId = appliedSiteId, nextFromDate = appliedFromDate, nextToDate = appliedToDate) {
+    const requestId = ++queueRequestRef.current;
     setLoading(true);
     setMessage("");
     try {
@@ -139,20 +144,21 @@ export default function EmployeeAttendanceApprovalPage() {
       if (nextFromDate) query.set("from_date", nextFromDate);
       if (nextToDate) query.set("to_date", nextToDate);
       const payload = await apiFetch(`/api/hr/attendance/approval-groups?${query.toString()}`);
+      if (requestId !== queueRequestRef.current) return selectedId;
       const nextRows = nextSiteId ? payload.groups || [] : [];
-      setSites(payload.sites || []);
+      if (reviewModeRef.current) return selectedId;
       setRows(nextRows);
       const nextSelected = nextRows.some((row: any) => row.id === preferredId) ? preferredId : nextRows[0]?.id || "";
       setSelectedId(nextSelected);
       if (!nextSelected) setDetail(null);
       return nextSelected;
     } catch (error: any) {
-      setRows([]);
-      setDetail(null);
+      if (requestId !== queueRequestRef.current) return selectedId;
+      if (!reviewModeRef.current && !rows.length) setDetail(null);
       setMessage(safeError(error.message, "Failed to load attendance approval queue."));
       return "";
     } finally {
-      setLoading(false);
+      if (requestId === queueRequestRef.current) setLoading(false);
     }
   }
 
@@ -160,6 +166,7 @@ export default function EmployeeAttendanceApprovalPage() {
     if (!id) return;
     const group = rows.find((row) => row.id === id);
     if (!group) return;
+    const requestId = ++detailRequestRef.current;
     setDetailLoading(true);
     setMessage("");
     try {
@@ -167,6 +174,7 @@ export default function EmployeeAttendanceApprovalPage() {
       const nextFrom = range?.from || fromDate || appliedFromDate || queueDates[0] || group.attendance_date;
       const nextTo = range?.to || toDate || appliedToDate || queueDates[queueDates.length - 1] || group.attendance_date;
       const payload = await apiFetch(`/api/hr/attendance/approval-groups?period_status=${encodeURIComponent(appliedPeriodStatus)}&site_id=${encodeURIComponent(group.site_id)}&attendance_date=${encodeURIComponent(group.attendance_date)}&from_date=${encodeURIComponent(nextFrom)}&to_date=${encodeURIComponent(nextTo)}`);
+      if (requestId !== detailRequestRef.current) return;
       setDetail(payload);
       if (range || appliedFromDate || appliedToDate) {
         setFromDate(payload.dates?.[0] || "");
@@ -180,12 +188,19 @@ export default function EmployeeAttendanceApprovalPage() {
       setEmployeeSearch("");
       setShowHistory(false);
     } catch (error: any) {
+      if (requestId !== detailRequestRef.current) return;
       setDetail(null);
       setMessage(safeError(error.message, "Failed to load attendance approval detail."));
     } finally {
-      setDetailLoading(false);
+      if (requestId === detailRequestRef.current) setDetailLoading(false);
     }
   }
+
+  useEffect(() => {
+    apiFetch("/api/hr/attendance/approval-groups?metadata_only=true")
+      .then((payload) => setSites(payload.sites || []))
+      .catch((error: any) => setMessage(safeError(error.message, "Failed to load attendance sites.")));
+  }, []);
 
   useEffect(() => {
     loadQueue("", appliedPeriodStatus, appliedSiteId, appliedFromDate, appliedToDate);
@@ -285,12 +300,14 @@ export default function EmployeeAttendanceApprovalPage() {
             setAppliedPeriodStatus(periodStatusFilter);
             setAppliedFromDate(fromDate);
             setAppliedToDate(toDate);
+            reviewModeRef.current = false;
+            setReviewMode(false);
             setSelectedId("");
           }} className="h-10 rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white">Apply Filters</button>
         </div>
       </section>
 
-      <section className="rounded-2xl border bg-white shadow-sm">
+      {!reviewMode && <section className="rounded-2xl border bg-white shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
           <div>
             <h2 className="font-semibold text-slate-950">Daily Attendance Approval Queue</h2>
@@ -304,38 +321,45 @@ export default function EmployeeAttendanceApprovalPage() {
           </div>
         ) : <MonthlyQueue rows={rows} selectedId={selectedId} onSelect={(id) => {
           const next = rows.find((row) => row.id === id);
+          reviewModeRef.current = true;
+          setReviewMode(true);
+          setDetail(null);
           setSelectedId(id);
           if (next) {
             setFromDate(next.attendance_date);
             setToDate(next.attendance_date);
           }
         }} />}
-      </section>
+      </section>}
 
-      {selectedRow && (
+      {reviewMode && selectedRow && (
         <section className="space-y-4">
+          <button type="button" onClick={() => { reviewModeRef.current = false; setReviewMode(false); }} className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
+            <span aria-hidden="true">←</span>
+            Back to Approval Queue
+          </button>
           <div className="rounded-2xl border bg-white p-4 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
+              <div className="min-w-0 flex-1">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Daily Attendance Register</p>
                 <h2 className="mt-1 text-xl font-bold text-slate-950">{selectedRow.site_name} · {formatDate(selectedRow.attendance_date)}</h2>
                 <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-500"><span>{selectedRow.total_employee_count} Employees · {selectedRow.company_count} Companies</span><AttendanceApprovalStatusBadge status={selectedRow.status_label} /></p>
+                <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
+                  <button type="button" disabled={actionLoading || detailLoading || !hasPendingInRange} onClick={openSendBackModal} className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60">
+                    <RotateCcw className="h-4 w-4" />
+                    Send Back
+                  </button>
+                  <button type="button" title="Approve submitted attendance dates" disabled={actionLoading || detailLoading || !hasPendingInRange} onClick={openApproveModal} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white outline-none transition hover:bg-emerald-800 focus:ring-2 focus:ring-emerald-400 disabled:cursor-not-allowed disabled:opacity-60">
+                    <CheckCircle2 className="h-4 w-4" />
+                    Approve
+                  </button>
+                </div>
                 <div className="mt-2 space-y-0.5 text-xs text-slate-500">
                   {(selectedRow.periods || []).map((period: any) => <p key={period.daily_submission_id}>{period.company_name} · {period.employee_count} employees</p>)}
                 </div>
               </div>
               <div className="max-w-md text-sm text-slate-500">
                 Filters affect only the displayed employee rows. Approval applies only to submitted attendance dates in the selected range.
-              </div>
-              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
-                <button type="button" disabled={actionLoading || detailLoading || !hasPendingInRange} onClick={openSendBackModal} className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60">
-                  <RotateCcw className="h-4 w-4" />
-                  Send Back
-                </button>
-                <button type="button" title="Approve submitted attendance dates" disabled={actionLoading || detailLoading || !hasPendingInRange} onClick={openApproveModal} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white outline-none transition hover:bg-emerald-800 focus:ring-2 focus:ring-emerald-400 disabled:cursor-not-allowed disabled:opacity-60">
-                  <CheckCircle2 className="h-4 w-4" />
-                  Approve
-                </button>
               </div>
             </div>
           </div>
@@ -453,11 +477,11 @@ function MonthlyDetail({ detail, rows, fromDate, toDate, employeeFilter, company
             </span>
           ))}
         </div>
-        <table className="w-full min-w-[900px] border-separate border-spacing-0 text-left text-xs">
+        <table className="w-max min-w-0 table-fixed border-separate border-spacing-0 text-left text-xs">
           <thead className="sticky top-0 z-20 border-b bg-slate-50 uppercase tracking-wide text-slate-500">
-            <tr><th className="sticky left-0 z-30 min-w-[220px] border-b bg-slate-50 px-3 py-3">Employee Name / Code</th>{displayDates.map((date: string) => { const hasAttendance = detail.rows?.some((row: any) => Boolean(row.days?.[detail.dates.indexOf(date)])); return <th key={date} title={hasAttendance ? "Attendance records exist" : undefined} className={`border-b px-2 py-3 text-center ${hasAttendance ? "bg-sky-50 text-sky-800" : ""}`}>{date.slice(-2)}</th>; })}</tr>
+            <tr><th className="sticky left-0 z-30 w-[560px] min-w-[560px] border-b bg-slate-50 px-3 py-3">Employee Name / Code</th>{displayDates.map((date: string) => { const hasAttendance = detail.rows?.some((row: any) => Boolean(row.days?.[detail.dates.indexOf(date)])); return <th key={date} title={hasAttendance ? "Attendance records exist" : undefined} className={`w-[80px] min-w-[80px] border-b px-2 py-3 text-center ${hasAttendance ? "bg-sky-50 text-sky-800" : ""}`}>{date.slice(-2)}</th>; })}</tr>
           </thead>
-          <tbody>{rows.length === 0 ? <tr><td colSpan={displayDates.length + 1} className="px-4 py-10 text-center text-sm text-slate-500">No employees match the selected filters.</td></tr> : rows.map((row: any) => <tr key={row.employee.id} className="border-b"><td className="sticky left-0 z-10 min-w-[220px] border-b bg-white px-3 py-3"><p className="font-semibold text-slate-950">{row.employee.employee_name}</p><p className="text-slate-500">{row.employee.employee_code}</p></td>{displayDates.map((date: string) => { const day = row.days?.[detail.dates.indexOf(date)]; return <td key={`${row.employee.id}-${date}`} className={`border-b px-2 py-3 text-center ${day ? "bg-sky-50/50" : ""}`}>{day ? ATTENDANCE_STATUS_CODES[day.status as keyof typeof ATTENDANCE_STATUS_CODES] : "-"}</td>; })}</tr>)}</tbody>
+          <tbody>{rows.length === 0 ? <tr><td colSpan={displayDates.length + 1} className="px-4 py-10 text-center text-sm text-slate-500">No employees match the selected filters.</td></tr> : rows.map((row: any) => <tr key={row.employee.id} className="border-b"><td className="sticky left-0 z-10 w-[560px] min-w-[560px] border-b bg-white px-3 py-3"><p className="font-semibold text-slate-950">{row.employee.employee_name}</p><p className="text-slate-500">{row.employee.employee_code}</p></td>{displayDates.map((date: string) => { const day = row.days?.[detail.dates.indexOf(date)]; return <td key={`${row.employee.id}-${date}`} className={`w-[80px] min-w-[80px] border-b px-2 py-3 text-center ${day ? "bg-sky-50/50" : ""}`}>{day ? ATTENDANCE_STATUS_CODES[day.status as keyof typeof ATTENDANCE_STATUS_CODES] : "-"}</td>; })}</tr>)}</tbody>
         </table>
       </section>
       <section className="rounded-2xl border bg-white p-4 shadow-sm">
