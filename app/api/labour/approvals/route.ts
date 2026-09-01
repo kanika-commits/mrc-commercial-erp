@@ -1330,8 +1330,8 @@ async function loadStandardApprovalRegisters(access: any, input: {
   contractorProfileId?: string | null;
   search?: string | null;
 }) {
-  const periodMonthFrom = monthStart(input.workDate) || monthStart(new Date().toISOString().slice(0, 10));
-  const periodMonthTo = monthStart(input.toDate) || periodMonthFrom;
+  const periodMonthFrom = input.workDate ? monthStart(input.workDate) : null;
+  const periodMonthTo = input.toDate ? monthStart(input.toDate) : null;
   const requestedStatus = input.status === "final_approved" ? "finalized"
     : input.status === "sent_back_by_pm" || input.status === "sent_back_by_ho" ? "reopened"
     : input.status === "all" ? null
@@ -1343,10 +1343,10 @@ async function loadStandardApprovalRegisters(access: any, input: {
     .eq("organization_id", input.organizationId)
     .eq("company_id", input.companyId)
     .eq("site_id", input.siteId)
-    .gte("period_month", periodMonthFrom)
-    .lte("period_month", periodMonthTo)
     .eq("originating_attendance_system", "standard")
     .order("submitted_at", { ascending: false });
+  if (periodMonthFrom) periodQuery = periodQuery.gte("period_month", periodMonthFrom);
+  if (periodMonthTo) periodQuery = periodQuery.lte("period_month", periodMonthTo);
   if (input.contractorProfileId) periodQuery = periodQuery.eq("contractor_profile_id", input.contractorProfileId);
   periodQuery = applyCompanySiteScope(periodQuery, access.assignments);
   if (!periodQuery) return [];

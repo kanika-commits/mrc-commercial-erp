@@ -47,6 +47,8 @@ assert.match(permissions, /"ho_approve"/, "HO approve action must be a first-cla
 assert.match(permissions, /labour_daily_submission: \["view", "submit", "pm_approve", "pm_send_back", "ho_approve", "ho_send_back", "final_override", "export"\]/, "Permission matrix must expose unified approval actions");
 
 assert.match(approvalApi, /requireLabourPermission\(request, monthlyMode \? "labour_attendance" : "labour_daily_submission", "view"\)/, "Approval list/detail must require workflow-appropriate view permission");
+assert.match(approvalApi, /const periodMonthFrom = input\.workDate \? monthStart\(input\.workDate\) : null/, "Daily Approval must not impose an implicit current-month restriction without a date");
+assert.match(approvalApi, /if \(periodMonthFrom\) periodQuery = periodQuery\.gte\("period_month", periodMonthFrom\)/, "Daily Approval must retain explicit date period filtering");
 assert.match(approvalApi, /resolveSiteAttendanceSystem/, "Approval API must resolve the selected Site attendance system before choosing a workflow");
 assert.match(approvalApi, /workflowFromApprovalStatus/, "Approval API must infer record-origin workflow from workflow-specific approval statuses");
 assert.match(approvalApi, /const approvalWorkflow = workflowFilter === "standard" \|\| workflowFilter === "site_in_engineer"[\s\S]+workflowFromApprovalStatus\(status\) \|\| system\.attendanceSystem/, "Approval API must prefer explicit/origin workflow over current Site policy for existing records");
