@@ -510,6 +510,50 @@ export async function loadAttendanceRowsForWorkers(access: LabourAccess, input: 
   return (data || []).filter((row: any) => eligibleWorkerIds.has(row.labour_worker_id));
 }
 
+export async function loadLabourAttendanceDateAuthority(access: LabourAccess, input: {
+  period: any | null;
+  organizationId: string;
+  siteId: string;
+  attendanceDate: string;
+  attendanceType?: "labour";
+}) {
+  const summaryStatus = normalizeText(input.period?.summary?.date_statuses?.[input.attendanceDate]?.status) || "draft";
+  const { data: latestSubmitted, error } = input.period?.id
+    ? await access.admin
+        .from("labour_attendance_submission_versions")
+        .select("id,status,submission_version,submitted_at,submitted_by,submitted_by_name,submitted_by_email,provenance")
+        .eq("period_id", input.period.id)
+        .eq("attendance_date", input.attendanceDate)
+        .eq("status", "submitted")
+        .order("submission_version", { ascending: false })
+        .order("submitted_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    : { data: null, error: null };
+  if (error) throw error;
+  const historicalAccess = await getActiveHistoricalAttendanceAccess(access, {
+    organizationId: input.organizationId,
+    siteId: input.siteId,
+    attendanceDate: input.attendanceDate,
+    attendanceType: input.attendanceType || "labour",
+  });
+  const reopened = summaryStatus === "reopened" || input.period?.status === "reopened";
+  const status = ["submitted", "finalized", "approved"].includes(summaryStatus)
+    ? summaryStatus
+    : latestSubmitted && !reopened
+      ? "submitted"
+      : summaryStatus;
+  return {
+    status,
+    summaryStatus,
+    latestSubmitted,
+    reopened,
+    historicalAccess,
+    submittedSnapshotLocked: Boolean(latestSubmitted && !reopened),
+  };
+}
+
 export async function findOrCreateAttendancePeriod(access: LabourAccess, input: {
   organizationId: string;
   companyId: string;

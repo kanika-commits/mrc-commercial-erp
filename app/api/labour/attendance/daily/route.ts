@@ -13,6 +13,7 @@ import {
   isGlobalOrSuperAdmin,
   loadEligibleDeployments,
   loadFrozenAttendanceDeploymentIds,
+  loadLabourAttendanceDateAuthority,
   loadAttendanceRowsForWorkers,
   requireLabourPermission,
   originatingAttendanceSystem,
@@ -427,7 +428,8 @@ export async function GET(request: Request) {
     if ("error" in tradeCheck) return jsonError(tradeCheck.error || "Selected labour category is not available.", 403);
 
     const period = await findOrCreateAttendancePeriod(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate, originatingAttendanceSystem: "standard" });
-    const dateStatusForPopulation = selectedDateRegisterStatus(period, [], attendanceDate);
+    const dateAuthority = await loadLabourAttendanceDateAuthority(access, { period, organizationId, siteId, attendanceDate });
+    const dateStatusForPopulation = dateAuthority.status;
     const frozenDeploymentIds = await loadFrozenAttendanceDeploymentIds(access, period, attendanceDate, dateStatusForPopulation);
     const population = await loadStandardPopulation(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate, deploymentIds: frozenDeploymentIds, ignoreWorkerCreatedAt: !frozenDeploymentIds });
     const [dayLock, policy] = await Promise.all([
@@ -447,9 +449,9 @@ export async function GET(request: Request) {
       attendanceDate,
       workerIds,
     });
-    const selectedStatus = selectedDateRegisterStatus(period, attendanceRows || [], attendanceDate);
-    const historicalAccess = await getActiveHistoricalAttendanceAccess(access, { organizationId, siteId, attendanceDate, attendanceType: "labour" });
-    const explicitlyOpen = selectedStatus === "reopened" || Boolean(historicalAccess);
+    const selectedStatus = dateAuthority.status;
+    const historicalAccess = dateAuthority.historicalAccess;
+    const explicitlyOpen = selectedStatus === "reopened";
     const attendanceByWorker = new Map((attendanceRows || []).map((row: any) => [row.labour_worker_id, row]));
     const workerIdSet = new Set(workerIds);
     const { data: scopedWorkerRates, error: workerRatesError } = workerIds.length
@@ -589,7 +591,7 @@ export async function POST(request: Request) {
     const contractorProfileIds = contractorCheck.profileIds;
 
     const existingPeriod = await loadExistingAttendancePeriod(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate });
-    const reopenedDate = existingPeriod?.summary?.date_statuses?.[attendanceDate]?.status === "reopened";
+    const reopenedDate = existingPeriod?.summary?.date_statuses?.[attendanceDate]?.status === "reopened" || existingPeriod?.status === "reopened";
     const historicalAccess = await getActiveHistoricalAttendanceAccess(access, { organizationId, siteId, attendanceDate, attendanceType: "labour" });
     const dateAccess = actorCanEditAttendanceDate(access, attendanceDate, backdatedReason, { reopened: reopenedDate, historicallyOpened: Boolean(historicalAccess) && !reopenedDate });
     if ("error" in dateAccess) return jsonError(dateAccess.error || "You cannot edit attendance for this date.", 403);
@@ -600,7 +602,9 @@ export async function POST(request: Request) {
       return jsonError("This attendance period belongs to Site-In & Engineer Daily Labour. Use Engineer Daily Labour for this existing record.", 403);
     }
     const period = originResult.period || await findOrCreateAttendancePeriod(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate, originatingAttendanceSystem: "standard" });
-    const explicitlyOpen = reopenedDate || Boolean(historicalAccess);
+    const dateAuthority = await loadLabourAttendanceDateAuthority(access, { period, organizationId, siteId, attendanceDate });
+    if (dateAuthority.submittedSnapshotLocked) return jsonError("Attendance for this date has already been submitted. Reopen the date before making changes.", 403);
+    const explicitlyOpen = dateAuthority.reopened || Boolean(historicalAccess);
     const lockBlocker = explicitlyOpen
       ? null
       : await loadLabourEditLockBlocker(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate });
@@ -610,7 +614,7 @@ export async function POST(request: Request) {
 
     const changes = Array.isArray(payload.rows) ? payload.rows : [];
     if (!changes.length) return NextResponse.json({ saved: 0 });
-    const populationStatus = selectedDateRegisterStatus(period, [], attendanceDate);
+    const populationStatus = dateAuthority.status;
     const frozenDeploymentIds = await loadFrozenAttendanceDeploymentIds(access, period, attendanceDate, populationStatus);
     const population = await loadStandardPopulation(access, {
       organizationId,
@@ -631,7 +635,7 @@ export async function POST(request: Request) {
       attendanceDate,
       workerIds,
     });
-    const selectedStatus = selectedDateRegisterStatus(period, existingRows || [], attendanceDate);
+    const selectedStatus = dateAuthority.status;
     if (["submitted", "finalized"].includes(selectedStatus) && !explicitlyOpen) return jsonError("Attendance is locked for editing for this date.", 403);
     const requiresOverride = selectedStatus !== "draft";
     const { data: wagePeriod, error: wageError } = await access.admin
