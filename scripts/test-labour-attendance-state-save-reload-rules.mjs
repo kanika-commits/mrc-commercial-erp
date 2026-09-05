@@ -8,6 +8,10 @@ const labourShared = fs.readFileSync("app/api/labour/_shared.ts", "utf8");
 const submitApi = fs.readFileSync("app/api/labour/attendance/periods/[id]/submit/route.ts", "utf8");
 const approvalApi = fs.readFileSync("app/api/labour/approvals/route.ts", "utf8");
 const migration = fs.readFileSync("supabase/migrations/202609040021_labour_attendance_submission_date_status_merge_fix.sql", "utf8");
+const contractorFilterBranch = attendancePage.slice(
+  attendancePage.indexOf('if ("contractor_profile_id" in patch && Object.keys(patch).length === 1)'),
+  attendancePage.indexOf('if ("labour_search" in patch && Object.keys(patch).length === 1)'),
+);
 
 function mergeLabourAttendanceDateStatus(summary, attendanceDate, dateStatus) {
   const base = summary && typeof summary === "object" && !Array.isArray(summary) ? summary : {};
@@ -49,6 +53,35 @@ function selectedShiftButton(value) {
 
 function changedRowsForSaveDraft(rows, dirtyWorkerIds) {
   return rows.filter((row) => dirtyWorkerIds.has(row.labour_worker_id));
+}
+
+function loadedContextKey(filters) {
+  return [filters.company_id, filters.site_id, filters.attendance_date].join("|");
+}
+
+function visibleRows(rows, filters) {
+  const normalizedLabourSearch = filters.labour_search.trim().toLowerCase();
+  return rows.filter((row) => {
+    const contractorMatches = !filters.contractor_profile_id || row.contractor?.id === filters.contractor_profile_id;
+    const labourMatches = !normalizedLabourSearch
+      || String(row.worker?.worker_name || "").toLowerCase().includes(normalizedLabourSearch)
+      || String(row.worker?.labour_code || "").toLowerCase().includes(normalizedLabourSearch);
+    return contractorMatches && labourMatches;
+  });
+}
+
+function applySoftContractorFilter(state, contractorProfileId) {
+  return {
+    ...state,
+    filters: { ...state.filters, contractor_profile_id: contractorProfileId || "" },
+  };
+}
+
+function applySoftLabourSearch(state, labourSearch) {
+  return {
+    ...state,
+    filters: { ...state.filters, labour_search: labourSearch || "" },
+  };
 }
 
 function clearConfirmedSavedWorkers(dirtyWorkerIds, savedWorkerIds) {
@@ -122,6 +155,52 @@ assert.deepEqual(
   ["w1", "w2", "w3", "w4", "w5"],
   "Failed bulk save must preserve dirty rows",
 );
+assert.equal(
+  loadedContextKey({ company_id: "c1", site_id: "s1", attendance_date: "2026-09-01", contractor_profile_id: "contractor-a" }),
+  loadedContextKey({ company_id: "c1", site_id: "s1", attendance_date: "2026-09-01", contractor_profile_id: "contractor-b" }),
+  "Contractor must not participate in the hard loaded attendance context",
+);
+assert.notEqual(
+  loadedContextKey({ company_id: "c1", site_id: "s1", attendance_date: "2026-09-01" }),
+  loadedContextKey({ company_id: "c2", site_id: "s1", attendance_date: "2026-09-01" }),
+  "Company must remain part of the hard loaded attendance context",
+);
+assert.notEqual(
+  loadedContextKey({ company_id: "c1", site_id: "s1", attendance_date: "2026-09-01" }),
+  loadedContextKey({ company_id: "c1", site_id: "s2", attendance_date: "2026-09-01" }),
+  "Site must remain part of the hard loaded attendance context",
+);
+assert.notEqual(
+  loadedContextKey({ company_id: "c1", site_id: "s1", attendance_date: "2026-09-01" }),
+  loadedContextKey({ company_id: "c1", site_id: "s1", attendance_date: "2026-09-02" }),
+  "Attendance date must remain part of the hard loaded attendance context",
+);
+const crossContractorRows = [
+  { labour_worker_id: "a1", contractor: { id: "contractor-a" }, worker: { worker_name: "A One", labour_code: "A1" } },
+  { labour_worker_id: "a2", contractor: { id: "contractor-a" }, worker: { worker_name: "A Two", labour_code: "A2" } },
+  { labour_worker_id: "b1", contractor: { id: "contractor-b" }, worker: { worker_name: "B One", labour_code: "B1" } },
+  { labour_worker_id: "b2", contractor: { id: "contractor-b" }, worker: { worker_name: "B Two", labour_code: "B2" } },
+];
+const dirtySoftFilterState = {
+  filters: { company_id: "c1", site_id: "s1", attendance_date: "2026-09-01", contractor_profile_id: "contractor-a", labour_search: "" },
+  rows: crossContractorRows,
+  dirtyWorkerIds: new Set(["a1", "b1"]),
+  loadedContextKey: "c1|s1|2026-09-01",
+  unsavedAction: null,
+};
+const contractorBState = applySoftContractorFilter(dirtySoftFilterState, "contractor-b");
+assert.equal(contractorBState.unsavedAction, null, "Contractor changes with dirty rows must not trigger the unsaved changes modal");
+assert.deepEqual([...contractorBState.dirtyWorkerIds], ["a1", "b1"], "Contractor changes must not clear dirty workers");
+assert.equal(Boolean(contractorBState.rows.length && contractorBState.loadedContextKey === loadedContextKey(contractorBState.filters)), true, "Contractor changes must not invalidate loaded attendance");
+assert.deepEqual(visibleRows(contractorBState.rows, contractorBState.filters).map((row) => row.labour_worker_id), ["b1", "b2"], "Contractor soft filter must immediately show matching loaded rows");
+assert.deepEqual(visibleRows(applySoftContractorFilter(contractorBState, "contractor-a").rows, applySoftContractorFilter(contractorBState, "contractor-a").filters).map((row) => row.labour_worker_id), ["a1", "a2"], "Dirty edits must remain reachable after switching Contractor A to B to A");
+assert.deepEqual(visibleRows(applySoftContractorFilter(contractorBState, "").rows, applySoftContractorFilter(contractorBState, "").filters).map((row) => row.labour_worker_id), ["a1", "a2", "b1", "b2"], "All Contractors must show the full loaded dataset without reload");
+assert.deepEqual(visibleRows(applySoftLabourSearch(dirtySoftFilterState, "two").rows, applySoftLabourSearch(dirtySoftFilterState, "two").filters).map((row) => row.labour_worker_id), ["a2"], "Labour search must remain a client-side soft filter");
+assert.deepEqual(
+  changedRowsForSaveDraft(crossContractorRows, new Set(["a1", "b1"])).map((row) => row.labour_worker_id),
+  ["a1", "b1"],
+  "Save Draft must include dirty rows from multiple contractors",
+);
 
 assert.match(operations, /export function mergeLabourAttendanceDateStatus/, "Shared operations must document/test date status merge semantics");
 assert.match(operations, /export function labourAttendanceRowsMatch/, "Shared operations must normalize NULL\/0 bonus comparisons");
@@ -146,9 +225,10 @@ assert.match(attendanceApi, /loadStandardPopulation\(access, \{[\s\S]+contractor
 assert.match(labourShared, /if \(input\.contractorProfileId\) query = query\.eq\("contractor_profile_id", input\.contractorProfileId\)/, "Eligible deployment loading must enforce selected contractor server-side");
 assert.match(attendanceApi, /dateAuthority\.submittedSnapshotLocked/, "Historical access alone must not reopen a submitted snapshot");
 
-assert.match(attendancePage, /params\.set\("contractor_profile_id", requestContext\.contractor_profile_id\)/, "Load Attendance must send selected contractor to the API");
-assert.match(attendancePage, /contractor_profile_id: filters\.contractor_profile_id \|\| null/, "Save Draft must send selected contractor to the API");
-assert.match(attendancePage, /filters\.attendance_date, filters\.contractor_profile_id \|\| ""/, "Loaded attendance context must include contractor");
+assert.doesNotMatch(attendancePage, /params\.set\("contractor_profile_id", requestContext\.contractor_profile_id\)/, "This page must load the full Company/Site/Date population without constraining GET by Contractor");
+assert.match(attendancePage, /contractor_profile_id: null/, "Save Draft from this page must save against the full Company/Site/Date context");
+assert.match(attendancePage, /const currentContextKey = \[filters\.company_id, filters\.site_id, filters\.attendance_date\]\.join\("\|"\)/, "Loaded attendance context must exclude soft Contractor filter");
+assert.doesNotMatch(attendancePage, /filters\.attendance_date, filters\.contractor_profile_id \|\| ""/, "Loaded attendance context must not include Contractor");
 assert.match(attendancePage, /if \(!attendanceLoaded\) \{\s*setMessage\(mode === "submit" \? "Load attendance before submitting\." : "Load attendance for the selected filters before saving\."\);[\s\S]+return false;\s*\}/, "Save Draft must explain stale or missing loaded context instead of silently doing nothing");
 assert.match(attendancePage, /onClick=\{saveRows\} disabled=\{saving \|\| submitting\}/, "Save Draft must remain clickable so stale context can show a clear message");
 assert.match(attendancePage, /const changed = mode === "submit" \? rows : rows\.filter\(\(row\) => dirtyWorkerIds\.has\(row\.labour_worker_id\)\)/, "Save Draft must persist dirty rows without inventing untouched rows");
@@ -169,9 +249,12 @@ assert.match(attendancePage, /savedWorkerIds\.forEach\(\(workerId\) => next\.del
 assert.match(attendancePage, /catch \{\s*setMessage\("Attendance save could not be confirmed\. Your unsaved changes have been kept\."\)/, "Malformed save responses must preserve dirty state");
 assert.match(attendancePage, /setMessage\(`Saved \$\{payload\.saved\} attendance rows\.`\);[\s\S]+setSubmitError\(""\);[\s\S]+setSubmitSuccessMessage\(""\);/, "Confirmed Save Draft must clear stale submitted-error banners");
 assert.match(attendancePage, /setSubmitError\(""\);[\s\S]+setRows\(\[\]\)/, "Fresh load must clear stale submit errors");
-assert.match(attendancePage, /function applyFilterChange[\s\S]+setSubmitError\(""\);[\s\S]+setRows\(\[\]\)/, "Changing the load context must clear stale submit errors");
+assert.match(attendancePage, /const changesHardContext = "company_id" in patch \|\| "site_id" in patch \|\| "attendance_date" in patch/, "Only Company, Site and Attendance Date must be hard loaded-context filters");
+assert.match(attendancePage, /function applyFilterChange[\s\S]+if \(changesHardContext\) \{[\s\S]+setSubmitError\(""\);[\s\S]+setRows\(\[\]\)/, "Changing the hard load context must clear stale submit errors and rows");
 assert.match(attendancePage, /"contractor_profile_id" in patch[\s\S]+setSubmitError\(""\)/, "Contractor changes must clear stale submit errors");
-assert.match(attendancePage, /"contractor_profile_id" in patch[\s\S]+if \(hasUnsavedChanges\) \{\s*setUnsavedAction\(\(\) => action\);[\s\S]+return;[\s\S]+\}\s*action\(\);/, "Contractor changes with dirty rows must use the existing unsaved-change protection");
+assert.ok(contractorFilterBranch.includes('setFilters((current) => ({ ...current, contractor_profile_id: patch.contractor_profile_id || "" }))'), "Contractor changes must update only the soft filter value");
+assert.doesNotMatch(contractorFilterBranch, /hasUnsavedChanges|setUnsavedAction|setRows\(\[\]\)|setLoadedContextKey\(null\)|setDirtyWorkerIds\(new Set\(\)\)/, "Contractor changes with dirty rows must not trigger the unsaved-change modal or clear loaded state");
+assert.match(attendancePage, /"labour_search" in patch[\s\S]+setFilters\(\(current\) => \(\{ \.\.\.current, labour_search: patch\.labour_search \|\| "" \}\)\)/, "Labour search must remain a soft client-side filter");
 assert.match(attendancePage, /setDirtyWorkerIds\(\(current\) => new Set\(\[\.\.\.current, \.\.\.displayedRows\.map\(\(row\) => row\.labour_worker_id\)\]\)\)/, "Mark All Present/Absent must still mark visible intended rows dirty");
 
 assert.match(submitApi, /loadLabourAttendanceDateAuthority/, "Submit must use snapshot-backed date authority");

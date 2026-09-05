@@ -81,7 +81,7 @@ assert.match(snapshotMigration, /where period_id = p_period_id and attendance_da
 
 assert.match(standardApi, /\.upsert\(rows, \{ onConflict: "period_id,labour_worker_id,attendance_date" \}\)/, "Standard Attendance POST must use period-scoped identity");
 assert.match(standardApi, /periodId: period\.id/, "Standard Attendance POST must put the server-resolved period on each row");
-assert.match(standardPage, /contractor_profile_id: filters\.contractor_profile_id \|\| null/, "All Contractors must remain a filter, not part of identity");
+assert.match(standardPage, /contractor_profile_id: null/, "Standard Attendance page must save against the full Company/Site/Date context while Contractor remains a soft filter");
 
 assert.match(engineerApi, /\.in\("period_id", periodIds\)[\s\S]+\.eq\("attendance_date", context\.workDate\)[\s\S]+\.in\("labour_worker_id", workerIds\)/, "Engineer Daily existing-row lookup must be period scoped");
 assert.match(engineerApi, /\.upsert\(upserts, \{ onConflict: "period_id,labour_worker_id,attendance_date" \}\)/, "Engineer Daily upsert must use period-scoped identity");

@@ -143,7 +143,7 @@ export default function LabourDailyAttendancePage() {
   ) as Record<string, string>, [rows]);
 
   const hasUnsavedChanges = dirtyWorkerIds.size > 0;
-  const currentContextKey = [filters.company_id, filters.site_id, filters.attendance_date, filters.contractor_profile_id || ""].join("|");
+  const currentContextKey = [filters.company_id, filters.site_id, filters.attendance_date].join("|");
   const attendanceLoaded = Boolean(rows.length && loadedContextKey === currentContextKey);
   const dateSummary = period?.summary?.date_statuses?.[filters.attendance_date] || {};
   const reopenedDate = dateSummary.status === "reopened";
@@ -214,7 +214,6 @@ export default function LabourDailyAttendancePage() {
       company_id: filters.company_id,
       site_id: filters.site_id,
       attendance_date: filters.attendance_date,
-      contractor_profile_id: filters.contractor_profile_id,
     };
     if (!requestContext.company_id) return setMessage("Select a company.");
     if (!requestContext.site_id) return setMessage("Select a site.");
@@ -242,7 +241,6 @@ export default function LabourDailyAttendancePage() {
       params.set("company_id", requestContext.company_id);
       params.set("site_id", requestContext.site_id);
       params.set("attendance_date", requestContext.attendance_date);
-      if (requestContext.contractor_profile_id) params.set("contractor_profile_id", requestContext.contractor_profile_id);
       const response = await fetch(`/api/labour/attendance/daily?${params}`, {
         headers: { Authorization: `Bearer ${await token()}` },
         signal: controller.signal,
@@ -260,7 +258,7 @@ export default function LabourDailyAttendancePage() {
       if (!response.ok) return setMessage(payload.error || "Could not load attendance.");
       const nextRows = payload.rows || [];
       setRows(nextRows);
-      setLoadedContextKey(nextRows.length ? [requestContext.company_id, requestContext.site_id, requestContext.attendance_date, requestContext.contractor_profile_id || ""].join("|") : null);
+      setLoadedContextKey(nextRows.length ? [requestContext.company_id, requestContext.site_id, requestContext.attendance_date].join("|") : null);
       setMessage(nextRows.length ? "" : "No eligible deployed labourers found for this Site/date.");
       setPeriod(payload.period ? { ...payload.period, server_read_only: payload.read_only } : null);
       setSupportingPdf(payload.supporting_pdf || null);
@@ -290,8 +288,9 @@ export default function LabourDailyAttendancePage() {
   }
 
   function applyFilterChange(patch: Partial<typeof filters>, options: { clearContractors?: boolean } = {}) {
+    const changesHardContext = "company_id" in patch || "site_id" in patch || "attendance_date" in patch;
     if ("company_id" in patch || "site_id" in patch) clearSelectedLabourContext();
-    if (!("contractor_profile_id" in patch)) {
+    if (changesHardContext) {
       setMessage("");
       setSubmitSuccessMessage("");
       setSubmitError("");
@@ -313,18 +312,11 @@ export default function LabourDailyAttendancePage() {
 
   function updateFilters(patch: Partial<typeof filters>, options: { clearContractors?: boolean } = {}) {
     if ("contractor_profile_id" in patch && Object.keys(patch).length === 1) {
-      const action = () => {
-        setSubmitError("");
-        setMessage("");
-        setSubmitSuccessMessage("");
-        setSubmitted(false);
-        setFilters((current) => ({ ...current, contractor_profile_id: patch.contractor_profile_id || "" }));
-      };
-      if (hasUnsavedChanges) {
-        setUnsavedAction(() => action);
-        return;
-      }
-      action();
+      setSubmitError("");
+      setMessage("");
+      setSubmitSuccessMessage("");
+      setSubmitted(false);
+      setFilters((current) => ({ ...current, contractor_profile_id: patch.contractor_profile_id || "" }));
       return;
     }
     if ("labour_search" in patch && Object.keys(patch).length === 1) {
@@ -531,7 +523,7 @@ export default function LabourDailyAttendancePage() {
           company_id: filters.company_id,
           site_id: filters.site_id,
           attendance_date: filters.attendance_date,
-          contractor_profile_id: filters.contractor_profile_id || null,
+          contractor_profile_id: null,
           backdated_reason,
           mode,
           rows: changed.map(({ labour_worker_id, first_shift_status, second_shift_status, ot_hours, remarks, first_shift_override_reason, second_shift_override_reason }) => {
