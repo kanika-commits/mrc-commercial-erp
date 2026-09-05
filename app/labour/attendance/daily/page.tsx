@@ -143,7 +143,7 @@ export default function LabourDailyAttendancePage() {
   ) as Record<string, string>, [rows]);
 
   const hasUnsavedChanges = dirtyWorkerIds.size > 0;
-  const currentContextKey = [filters.company_id, filters.site_id, filters.attendance_date].join("|");
+  const currentContextKey = [filters.company_id, filters.site_id, filters.attendance_date, filters.contractor_profile_id || ""].join("|");
   const attendanceLoaded = Boolean(rows.length && loadedContextKey === currentContextKey);
   const dateSummary = period?.summary?.date_statuses?.[filters.attendance_date] || {};
   const reopenedDate = dateSummary.status === "reopened";
@@ -156,6 +156,7 @@ export default function LabourDailyAttendancePage() {
   const policyMissing = Boolean(filters.company_id && filters.site_id && attendanceSystem && systemValue !== "standard" && systemValue !== "site_in_engineer");
   const siteInEngineerSite = systemValue === "site_in_engineer";
   const standardBlocked = policyMissing || siteInEngineerSite;
+
   async function token() {
     const { data: { session } } = await supabase.auth.getSession();
     return session?.access_token || "";
@@ -227,6 +228,7 @@ export default function LabourDailyAttendancePage() {
     rowAbortRef.current = controller;
     setSubmitSuccessMessage("");
     setMessage("");
+    setSubmitError("");
     setSubmitted(false);
     setRows([]);
     setPeriod(null);
@@ -240,6 +242,7 @@ export default function LabourDailyAttendancePage() {
       params.set("company_id", requestContext.company_id);
       params.set("site_id", requestContext.site_id);
       params.set("attendance_date", requestContext.attendance_date);
+      if (requestContext.contractor_profile_id) params.set("contractor_profile_id", requestContext.contractor_profile_id);
       const response = await fetch(`/api/labour/attendance/daily?${params}`, {
         headers: { Authorization: `Bearer ${await token()}` },
         signal: controller.signal,
@@ -257,7 +260,7 @@ export default function LabourDailyAttendancePage() {
       if (!response.ok) return setMessage(payload.error || "Could not load attendance.");
       const nextRows = payload.rows || [];
       setRows(nextRows);
-      setLoadedContextKey(nextRows.length ? [requestContext.company_id, requestContext.site_id, requestContext.attendance_date].join("|") : null);
+      setLoadedContextKey(nextRows.length ? [requestContext.company_id, requestContext.site_id, requestContext.attendance_date, requestContext.contractor_profile_id || ""].join("|") : null);
       setMessage(nextRows.length ? "" : "No eligible deployed labourers found for this Site/date.");
       setPeriod(payload.period ? { ...payload.period, server_read_only: payload.read_only } : null);
       setSupportingPdf(payload.supporting_pdf || null);
@@ -276,6 +279,8 @@ export default function LabourDailyAttendancePage() {
 
   function updateRow(workerId: string, patch: Record<string, any>) {
     setMessage("");
+    setSubmitError("");
+    setSubmitSuccessMessage("");
     setRows((current) => current.map((row) => row.labour_worker_id === workerId ? { ...row, ...patch } : row));
     setDirtyWorkerIds((current) => {
       const next = new Set(current);
@@ -287,6 +292,9 @@ export default function LabourDailyAttendancePage() {
   function applyFilterChange(patch: Partial<typeof filters>, options: { clearContractors?: boolean } = {}) {
     if ("company_id" in patch || "site_id" in patch) clearSelectedLabourContext();
     if (!("contractor_profile_id" in patch)) {
+      setMessage("");
+      setSubmitSuccessMessage("");
+      setSubmitError("");
       setRows([]);
       setLoadedContextKey(null);
       setPeriod(null);
@@ -305,7 +313,18 @@ export default function LabourDailyAttendancePage() {
 
   function updateFilters(patch: Partial<typeof filters>, options: { clearContractors?: boolean } = {}) {
     if ("contractor_profile_id" in patch && Object.keys(patch).length === 1) {
-      setFilters((current) => ({ ...current, contractor_profile_id: patch.contractor_profile_id || "" }));
+      const action = () => {
+        setSubmitError("");
+        setMessage("");
+        setSubmitSuccessMessage("");
+        setSubmitted(false);
+        setFilters((current) => ({ ...current, contractor_profile_id: patch.contractor_profile_id || "" }));
+      };
+      if (hasUnsavedChanges) {
+        setUnsavedAction(() => action);
+        return;
+      }
+      action();
       return;
     }
     if ("labour_search" in patch && Object.keys(patch).length === 1) {
@@ -340,6 +359,7 @@ export default function LabourDailyAttendancePage() {
     setDirtyWorkerIds(new Set());
     setMessage("");
     setSubmitSuccessMessage("");
+    setSubmitError("");
     setSubmitted(false);
     setUnsavedAction(null);
     action();
@@ -364,7 +384,7 @@ export default function LabourDailyAttendancePage() {
         return;
       }
     }
-    updateRow(workerId, { [field]: status, [reasonField]: overrideReason });
+    updateRow(workerId, { [field]: status, [existingField]: status === "present", [reasonField]: overrideReason });
   }
 
   function batchStatus(status: string) {
@@ -386,6 +406,8 @@ export default function LabourDailyAttendancePage() {
       ...row,
       first_shift_status: status,
       second_shift_status: status,
+      first_half_present: status === "present",
+      second_half_present: status === "present",
       ot_hours: status === "present" ? row.ot_hours || "" : "",
       bonus_hours: status === "present" ? row.bonus_hours ?? "" : "",
       first_shift_override_reason: "",
@@ -404,6 +426,8 @@ export default function LabourDailyAttendancePage() {
       ...row,
       first_shift_status: null,
       second_shift_status: null,
+      first_half_present: null,
+      second_half_present: null,
       ot_hours: "",
       bonus_hours: "",
       first_shift_override_reason: "",
@@ -465,6 +489,14 @@ export default function LabourDailyAttendancePage() {
   }
 
   async function persistRows(mode: "draft" | "submit") {
+    const changed = mode === "submit" ? rows : rows.filter((row) => dirtyWorkerIds.has(row.labour_worker_id));
+    const expectedSavedCount = changed.length;
+    const savedWorkerIds = new Set(changed.map((row) => row.labour_worker_id));
+    if (mode === "draft") setSubmitError("");
+    if (!attendanceLoaded) {
+      setMessage(mode === "submit" ? "Load attendance before submitting." : "Load attendance for the selected filters before saving.");
+      return false;
+    }
     if (policyMissing) {
       setMessage("Attendance system is not configured for this site.");
       return false;
@@ -473,7 +505,6 @@ export default function LabourDailyAttendancePage() {
       setMessage("This site uses Site-In & Engineer Daily Labour. Use Site-In and Engineer Daily Labour for attendance.");
       return false;
     }
-    const changed = mode === "submit" ? rows : rows.filter((row) => dirtyWorkerIds.has(row.labour_worker_id));
     if (!changed.length) {
       setMessage(mode === "submit" ? "Load attendance before submitting." : "No changes to save.");
       return false;
@@ -500,6 +531,7 @@ export default function LabourDailyAttendancePage() {
           company_id: filters.company_id,
           site_id: filters.site_id,
           attendance_date: filters.attendance_date,
+          contractor_profile_id: filters.contractor_profile_id || null,
           backdated_reason,
           mode,
           rows: changed.map(({ labour_worker_id, first_shift_status, second_shift_status, ot_hours, remarks, first_shift_override_reason, second_shift_override_reason }) => {
@@ -521,13 +553,30 @@ export default function LabourDailyAttendancePage() {
           }),
         }),
       });
-      const payload = await response.json();
+      let payload: any = {};
+      try {
+        payload = await response.json();
+      } catch {
+        setMessage("Attendance save could not be confirmed. Your unsaved changes have been kept.");
+        return false;
+      }
       if (!response.ok) {
         setMessage(payload.error || "Could not save attendance.");
         return false;
       }
+      const confirmedSavedCount = Number(payload.saved);
+      if (!Number.isFinite(confirmedSavedCount) || confirmedSavedCount !== expectedSavedCount) {
+        setMessage(`Attendance save could not be confirmed. Expected ${expectedSavedCount} rows, server confirmed ${Number.isFinite(confirmedSavedCount) ? confirmedSavedCount : "an invalid count"}. Your unsaved changes have been kept.`);
+        return false;
+      }
       setMessage(`Saved ${payload.saved} attendance rows.`);
-      setDirtyWorkerIds(new Set());
+      setSubmitError("");
+      setSubmitSuccessMessage("");
+      setDirtyWorkerIds((current) => {
+        const next = new Set(current);
+        savedWorkerIds.forEach((workerId) => next.delete(workerId));
+        return next;
+      });
       return true;
     } catch (saveError: any) {
       setMessage(saveError.message || "Could not save attendance.");
@@ -784,7 +833,7 @@ export default function LabourDailyAttendancePage() {
           </div>
           <div className="flex flex-wrap gap-2">
             {canSave && !readOnly && (
-              <button type="button" onClick={saveRows} disabled={!attendanceLoaded || saving || submitting} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+              <button type="button" onClick={saveRows} disabled={saving || submitting} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
                 <Save className="h-4 w-4" /> {saving ? "Saving attendance..." : "Save Draft"}
               </button>
             )}

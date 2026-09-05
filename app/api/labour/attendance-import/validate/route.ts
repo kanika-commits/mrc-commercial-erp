@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     if (!batch) return jsonError("Import batch not found.", 404);
     const rows = await loadBatchRows(access, batch_id);
 
-    const [{ data: workers, error: workersError }, { data: deployments, error: deploymentsError }, { data: existingAttendance, error: existingError }] = await Promise.all([
+    const [{ data: workers, error: workersError }, { data: deployments, error: deploymentsError }] = await Promise.all([
       access.admin
         .from("labour_workers")
         .select("id, labour_code, worker_name, status")
@@ -30,20 +30,45 @@ export async function POST(request: Request) {
         .eq("company_id", batch.selected_company_id)
         .eq("site_id", batch.selected_site_id)
         .eq("status", "active"),
-      rows.length
-        ? access.admin
-            .from("labour_attendance")
-            .select("id, labour_worker_id, attendance_date")
-            .eq("organization_id", batch.organization_id)
-            .eq("company_id", batch.selected_company_id)
-            .eq("site_id", batch.selected_site_id)
-        : Promise.resolve({ data: [], error: null }),
     ]);
     if (workersError) throw workersError;
     if (deploymentsError) throw deploymentsError;
+
+    const attendanceDates = Array.from(new Set(
+      rows
+        .map((row: any) => row.normalized_data?.attendance_date || row.attendance_date)
+        .filter(Boolean),
+    )) as string[];
+    const periodMonths = Array.from(new Set(attendanceDates.map((date) => monthStart(date)).filter(Boolean))) as string[];
+    let existingPeriodsQuery = periodMonths.length
+      ? access.admin
+          .from("labour_attendance_periods")
+          .select("id, period_month")
+          .eq("organization_id", batch.organization_id)
+          .eq("company_id", batch.selected_company_id)
+          .eq("site_id", batch.selected_site_id)
+          .in("period_month", periodMonths)
+      : null;
+    if (existingPeriodsQuery) {
+      existingPeriodsQuery = batch.selected_contractor_profile_id
+        ? existingPeriodsQuery.eq("contractor_profile_id", batch.selected_contractor_profile_id)
+        : existingPeriodsQuery.is("contractor_profile_id", null);
+    }
+    const { data: existingPeriods, error: periodsError } = existingPeriodsQuery
+      ? await existingPeriodsQuery
+      : { data: [], error: null };
+    if (periodsError) throw periodsError;
+    const periodByMonth = new Map((existingPeriods || []).map((period: any) => [period.period_month, period]));
+    const periodIds = Array.from(new Set((existingPeriods || []).map((period: any) => period.id).filter(Boolean)));
+    const { data: existingAttendance, error: existingError } = periodIds.length
+      ? await access.admin
+          .from("labour_attendance")
+          .select("id, period_id, labour_worker_id, attendance_date")
+          .in("period_id", periodIds)
+      : { data: [], error: null };
     if (existingError) throw existingError;
 
-    const existingKeys = new Set((existingAttendance || []).map((row: any) => `${row.labour_worker_id}|${row.attendance_date}`));
+    const existingKeys = new Set((existingAttendance || []).map((row: any) => `${row.period_id}|${row.labour_worker_id}|${row.attendance_date}`));
     const workbookKeys = new Map<string, number>();
     const updates = [];
 
@@ -106,7 +131,8 @@ export async function POST(request: Request) {
       const key = worker && attendanceDate ? `${worker.id}|${attendanceDate}` : `${row.source_row_number}|${row.source_column || ""}`;
       workbookKeys.set(key, (workbookKeys.get(key) || 0) + 1);
       if (workbookKeys.get(key)! > 1) errors.push("Duplicate attendance row in workbook.");
-      if (worker && attendanceDate && existingKeys.has(`${worker.id}|${attendanceDate}`)) {
+      const period = attendanceDate ? periodByMonth.get(monthStart(attendanceDate)) : null;
+      if (worker && attendanceDate && period && existingKeys.has(`${period.id}|${worker.id}|${attendanceDate}`)) {
         warnings.push("Existing attendance will be updated.");
       }
 

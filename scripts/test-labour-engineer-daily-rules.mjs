@@ -97,7 +97,7 @@ assert.match(api, /overtimeMinutes: ot\.minutes \|\| 0/, "OT hours are stored th
 assert.match(api, /site_in_id: eligible\.site_in_id/, "Attendance rows retain the Site-In link");
 assert.match(api, /first_half_present: shiftStatusToBoolean/, "First Shift maps to first_half_present");
 assert.match(api, /second_half_present: shiftStatusToBoolean/, "Second Shift maps to second_half_present");
-assert.match(api, /\.upsert\(upserts, \{ onConflict: "labour_worker_id,attendance_date" \}\)/, "Attendance upsert preserves worker/date uniqueness");
+assert.match(api, /\.upsert\(upserts, \{ onConflict: "period_id,labour_worker_id,attendance_date" \}\)/, "Attendance upsert preserves period-scoped worker/date uniqueness");
 assert.doesNotMatch(api, /salary|payroll|bonus_amount|incentive|wage_calculation/i, "Bonus storage does not add payroll, incentive or wage calculations");
 
 assert.match(api, /\.from\("labour_daily_work_logs"\)/, "Daily Work uses existing labour_daily_work_logs");

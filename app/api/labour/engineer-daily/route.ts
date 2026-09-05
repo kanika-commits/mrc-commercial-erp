@@ -616,12 +616,31 @@ async function saveAttendanceRows(access: any, context: any, rows: any[], mode: 
   const workerIds = rows.map((row: any) => text(row.labour_worker_id)).filter(Boolean) as string[];
   const invalidWorker = workerIds.find((workerId) => !eligibleByWorker.has(workerId));
   if (invalidWorker) return { error: "One or more attendance rows are not assigned to this engineer." };
-  const { data: existingRows, error: existingError } = workerIds.length
-    ? await access.admin.from("labour_attendance").select("*").eq("attendance_date", context.workDate).in("labour_worker_id", workerIds)
+  const periodsByContractor = new Map<string, any>();
+  for (const workerId of workerIds) {
+    const eligible: any = eligibleByWorker.get(workerId);
+    if (!eligible || periodsByContractor.has(eligible.contractor_profile_id)) continue;
+    const period = await findOrCreateAttendancePeriod(access, {
+      organizationId: context.organizationId,
+      companyId: context.companyId,
+      siteId: context.siteId,
+      contractorProfileId: eligible.contractor_profile_id,
+      attendanceDate: context.workDate,
+      originatingAttendanceSystem: "site_in_engineer",
+    });
+    periodsByContractor.set(eligible.contractor_profile_id, period);
+  }
+  const periodIds = Array.from(new Set(Array.from(periodsByContractor.values()).map((period: any) => period.id).filter(Boolean)));
+  const { data: existingRows, error: existingError } = workerIds.length && periodIds.length
+    ? await access.admin
+        .from("labour_attendance")
+        .select("*")
+        .in("period_id", periodIds)
+        .eq("attendance_date", context.workDate)
+        .in("labour_worker_id", workerIds)
     : { data: [], error: null };
   if (existingError) throw existingError;
-  const existingByWorker = new Map((existingRows || []).map((row: any) => [row.labour_worker_id, row]));
-  const periodsByContractor = new Map<string, any>();
+  const existingByPeriodWorker = new Map((existingRows || []).map((row: any) => [`${row.period_id}:${row.labour_worker_id}`, row]));
   const upserts = [];
   const now = new Date().toISOString();
   for (const row of rows) {
@@ -636,21 +655,10 @@ async function saveAttendanceRows(access: any, context: any, rows: any[], mode: 
     if (!ot.ok) return { error: `OT Hours must be blank or a non-negative whole number for ${eligible.worker_name || eligible.labour_code}.` };
     const bonus = optionalWholeHours(row.bonus_hours);
     if (!bonus.ok) return { error: `Bonus Hours must be blank or a non-negative whole number for ${eligible.worker_name || eligible.labour_code}.` };
-    let period = periodsByContractor.get(eligible.contractor_profile_id);
-    if (!period) {
-      period = await findOrCreateAttendancePeriod(access, {
-        organizationId: context.organizationId,
-        companyId: context.companyId,
-        siteId: context.siteId,
-        contractorProfileId: eligible.contractor_profile_id,
-        attendanceDate: context.workDate,
-        originatingAttendanceSystem: "site_in_engineer",
-      });
-      periodsByContractor.set(eligible.contractor_profile_id, period);
-    }
+    const period = periodsByContractor.get(eligible.contractor_profile_id);
     if (["submitted", "finalized"].includes(period.status)) return { error: "Attendance period is locked for editing." };
     upserts.push(buildLabourAttendanceUpsertPayload({
-      existingRow: existingByWorker.get(workerId!) as Record<string, any> | null | undefined,
+      existingRow: existingByPeriodWorker.get(`${period.id}:${workerId}`) as Record<string, any> | null | undefined,
       organizationId: context.organizationId,
       companyId: context.companyId,
       siteId: context.siteId,
@@ -678,7 +686,7 @@ async function saveAttendanceRows(access: any, context: any, rows: any[], mode: 
     }));
   }
   if (upserts.length) {
-    const { error } = await access.admin.from("labour_attendance").upsert(upserts, { onConflict: "labour_worker_id,attendance_date" });
+    const { error } = await access.admin.from("labour_attendance").upsert(upserts, { onConflict: "period_id,labour_worker_id,attendance_date" });
     if (error) throw error;
   }
   return { saved: upserts.length };

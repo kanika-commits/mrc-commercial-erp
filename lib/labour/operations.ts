@@ -284,6 +284,63 @@ export function roundNumber(value: number) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 }
 
+export function mergeLabourAttendanceDateStatus(
+  summary: Record<string, any> | null | undefined,
+  attendanceDate: string,
+  dateStatus: Record<string, any>,
+) {
+  const base = summary && typeof summary === "object" && !Array.isArray(summary) ? summary : {};
+  const existingStatuses = base.date_statuses && typeof base.date_statuses === "object" && !Array.isArray(base.date_statuses)
+    ? base.date_statuses
+    : {};
+  const existingDateStatus = existingStatuses[attendanceDate] && typeof existingStatuses[attendanceDate] === "object" && !Array.isArray(existingStatuses[attendanceDate])
+    ? existingStatuses[attendanceDate]
+    : {};
+
+  return {
+    ...base,
+    date_statuses: {
+      ...existingStatuses,
+      [attendanceDate]: {
+        ...existingDateStatus,
+        ...dateStatus,
+      },
+    },
+  };
+}
+
+export function deriveLabourAttendanceStatus(row: {
+  first_half_present?: boolean | null;
+  second_half_present?: boolean | null;
+}) {
+  if (row.first_half_present === null || row.first_half_present === undefined || row.second_half_present === null || row.second_half_present === undefined) return "incomplete";
+  if (row.first_half_present && row.second_half_present) return "present";
+  if (!row.first_half_present && !row.second_half_present) return "absent";
+  return "half_day";
+}
+
+export function labourAttendanceRowsMatch(
+  liveRow: {
+    first_half_present?: boolean | null;
+    second_half_present?: boolean | null;
+    overtime_minutes?: number | null;
+    approved_overtime_minutes?: number | null;
+    bonus_minutes?: number | null;
+  },
+  snapshotRow: {
+    first_half_present?: boolean | null;
+    second_half_present?: boolean | null;
+    overtime_minutes?: number | null;
+    approved_overtime_minutes?: number | null;
+    bonus_minutes?: number | null;
+  },
+) {
+  return liveRow.first_half_present === snapshotRow.first_half_present
+    && liveRow.second_half_present === snapshotRow.second_half_present
+    && Number(liveRow.approved_overtime_minutes ?? liveRow.overtime_minutes ?? 0) === Number(snapshotRow.approved_overtime_minutes ?? snapshotRow.overtime_minutes ?? 0)
+    && Number(liveRow.bonus_minutes ?? 0) === Number(snapshotRow.bonus_minutes ?? 0);
+}
+
 export function normalizedContractorKey(contractorProfileId?: string | null) {
   return contractorProfileId || "direct";
 }

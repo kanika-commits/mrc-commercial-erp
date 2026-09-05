@@ -25,7 +25,14 @@ export async function GET(request: Request) {
     const workerIds = deployments.map((row: any) => row.labour_worker_id);
     const [attendanceResult, workLogsResult, overtimeResult] = await Promise.all([
       workerIds.length
-        ? access.admin.from("labour_attendance").select("status, overtime_minutes, labour_worker_id, contractor_profile_id").eq("attendance_date", date).in("labour_worker_id", workerIds)
+        ? access.admin
+            .from("labour_attendance")
+            .select("status, overtime_minutes, labour_worker_id, contractor_profile_id")
+            .eq("organization_id", organizationId)
+            .eq("company_id", companyId)
+            .eq("site_id", siteId)
+            .eq("attendance_date", date)
+            .in("labour_worker_id", workerIds)
         : Promise.resolve({ data: [], error: null }),
       access.admin.from("labour_daily_work_logs").select("id, work_type, status").eq("organization_id", organizationId).eq("company_id", companyId).eq("site_id", siteId).eq("work_date", date),
       access.admin.from("labour_overtime_requests").select("id, status, proposed_minutes, approved_minutes").eq("organization_id", organizationId).eq("company_id", companyId).eq("site_id", siteId),

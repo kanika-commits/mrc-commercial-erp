@@ -22,7 +22,7 @@ import {
   validateTrade,
   validateWorkOrder,
 } from "@/app/api/labour/_shared";
-import { buildLabourAttendanceUpsertPayload, daysBefore, isoDate, todayInIst } from "@/lib/labour/operations";
+import { buildLabourAttendanceUpsertPayload, daysBefore, deriveLabourAttendanceStatus, isoDate, todayInIst } from "@/lib/labour/operations";
 import { labelFromCode, normalizeText } from "@/lib/labour/constants";
 import { hasActiveSiteHrAssignment } from "@/lib/serverSiteHr";
 
@@ -142,16 +142,11 @@ function shiftStatusToBoolean(value: "present" | "absent" | null) {
 
 function summaryStatus(first: "present" | "absent" | null, second: "present" | "absent" | null) {
   if (first === null && second === null) return "not_deployed";
-  if (first === "present" && second === "present") return "present";
-  if (first === "absent" && second === "absent") return "absent";
-  return "half_day";
-}
-
-function selectedDateRegisterStatus(period: any, attendanceRows: any[], attendanceDate: string) {
-  if (!period) return "draft";
-  const dateStatus = period.summary?.date_statuses?.[attendanceDate]?.status;
-  if (dateStatus) return dateStatus;
-  return "draft";
+  if (first === null || second === null) return "half_day";
+  return deriveLabourAttendanceStatus({
+    first_half_present: first === "present",
+    second_half_present: second === "present",
+  });
 }
 
 function selectedDateReadOnlyReason(period: any, dayLock: any, selectedStatus: string, explicitlyOpen = false) {
@@ -166,6 +161,111 @@ function selectedDateReadOnlyReason(period: any, dayLock: any, selectedStatus: s
 function workerOtLabel(deployment: any) {
   const worker = Array.isArray(deployment?.labour_workers) ? deployment.labour_workers[0] : deployment?.labour_workers;
   return worker?.labour_code || worker?.worker_name || "selected labourer";
+}
+
+async function loadSubmittedSnapshotRows(access: any, period: any, latestSubmitted: any) {
+  if (!period?.id || !latestSubmitted?.id) return null;
+
+  const { data: snapshotRows, error: snapshotRowsError } = await access.admin
+    .from("labour_attendance_submission_version_rows")
+    .select("*")
+    .eq("submission_version_id", latestSubmitted.id)
+    .order("labour_code_snapshot", { ascending: true })
+    .order("id", { ascending: true });
+  if (snapshotRowsError) throw snapshotRowsError;
+
+  const deploymentIds = Array.from(new Set((snapshotRows || []).map((row: any) => row.deployment_id).filter(Boolean))) as string[];
+  const { data: deployments, error: deploymentError } = deploymentIds.length
+    ? await access.admin
+        .from("labour_deployments")
+        .select(`
+          id, organization_id, labour_worker_id, contractor_profile_id, company_id, site_id,
+          work_order_id, manpower_work_order_id, commercial_model, labour_trade_id, trade, skill_level, wage_type, wage_rate,
+          effective_from, effective_to, status,
+          labour_workers(id, labour_code, worker_name, father_or_husband_name, skill_level, status, worker_type, date_of_joining, date_of_exit),
+          labour_contractor_profiles(id, contractor_code, vendors(vendor_name)),
+          work_orders(id, wo_number),
+          manpower_work_orders(id, manpower_wo_number, title, status, manpower_work_order_rates(id, labour_trade_id, daily_rate, effective_from, effective_to, status)),
+          labour_trades(id, trade_name, trade_code, status)
+        `)
+        .in("id", deploymentIds)
+    : { data: [], error: null };
+  if (deploymentError) throw deploymentError;
+
+  const deploymentById = new Map((deployments || []).map((deployment: any) => [deployment.id, deployment]));
+
+  return (snapshotRows || []).map((snapshotRow: any) => {
+    const deployment: any = deploymentById.get(snapshotRow.deployment_id) || {};
+    const worker = deployment.labour_workers || {
+      id: snapshotRow.labour_worker_id,
+      labour_code: snapshotRow.labour_code_snapshot,
+      worker_name: snapshotRow.worker_name_snapshot,
+      status: "active",
+    };
+    const workOrder = Array.isArray(deployment.work_orders) ? deployment.work_orders[0] : deployment.work_orders;
+    const manpowerWorkOrder = Array.isArray(deployment.manpower_work_orders) ? deployment.manpower_work_orders[0] : deployment.manpower_work_orders;
+    const paymentModel = snapshotRow.commercial_model_snapshot || deployment.commercial_model || "contract_basis";
+    const rateApplicable = paymentModel === "daily_wage";
+    const assignmentNumber = rateApplicable ? manpowerWorkOrder?.manpower_wo_number : workOrder?.wo_number;
+    const firstShiftStatus = booleanToShiftStatus(snapshotRow.first_half_present);
+    const secondShiftStatus = booleanToShiftStatus(snapshotRow.second_half_present);
+    const status = snapshotRow.derived_status || deriveLabourAttendanceStatus(snapshotRow);
+
+    return {
+      site_in_id: null,
+      site_in_time: null,
+      first_shift_completes_at: null,
+      second_shift_completes_at: null,
+      ot_starts_after: null,
+      deployment_id: snapshotRow.deployment_id,
+      labour_worker_id: snapshotRow.labour_worker_id,
+      worker,
+      contractor: deployment.labour_contractor_profiles || {
+        id: period.contractor_profile_id || null,
+        vendors: { vendor_name: snapshotRow.contractor_name_snapshot || null },
+      },
+      work_order: workOrder || null,
+      manpower_work_order: manpowerWorkOrder || null,
+      manpower_work_order_id: deployment.manpower_work_order_id || null,
+      assignment_number: assignmentNumber || null,
+      assignment_label: rateApplicable
+        ? [manpowerWorkOrder?.manpower_wo_number, manpowerWorkOrder?.title].filter(Boolean).join(" · ")
+        : workOrder?.wo_number || null,
+      commercial_model: paymentModel,
+      payment_model: paymentModel,
+      payment_model_label: labelFromCode(paymentModel),
+      trade: deployment.labour_trades || { trade_name: snapshotRow.trade_snapshot },
+      skill_level: deployment.skill_level || worker?.skill_level,
+      daily_rate: rateApplicable ? numberOrNull(deployment.wage_rate) : null,
+      rate_applicable: rateApplicable,
+      daily_rate_label: rateApplicable ? moneyLabel(deployment.wage_rate) : "N/A",
+      attendance: {
+        id: snapshotRow.id,
+        first_half_present: snapshotRow.first_half_present,
+        second_half_present: snapshotRow.second_half_present,
+        overtime_minutes: snapshotRow.overtime_minutes || 0,
+        approved_overtime_minutes: snapshotRow.approved_overtime_minutes ?? null,
+        bonus_minutes: snapshotRow.bonus_minutes ?? null,
+        remarks: snapshotRow.remarks || "",
+        status,
+        source: snapshotRow.source || "snapshot",
+      },
+      status,
+      first_shift_status: firstShiftStatus,
+      second_shift_status: secondShiftStatus,
+      first_half_present: snapshotRow.first_half_present ?? null,
+      second_half_present: snapshotRow.second_half_present ?? null,
+      overtime_minutes: snapshotRow.overtime_minutes || 0,
+      ot_hours: Number(snapshotRow.overtime_minutes || 0) > 0 ? Math.round(Number(snapshotRow.overtime_minutes || 0) / 60) : "",
+      bonus_minutes: snapshotRow.bonus_minutes ?? null,
+      bonus_hours: snapshotRow.bonus_minutes === null || snapshotRow.bonus_minutes === undefined ? "" : String(Math.round(Number(snapshotRow.bonus_minutes || 0) / 60)),
+      proposed_overtime_minutes: snapshotRow.overtime_minutes || 0,
+      approved_overtime_minutes: snapshotRow.approved_overtime_minutes ?? null,
+      remarks: snapshotRow.remarks || "",
+      snapshot_submission_id: latestSubmitted.id,
+      snapshot_submission_version: latestSubmitted.submission_version,
+    };
+  });
 }
 
 const UNKNOWN_ORIGIN_MESSAGE = "This attendance period has no originating attendance workflow. Confirm the historical workflow before editing it.";
@@ -429,8 +529,12 @@ export async function GET(request: Request) {
 
     const period = await findOrCreateAttendancePeriod(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate, originatingAttendanceSystem: "standard" });
     const dateAuthority = await loadLabourAttendanceDateAuthority(access, { period, organizationId, siteId, attendanceDate });
-    const dateStatusForPopulation = dateAuthority.status;
-    const frozenDeploymentIds = await loadFrozenAttendanceDeploymentIds(access, period, attendanceDate, dateStatusForPopulation);
+    const selectedStatus = dateAuthority.status;
+    const submittedSnapshotRows = ["submitted", "finalized", "approved"].includes(selectedStatus) && dateAuthority.latestSubmitted
+      ? await loadSubmittedSnapshotRows(access, period, dateAuthority.latestSubmitted)
+      : null;
+    const dateStatusForPopulation = selectedStatus;
+    const frozenDeploymentIds = submittedSnapshotRows ? [] : await loadFrozenAttendanceDeploymentIds(access, period, attendanceDate, dateStatusForPopulation);
     const population = await loadStandardPopulation(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate, deploymentIds: frozenDeploymentIds, ignoreWorkerCreatedAt: !frozenDeploymentIds });
     const [dayLock, policy] = await Promise.all([
       getDayLock(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate }),
@@ -449,7 +553,6 @@ export async function GET(request: Request) {
       attendanceDate,
       workerIds,
     });
-    const selectedStatus = dateAuthority.status;
     const historicalAccess = dateAuthority.historicalAccess;
     const explicitlyOpen = selectedStatus === "reopened";
     const attendanceByWorker = new Map((attendanceRows || []).map((row: any) => [row.labour_worker_id, row]));
@@ -475,7 +578,7 @@ export async function GET(request: Request) {
       workerRatesByWorker.set(rate.labour_worker_id, rates);
     }
 
-    const rows = deployments.map((deployment: any) => {
+    const rows = submittedSnapshotRows || deployments.map((deployment: any) => {
       const saved = attendanceByWorker.get(deployment.labour_worker_id);
       const worker = Array.isArray(deployment.labour_workers) ? deployment.labour_workers[0] : deployment.labour_workers;
       const workOrder = Array.isArray(deployment.work_orders) ? deployment.work_orders[0] : deployment.work_orders;
@@ -613,7 +716,7 @@ export async function POST(request: Request) {
     const canOverrideAbsentToPresent = hasServerPermission(access, "labour_attendance", "override");
 
     const changes = Array.isArray(payload.rows) ? payload.rows : [];
-    if (!changes.length) return NextResponse.json({ saved: 0 });
+    if (!changes.length) return jsonError("No attendance changes to save.", 400);
     const populationStatus = dateAuthority.status;
     const frozenDeploymentIds = await loadFrozenAttendanceDeploymentIds(access, period, attendanceDate, populationStatus);
     const population = await loadStandardPopulation(access, {
@@ -660,7 +763,9 @@ export async function POST(request: Request) {
     for (const change of changes) {
       const workerId = text(change.labour_worker_id);
       const deployment: any = workerId ? deploymentByWorker.get(workerId) : null;
-      if (!workerId || !deployment) return jsonError("One or more labourers are not actively deployed for the selected Site/date.", 403);
+      if (!workerId || !deployment) {
+        return jsonError(`Attendance could not be saved for worker ${workerId || "unknown"}: worker is not eligible for the selected Site/date/contractor.`, 403);
+      }
       const existing = existingByWorker.get(workerId);
       const requiredAction = existing ? "edit" : "add";
       if (!hasServerPermission(access, "labour_attendance", requiredAction)) {
@@ -668,7 +773,9 @@ export async function POST(request: Request) {
       }
       const firstShiftStatus = nullableShiftStatus(change.first_shift_status);
       const secondShiftStatus = nullableShiftStatus(change.second_shift_status);
-      if (firstShiftStatus === "__invalid__" || secondShiftStatus === "__invalid__") return jsonError("Invalid shift attendance status.");
+      if (firstShiftStatus === "__invalid__" || secondShiftStatus === "__invalid__") {
+        return jsonError("Invalid shift attendance status.");
+      }
       if (payload.mode === "submit" && (!firstShiftStatus || !secondShiftStatus)) {
         return jsonError("Mark First Shift and Second Shift for every loaded Site-In labourer before submitting.");
       }
@@ -687,13 +794,17 @@ export async function POST(request: Request) {
         overrideAudits.push({ workerId, shift: "second_shift", previous: "absent", next: "present", reason: secondOverrideReason, attendanceId: existing?.id });
       }
       const otHours = optionalWholeOtHours(change.ot_hours ?? (change.overtime_minutes === undefined ? "" : Number(change.overtime_minutes) / 60));
-      if (otHours === null) return jsonError("OT Hours must be a whole number from 0 to 6, or leave it blank for no OT.");
+      if (otHours === null) {
+        return jsonError("OT Hours must be a whole number from 0 to 6, or leave it blank for no OT.");
+      }
       const overtime = Math.max(0, Math.round(otHours * 60));
       if (overtime > MAX_STANDARD_OT_MINUTES) {
         return jsonError(`OT Hours cannot exceed 6 hours for ${workerOtLabel(deployment)}.`);
       }
       const bonus = optionalWholeBonusHours(change.bonus_hours ?? (change.bonus_minutes === undefined ? "" : Number(change.bonus_minutes) / 60));
-      if (!bonus.ok) return jsonError("Bonus Hours must be blank or a non-negative whole number.");
+      if (!bonus.ok) {
+        return jsonError("Bonus Hours must be blank or a non-negative whole number.");
+      }
       const maxDailyOt = policy?.max_daily_ot_minutes === null || policy?.max_daily_ot_minutes === undefined
         ? null
         : Math.max(0, Math.round(Number(policy.max_daily_ot_minutes)));
@@ -733,10 +844,15 @@ export async function POST(request: Request) {
       }));
     }
 
-    const { error } = await access.admin
+    const { data: savedRows, error } = await access.admin
       .from("labour_attendance")
-      .upsert(rows, { onConflict: "labour_worker_id,attendance_date" });
+      .upsert(rows, { onConflict: "period_id,labour_worker_id,attendance_date" })
+      .select("labour_worker_id");
     if (error) throw error;
+    const savedCount = savedRows?.length || 0;
+    if (savedCount !== rows.length) {
+      return jsonError(`Attendance save could not be confirmed. Expected ${rows.length} rows, database confirmed ${savedCount}.`, 500);
+    }
     if (!(existingRows || []).length && ["submitted", "finalized"].includes(period.status)) {
       const nextSummary = {
         ...(period.summary || {}),
@@ -778,10 +894,13 @@ export async function POST(request: Request) {
       companyId,
       siteId,
       description: `Saved labour attendance for ${attendanceDate}.`,
-      newValues: { saved_rows: rows.length, contractor_profile_id: contractorProfileId },
+      newValues: { saved_rows: savedCount, contractor_profile_id: contractorProfileId },
     });
-    return NextResponse.json({ saved: rows.length });
+    return NextResponse.json({ saved: savedCount });
   } catch (error: any) {
+    if (String(error?.message || "").includes("Attendance for this date has already been submitted.")) {
+      return jsonError("Attendance for this date has already been submitted. Reopen the date before making changes.", 409);
+    }
     return jsonError(error.message || "Failed to save labour attendance.", 500);
   }
 }

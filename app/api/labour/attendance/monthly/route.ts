@@ -22,6 +22,38 @@ function daysInMonth(periodMonth: string) {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
+async function resolveMonthlyAttendancePeriod(access: any, input: {
+  organizationId: string;
+  companyId: string;
+  siteId: string;
+  contractorProfileId: string | null;
+  periodMonth: string;
+}) {
+  const { data: existingPeriods, error } = await access.admin
+    .from("labour_attendance_periods")
+    .select("*")
+    .eq("organization_id", input.organizationId)
+    .eq("company_id", input.companyId)
+    .eq("site_id", input.siteId)
+    .eq("period_month", input.periodMonth)
+    .is("contractor_profile_id", null)
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
+    .limit(2);
+  if (error) throw error;
+  if ((existingPeriods || []).length > 1) {
+    throw new Error("Multiple labour attendance periods exist for the selected Company/Site/month. Resolve duplicate periods before loading the monthly register.");
+  }
+  return existingPeriods?.[0] || findOrCreateAttendancePeriod(access, {
+    organizationId: input.organizationId,
+    companyId: input.companyId,
+    siteId: input.siteId,
+    contractorProfileId: input.contractorProfileId,
+    periodMonth: input.periodMonth,
+    originatingAttendanceSystem: "standard",
+  });
+}
+
 async function loadMuster(request: Request, action: "view" | "export" = "view") {
   const access = await requireLabourPermission(request, "labour_attendance", action);
   if ("response" in access) return access;
@@ -46,7 +78,7 @@ async function loadMuster(request: Request, action: "view" | "export" = "view") 
 
   const dayCount = daysInMonth(periodMonth);
   const monthEnd = `${periodMonth.slice(0, 8)}${String(dayCount).padStart(2, "0")}`;
-  const period = await findOrCreateAttendancePeriod(access, { organizationId, companyId, siteId, contractorProfileId, periodMonth, originatingAttendanceSystem: "standard" });
+  const period = await resolveMonthlyAttendancePeriod(access, { organizationId, companyId, siteId, contractorProfileId, periodMonth });
   const deploymentsByWorker = new Map<string, any>();
   for (let day = 1; day <= dayCount; day += 1) {
     const date = `${periodMonth.slice(0, 8)}${String(day).padStart(2, "0")}`;
@@ -59,14 +91,15 @@ async function loadMuster(request: Request, action: "view" | "export" = "view") 
   const { data: attendanceRows, error: attendanceError } = workerIds.length
     ? await access.admin
       .from("labour_attendance")
-      .select("labour_worker_id, attendance_date, status, overtime_minutes")
+      .select("period_id, labour_worker_id, attendance_date, status, overtime_minutes")
+      .eq("period_id", period.id)
       .gte("attendance_date", periodMonth)
       .lte("attendance_date", monthEnd)
       .in("labour_worker_id", workerIds)
     : { data: [], error: null };
   if (attendanceError) throw attendanceError;
 
-  const attendanceByWorkerDate = new Map((attendanceRows || []).map((row: any) => [`${row.labour_worker_id}:${row.attendance_date}`, row]));
+  const attendanceByScopedKey = new Map((attendanceRows || []).map((row: any) => [`${row.period_id}:${row.labour_worker_id}:${row.attendance_date}`, row]));
   const rows = workerIds.map((workerId) => {
     const deployment = deploymentsByWorker.get(workerId);
     const worker = Array.isArray(deployment.labour_workers) ? deployment.labour_workers[0] : deployment.labour_workers;
@@ -76,7 +109,7 @@ async function loadMuster(request: Request, action: "view" | "export" = "view") 
     const totals: any = { present: 0, half_day: 0, absent: 0, weekly_off: 0, holiday: 0, leave: 0, not_deployed: 0, overtime_minutes: 0, payable_days: 0, missing: 0, total_recorded: 0 };
     for (let day = 1; day <= dayCount; day += 1) {
       const date = `${periodMonth.slice(0, 8)}${String(day).padStart(2, "0")}`;
-      const saved = attendanceByWorkerDate.get(`${workerId}:${date}`);
+      const saved = attendanceByScopedKey.get(`${period.id}:${workerId}:${date}`);
       if (!saved) {
         dayMap[String(day)] = "";
         totals.missing += 1;

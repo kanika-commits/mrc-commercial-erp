@@ -100,6 +100,9 @@ export async function POST(request: Request) {
     const { data: attendanceRows, error: attendanceError } = await access.admin
       .from("labour_attendance")
       .select("id, labour_worker_id, status, start_time, end_time")
+      .eq("organization_id", organizationId)
+      .eq("company_id", companyId)
+      .eq("site_id", siteId)
       .eq("attendance_date", workDate)
       .in("labour_worker_id", memberWorkerIds);
     if (attendanceError) throw attendanceError;

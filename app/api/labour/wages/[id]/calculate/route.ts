@@ -45,6 +45,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       access.admin
         .from("labour_attendance")
         .select("*, labour_workers(labour_code, worker_name)")
+        .eq("period_id", wagePeriod.attendance_period_id)
         .eq("organization_id", wagePeriod.organization_id)
         .eq("company_id", wagePeriod.company_id)
         .eq("site_id", wagePeriod.site_id)

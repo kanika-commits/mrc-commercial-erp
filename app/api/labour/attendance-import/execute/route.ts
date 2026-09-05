@@ -60,6 +60,7 @@ export async function POST(request: Request) {
         const { data: existingRow, error: existingError } = await access.admin
           .from("labour_attendance")
           .select("*")
+          .eq("period_id", period.id)
           .eq("labour_worker_id", row.matched_labour_worker_id)
           .eq("attendance_date", row.attendance_date)
           .maybeSingle();
@@ -88,7 +89,7 @@ export async function POST(request: Request) {
         });
         const { data, error } = await access.admin
           .from("labour_attendance")
-          .upsert(attendancePayload, { onConflict: "labour_worker_id,attendance_date" })
+          .upsert(attendancePayload, { onConflict: "period_id,labour_worker_id,attendance_date" })
           .select("id")
           .single();
         if (error) throw error;
