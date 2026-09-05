@@ -103,15 +103,38 @@ async function loadExistingWorkersByAadhaar(access: any, organizationId: string,
     p_aadhaar_digits: digits,
     p_exclude_worker_id: null,
   });
-  if (!rpcResult.error && rpcResult.data?.[0]) return rpcResult.data;
+  if (!rpcResult.error && rpcResult.data?.[0] && "status" in rpcResult.data[0] && "current_work_order_id" in rpcResult.data[0]) return rpcResult.data;
   const { data, error } = await access.admin
     .from("labour_workers")
-    .select("id, labour_code, worker_name, father_or_husband_name, aadhaar_number, mobile_number, current_company_id, current_site_id, current_contractor_profile_id, labour_trade_id, labour_trades(trade_name, trade_code), companies:current_company_id(company_name, company_code), sites:current_site_id(site_name, site_code), labour_contractor_profiles(id, vendor_id, contractor_code, vendors(vendor_name))")
+    .select("id, labour_code, worker_name, father_or_husband_name, aadhaar_number, mobile_number, status, current_company_id, current_site_id, current_work_order_id, current_contractor_profile_id, labour_trade_id, labour_trades(trade_name, trade_code), companies:current_company_id(company_name, company_code), sites:current_site_id(site_name, site_code), labour_contractor_profiles(id, vendor_id, contractor_code, vendors(vendor_name))")
     .eq("organization_id", organizationId)
     .in("aadhaar_number", aadhaarLookupValues(digits))
     .limit(2);
   if (error) throw error;
   return data || [];
+}
+
+function commercialModelForWorkOrderType(woType: unknown) {
+  return woType === "Daily Wage" ? "daily_wage" : "contract_basis";
+}
+
+async function loadCurrentAssignment(access: any, workerId: string) {
+  const { data: deployments, error } = await access.admin
+    .from("labour_deployments")
+    .select("company_id, site_id, contractor_profile_id, work_order_id, effective_to, status")
+    .eq("labour_worker_id", workerId)
+    .eq("status", "active")
+    .is("effective_to", null);
+  if (error) throw error;
+  if ((deployments || []).length !== 1) return { deployment: null, model: null };
+  const deployment = deployments[0];
+  const { data: workOrder, error: workOrderError } = await access.admin
+    .from("work_orders")
+    .select("id, wo_type")
+    .eq("id", deployment.work_order_id)
+    .maybeSingle();
+  if (workOrderError) throw workOrderError;
+  return { deployment, model: workOrder ? commercialModelForWorkOrderType(workOrder.wo_type) : null };
 }
 
 function resolveEffectiveAadhaarAvailability(normalized: Record<string, any>) {
@@ -446,7 +469,39 @@ export async function POST(request: Request) {
 
       const workerMatches = aadhaarValidation.valid ? existingWorkersByAadhaar.get(aadhaarValidation.digits) || [] : [];
       if (workerMatches.length > 1) errors.push("Multiple existing labourers match this row.");
-      if (workerMatches.length === 1) warnings.push("Existing labourer found; row will be skipped in V1.");
+      let existingAction = "create";
+      let existingMessage = "";
+      let requiresReactivation = false;
+      let currentDailyRate: number | null = null;
+      if (workerMatches.length === 1) {
+        const existingWorker = workerMatches[0] as any;
+        const currentAssignment = existingWorker.status === "active" ? await loadCurrentAssignment(access, existingWorker.id) : { deployment: null, model: null };
+        const currentDeployment = currentAssignment.deployment as any;
+        currentDailyRate = currentDeployment?.commercial_model === "daily_wage" ? currentDeployment.wage_rate : null;
+        const sameAssignment = existingWorker.status === "active" &&
+          currentDeployment?.company_id === companyId &&
+          currentDeployment?.site_id === siteId &&
+          currentDeployment?.contractor_profile_id === matchedContractor?.id &&
+          currentDeployment?.work_order_id === (mappedWorkOrderId || null) &&
+          currentAssignment.model === commercialModel;
+        if (existingWorker.status === "inactive") {
+          existingAction = "update_review";
+          requiresReactivation = true;
+          existingMessage = "Existing labourer is inactive. Reactivation is required before import.";
+        } else if (sameAssignment) {
+          existingAction = "skip";
+          existingMessage = "Existing labourer already has this assignment; row will be skipped.";
+        } else {
+          existingAction = "update_review";
+          existingMessage = "Existing active labourer has a different assignment. Confirming the import will transfer the labourer to the mapped assignment.";
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(String(normalized.date_of_joining || "").trim())) errors.push("Valid transfer effective date is required.");
+          if (commercialModel === "daily_wage") {
+            const rateError = validateLabourImportDailyRate(normalized.wage_rate);
+            if (rateError) errors.push(rateError);
+          }
+        }
+        warnings.push(existingMessage);
+      }
 
       const key = aadhaarValidation.valid ? `AADHAAR:${aadhaarValidation.digits}` : `NOAADHAAR:${normalizedPersonKey(normalized, siteId, matchedContractor?.id || null)}`;
       const workbookDuplicateRows = key ? workbookKeys.get(key) || [] : [];
@@ -463,7 +518,7 @@ export async function POST(request: Request) {
         warnings.push("Aadhaar document not uploaded. Upload later to complete verification.");
       }
 
-      const status = errors.length ? "blocked" : workerMatches.length ? "warning" : warnings.length ? "warning" : "ready";
+      const status = errors.length || requiresReactivation ? "blocked" : workerMatches.length ? "warning" : warnings.length ? "warning" : "ready";
       const maskedAadhaar = maskAadhaarForImport(normalized.aadhaar_number);
       const existingWorker = workerMatches[0] as any;
       updates.push({
@@ -476,7 +531,7 @@ export async function POST(request: Request) {
         validation_status: status,
         validation_errors: errors,
         validation_warnings: warnings,
-        selected_action: workerMatches.length ? "skip" : "create",
+        selected_action: existingAction,
         normalized_data: {
           ...normalized,
           aadhaar_number: aadhaarValidation.valid ? aadhaarValidation.formatted : normalized.aadhaar_number,
@@ -489,6 +544,7 @@ export async function POST(request: Request) {
           commercial_model: commercialModel,
           payment_model: commercialModel === "daily_wage" ? "Daily Wage" : "Contractual Labour",
           wage_rate: requiresDailyRate ? normalized.wage_rate : null,
+          current_daily_rate: currentDailyRate,
           trade_name: matchedTrade?.trade_name || normalized.trade || null,
           contractor_vendor_id: matchedContractor?.vendor_id || null,
           labour_trade_id: matchedTrade?.id || null,

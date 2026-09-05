@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { POST as registerWorker } from "@/app/api/labour/workers/register/route";
-import { actorFields, audit, jsonError, LABOUR_DOCUMENT_BUCKET, loadScopedLabourImportBatch, requireLabourPermission } from "@/app/api/labour/_shared";
+import { actorFields, audit, jsonError, LABOUR_DOCUMENT_BUCKET, loadScopedLabourImportBatch, requireLabourPermission, validateLabourCompanySiteIndependent, validateLabourWorkOrderForContractor } from "@/app/api/labour/_shared";
 import { normalizeText } from "@/lib/labour/constants";
-import { LABOUR_IMPORT_DOCUMENT_FIELDS, maskAadhaarForImport } from "@/lib/labour/import";
+import { LABOUR_IMPORT_DOCUMENT_FIELDS, maskAadhaarForImport, validateLabourImportDailyRate } from "@/lib/labour/import";
+import { validateAadhaar } from "@/lib/utils/aadhaar";
 import { createPrivateStorageAdapter, safeObjectKey } from "@/lib/storage/privateStorage";
 import { downloadDriveFile } from "@/src/lib/googleDrive";
 
@@ -25,6 +26,14 @@ function authHeaders(request: Request) {
   const authorization = request.headers.get("authorization");
   if (authorization) headers.authorization = authorization;
   return headers;
+}
+
+function aadhaarLookupValues(digits: string) {
+  return Array.from(new Set([digits, `${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(8, 12)}`, `${digits.slice(0, 4)} ${digits.slice(4, 8)} ${digits.slice(8, 12)}`]));
+}
+
+function commercialModelForWorkOrderType(woType: unknown) {
+  return woType === "Daily Wage" ? "daily_wage" : "contract_basis";
 }
 
 async function attachDocument(access: any, request: Request, row: any, workerId: string, field: string, type: string) {
@@ -139,7 +148,7 @@ export async function POST(request: Request) {
       .select("*")
       .eq("batch_id", batch_id)
       .in("validation_status", ["ready", "warning"])
-      .in("selected_action", ["create", "skip"])
+      .in("selected_action", ["create", "skip", "update_review"])
       .eq("execution_status", "pending")
       .order("source_row_number");
     if (rowsError) throw rowsError;
@@ -152,7 +161,76 @@ export async function POST(request: Request) {
       let createdNewWorkerId: string | null = null;
       try {
         const n = row.normalized_data || {};
-        if (row.selected_action === "skip" || row.matched_labour_worker_id) {
+        if (row.matched_labour_worker_id) {
+          const identity = validateAadhaar(n.aadhaar_number);
+          if (!identity.valid) throw new Error("Existing labourer Aadhaar could not be revalidated.");
+          const { data: workers, error: workerError } = await access.admin.from("labour_workers").select("id, organization_id, status, labour_code, aadhaar_number").eq("organization_id", batch.organization_id).in("aadhaar_number", aadhaarLookupValues(identity.digits));
+          if (workerError) throw workerError;
+          if ((workers || []).length !== 1) throw new Error((workers || []).length ? "Multiple labourers match this Aadhaar; import is blocked." : "Existing labourer could not be revalidated.");
+          const worker = workers[0];
+          if (worker.id !== row.matched_labour_worker_id) throw new Error("Import preview is stale: Aadhaar matched a different labourer.");
+          const targetWorkOrderId = normalizeText(n.work_order_id || row.matched_work_order_id);
+          if (worker.status === "inactive") {
+            throw new Error("Existing labourer is inactive. Reactivation is required before import.");
+          }
+          if (worker.status !== "active") throw new Error("Existing labourer is not active; import cannot change its deployment.");
+          const scopeCheck = await validateLabourCompanySiteIndependent(access, batch.organization_id, row.matched_company_id, row.matched_site_id);
+          if ("error" in scopeCheck) throw new Error(scopeCheck.error || "Import assignment is outside your company/site scope.");
+          const { data: deployments, error: deploymentError } = await access.admin.from("labour_deployments").select("id, company_id, site_id, contractor_profile_id, work_order_id, commercial_model, effective_from, effective_to, status, labour_trade_id, trade, wage_type, wage_rate").eq("labour_worker_id", worker.id).eq("status", "active").is("effective_to", null);
+          if (deploymentError) throw deploymentError;
+          if ((deployments || []).length !== 1) throw new Error((deployments || []).length ? "Conflicting active deployments prevent safe import transfer." : "Active labourer has no authoritative active deployment.");
+          const currentDeployment = deployments[0];
+          const { data: currentWorkOrder, error: currentWorkOrderError } = await access.admin.from("work_orders").select("id, wo_type").eq("id", currentDeployment.work_order_id).maybeSingle();
+          if (currentWorkOrderError) throw currentWorkOrderError;
+          const currentModel = currentWorkOrder ? commercialModelForWorkOrderType(currentWorkOrder.wo_type) : null;
+          const { data: targetWorkOrder, error: targetWorkOrderError } = await access.admin.from("work_orders").select("id, organization_id, company_id, site_id, wo_type, status, approval_status, is_deleted").eq("id", targetWorkOrderId).maybeSingle();
+          if (targetWorkOrderError) throw targetWorkOrderError;
+          if (!targetWorkOrder || targetWorkOrder.organization_id !== batch.organization_id || targetWorkOrder.company_id !== row.matched_company_id || targetWorkOrder.site_id !== row.matched_site_id || targetWorkOrder.status !== "active" || targetWorkOrder.approval_status !== "approved" || targetWorkOrder.is_deleted === true) throw new Error("Selected Work Order is not approved and active for this import assignment.");
+          const targetModel = commercialModelForWorkOrderType(targetWorkOrder.wo_type);
+          const sameAssignment = currentDeployment.company_id === row.matched_company_id && currentDeployment.site_id === row.matched_site_id && currentDeployment.contractor_profile_id === row.matched_contractor_profile_id && currentDeployment.work_order_id === (targetWorkOrderId || null) && currentModel === targetModel;
+          if (!sameAssignment) {
+            const effectiveFrom = normalizeText(n.date_of_joining);
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom)) throw new Error("A valid Effective/Joining Date is required for transfer.");
+            const transferReason = normalizeText(n.transfer_reason);
+            if (transferReason.length < 10) throw new Error("Transfer Reason must be at least 10 characters for an existing labourer transfer.");
+            if (targetModel === "daily_wage") {
+              const rateError = validateLabourImportDailyRate(n.wage_rate);
+              if (rateError) throw new Error(rateError);
+            }
+            const workOrderCheck = await validateLabourWorkOrderForContractor(access, {
+              organizationId: batch.organization_id,
+              companyId: row.matched_company_id,
+              siteId: row.matched_site_id,
+              contractorProfileId: row.matched_contractor_profile_id,
+              workOrderId: targetWorkOrderId,
+            });
+            if ("error" in workOrderCheck) throw new Error(workOrderCheck.error || "Selected Labour Work Order is not available.");
+            const { data: deploymentId, error: transferError } = await access.admin.rpc("transfer_labour_deployment", {
+              p_worker_id: worker.id,
+              p_organization_id: worker.organization_id,
+              p_contractor_profile_id: row.matched_contractor_profile_id,
+              p_company_id: row.matched_company_id,
+              p_site_id: row.matched_site_id,
+              p_work_order_id: targetWorkOrderId,
+              p_manpower_work_order_id: null,
+              p_commercial_model: targetModel,
+              p_trade: n.trade_name || n.trade || null,
+              p_skill_level: n.skill_level || null,
+              p_wage_type: n.commercial_model === "daily_wage" ? "daily" : null,
+              p_wage_rate: n.commercial_model === "daily_wage" ? Number(n.wage_rate) : null,
+              p_effective_from: effectiveFrom,
+              p_effective_to: null,
+              p_deployment_reason: transferReason,
+              p_actor_id: access.auth.user.id,
+              p_actor_name: access.auth.user.user_metadata?.full_name || access.auth.user.email || "Unknown User",
+              p_actor_email: access.auth.user.email || null,
+            });
+            if (transferError) throw transferError;
+            await audit(access, request, { moduleCode: "labour_import", action: "transfer_existing", entityType: "labour_deployment", recordId: deploymentId, parentEntityType: "labour_worker", parentRecordId: worker.id, organizationId: batch.organization_id, companyId: row.matched_company_id, siteId: row.matched_site_id, description: `Transferred existing labourer ${worker.labour_code} from Labour Import row ${row.source_row_number}.`, importBatchId: batch_id } as any);
+            await access.admin.from("labour_import_rows").update({ execution_status: "executed", validation_status: "executed", updated_at: new Date().toISOString() }).eq("id", row.id);
+            executed += 1;
+            continue;
+          }
           await access.admin.from("labour_import_rows").update({
             execution_status: "skipped",
             validation_status: "skipped",

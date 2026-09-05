@@ -242,6 +242,25 @@ export default function LabourImportPage() {
     else setMessage({ type: "error", text: payload.error || "Preview failed." });
   }
 
+  async function saveTransferReview(row: any, field: "date_of_joining" | "transfer_reason" | "wage_rate", value: string) {
+    const normalized_data = { ...(row.normalized_data || {}), [field]: value };
+    setPreview((current: any) => ({ ...current, rows: current.rows.map((item: any) => item.id === row.id ? { ...item, normalized_data } : item) }));
+    const response = await fetch(`/api/labour/import/rows/${row.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${await token()}` },
+      body: JSON.stringify({ normalized_data }),
+    });
+    if (!response.ok) {
+      const payload = await readPayload(response);
+      setMessage({ type: "error", text: payload.error || "Failed to save transfer review." });
+      await loadPreview();
+    }
+  }
+
+  async function saveTransferReviewForGroup(groupRows: any[], field: "date_of_joining" | "transfer_reason", value: string) {
+    for (const row of groupRows) await saveTransferReview(row, field, value);
+  }
+
   async function saveMasterMappings() {
     if (!batchId || busy) return;
     setBusy("Saving ERP master mappings...");
@@ -285,7 +304,7 @@ export default function LabourImportPage() {
 
   async function execute() {
     if (!batchId || busy) return;
-    const importableRows = rows.filter((row: any) => ["ready", "warning"].includes(row.validation_status) && row.selected_action === "create").length;
+    const importableRows = rows.filter((row: any) => ["ready", "warning"].includes(row.validation_status) && ["create", "skip", "update_review"].includes(row.selected_action)).length;
     if (!window.confirm(`Confirm Labour Import? ${importableRows} ready/warning row(s) will be imported and blocked rows will be skipped.`)) return;
     setStep("importing");
     setBusy("Confirming import...");
@@ -421,7 +440,7 @@ export default function LabourImportPage() {
     });
   }, [contractorSitePairs]);
   const hasMasterValues = MASTER_GROUPS.some((group) => (masterValues[group.key] || []).length > 0);
-  const importableRows = rows.filter((row: any) => ["ready", "warning"].includes(row.validation_status) && row.selected_action === "create").length;
+  const importableRows = rows.filter((row: any) => ["ready", "warning"].includes(row.validation_status) && ["create", "skip", "update_review"].includes(row.selected_action)).length;
   const summary = useMemo(() => ({
     total: rows.length,
     ready: rows.filter((row: any) => row.validation_status === "ready" || row.validation_status === "warning").length,
@@ -439,6 +458,9 @@ export default function LabourImportPage() {
     documentLinks: rows.reduce((sum: number, row: any) => sum + Number(row.normalized_data?.documents_expected || 0), 0),
     matchedDocuments: Number(preview.batch?.summary?.matched_documents || 0),
   }), [rows, preview.batch]);
+  const transferRows = useMemo(() => rows.filter((row: any) => row.selected_action === "update_review" && !row.validation_warnings?.some((warning: string) => warning.includes("Reactivation is required"))), [rows]);
+  const sharedTransferDate = transferRows.length > 0 && transferRows.every((row: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(row.normalized_data?.date_of_joining || "").trim())) && new Set(transferRows.map((row: any) => row.normalized_data?.date_of_joining)).size === 1 ? String(transferRows[0].normalized_data.date_of_joining) : "";
+  const sharedTransferReason = transferRows.length > 0 && transferRows.every((row: any) => row.normalized_data?.transfer_reason === transferRows[0].normalized_data?.transfer_reason) ? String(transferRows[0].normalized_data?.transfer_reason || "") : "";
 
   return (
     <section className="min-h-screen bg-[#f6f3f5] px-6 py-7 text-slate-950 md:px-10">
@@ -638,6 +660,14 @@ export default function LabourImportPage() {
                   : "Review worker details and document links before allowing document access."}
             </p>
           </div>
+          {step === "review" && transferRows.length > 0 && (
+            <div className="border-b bg-amber-50/40 px-4 py-4">
+              <h3 className="font-semibold text-slate-900">Transfer Details</h3>
+              <p className="mt-1 text-xs text-slate-600">Applies to {transferRows.length} worker{transferRows.length === 1 ? "" : "s"}</p>
+              {sharedTransferDate ? <label className="mt-3 block max-w-xs text-xs font-semibold text-slate-700">Effective From *<input type="date" defaultValue={sharedTransferDate} onBlur={(event) => saveTransferReviewForGroup(transferRows, "date_of_joining", event.currentTarget.value)} className="mt-1 h-9 w-full rounded-md border bg-white px-2 text-sm font-normal" /></label> : <p className="mt-3 text-xs font-semibold text-amber-800">Multiple or invalid effective dates are preserved per worker below.</p>}
+              <label className="mt-3 block max-w-xl text-xs font-semibold text-slate-700">Transfer Reason *<textarea defaultValue={sharedTransferReason} onBlur={(event) => saveTransferReviewForGroup(transferRows, "transfer_reason", event.currentTarget.value)} rows={2} className="mt-1 w-full rounded-md border bg-white px-2 py-1 text-sm font-normal" placeholder="Enter at least 10 characters" /></label>
+            </div>
+          )}
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
               <tr>{(importCompleted ? ["Labour Code", "Labour Name", "Company", "Site", "Work Order", "Final Status", "Documents", "Remarks"] : ["Excel Row", "Worker", "Aadhaar", "Company", "Site", "Contractor", "Work Order", "Labour Category", "Trade", "Daily Rate", "Documents", "Status", "Errors / Warnings", "Import Action"]).map((header) => <th key={header} className="px-3 py-3">{header}</th>)}</tr>
@@ -691,7 +721,21 @@ export default function LabourImportPage() {
                       <span className="text-red-700">{(row.validation_errors || []).join("; ")}</span>
                       {row.validation_warnings?.length ? <span className="block text-amber-700">{row.validation_warnings.join("; ")}</span> : null}
                     </td>
-                    <td className="px-3 py-3">{row.selected_action === "skip" ? "Skip Existing" : "Create New"}</td>
+                    <td className="px-3 py-3 align-top">
+                      {row.selected_action === "skip" ? "Skip Existing" : row.selected_action === "update_review" && row.validation_warnings?.some((warning: string) => warning.includes("Reactivation is required")) ? "Requires Reactivation" : row.selected_action === "update_review" ? (
+                        <div className="min-w-[240px] space-y-2">
+                          <div className="font-semibold">Transfer / Redeploy</div>
+                          {n.current_daily_rate != null && <div className="text-xs text-slate-500">Current Daily Rate: ₹{n.current_daily_rate}</div>}
+                          <div className="text-xs text-slate-500">Target: {n.company_name || n.company_text || "-"} / {n.site_name || n.site_text || "-"} / {n.contractor_name || n.contractor_text || "-"} / {n.work_order_name || "-"}</div>
+                          {n.commercial_model === "daily_wage" && <label className="block text-xs font-semibold text-slate-700">New Daily Rate *
+                            <input type="number" min="1" step="1" defaultValue={n.wage_rate || ""} onBlur={(event) => saveTransferReview(row, "wage_rate", event.currentTarget.value)} className="mt-1 h-9 w-full rounded-md border px-2 text-sm font-normal" />
+                          </label>}
+                          {!sharedTransferDate && <label className="block text-xs font-semibold text-slate-700">Effective From *
+                            <input type="date" defaultValue={n.date_of_joining || ""} onBlur={(event) => saveTransferReview(row, "date_of_joining", event.currentTarget.value)} className="mt-1 h-9 w-full rounded-md border px-2 text-sm font-normal" />
+                          </label>}
+                        </div>
+                      ) : "Create New"}
+                    </td>
                   </tr>
                 );
               })}
