@@ -91,6 +91,7 @@ const MODULE_ACTIONS: Record<string, PermissionAction[]> = {
   procurement_rfqs: ["view", "add", "edit", "delete", "issue", "export"],
   procurement_purchase_orders: ["view", "add", "edit", "approve", "reject", "export"],
   procurement_goods_receipts: ["view", "add", "edit", "approve", "export"],
+  procurement_inventory: ["view", "add", "edit", "approve", "export"],
   procurement_material_approvals: ["view", "add", "edit", "delete", "upload"],
   ra_bills: ["view", "add", "delete"],
   ra_approval: ["view", "approve", "reject"],

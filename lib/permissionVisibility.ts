@@ -2,27 +2,12 @@ import { availableActionsForModule } from "@/lib/permissionMatrix";
 
 const HIDDEN_PERMISSION_MODULES = new Set([
   "labour_import",
-  "labour_attendance_policy",
   "labour_engineer_groups",
-  "labour_work_logs",
-  "labour_work_groups",
-  "labour_contractors",
-  "labour_manpower_work_orders",
-  "labour_wages",
   "labour_wage_approval",
-  "labour_advances",
-  "labour_overtime",
-  "labour_rate_overrides",
-  "labour_wage_rates",
-  "hr_salary",
   "store_management",
   "support",
   "settings_password",
   "labour_workspace",
-  "labour_deployments",
-  "labour_documents",
-  "labour_photo_evidence",
-  "labour_attendance_unlock",
   "procurement_material_approvals",
 ]);
 
@@ -30,6 +15,7 @@ const VISIBLE_GROUP_ORDER = [
   "Dashboard",
   "Project Management",
   "Human Resources",
+  "Labour Management",
   "Purchase",
   "Accounts / Finance",
   "Reports",
@@ -102,7 +88,8 @@ const PERMISSION_PRESENTATION: Record<string, VisiblePermissionPresentation> = {
 
   purchase_requisitions: { visible_group: "Store Management", visible_name: "Material Indent", visible_sort_order: 5, visible_actions: ["view", "add", "edit", "delete", "submit", "export"] },
   purchase_requisition_approval: { visible_group: "Store Management", visible_name: "Indent Approval", visible_sort_order: 6, visible_actions: ["view", "approve", "reject"], visible_action_labels: { reject: "Send Back / Reject" } },
-  procurement_goods_receipts: { visible_group: "Store Management", visible_name: "Goods Receipt Notes", visible_sort_order: 7, visible_actions: ["view", "add", "edit", "approve", "export"], visible_action_labels: { approve: "Finalize" } },
+  procurement_goods_receipts: { visible_group: "Store Management", visible_name: "Purchase Order Tracking", visible_sort_order: 7, visible_actions: ["view", "add", "edit", "approve", "export"], visible_action_labels: { approve: "Finalize" } },
+  procurement_inventory: { visible_group: "Store Management", visible_name: "Inventory", visible_sort_order: 8, visible_actions: ["view", "add", "edit", "approve", "export"], visible_action_labels: { approve: "Finalize Issue" } },
   procurement_rfqs: { visible_group: "Purchase", visible_name: "Request for Quotation", visible_sort_order: 7, visible_actions: ["view", "add", "edit", "delete", "issue", "export"] },
   procurement_purchase_queue: { visible_group: "Purchase", visible_name: "Purchase Queue", visible_sort_order: 6.5, visible_actions: ["view", "take_up"] },
   procurement_purchase_orders: { visible_group: "Purchase", visible_name: "Purchase Orders", visible_sort_order: 8, visible_actions: ["view", "add", "edit", "approve", "reject", "export"] },
@@ -157,42 +144,142 @@ const PERMISSION_PRESENTATION: Record<string, VisiblePermissionPresentation> = {
     visible_action_labels: { approve: "Approve", reject: "Send Back" },
   },
   reimbursements: { visible_group: "Human Resources", visible_name: "Reimbursement", visible_sort_order: 50 },
-  labour_attendance: {
+  hr_salary: {
     visible_group: "Human Resources",
+    visible_name: "Salary / Remuneration",
+    visible_sort_order: 52,
+    permission_note: "Controls access to employee salary and remuneration information.",
+  },
+  hr_audit: {
+    visible_group: "Human Resources",
+    visible_name: "HR Audit",
+    visible_sort_order: 54,
+    visible_actions: ["view"],
+    permission_note: "Controls access to sensitive HR audit and activity information.",
+  },
+  labour_attendance: {
+    visible_group: "Labour Management",
     visible_name: "Labour Attendance",
     visible_sort_order: 60,
     visible_actions: ["view", "add", "edit", "submit", "override", "export"],
   },
   labour_attendance_import: {
-    visible_group: "Human Resources",
+    visible_group: "Labour Management",
     visible_name: "Labour Attendance Import",
     visible_sort_order: 65,
     visible_actions: ["view", "upload", "execute", "export"],
   },
   labour_workers: {
-    visible_group: "Human Resources",
+    visible_group: "Labour Management",
     visible_name: "Labour Registration",
     visible_sort_order: 70,
     visible_actions: ["view", "add", "edit", "delete", "upload", "import", "export", "change_deployment", "change_rate"],
   },
+  labour_contractors: {
+    visible_group: "Labour Management",
+    visible_name: "Labour Contractors",
+    visible_sort_order: 72,
+    permission_note: "Controls contractor master access and contractor document upload/export actions.",
+  },
+  labour_deployments: {
+    visible_group: "Labour Management",
+    visible_name: "Labour Deployments",
+    visible_sort_order: 74,
+    permission_note: "Controls worker deployment records where exposed by Labour workflows.",
+  },
+  labour_documents: {
+    visible_group: "Labour Management",
+    visible_name: "Labour Documents",
+    visible_sort_order: 76,
+    visible_actions: ["view", "upload", "delete"],
+    permission_note: "Controls labour and contractor document viewing, upload and deletion.",
+  },
   labour_site_in: {
-    visible_group: "Human Resources",
+    visible_group: "Labour Management",
     visible_name: "Site-In",
     visible_sort_order: 80,
     visible_actions: ["view", "add", "correct_time"],
   },
   labour_engineer_daily: {
-    visible_group: "Human Resources",
+    visible_group: "Labour Management",
     visible_name: "Engineer Daily Labour",
     visible_sort_order: 90,
     visible_actions: ["view", "add", "edit", "submit"],
   },
   labour_daily_submission: {
-    visible_group: "Human Resources",
+    visible_group: "Labour Management",
     visible_name: "Labour Attendance Approval",
     visible_sort_order: 100,
     visible_actions: ["view", "pm_approve", "pm_send_back", "ho_approve", "ho_send_back", "final_override", "export"],
     permission_note: "View includes register review and supporting attendance document viewing.",
+  },
+  labour_manpower_work_orders: {
+    visible_group: "Labour Management",
+    visible_name: "Manpower Work Orders",
+    visible_sort_order: 110,
+    permission_note: "Controls labour manpower contract workflow actions.",
+  },
+  labour_wages: {
+    visible_group: "Labour Management",
+    visible_name: "Wage Register",
+    visible_sort_order: 120,
+    permission_note: "Controls labour wage calculation, editing, submission and export.",
+  },
+  labour_wage_rates: {
+    visible_group: "Labour Management",
+    visible_name: "Wage Rates",
+    visible_sort_order: 122,
+    permission_note: "Controls wage-rate master access where exposed by Labour workflows.",
+  },
+  labour_advances: {
+    visible_group: "Labour Management",
+    visible_name: "Labour Advances",
+    visible_sort_order: 130,
+    permission_note: "Controls labour advance entry, approval and export.",
+  },
+  labour_work_logs: {
+    visible_group: "Labour Management",
+    visible_name: "Daily Work Logs",
+    visible_sort_order: 140,
+    permission_note: "Controls labour work log entry, approval, assignment and document upload.",
+  },
+  labour_work_groups: {
+    visible_group: "Labour Management",
+    visible_name: "Work Groups",
+    visible_sort_order: 142,
+    permission_note: "Controls labour work-group setup and approval actions.",
+  },
+  labour_overtime: {
+    visible_group: "Labour Management",
+    visible_name: "Overtime Review",
+    visible_sort_order: 150,
+    permission_note: "Controls labour overtime requests and approvals.",
+  },
+  labour_rate_overrides: {
+    visible_group: "Labour Management",
+    visible_name: "Rate Overrides",
+    visible_sort_order: 152,
+    permission_note: "Controls labour rate override requests and approvals.",
+  },
+  labour_photo_evidence: {
+    visible_group: "Labour Management",
+    visible_name: "Photo Evidence",
+    visible_sort_order: 154,
+    permission_note: "Controls labour photo evidence viewing, upload, edit and deletion.",
+  },
+  labour_attendance_policy: {
+    visible_group: "Labour Management",
+    visible_name: "Attendance Policy Controls",
+    visible_sort_order: 160,
+    permission_note: "Controls Labour Attendance policy and configuration actions.",
+  },
+  labour_attendance_unlock: {
+    visible_group: "Labour Management",
+    visible_name: "Attendance Date Access",
+    visible_sort_order: 162,
+    visible_actions: ["view", "approve"],
+    visible_action_labels: { approve: "Open / Approve Access" },
+    permission_note: "Controls Attendance Date Access and unlock-authority functionality.",
   },
 
   companies: { visible_group: "Settings", visible_name: "Masters - Companies", visible_sort_order: 10 },
@@ -210,6 +297,13 @@ const PERMISSION_PRESENTATION: Record<string, VisiblePermissionPresentation> = {
   users: { visible_group: "Admin", visible_name: "Users", visible_sort_order: 20 },
   roles: { visible_group: "Admin", visible_name: "Roles", visible_sort_order: 30 },
   permissions: { visible_group: "Admin", visible_name: "Permissions", visible_sort_order: 40 },
+  system_activity: {
+    visible_group: "Admin",
+    visible_name: "System Activity",
+    visible_sort_order: 50,
+    visible_actions: ["view"],
+    permission_note: "Controls access to system activity and audit pages.",
+  },
 };
 
 const FALLBACK_GROUP_LABELS: Record<string, VisiblePermissionPresentation["visible_group"]> = {
@@ -272,7 +366,10 @@ export function presentVisiblePermissionModule<T extends PermissionModuleRow>(mo
 export function prepareVisiblePermissionModules<T extends PermissionModuleRow>(modules: T[]) {
   const registryModules = [...modules];
   if (!registryModules.some((module) => module.module_code === "procurement_goods_receipts")) {
-    registryModules.push({ module_code: "procurement_goods_receipts", module_group: "store_management", module_name: "Goods Receipt Notes", sort_order: 7, status: "active" } as T);
+    registryModules.push({ module_code: "procurement_goods_receipts", module_group: "store_management", module_name: "Purchase Order Tracking", sort_order: 7, status: "active" } as T);
+  }
+  if (!registryModules.some((module) => module.module_code === "procurement_inventory")) {
+    registryModules.push({ module_code: "procurement_inventory", module_group: "store_management", module_name: "Inventory", sort_order: 8, status: "active" } as T);
   }
   if (!registryModules.some((module) => module.module_code === "procurement_purchase_orders")) {
     registryModules.push({ module_code: "procurement_purchase_orders", module_group: "purchase", module_name: "Purchase Orders", sort_order: 8, status: "active" } as T);

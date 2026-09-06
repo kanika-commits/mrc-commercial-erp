@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import {
@@ -22,6 +23,7 @@ export default function PermissionsPage() {
   const [permissions, setPermissions] = useState<any[]>([]);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
 
   async function loadBaseData() {
     const { data: roleData, error: roleError } = await supabase
@@ -82,13 +84,41 @@ export default function PermissionsPage() {
     setPermissions(data || []);
   }
 
+  const filteredModules = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return modules;
+
+    return modules.filter((module) => {
+      const moduleCode = permissionModuleCode(module);
+      const actionText = availableActionsForDisplayModule(module)
+        .flatMap((action) => [
+          action,
+          permissionActionLabel(action),
+          module.visible_action_labels?.[action] || "",
+        ])
+        .join(" ");
+      return [
+        module.module_name,
+        module.module_code,
+        moduleCode,
+        module.permission_note,
+        module.technical_group,
+        actionText,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(term);
+    });
+  }, [modules, search]);
+
   const groupedModules = useMemo(() => {
-    return modules.reduce<Record<string, any[]>>((acc, item) => {
+    return filteredModules.reduce<Record<string, any[]>>((acc, item) => {
       if (!acc[item.module_group]) acc[item.module_group] = [];
       acc[item.module_group].push(item);
       return acc;
     }, {});
-  }, [modules]);
+  }, [filteredModules]);
 
   function permissionKey(moduleCode: string, actionCode: string) {
     return `${moduleCode}.${actionCode}`;
@@ -292,6 +322,19 @@ export default function PermissionsPage() {
         </p>
       </div>
 
+      <section className="rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-slate-700">
+        <p className="font-semibold text-slate-900">
+          This page controls functional permissions for roles.
+        </p>
+        <p className="mt-1">
+          User-specific overrides and Company/Site access are managed separately in{" "}
+          <Link href="/admin/users" className="font-semibold text-blue-700 underline-offset-2 hover:underline">
+            User Administration
+          </Link>
+          .
+        </p>
+      </section>
+
       {message && (
         <div className="rounded-lg border bg-yellow-50 p-3 text-sm text-yellow-800">
           {message}
@@ -326,7 +369,17 @@ export default function PermissionsPage() {
       {selectedRoleId && (
         <>
           <section className="rounded-lg border bg-white p-6">
-            <div className="mb-6 flex flex-wrap gap-3">
+            <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+              <label className="block min-w-[260px] flex-1 text-sm font-medium text-slate-700">
+                Search permissions
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search module, action, code or description"
+                  className="mt-1 h-10 w-full rounded-lg border px-3 text-sm font-normal outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+              </label>
+              <div className="flex flex-wrap gap-3">
               <button
                 type="button"
                 onClick={() => setAllPermissions(true)}
@@ -342,12 +395,18 @@ export default function PermissionsPage() {
               >
                 Clear All Permissions
               </button>
+              </div>
             </div>
             <p className="mb-4 text-xs text-slate-500">
-              Permission source: checked controls are granted to this role; unsupported actions are shown as —.
+              Permission source: checked controls are granted to this role; unsupported actions are shown as —. Rows marked as mapped save to their canonical permission key.
             </p>
 
             <div className="space-y-8 overflow-x-auto">
+              {filteredModules.length === 0 && (
+                <div className="rounded-md border border-dashed p-6 text-center text-sm text-slate-500">
+                  No permissions match your search.
+                </div>
+              )}
               {Object.entries(groupedModules).map(([groupName, items]) => {
                 const specializedItems = items.filter((module) => specializedPermissionActions(module).length > 0);
                 const normalItems = items.filter((module) => specializedPermissionActions(module).length === 0 && normalPermissionActions(module).length > 0);
@@ -399,6 +458,7 @@ export default function PermissionsPage() {
                             <tr key={module.id} className="border-t">
                               <td className="p-2 font-medium">
                                 {module.module_name}
+                                {module.permission_module_code && module.permission_module_code !== module.module_code && <div className="text-xs font-normal text-blue-700">Mapped to {module.permission_module_code}</div>}
                                 {module.permission_note && <div className="text-xs font-normal text-slate-500">{module.permission_note}</div>}
                               </td>
                               <td className="p-2 text-center">
@@ -425,6 +485,7 @@ export default function PermissionsPage() {
                           <div key={module.id} className="rounded-md border bg-slate-50 p-2">
                             <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1">
                               <span className="font-medium">{module.module_name}</span>
+                              {module.permission_module_code && module.permission_module_code !== module.module_code && <span className="text-xs font-medium text-blue-700">Mapped to {module.permission_module_code}</span>}
                               {module.permission_note && <span className="text-xs text-slate-500">{module.permission_note}</span>}
                             </div>
                             <div className="flex flex-wrap gap-3">

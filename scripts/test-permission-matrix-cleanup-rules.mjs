@@ -13,30 +13,12 @@ const migration = fs.readFileSync("supabase/migrations/202608010001_add_standalo
 
 const hiddenModules = [
   "labour_import",
-  "labour_attendance_policy",
   "labour_engineer_groups",
-  "labour_work_logs",
-  "labour_work_groups",
-  "hr_employee_document_import",
-  "labour_contractors",
-  "labour_manpower_work_orders",
-  "labour_attendance_import",
-  "labour_wages",
   "labour_wage_approval",
-  "labour_advances",
-  "labour_overtime",
-  "labour_rate_overrides",
-  "labour_wage_rates",
-  "hr_salary",
   "store_management",
   "support",
   "settings_password",
   "labour_workspace",
-  "labour_attendance_approval",
-  "labour_attendance_unlock",
-  "labour_deployments",
-  "labour_documents",
-  "labour_photo_evidence",
 ];
 
 const hiddenListSource = visibility.match(/const HIDDEN_PERMISSION_MODULES = new Set\(\[[\s\S]*?\]\);/)?.[0] || "";
@@ -65,6 +47,23 @@ for (const moduleCode of [
   "labour_daily_submission",
   "labour_muster_configuration",
   "labour_trades",
+  "hr_salary",
+  "hr_audit",
+  "system_activity",
+  "labour_attendance_policy",
+  "labour_attendance_unlock",
+  "labour_contractors",
+  "labour_manpower_work_orders",
+  "labour_wages",
+  "labour_advances",
+  "labour_work_logs",
+  "labour_work_groups",
+  "labour_overtime",
+  "labour_rate_overrides",
+  "labour_wage_rates",
+  "labour_deployments",
+  "labour_documents",
+  "labour_photo_evidence",
 ]) {
   assert.doesNotMatch(
     hiddenListSource,
@@ -76,21 +75,27 @@ for (const moduleCode of [
 assert.match(rolePermissionsPage, /prepareVisiblePermissionModules\(moduleData \|\| \[\]\)/, "Role Permissions page must render modules through the ERP visible permission presentation");
 assert.match(userPermissionsPage, /prepareVisiblePermissionModules\(result\.modules \|\| \[\]\)/, "User Permissions page must render modules through the ERP visible permission presentation");
 assert.match(visibility, /VISIBLE_GROUP_ORDER = \[[\s\S]+"Dashboard"[\s\S]+"Project Management"[\s\S]+"Human Resources"[\s\S]+"Purchase"[\s\S]+"Accounts \/ Finance"[\s\S]+"Reports"[\s\S]+"Settings"[\s\S]+"Admin"/, "Visible permission groups must match the final assignable ERP structure");
+assert.match(visibility, /VISIBLE_GROUP_ORDER = \[[\s\S]+"Labour Management"/, "Labour Management must group live Labour permissions separately");
 assert.doesNotMatch(visibility, /"Store Management"[\s\S]*\] as const/, "Store Management must not appear as an empty placeholder permission group");
 assert.match(visibility, /"Reports"/, "Reports must appear now that /reports is implemented");
 assert.doesNotMatch(visibility, /"Support"[\s\S]*\] as const/, "Support must not appear as an empty placeholder permission group");
 assert.doesNotMatch(visibility, /\|\|\s*"Support"/, "Unmapped permission modules must not fall back into Support");
 assert.doesNotMatch(visibility, /visible_group: "Contract Management"/, "Contract Management must not be a visible permission group");
-assert.doesNotMatch(visibility, /visible_group: "Labour Management"/, "Labour Management must not be a visible permission group");
+assert.match(visibility, /visible_group: "Labour Management"/, "Live Labour permissions must be grouped under Labour Management");
 assert.match(visibility, /work_orders: \{ visible_group: "Purchase"[\s\S]+visible_name: "Work Orders"/, "Work Orders must appear only under Purchase");
 assert.match(visibility, /ra_bills: \{ visible_group: "Project Management"[\s\S]+visible_name: "RA Bills"/, "RA Bills must appear under Project Management");
 assert.match(visibility, /debit_notes: \{ visible_group: "Project Management"[\s\S]+visible_name: "Debit Notes"/, "Debit Notes must appear under Project Management");
 assert.match(visibility, /invoices: \{ visible_group: "Accounts \/ Finance"[\s\S]+visible_name: "Invoices"/, "Invoices must appear under Accounts / Finance");
 assert.match(visibility, /itc_claims: \{ visible_group: "Accounts \/ Finance"[\s\S]+visible_name: "ITC Review"/, "ITC Review must appear under Accounts / Finance");
 assert.match(visibility, /payments: \{ visible_group: "Accounts \/ Finance"[\s\S]+visible_name: "Payments"/, "Payments must appear under Accounts / Finance");
-assert.match(visibility, /labour_workers: \{[\s\S]+visible_group: "Human Resources"[\s\S]+visible_name: "Labour Registration"/, "Labour Registration must appear under Human Resources");
-assert.match(visibility, /labour_attendance: \{[\s\S]+visible_group: "Human Resources"[\s\S]+visible_name: "Labour Attendance"/, "Labour Attendance must be the editable Labour attendance row");
-assert.match(visibility, /labour_daily_submission: \{[\s\S]+visible_name: "Labour Attendance Approval"[\s\S]+visible_actions: \["view", "pm_approve", "pm_send_back", "ho_approve", "ho_send_back", "final_override"\]/, "Labour Attendance Approval must expose only meaningful approval actions in the visible matrix");
+assert.match(visibility, /labour_workers: \{[\s\S]+visible_group: "Labour Management"[\s\S]+visible_name: "Labour Registration"/, "Labour Registration must appear under Labour Management");
+assert.match(visibility, /labour_attendance: \{[\s\S]+visible_group: "Labour Management"[\s\S]+visible_name: "Labour Attendance"/, "Labour Attendance must be the editable Labour attendance row");
+assert.match(visibility, /labour_daily_submission: \{[\s\S]+visible_name: "Labour Attendance Approval"[\s\S]+visible_actions: \["view", "pm_approve", "pm_send_back", "ho_approve", "ho_send_back", "final_override", "export"\]/, "Labour Attendance Approval must expose only meaningful approval actions in the visible matrix");
+assert.match(visibility, /hr_salary: \{[\s\S]+visible_name: "Salary \/ Remuneration"[\s\S]+employee salary and remuneration/, "HR Salary must be visible with a sensitive-data note");
+assert.match(visibility, /hr_audit: \{[\s\S]+visible_name: "HR Audit"[\s\S]+sensitive HR audit/, "HR Audit must be visible with a sensitive-data note");
+assert.match(visibility, /system_activity: \{[\s\S]+visible_name: "System Activity"[\s\S]+system activity and audit pages/, "System Activity must be visible with a system audit note");
+assert.match(visibility, /labour_attendance_unlock: \{[\s\S]+visible_name: "Attendance Date Access"[\s\S]+Attendance Date Access and unlock-authority/, "Attendance Date Access must be visible with an unlock-authority note");
+assert.match(visibility, /labour_attendance_policy: \{[\s\S]+visible_name: "Attendance Policy Controls"[\s\S]+Labour Attendance policy/, "Labour attendance policy controls must be visible");
 assert.match(visibility, /hr_attendance: \{[\s\S]+visible_actions: \["view", "add", "edit", "submit", "override", "export"\]/, "Employee Attendance must expose view/add/edit/submit/override/export actions");
 assert.match(visibility, /hr_attendance_approval: \{[\s\S]+visible_actions: \["view", "approve", "reject"\]/, "Employee Attendance Approval must expose its currently enforced approval and send-back actions");
 assert.match(visibility, /labour_site_in: \{[\s\S]+visible_actions: \["view", "add", "correct_time"\]/, "Site-In must expose its current operational actions");
@@ -115,7 +120,7 @@ assert.match(userPermissionsApi, /parseVisiblePermissionKeys[\s\S]+deleteScopedU
 assert.match(rolePermissionsApi, /visiblePermissionKeys\.includes\(`\$\{String\(item\.module_code \|\| ""\)\}\.\$\{String\(item\.action_code \|\| ""\)\}`\)/, "Role permission save must reinsert only visible module-action rows");
 assert.match(userPermissionsApi, /visiblePermissionKeys\.includes\(`\$\{String\(permission\.module_code \|\| ""\)\}\.\$\{String\(permission\.action_code \|\| ""\)\}`\)/, "User permission save must reinsert only visible module-action rows");
 assert.match(authGuard, /pathname === "\/hr\/attendance-approval"[\s\S]+can\(access\.permissions, "hr_attendance_approval", "view"\)/, "Employee Attendance Approval route guard must require hr_attendance_approval:view");
-assert.match(permissionMatrix, /labour_workers: \["view", "add", "edit", "delete", "upload", "import", "export", "change_deployment", "change_rate"\]/, "Labour Registration must expose import plus separately controlled deployment and rate-change actions");
+assert.match(permissionMatrix, /labour_workers: \["view", "add", "edit", "delete", "hard_delete", "upload", "import", "export", "change_deployment", "change_rate"\]/, "Labour Registration must expose import plus separately controlled deployment and rate-change actions");
 assert.match(permissionMatrix, /hr_attendance: \["view", "add", "edit", "submit", "override", "export"\]/, "Employee Attendance must expose override separately from edit");
 assert.match(permissionMatrix, /labour_site_in: \["view", "add", "correct_time"\]/, "Site-In must expose view/add/correct_time");
 assert.match(permissionMatrix, /change_deployment: "Change Deployment"/, "Permission Matrix must label labour_workers:change_deployment clearly");
@@ -124,8 +129,18 @@ assert.match(permissionMatrix, /hr_departments: \["view", "add", "edit", "delete
 assert.match(permissionMatrix, /hr_designations: \["view", "add", "edit", "delete"\]/, "Designations must expose only master-page actions");
 assert.match(permissionMatrix, /hr_employee_attendance_policy: \["view", "add", "edit"\]/, "Employee Attendance Policy must expose only view/add/edit actions");
 assert.doesNotMatch(appShell, /navLeaf\([^)]*"labour_workspace"/, "Labour Workspace must not be presented as a normal assignable permission leaf");
-assert.doesNotMatch(visibility, /visible_name: "Salary"/, "Salary must stay out of the visible matrix until the standalone workflow is live");
+assert.doesNotMatch(visibility, /procurement_purchase_order_approval: \{/, "Purchase Order Approval must remain a synthetic presentation row, not a canonical visibility key");
 assert.match(visibility, /reports: \{[\s\S]+visible_group: "Reports"[\s\S]+visible_name: "Reports"[\s\S]+visible_actions: \["view", "export"\]/, "Reports must expose view and export now that /reports is implemented");
+assert.match(rolePermissionsPage, /const \[search, setSearch\] = useState\(""\)/, "Role Permission page must provide client-side permission search");
+assert.match(rolePermissionsPage, /Search permissions/, "Search field must be labelled clearly");
+assert.match(rolePermissionsPage, /module\.module_name/, "Search must include module labels");
+assert.match(rolePermissionsPage, /permissionActionLabel\(action\)/, "Search must include action labels");
+assert.match(rolePermissionsPage, /module\.permission_note/, "Search must include descriptions");
+assert.match(rolePermissionsPage, /This page controls functional permissions for roles/, "Role Permission page must explain functional permissions");
+assert.match(rolePermissionsPage, /Company\/Site access are managed separately[\s\S]+User Administration/, "Role Permission page must link data scope and user overrides to User Administration");
+assert.match(rolePermissionsPage, /Mapped to \{module\.permission_module_code\}/, "Synthetic visible rows must disclose their canonical permission mapping");
+assert.doesNotMatch(permissionMatrix, /procurement_purchase_order_approval|procurement_gst_billing_delivery_master|procurement_site_contact_master|procurement_letterhead_master/, "No synthetic presentation key may be introduced to the canonical permission matrix");
+assert.match(fs.readFileSync("lib/serverAccountAccess.ts", "utf8"), /const permissionMap = new Map<string, AccountPermission>\(\);[\s\S]+\.\.\.\(\(rolePermissionsResult\.data \|\| \[\]\) as AccountPermission\[\]\),[\s\S]+\.\.\.\(\(userPermissionsResult\.data \|\| \[\]\) as AccountPermission\[\]\)/, "Runtime access calculation must remain role permissions merged with user overrides");
 assert.match(rolePermissionsPage, /function visibleModuleCodesForSave\(\)[\s\S]+Array\.from\([\s\S]+new Set\(/, "Role permission saves must write each real module code only once");
 assert.match(userPermissionsPage, /function visibleModuleCodesForSave\(\)[\s\S]+Array\.from\([\s\S]+new Set\(/, "User permission saves must write each real module code only once");
 assert.match(migration, /'settings', 'hr_departments', 'Departments', '\/hr\/departments'/, "Migration must create the Departments ERP module row");
