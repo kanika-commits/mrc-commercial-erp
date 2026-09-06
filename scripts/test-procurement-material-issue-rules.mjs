@@ -1,0 +1,15 @@
+import fs from "node:fs";
+import assert from "node:assert/strict";
+const root = new URL("..", import.meta.url).pathname;
+const read = (file) => fs.readFileSync(`${root}/${file}`, "utf8");
+const migration = read("supabase/migrations/202609070003_store_inventory_material_issue_baseline.sql");
+const route = read("app/api/procurement/material-issues/[id]/route.ts");
+assert.match(migration, /from public\.procurement_material_issue_items ii[\s\S]*where ii\.material_issue_id = p_issue_id[\s\S]*order by b\.id, ii\.id[\s\S]*for update of b/);
+assert.match(migration, /join public\.procurement_inventory_balances b on b\.id = ii\.inventory_balance_id/);
+assert.match(migration, /i\.quantity_on_hand < i\.issue_quantity/);
+assert.match(migration, /quantity_on_hand = quantity_on_hand - i\.issue_quantity/);
+assert.match(migration, /unique \(source_type, source_item_id, movement_type\)/);
+assert.match(migration, /Finalized Material Issues are immutable/);
+assert.match(route, /export async function PUT/);
+assert.match(route, /Finalized Material Issues are read-only/);
+console.log("Procurement material issue rules: PASS");

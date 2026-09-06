@@ -1,0 +1,32 @@
+import fs from "node:fs";
+import assert from "node:assert/strict";
+
+const root = new URL("..", import.meta.url).pathname;
+const read = (file) => fs.readFileSync(`${root}/${file}`, "utf8");
+const migration = read("supabase/migrations/202609070003_store_inventory_material_issue_baseline.sql");
+const inventoryRoute = read("app/api/procurement/inventory/route.ts");
+const detailRoute = read("app/api/procurement/inventory/[id]/route.ts");
+const issueRoute = read("app/api/procurement/material-issues/[id]/route.ts");
+
+assert.match(migration, /create table if not exists public\.procurement_inventory_movements/);
+assert.match(migration, /create table if not exists public\.procurement_inventory_balances/);
+assert.match(migration, /quantity_in > 0 and quantity_out = 0.*quantity_out > 0 and quantity_in = 0/s);
+assert.match(migration, /unique \(source_type, source_item_id, movement_type\)/);
+assert.match(migration, /Inventory movement ledger is immutable/);
+assert.match(migration, /Finalized Material Issues are immutable/);
+assert.match(migration, /old\.status is distinct from new\.status and new\.status = 'finalized'/);
+assert.match(migration, /i\.accepted_quantity > 0/);
+assert.match(migration, /for update/);
+assert.match(migration, /Insufficient stock/);
+assert.doesNotMatch(migration, /opening_balance|reorder|low_stock|inventory_transfer|uom_conversion/i);
+assert.match(inventoryRoute, /applyOrganizationAccess/);
+assert.match(inventoryRoute, /applyCompanySiteAccess/);
+assert.match(inventoryRoute, /range\(/);
+assert.match(inventoryRoute, /finalize_procurement_material_issue_atomic/);
+assert.match(detailRoute, /movement_date/);
+assert.match(detailRoute, /running_balance/);
+assert.match(detailRoute, /order\("id"/);
+assert.match(issueRoute, /requireProcurementPermission/);
+assert.match(read("components/AppShell.tsx"), /navLeaf\("Inventory", "procurement_inventory", "\/store\/inventory"\)/);
+assert.match(read("lib/permissionMatrix.ts"), /procurement_inventory/);
+console.log("Procurement inventory rules: PASS");

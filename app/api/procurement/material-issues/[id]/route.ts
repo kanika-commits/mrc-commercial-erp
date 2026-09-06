@@ -1,0 +1,27 @@
+import { NextResponse } from "next/server";
+import { adminClient, applyCompanySiteAccess, applyOrganizationAccess, jsonError, requireProcurementAny, requireProcurementPermission } from "@/lib/serverProcurementAccess";
+const MODULE = "procurement_inventory";
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  try { const access = await requireProcurementAny(request, [{ moduleCode: MODULE, actionCode: "view" }, { moduleCode: MODULE, actionCode: "add" }]); if ("response" in access) return access.response; const { id } = await context.params; const admin = adminClient(); let query: any = applyOrganizationAccess(admin.from("procurement_material_issues").select("*, items:procurement_material_issue_items(*), events:procurement_material_issue_events(*)").eq("id", id).maybeSingle(), access); query = query && applyCompanySiteAccess(query, access); if (!query) return jsonError("Material Issue was not found.", 404); const { data, error } = await query; if (error) throw error; return data ? NextResponse.json({ issue: data }) : jsonError("Material Issue was not found.", 404); } catch (error: any) { return jsonError(error.message || "Failed to load Material Issue.", 500); }
+}
+export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
+  try { const access = await requireProcurementPermission(request, MODULE, "approve"); if ("response" in access) return access.response; const { id } = await context.params; const admin = adminClient(); let query: any = applyOrganizationAccess(admin.from("procurement_material_issues").select("id").eq("id", id).maybeSingle(), access); query = query && applyCompanySiteAccess(query, access); if (!query) return jsonError("Material Issue was not found.", 404); const { data, error } = await query; if (error) throw error; if (!data) return jsonError("Material Issue was not found.", 404); const actor = { user_id: access.user.id, name: access.user.user_metadata?.full_name || access.user.email, email: access.user.email || null }; const result = await admin.rpc("finalize_procurement_material_issue_atomic", { p_issue_id: id, p_actor: actor }); if (result.error) throw result.error; return NextResponse.json({ result: result.data }); } catch (error: any) { return jsonError(error.message || "Failed to finalize Material Issue.", 400); }
+}
+export async function PUT(request: Request, context: { params: Promise<{ id: string }> }) {
+  try {
+    const access = await requireProcurementPermission(request, MODULE, "edit"); if ("response" in access) return access.response;
+    const { id } = await context.params; const body = await request.json(); const admin = adminClient();
+    let query: any = applyOrganizationAccess(admin.from("procurement_material_issues").select("*").eq("id", id).maybeSingle(), access); query = query && applyCompanySiteAccess(query, access);
+    if (!query) return jsonError("Material Issue was not found.", 404); const { data: issue, error } = await query; if (error) throw error; if (!issue) return jsonError("Material Issue was not found.", 404); if (issue.status !== "draft") return jsonError("Finalized Material Issues are read-only.", 403);
+    const actor = { id: access.user.id, name: access.user.user_metadata?.full_name || access.user.email, email: access.user.email || null };
+    const updated = await admin.from("procurement_material_issues").update({ issued_to: body.issued_to, department: body.department || null, work_location: body.work_location || null, purpose: body.purpose, remarks: body.remarks || null, updated_by: actor.id, updated_by_name: actor.name, updated_by_email: actor.email, updated_at: new Date().toISOString() }).eq("id", id).eq("status", "draft"); if (updated.error) throw updated.error;
+    if (Array.isArray(body.items)) {
+      const balances = await admin.from("procurement_inventory_balances").select("*").in("id", body.items.map((item: any) => item.balance_id)); if (balances.error) throw balances.error;
+      const byId = new Map((balances.data || []).map((row: any) => [row.id, row]));
+      const items = body.items.map((input: any) => { const row: any = byId.get(input.balance_id); const quantity = Number(input.issue_quantity); if (!row || row.company_id !== issue.company_id || row.site_id !== issue.site_id || !Number.isFinite(quantity) || quantity <= 0 || quantity > Number(row.quantity_on_hand)) throw new Error("Invalid Material Issue item or quantity."); return { material_issue_id: id, inventory_balance_id: row.id, stock_identity_key: row.stock_identity_key, material_item_id: row.material_item_id, source_purchase_order_item_id: row.source_purchase_order_item_id, item_code_snapshot: row.item_code_snapshot, item_name_snapshot: row.item_name_snapshot, specification_snapshot: row.specification_snapshot, make_snapshot: row.make_snapshot, uom_snapshot: row.uom_snapshot, available_quantity_snapshot: row.quantity_on_hand, issue_quantity: quantity, remarks: input.remarks || null }; });
+      const removed = await admin.from("procurement_material_issue_items").delete().eq("material_issue_id", id); if (removed.error) throw removed.error;
+      const inserted = await admin.from("procurement_material_issue_items").insert(items); if (inserted.error) throw inserted.error;
+    }
+    return NextResponse.json({ saved: true });
+  } catch (error: any) { return jsonError(error.message || "Failed to update Material Issue.", 400); }
+}
