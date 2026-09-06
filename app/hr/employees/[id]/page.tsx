@@ -12,6 +12,7 @@ import type { HrEmployeeUserOption } from "@/types/hr";
 import StatusBadge from "@/components/hr/StatusBadge";
 import ReimbursementTable from "@/components/hr/ReimbursementTable";
 import EmployeeComplianceDocuments from "@/components/hr/EmployeeComplianceDocuments";
+import EmployeeSignatureBlock from "@/components/hr/EmployeeSignatureBlock";
 import EmployeeAuditTrail from "@/components/hr/EmployeeAuditTrail";
 import EmployeeEmploymentTimeline from "@/components/hr/EmployeeEmploymentTimeline";
 import EmployeeSalaryHistory from "@/components/hr/EmployeeSalaryHistory";
@@ -398,6 +399,14 @@ export default function EmployeeDetailPage() {
                   <ComplianceRecordsTable records={complianceRecords} documents={documents} />
                 </TabPanelLoading>
               </SectionCard>
+
+              <EmployeeSignatureBlock
+                employee={employee}
+                designation={labels.designation}
+                department={labels.department}
+                canEdit={canEdit}
+                onError={setMessage}
+              />
             </div>
           )}
 

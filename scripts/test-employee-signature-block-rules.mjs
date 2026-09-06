@@ -1,0 +1,83 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const migration = fs.readFileSync("supabase/migrations/202609050003_employee_signature_profiles.sql", "utf8");
+const route = fs.readFileSync("app/api/hr/employees/[id]/signature/route.ts", "utf8");
+const helper = fs.readFileSync("lib/hr/employeeSignature.ts", "utf8");
+const component = fs.readFileSync("components/hr/EmployeeSignatureBlock.tsx", "utf8");
+const employeePage = fs.readFileSync("app/hr/employees/[id]/page.tsx", "utf8");
+const types = fs.readFileSync("types/hr.ts", "utf8");
+
+assert.match(migration, /create table if not exists public\.employee_signature_profiles/, "Migration must create employee_signature_profiles");
+assert.match(migration, /employee_id uuid not null references public\.hr_employees\(id\) on delete cascade/, "Signature profiles must belong to employee master rows");
+assert.match(migration, /organization_id uuid not null/, "Signature profiles must be organization scoped");
+assert.match(migration, /employee_signature_profiles_one_active_uidx[\s\S]+on public\.employee_signature_profiles \(employee_id\)[\s\S]+where is_active = true/, "Only one active signature profile per employee is allowed");
+assert.match(migration, /alter table public\.employee_signature_profiles enable row level security/, "Signature profile table must enable RLS");
+assert.match(migration, /revoke all on table public\.employee_signature_profiles from anon/, "Anonymous direct table access must be revoked");
+assert.match(migration, /revoke all on table public\.employee_signature_profiles from authenticated/, "Authenticated direct table access must be revoked");
+assert.match(migration, /grant all on table public\.employee_signature_profiles to service_role/, "Service role API access must be granted");
+assert.match(migration, /insert into storage\.buckets[\s\S]+'employee-signatures'[\s\S]+false/, "Migration must create a private employee-signatures bucket");
+assert.match(migration, /size_bytes >= 0/, "Migration must check non-negative file size");
+assert.match(migration, /storage_provider[\s\S]+length\(trim\(storage_provider\)\) > 0/, "Migration must reject empty storage providers");
+assert.match(migration, /storage_bucket[\s\S]+length\(trim\(storage_bucket\)\) > 0/, "Migration must reject empty storage buckets");
+assert.match(migration, /storage_key[\s\S]+length\(trim\(storage_key\)\) > 0/, "Migration must reject empty storage keys");
+
+assert.match(helper, /export async function getEmployeeSignatureBlock/, "Reusable server helper must expose getEmployeeSignatureBlock");
+assert.match(helper, /\.eq\("id", input\.employeeId\)/, "Helper must resolve by employeeId");
+assert.match(helper, /\.eq\("user_id", input\.userId\)/, "Helper must resolve linked userId through hr_employees.user_id");
+assert.match(helper, /employee_name/, "Helper must derive employee name from employee master");
+assert.match(helper, /employee_code/, "Helper must derive employee code from employee master");
+assert.match(helper, /department:hr_departments\(department_name\)/, "Helper must derive department from employee master relationships");
+assert.match(helper, /designation:hr_designations\(designation_name\)/, "Helper must derive designation from employee master relationships");
+assert.match(helper, /company:companies\(company_name\)/, "Helper must derive company from employee master relationships");
+assert.match(helper, /site:sites\(site_name\)/, "Helper must derive site from employee master relationships");
+assert.match(helper, /createPrivateStorageAdapter\(admin\)\.createSignedReadUrl/, "Helper must return short-lived signed signature image URLs");
+assert.match(helper, /includeSignedUrl\?: boolean/, "Helper must allow server renderers to resolve storage metadata without minting a signed preview URL");
+assert.match(helper, /input\.includeSignedUrl !== false/, "Signed preview URL creation must be optional for private server-side PDF embedding");
+assert.doesNotMatch(helper, /publicUrl|getPublicUrl|storage\/v1\/object\/public/, "Helper must not expose public signature URLs");
+
+assert.match(route, /export async function GET/, "Signature API must support GET");
+assert.match(route, /requirePermission\(request, HR_EMPLOYEES_MODULE_CODE, "view"\)/, "GET must require hr_employees:view");
+assert.match(route, /export async function POST/, "Signature API must support upload/replace");
+assert.match(route, /export async function PUT[\s\S]+return POST\(request, context\)/, "Signature API must support PUT via the upload/replace path");
+assert.match(route, /requirePermission\(request, HR_EMPLOYEES_MODULE_CODE, "edit"\)/, "Upload and delete must require hr_employees:edit");
+assert.match(route, /canAccessHrEmployee\(admin, auth, employee\)/, "API must enforce existing employee scope");
+assert.match(route, /const SIGNATURE_BUCKET = "employee-signatures"/, "API must use the employee-signatures bucket");
+assert.match(route, /const MAX_SIGNATURE_SIZE = 2 \* 1024 \* 1024/, "API must enforce a 2 MB max signature size");
+assert.match(route, /\["image\/png", "png"\]/, "API must accept PNG signatures");
+assert.match(route, /\["image\/jpeg", "jpg"\]/, "API must accept JPEG signatures");
+assert.match(route, /\["image\/webp", "webp"\]/, "API must accept WEBP signatures");
+assert.match(route, /if \(!extension\)[\s\S]+Only PNG, JPG and WEBP signature images are allowed/, "API must reject SVG and arbitrary files");
+assert.match(route, /file\.size > MAX_SIGNATURE_SIZE/, "API must reject oversized signatures");
+assert.match(route, /safeObjectKey\(\[employee\.organization_id, id, `signature-\$\{crypto\.randomUUID\(\)\}\.\$\{extension\}`\]\)/, "API must use the approved organization/employee scoped storage path");
+assert.match(route, /storage\.upload[\s\S]+try \{[\s\S]+employee_signature_profiles[\s\S]+catch \(error\) \{[\s\S]+storage\.delete\(\{ bucket: stored\.bucket, key: stored\.key \}\)/, "Replacement must upload first and remove the new object if the DB write fails");
+assert.match(route, /currentSignature\?\.storage_bucket[\s\S]+await storage\.delete\(\{ bucket: currentSignature\.storage_bucket, key: currentSignature\.storage_key \}\)/, "Replacement must delete the old signature only after the new DB write succeeds");
+assert.match(route, /export async function DELETE/, "Signature API must support DELETE");
+assert.match(route, /storage\.delete\(\{ bucket: currentSignature\.storage_bucket, key: currentSignature\.storage_key \}\)[\s\S]+\.update\(\{[\s\S]+is_active: false/, "Delete must remove the private object before deactivating the active profile");
+assert.match(route, /document_upload|document_replace|document_delete/, "Signature changes must use existing audit action conventions");
+
+assert.match(component, /accept="image\/png,image\/jpeg,image\/webp"/, "UI upload control must restrict accepted image types");
+assert.match(component, /ALLOWED_SIGNATURE_TYPES = new Set\(\["image\/png", "image\/jpeg", "image\/webp"\]\)/, "UI must validate allowed image types");
+assert.match(component, /MAX_SIGNATURE_SIZE = 2 \* 1024 \* 1024/, "UI must validate max size");
+assert.match(component, /Choose Signature Image/, "UI must expose a clear custom signature image picker label");
+assert.match(component, /PNG, JPG or WebP · Max 2 MB/, "UI must show supported signature image types and size limit beside the picker");
+assert.match(component, /selectedFile\?\.name \|\| "No file selected"/, "UI must show either the selected filename or an explicit no-file state");
+assert.match(component, /className="sr-only"/, "Native file input must remain accessible while visually hidden");
+assert.match(component, /URL\.createObjectURL\(selectedFile\)/, "UI should preview the selected image before save");
+assert.match(component, /signatureBlock\?\.signatureImageUrl/, "UI must render signed preview URLs returned by the API");
+assert.doesNotMatch(component, /storageKey|storage_bucket|storage_key/, "UI must not expose storage paths");
+assert.match(component, /Employee Name[\s\S]+employeeName[\s\S]+Designation[\s\S]+signatureDesignation/, "UI must preview derived employee name and designation");
+assert.match(component, /Employee Code[\s\S]+Department[\s\S]+Company[\s\S]+Site/, "UI must show derived employee master context");
+assert.doesNotMatch(component, /Display Title|Optional signing title|Initials|Optional initials/, "First-version UI must not ask users to re-enter signature title or initials");
+assert.doesNotMatch(component, /body\.set\("display_title"|body\.set\("initials"/, "UI must manage only the signature image in this pass");
+assert.match(component, /Upload Signature/, "UI must expose upload action");
+assert.match(component, /Replace Signature/, "UI must expose replace action");
+assert.match(component, /Remove Signature/, "UI must expose remove action");
+assert.match(component, /disabled=\{busy \|\| !selectedFile\}/, "UI must prevent double-submit while upload is busy");
+assert.match(employeePage, /import EmployeeSignatureBlock from "@\/components\/hr\/EmployeeSignatureBlock"/, "Employee detail page must import the focused signature component");
+assert.match(employeePage, /activeTab === "identity"[\s\S]+<EmployeeSignatureBlock/, "Signature Block must be located in the Identity employee profile area");
+
+assert.match(types, /export type EmployeeSignatureProfile/, "HR types must include EmployeeSignatureProfile");
+assert.match(types, /export type EmployeeSignatureBlock/, "HR types must include EmployeeSignatureBlock");
+
+console.log("Employee signature block regression rules passed.");

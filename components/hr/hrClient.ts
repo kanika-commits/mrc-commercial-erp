@@ -32,10 +32,12 @@ export async function apiFetchWithToken(
   }
 
   const response = await fetch(path, { ...init, headers });
-  const result = await response.json().catch(() => ({}));
+  const raw = await response.text();
+  let result: any = {};
+  try { result = raw ? JSON.parse(raw) : {}; } catch { result = { error: response.status === 413 ? "Attachment is too large to upload." : raw || "Request failed." }; }
 
   if (!response.ok) {
-    throw new Error(result.error || "Request failed.");
+    throw new Error(result.error || (response.status === 413 ? "Attachment is too large to upload." : "Request failed."));
   }
 
   return result;

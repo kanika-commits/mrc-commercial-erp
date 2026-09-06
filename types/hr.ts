@@ -108,6 +108,45 @@ export type EmployeeDocument = {
   signed_url_error?: string | null;
 };
 
+export type EmployeeSignatureProfile = {
+  id: string;
+  organization_id: string;
+  employee_id: string;
+  storage_provider: string;
+  storage_bucket: string;
+  storage_key: string;
+  original_file_name?: string | null;
+  mime_type: string;
+  size_bytes: number;
+  initials?: string | null;
+  display_title?: string | null;
+  is_active: boolean;
+  created_by?: string | null;
+  created_by_name?: string | null;
+  created_by_email?: string | null;
+  created_at?: string | null;
+  updated_by?: string | null;
+  updated_by_name?: string | null;
+  updated_by_email?: string | null;
+  updated_at?: string | null;
+};
+
+export type EmployeeSignatureBlock = {
+  employeeId: string;
+  userId?: string | null;
+  employeeName?: string | null;
+  employeeCode?: string | null;
+  designation?: string | null;
+  department?: string | null;
+  company?: string | null;
+  site?: string | null;
+  displayTitle?: string | null;
+  initials?: string | null;
+  signatureImageUrl?: string | null;
+  storageBucket?: string | null;
+  storageKey?: string | null;
+};
+
 export type EmployeeComplianceRecord = {
   id: string;
   organization_id: string;
