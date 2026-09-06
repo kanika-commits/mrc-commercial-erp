@@ -40,6 +40,16 @@ export default function SettingsPage() {
             </p>
           </Link>
         )}
+
+        {(roleCodes.includes("platform_owner") ||
+          can(permissions, "procurement_purchase_orders", "view") ||
+          can(permissions, "procurement_purchase_orders", "add") ||
+          can(permissions, "procurement_purchase_orders", "edit")) && (
+          <Link href="/settings/purchase-order-masters" className="rounded-lg border bg-white p-6 shadow-sm transition hover:border-blue-200 hover:shadow-md">
+            <h2 className="text-xl font-semibold text-slate-950">Purchase Order Master Data</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-500">Manage company billing addresses, site delivery contacts, and standard terms.</p>
+          </Link>
+        )}
       </div>
     </div>
   );

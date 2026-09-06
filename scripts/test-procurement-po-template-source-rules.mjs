@@ -1,0 +1,32 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const migration = fs.readFileSync("supabase/migrations/202608310001_procurement_purchase_order_templates.sql", "utf8");
+const masterData = fs.readFileSync("app/api/procurement/purchase-orders/master-data/route.ts", "utf8");
+const sourceRoute = fs.readFileSync("app/api/procurement/purchase-orders/template-source/route.ts", "utf8");
+const page = fs.readFileSync("app/settings/purchase-order-masters/po-templates/page.tsx", "utf8");
+
+assert.match(migration, /public\.procurement_purchase_order_template_versions/);
+assert.match(migration, /source_storage_bucket text/);
+assert.match(migration, /readiness_status text not null default 'setup_required'/);
+assert.match(migration, /procurement-po-template-documents', 'procurement-po-template-documents', false/);
+assert.match(masterData, /A template source PDF or DOCX is required/);
+assert.match(masterData, /version_number: Number\(latest\.data\?\.version_number \|\| 0\) \+ 1/);
+assert.match(masterData, /readiness_status: "setup_required"/);
+assert.match(masterData, /source_storage_path: source\.path/);
+assert.match(sourceRoute, /createSignedUploadUrl\(path\)/);
+assert.match(sourceRoute, /MIMES\.has\(mimeType\)/);
+assert.match(sourceRoute, /sizeBytes > MAX_BYTES/);
+assert.match(sourceRoute, /createSignedUrl\(version\.data\.source_storage_path, 600\)/);
+assert.match(page, /uploadToSignedUrl\(prepared\.path, prepared\.token, selected\)/);
+assert.match(page, /Template File/);
+assert.doesNotMatch(page, /Create New Version/);
+assert.match(masterData, /template_version_id/);
+assert.match(masterData, /A PO template with this code already exists for the selected company/);
+assert.match(masterData, /result\.error\.code === "23505"/);
+assert.match(masterData, /templateVersions\.length/);
+assert.match(masterData, /storage\.from\(PO_TEMPLATE_BUCKET\)\.remove/);
+assert.match(page, /messageKind === "error"/);
+assert.match(page, /border-red-200 bg-red-50 text-red-800/);
+assert.doesNotMatch(masterData, /duplicate key value violates unique constraint/);
+console.log("PO template source rules passed");

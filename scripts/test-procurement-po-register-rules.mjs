@@ -1,0 +1,38 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const page = fs.readFileSync("app/purchase/purchase-orders/page.tsx", "utf8");
+const route = fs.readFileSync("app/api/procurement/purchase-orders/route.ts", "utf8");
+const documentsRoute = fs.readFileSync("app/api/procurement/purchase-orders/[id]/documents/route.ts", "utf8");
+
+for (const label of ["Company", "Site", "Vendor", "PO Status", "Source", "From date", "To date"]) assert(page.includes(label) || page.includes(`Filter by ${label.toLowerCase()}`), `${label} filter missing`);
+for (const status of ["draft", "pending_approval", "approved", "issued", "sent_back", "rejected"]) assert(page.includes(`\"${status}\"`), `${status} status missing`);
+for (const source of ["direct", "indent"]) assert(page.includes(`\"${source}\"`), `${source} source missing`);
+assert.doesNotMatch(page, /final_selection|Final Selection/, "RFQ final-selection source must remain outside the shipping register");
+assert(page.includes("Clear Filters"), "Clear Filters action missing");
+assert(page.includes("row.po_date") && page.includes("filters"), "Combined date/filter behavior missing");
+assert(route.includes('params.get("vendor_id")') && route.includes('params.get("from_date")') && route.includes('params.get("to_date")'), "Server filter parameters missing");
+assert(route.includes("applyOrganizationAccess") && route.includes("applyCompanySiteAccess"), "Register authorization scope missing");
+assert.match(page, /form\.set\("document_type", "signed_po"\)/, "Vendor Acceptance upload must send the explicit signed_po document type");
+assert.match(page, /Vendor Acceptance Pending/, "Register must show the pending Vendor Acceptance sub-state");
+assert.match(page, /Vendor Acceptance Received/, "Register must show the received Vendor Acceptance sub-state after upload");
+assert.match(page, /!\["approved", "issued"\]\.includes\(row\.status\)/, "Vendor Acceptance UI must be limited to approved/issued Purchase Orders");
+assert.match(route, /\["approved", "issued"\]\.includes\(row\.status\)/, "Register API must include signed_po documents for approved and issued Purchase Orders");
+assert.match(route, /const signedDocumentOrganizationIds = \[\.\.\.new Set\(purchaseOrders\.filter\(\(row: any\) => approvedIds\.includes\(row\.id\)\)\.map\(\(row: any\) => row\.organization_id\)\.filter\(Boolean\)\)\]/, "Signed PO document lookup must derive organization scope from already-authorized Purchase Order rows");
+assert.doesNotMatch(route, /\.eq\("document_type", "signed_po"\)[\s\S]+\.in\("organization_id", auth\.organizations \|\| \[\]\)/, "Global-access users must not lose signed_po documents because auth.organizations is empty");
+assert.match(page, /await apiFetch\(`\/api\/procurement\/purchase-orders\/\$\{row\.id\}\/documents`, \{ method: "POST", body: form \}\); await refreshRows\(\)/, "Vendor Acceptance upload must refresh the register after upload succeeds");
+assert.match(page, /row\.signed_po_document \? <><span className="font-semibold text-emerald-700">Vendor Acceptance Received/, "Active signed_po document must switch the row to Vendor Acceptance Received");
+assert.match(page, /title="View Vendor Acceptance"/, "Active Vendor Acceptance document must expose a clear View action");
+assert.match(page, /title="Replace Vendor Acceptance"/, "Active Vendor Acceptance document must expose a clear Replace action");
+assert.match(documentsRoute, /const VENDOR_ACCEPTANCE_STATUSES = new Set\(\["approved", "issued"\]\)/, "Vendor Acceptance uploads must be allowed for approved/issued Purchase Orders");
+assert.match(documentsRoute, /"signed_po"/, "Purchase Order document API must recognize signed_po as an allowed document type");
+assert.match(documentsRoute, /documentType === "signed_po" && !VENDOR_ACCEPTANCE_STATUSES\.has\(access\.row\.status\)/, "Vendor Acceptance upload must be blocked outside approved/issued statuses");
+assert.match(documentsRoute, /documentType !== "signed_po" && access\.row\.status !== "draft"/, "Generic Purchase Order attachments must remain draft-only");
+assert.match(documentsRoute, /const SIGNED_PO_MIME_TYPES = new Set\(\["application\/pdf", "image\/jpeg", "image\/png", "image\/webp"\]\)/, "Vendor Acceptance must be limited to PDF and supported scanned-image formats");
+assert.match(documentsRoute, /documentType === "signed_po" && !SIGNED_PO_MIME_TYPES\.has\(file\.type\)/, "Vendor Acceptance must reject unsupported file types");
+assert.match(documentsRoute, /documentType === "signed_po"[\s\S]+from\("procurement_purchase_order_documents"\)\.insert/, "Vendor Acceptance upload must bypass the draft-only generic attachment RPC and use the existing document table directly");
+assert.match(documentsRoute, /: await access\.admin\.rpc\("add_procurement_purchase_order_document_atomic"/, "Generic attachments must still use the existing draft-only document RPC");
+assert.match(documentsRoute, /document_type: documentType/, "Uploaded Vendor Acceptance must preserve signed_po document_type");
+assert.match(documentsRoute, /currentSignature|previous|document_type === "signed_po"/, "Signed PO replacement path must preserve one active Vendor Acceptance document");
+assert.doesNotMatch(documentsRoute, /procurement_purchase_orders"\)\.update\(\{ status/, "Vendor Acceptance upload must not change the Purchase Order approval status");
+console.log("Purchase Order register rules passed.");
