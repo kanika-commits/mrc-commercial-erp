@@ -9,6 +9,7 @@ import {
   CreditCard,
   FileCheck2,
   FileText,
+  Boxes,
   Landmark,
   ReceiptText,
   Settings,
@@ -77,6 +78,51 @@ const pageMeta: Record<
     icon: Users,
     className: "from-cyan-50 to-white border-cyan-100 text-cyan-700",
     description: "Manage contractors and suppliers.",
+  },
+  purchase_requisitions: {
+    icon: FileText,
+    className: "from-amber-50 to-white border-amber-100 text-amber-700",
+    description: "Raise and track material requirements.",
+  },
+  purchase_requisition_approval: {
+    icon: CheckCircle2,
+    className: "from-green-50 to-white border-green-100 text-green-700",
+    description: "Review submitted purchase requisitions.",
+  },
+  procurement_goods_receipts: {
+    icon: FileCheck2,
+    className: "from-emerald-50 to-white border-emerald-100 text-emerald-700",
+    description: "Track approved Purchase Orders, material receipts, accepted quantities and pending balances.",
+  },
+  procurement_purchase_queue: {
+    icon: FileText,
+    className: "from-amber-50 to-white border-amber-100 text-amber-700",
+    description: "Take up Billing Engineer-approved requirements for direct purchase.",
+  },
+  procurement_purchase_orders: {
+    icon: FileText,
+    className: "from-amber-50 to-white border-amber-100 text-amber-700",
+    description: "Manage standard Purchase Order terms and conditions.",
+  },
+  procurement_gst_billing_delivery_master: {
+    icon: ReceiptText,
+    className: "from-cyan-50 to-white border-cyan-100 text-cyan-700",
+    description: "Manage company GST/billing details and connected delivery locations.",
+  },
+  procurement_site_contact_master: {
+    icon: Users,
+    className: "from-teal-50 to-white border-teal-100 text-teal-700",
+    description: "Manage site contact persons and delivery contacts.",
+  },
+  procurement_letterhead_master: {
+    icon: FileText,
+    className: "from-indigo-50 to-white border-indigo-100 text-indigo-700",
+    description: "Manage company letterheads and versions.",
+  },
+  procurement_material_approvals: {
+    icon: FileCheck2,
+    className: "from-blue-50 to-white border-blue-100 text-blue-700",
+    description: "Track preferred makes and client material approvals.",
   },
   work_orders: {
     icon: FileText,
@@ -158,6 +204,11 @@ const pageMeta: Record<
     className: "from-slate-50 to-white border-slate-200 text-slate-700",
     description: "Configure Labour Attendance workflow, lock rules and approval authorities.",
   },
+  procurement_items: {
+    icon: Boxes,
+    className: "from-emerald-50 to-white border-emerald-100 text-emerald-700",
+    description: "Maintain procurement item and material masters.",
+  },
   settings_password: {
     icon: Settings,
     className: "from-slate-50 to-white border-slate-200 text-slate-700",
@@ -181,18 +232,91 @@ export default function ModulePage({
 
     const moduleRows = ((effectiveNavigation.modules || []) as ModuleRow[])
       .filter((module: ModuleRow) => module.module_group === groupCode)
+      .filter((module: ModuleRow) => !(groupCode === "purchase" && module.module_code === "purchase_requisition_approval_configuration"))
       .filter(
         (page: ModuleRow) =>
           globalAccess || can(permissions, page.module_code, "view"),
       )
       .sort((first, second) => first.sort_order - second.sort_order);
 
-    if (groupCode !== "settings" || (!globalAccess && !can(permissions, "hr_employee_attendance_policy", "view") && !can(permissions, "labour_attendance_unlock", "approve"))) {
-      return moduleRows;
+    if (groupCode === "purchase" && (globalAccess || can(permissions, "procurement_purchase_orders", "view")) && !moduleRows.some((page) => page.route === "/purchase/purchase-orders")) {
+      moduleRows.push({
+        id: "purchase-purchase-orders",
+        module_group: "purchase",
+        module_code: "procurement_purchase_orders",
+        module_name: "Purchase Orders",
+        route: "/purchase/purchase-orders",
+        sort_order: 40,
+      });
+      moduleRows.sort((first, second) => first.sort_order - second.sort_order);
+    }
+    if (groupCode === "purchase" && (globalAccess || can(permissions, "procurement_purchase_orders", "approve")) && !moduleRows.some((page) => page.route === "/purchase/purchase-order-approvals")) {
+      moduleRows.push({ id: "purchase-purchase-order-approvals", module_group: "purchase", module_code: "procurement_purchase_orders", module_name: "Purchase Order Approval", route: "/purchase/purchase-order-approvals", sort_order: 41 });
+      moduleRows.sort((first, second) => first.sort_order - second.sort_order);
+    }
+    if (groupCode === "store_management" && (globalAccess || can(permissions, "procurement_goods_receipts", "view")) && !moduleRows.some((page) => page.route === "/store/goods-receipts")) {
+      moduleRows.push({ id: "store-goods-receipts", module_group: "store_management", module_code: "procurement_goods_receipts", module_name: "Purchase Order Tracking", route: "/store/goods-receipts", sort_order: 7 });
+      moduleRows.sort((first, second) => first.sort_order - second.sort_order);
     }
 
-    const hasEmployeeAttendancePolicy = moduleRows.some(
+    if (groupCode !== "settings") return moduleRows;
+
+    let settingsRows = moduleRows;
+    settingsRows = settingsRows.filter((page) => page.module_code !== "purchase_requisition_approval_configuration");
+    settingsRows = settingsRows.filter((page) => ![
+      "/settings/purchase-order-masters",
+      "/settings/purchase-order-masters?master=billing-delivery",
+      "/settings/purchase-order-masters/site-contacts",
+      "/settings/purchase-order-masters/letterheads",
+    ].includes(page.route));
+
+    if (globalAccess || can(permissions, "procurement_purchase_orders", "view")) {
+      settingsRows = [
+        ...settingsRows,
+        {
+          id: "settings-gst-billing-delivery-master",
+          module_group: "settings",
+          module_code: "procurement_gst_billing_delivery_master",
+          module_name: "GST / Billing & Delivery Master",
+          route: "/settings/purchase-order-masters?master=billing-delivery",
+          sort_order: 76,
+        },
+        {
+          id: "settings-site-contact-master",
+          module_group: "settings",
+          module_code: "procurement_site_contact_master",
+          module_name: "Site Contact Master",
+          route: "/settings/purchase-order-masters/site-contacts",
+          sort_order: 77,
+        },
+        {
+          id: "settings-letterhead-master",
+          module_group: "settings",
+          module_code: "procurement_letterhead_master",
+          module_name: "Letterhead Master",
+          route: "/settings/purchase-order-masters/letterheads",
+          sort_order: 78,
+        },
+        {
+          id: "settings-po-terms-conditions",
+          module_group: "settings",
+          module_code: "procurement_purchase_orders",
+          module_name: "PO Terms & Conditions",
+          route: "/settings/purchase-order-masters",
+          sort_order: 79,
+        },
+      ];
+    }
+
+    if (!globalAccess && !can(permissions, "hr_employee_attendance_policy", "view")) {
+      return settingsRows.sort((first, second) => first.sort_order - second.sort_order);
+    }
+
+    const hasEmployeeAttendancePolicy = settingsRows.some(
       (page) => page.route === "/settings/policies/employee-attendance",
+    );
+    const hasPurchaseOrderMasters = settingsRows.some(
+      (page) => page.route === "/settings/purchase-order-masters",
     );
     const additionalRows = [];
     if (!hasEmployeeAttendancePolicy) {
@@ -205,7 +329,7 @@ export default function ModulePage({
         sort_order: 8,
       });
     }
-    if ((globalAccess || can(permissions, "labour_attendance_unlock", "approve")) && !moduleRows.some((page) => page.route === "/settings/policies/attendance-date-access")) {
+    if ((globalAccess || can(permissions, "labour_attendance_unlock", "approve")) && !settingsRows.some((page) => page.route === "/settings/policies/attendance-date-access")) {
       additionalRows.push({
         id: "settings-attendance-date-access",
         module_group: "settings",
@@ -215,7 +339,17 @@ export default function ModulePage({
         sort_order: 9.5,
       });
     }
-    return [...moduleRows, ...additionalRows].sort((first, second) => first.sort_order - second.sort_order);
+    if ((globalAccess || can(permissions, "procurement_purchase_orders", "view")) && !hasPurchaseOrderMasters) {
+      additionalRows.push({
+        id: "settings-po-terms-conditions",
+        module_group: "settings",
+        module_code: "procurement_purchase_orders",
+        module_name: "PO Terms & Conditions",
+        route: "/settings/purchase-order-masters",
+        sort_order: 79,
+      });
+    }
+    return [...settingsRows, ...additionalRows].sort((first, second) => first.sort_order - second.sort_order);
   }, [access, groupCode, moduleNavigation]);
 
   if (loading) {
@@ -259,7 +393,7 @@ function SettingsSections({ pages }: { pages: ModuleRow[] }) {
   const sections = [
     {
       title: "Masters",
-      codes: ["companies", "vendors", "sites", "hr_departments", "hr_designations", "labour_trades", "company_bank_accounts"],
+      codes: ["companies", "vendors", "sites", "hr_departments", "hr_designations", "labour_trades", "procurement_items", "company_bank_accounts", "procurement_gst_billing_delivery_master", "procurement_site_contact_master", "procurement_letterhead_master", "procurement_purchase_orders"],
     },
     {
       title: "Policies",

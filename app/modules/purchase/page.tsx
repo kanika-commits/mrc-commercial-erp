@@ -5,7 +5,7 @@ export default function PurchasePage() {
     <ModulePage
       groupCode="purchase"
       title="Purchase"
-      description="Work orders and work order approvals."
+      description="Purchase requisitions and existing work order workflows."
     />
   );
 }

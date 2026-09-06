@@ -1,0 +1,63 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { CalendarDays, RotateCcw, Search } from "lucide-react";
+import AlertMessage from "@/components/AlertMessage";
+import { apiFetch, formatDate } from "@/components/hr/hrClient";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
+
+function stageForRow(row: any) {
+  const hasProgress = (row.items || []).some((item: any) => Number(item.reserved || 0) + Number(item.ordered || 0) > 0);
+  return hasProgress ? "Partially Procured" : "Purchase Pending";
+}
+
+function quantitySummary(items: any[]) {
+  return (items || []).reduce((total: any, item: any) => ({
+    approved: total.approved + Number(item.approved || 0),
+    reserved: total.reserved + Number(item.reserved || 0),
+    ordered: total.ordered + Number(item.ordered || 0),
+    available: total.available + Number(item.available || 0),
+  }), { approved: 0, reserved: 0, ordered: 0, available: 0 });
+}
+
+export default function PurchaseQueuePage() {
+  const router = useRouter();
+  const { access } = useAccessContext();
+  const [rows, setRows] = useState<any[]>([]);
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState({ company: "", site: "", material: "", stage: "", from: "", to: "" });
+  async function load() {
+    try { setLoading(true); const result = await apiFetch("/api/procurement/purchase-queue"); setRows(result.requisitions || []); }
+    catch (error: any) { setMessage(error.message || "Failed to load Purchase Queue."); }
+    finally { setLoading(false); }
+  }
+  useEffect(() => { void load(); }, []);
+  const canCreatePurchaseOrder = Boolean(access && can(access.permissions, "procurement_purchase_orders", "add"));
+  const companies = useMemo(() => [...new Map(rows.filter((row) => row.company_id && row.company?.company_name).map((row) => [row.company_id, row.company.company_name])).entries()], [rows]);
+  const sites = useMemo(() => [...new Map(rows.filter((row) => row.site_id && row.site?.site_name && (!filters.company || row.company_id === filters.company)).map((row) => [row.site_id, row.site.site_name])).entries()], [rows, filters.company]);
+  const materials = useMemo(() => [...new Map(rows.flatMap((row) => row.items || []).filter((item: any) => item.line_key && item.item_name_snapshot).map((item: any) => [item.line_key, item.item_name_snapshot])).entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]))), [rows]);
+  const hasFilters = Boolean(search.trim() || Object.values(filters).some(Boolean));
+  function setFilter(name: keyof typeof filters, value: string) { setFilters((current) => ({ ...current, [name]: value, ...(name === "company" ? { site: "" } : {}) })); }
+  function resetFilters() { setSearch(""); setFilters({ company: "", site: "", material: "", stage: "", from: "", to: "" }); }
+  function controlClass(active: boolean) { return "h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100 " + (active ? "border-amber-300 bg-amber-50/70 text-slate-950" : "border-slate-200 bg-white text-slate-700"); }
+  const filteredRows = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return rows.filter((row) => {
+      const rowStage = stageForRow(row);
+      const materialMatch = !filters.material || (row.items || []).some((item: any) => item.line_key === filters.material);
+      const searchText = [row.requisition_number, row.requested_by_name, row.company?.company_name, row.site?.site_name, ...(row.items || []).map((item: any) => `${item.item_code_snapshot || ""} ${item.item_name_snapshot || ""}`)].join(" ").toLowerCase();
+      return (!needle || searchText.includes(needle))
+        && (!filters.company || row.company_id === filters.company)
+        && (!filters.site || row.site_id === filters.site)
+        && materialMatch
+        && (!filters.stage || rowStage === filters.stage)
+        && (!filters.from || String(row.requisition_date || "") >= filters.from)
+        && (!filters.to || String(row.requisition_date || "") <= filters.to);
+    });
+  }, [rows, search, filters]);
+  return <section className="space-y-6"><header><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-amber-700">Purchase</p><h1 className="text-3xl font-bold text-slate-950">Purchase Queue</h1><p className="text-sm text-slate-500">Active procurement work for approved material lines.</p></div></div></header><AlertMessage type="error" message={message} onClose={() => setMessage("")} /><section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><Search className="h-4 w-4 text-amber-700" /><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Search Purchase Queue</p></div>{hasFilters && <button type="button" onClick={resetFilters} className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-amber-300 hover:bg-amber-50"><RotateCcw className="h-3.5 w-3.5" />Reset</button>}</div><div className="mt-3 grid gap-3 lg:grid-cols-[minmax(280px,1.4fr)_repeat(3,minmax(150px,1fr))]"><label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500">Search<div className="relative mt-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search indent, material or requester" className={"h-10 w-full rounded-lg border bg-white pl-9 pr-3 text-sm outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100 " + (search.trim() ? "border-amber-300 bg-amber-50/70" : "border-slate-200")} /></div></label><label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500">Company<select value={filters.company} onChange={(event) => setFilter("company", event.target.value)} className={"mt-1 " + controlClass(Boolean(filters.company))}><option value="">All Companies</option>{companies.map(([id, name]) => <option key={String(id)} value={String(id)}>{String(name)}</option>)}</select></label><label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500">Site<select value={filters.site} onChange={(event) => setFilter("site", event.target.value)} className={"mt-1 " + controlClass(Boolean(filters.site))}><option value="">All Sites</option>{sites.map(([id, name]) => <option key={String(id)} value={String(id)}>{String(name)}</option>)}</select></label><label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500">Material<select value={filters.material} onChange={(event) => setFilter("material", event.target.value)} className={"mt-1 " + controlClass(Boolean(filters.material))}><option value="">All Materials</option>{materials.map(([id, name]) => <option key={String(id)} value={String(id)}>{String(name)}</option>)}</select></label></div><div className="mt-4 border-t border-slate-200 pt-3"><div className="mb-2 flex items-center gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Filters</span><span className="text-slate-300">/</span><CalendarDays className="h-3.5 w-3.5 text-slate-400" /><span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Request Date</span></div><div className="grid gap-3 md:grid-cols-2 lg:grid-cols-[minmax(170px,1fr)_minmax(260px,1.5fr)_auto]"><label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500">Current Stage<select value={filters.stage} onChange={(event) => setFilter("stage", event.target.value)} className={"mt-1 " + controlClass(Boolean(filters.stage))}><option value="">All</option><option value="Purchase Pending">Purchase Pending</option><option value="Partially Procured">Partially Procured</option></select></label><fieldset className="min-w-0"><legend className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Date Range</legend><div className="mt-1 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2"><input type="date" value={filters.from} onChange={(event) => setFilter("from", event.target.value)} aria-label="Request date from" className={controlClass(Boolean(filters.from))} /><span className="text-sm font-semibold text-slate-400">→</span><input type="date" value={filters.to} onChange={(event) => setFilter("to", event.target.value)} aria-label="Request date to" className={controlClass(Boolean(filters.to))} /></div></fieldset>{hasFilters && <button type="button" onClick={resetFilters} className="h-10 self-end rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-amber-300 hover:bg-amber-50">Clear</button>}</div></div></section><section className="overflow-x-auto rounded-2xl border bg-white shadow-sm"><table className="w-full min-w-[1500px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="p-3">S. No.</th><th className="p-3">Indent / PR Number</th><th className="p-3">Request Date</th><th className="p-3">Company</th><th className="p-3">Site</th><th className="p-3">Requested By</th><th className="p-3">Materials</th><th className="p-3">Quantity</th><th className="p-3">Procurement Progress</th><th className="p-3">Current Stage</th><th className="p-3">Action</th></tr></thead><tbody className="divide-y">{loading ? <tr><td colSpan={11} className="p-8 text-center text-slate-500">Loading Purchase Queue...</td></tr> : filteredRows.length === 0 ? <tr><td colSpan={11} className="p-8 text-center text-slate-500">No active procurement work is currently available.</td></tr> : filteredRows.map((row, index) => { const totals = quantitySummary(row.items || []); const rowStage = stageForRow(row); return <tr key={row.id}><td className="p-3">{index + 1}</td><td className="p-3 font-semibold">{row.requisition_number}</td><td className="p-3">{formatDate(row.requisition_date)}</td><td className="p-3">{row.company?.company_name || "-"}</td><td className="p-3">{row.site?.site_name || "-"}</td><td className="p-3">{row.requested_by_name || "-"}</td><td className="p-3"><div className="space-y-1">{(row.items || []).map((item: any) => <div key={item.line_key} className="max-w-[260px] truncate" title={`${item.item_code_snapshot || ""} ${item.item_name_snapshot || ""}`.trim()}><span className="font-medium text-slate-900">{item.item_name_snapshot}</span>{item.item_code_snapshot && <span className="ml-1 text-xs text-slate-500">({item.item_code_snapshot})</span>}</div>)}</div></td><td className="p-3"><div className="space-y-1 text-xs"><p><span className="text-slate-500">Approved:</span> <b>{totals.approved.toLocaleString("en-IN")}</b></p><p><span className="text-slate-500">Reserved/Ordered:</span> <b>{(totals.reserved + totals.ordered).toLocaleString("en-IN")}</b></p><p><span className="text-slate-500">Remaining:</span> <b className="text-emerald-700">{totals.available.toLocaleString("en-IN")}</b></p></div></td><td className="p-3"><div className="space-y-1">{(row.items || []).map((item: any) => <div key={item.line_key} className="text-xs text-slate-600"><span className="font-medium text-slate-900">{item.item_name_snapshot}</span>: Approved {Number(item.approved || 0).toLocaleString("en-IN")} · Reserved/Ordered {(Number(item.reserved || 0) + Number(item.ordered || 0)).toLocaleString("en-IN")} · Remaining {Number(item.available || 0).toLocaleString("en-IN")}</div>)}</div></td><td className="p-3"><span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${rowStage === "Partially Procured" ? "border-blue-200 bg-blue-50 text-blue-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>{rowStage}</span></td><td className="p-3">{canCreatePurchaseOrder ? <button type="button" onClick={() => router.push(`/purchase/purchase-orders/new?source=indent&requisition_id=${row.id}&company_id=${row.company_id}&site_id=${row.site_id}`)} disabled={!(row.available_line_keys || []).length} className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">Create Purchase Order</button> : <span className="text-xs text-slate-500">No PO access</span>}</td></tr>; })}</tbody></table></section></section>;
+}

@@ -153,6 +153,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     },
     [canViewModule, labourWorkflow, moduleRouteByCode],
   );
+  const navActionLeaf = useCallback(
+    (label: string, moduleCode: string, actionCode: string, href: string): SidebarLeaf | null => {
+      if (!(globalAccess || can(permissions, moduleCode, actionCode))) return null;
+      if (!isLabourRouteAllowedForAttendanceSystem(moduleCode, labourWorkflow)) return null;
+      return { type: "leaf", label, moduleCode, href };
+    },
+    [globalAccess, labourWorkflow, permissions],
+  );
 
   const canViewAnyMusterModule = useCallback(
     () =>
@@ -210,7 +218,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       topNested(
         "module-store-management",
         "Store Management",
-        [placeholder("Store Management will be configured later.")],
+        [
+          navLeaf("Material Indent", "purchase_requisitions", "/purchase/requisitions"),
+          navLeaf("Indent Approval", "purchase_requisition_approval", "/purchase/requisitions/approvals"),
+          navLeaf("Purchase Order Tracking", "procurement_goods_receipts", "/store/goods-receipts"),
+          navLeaf("Inventory", "procurement_inventory", "/store/inventory"),
+        ],
         "/modules/store-management",
         Package,
       ),
@@ -240,6 +253,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         "module-purchase",
         "Purchase",
         [
+          navLeaf("Purchase Queue", "procurement_purchase_queue", "/purchase/queue"),
+          navLeaf("Purchase Orders", "procurement_purchase_orders", "/purchase/purchase-orders"),
+          navActionLeaf("Purchase Order Approval", "procurement_purchase_orders", "approve", "/purchase/purchase-order-approvals"),
           navLeaf("Work Orders", "work_orders", "/work-orders"),
           navLeaf("Work Order Approval", "wo_approval", "/approvals/work-orders"),
         ],
@@ -275,7 +291,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         navLeaf("Departments", "hr_departments", "/hr/departments"),
         navLeaf("Designations", "hr_designations", "/hr/designations"),
         navLeaf("Labour Categories", "labour_trades", "/labour/trades"),
+        navLeaf("Item / Material Master", "procurement_items", "/settings/items"),
         navLeaf("Bank Accounts", "company_bank_accounts", "/company-bank-accounts"),
+        navLeaf("GST Registration Master", "procurement_purchase_orders", "/settings/purchase-order-masters/gst-registrations"),
+        navLeaf("Billing / Delivery Addresses", "procurement_purchase_orders", "/settings/purchase-order-masters?master=billing-delivery"),
+        navLeaf("Site Contact Master", "procurement_purchase_orders", "/settings/purchase-order-masters/site-contacts"),
+        navLeaf("Letterhead Master", "procurement_purchase_orders", "/settings/purchase-order-masters/letterheads"),
       ]),
       nested("settings-policies", "Policies", [
         navLeaf("Employee Attendance Policy", "hr_employee_attendance_policy", "/settings/policies/employee-attendance"),
@@ -522,6 +543,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+
   useEffect(() => {
     if (!user || notificationsStartedRef.current) return;
 
@@ -540,6 +562,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const pageKeyByPath: Record<string, string> = {
       "/": "dashboard",
+      "/purchase/requisitions": "purchase_requisitions_register",
+      "/purchase/requisitions/approvals": "purchase_requisition_approval",
+      "/purchase/material-approvals": "procurement_material_approvals_register",
+      "/settings/items": "item_master",
       "/work-orders": "work_orders_register",
       "/ra-bills": "ra_bills_register",
       "/invoices": "invoices_register",
