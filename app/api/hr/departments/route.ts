@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { requirePermission } from "@/lib/serverPermissions";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import {
   applyOrganizationScope,
   loadActorOrganizationScope,
@@ -119,6 +120,19 @@ export async function POST(request: Request) {
       .single();
 
     if (error) throw error;
+
+    await recordAuditEvent(admin, auth.user, {
+      organizationId,
+      moduleCode: MODULE_CODE,
+      entityType: "hr_department",
+      recordId: data.id,
+      recordNumber: departmentCode || departmentName,
+      action: "create",
+      actionCategory: "create",
+      activityLabel: "Created Department",
+      description: `Created department ${departmentName}.`,
+      newValues: { department_name: departmentName, department_code: departmentCode || null, status },
+    }, request);
 
     return NextResponse.json({ department_id: data.id });
   } catch (error: any) {

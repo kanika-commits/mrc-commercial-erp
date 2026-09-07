@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { requirePermission } from "@/lib/serverPermissions";
+import { recordAuditEvent } from "@/lib/auditEvent";
 import {
   isInOrganizationScope,
   loadActorOrganizationScope,
@@ -116,6 +117,8 @@ export async function PUT(
 
     if (error) throw error;
 
+    await recordAuditEvent(admin, auth.user, { organizationId: designation.organization_id, moduleCode: MODULE_CODE, entityType: "hr_designation", recordId: id, action: "update", actionCategory: "update", activityLabel: "Updated Designation", description: `Updated designation ${designationName}.`, newValues: { department_id: departmentId || null, designation_name: designationName, designation_code: designationCode || null, status } }, request);
+
     return NextResponse.json({ designation_id: id });
   } catch (error: any) {
     return NextResponse.json(
@@ -178,6 +181,8 @@ export async function DELETE(
       .eq("id", id);
 
     if (error) throw error;
+
+    await recordAuditEvent(admin, auth.user, { organizationId: designation.organization_id, moduleCode: MODULE_CODE, entityType: "hr_designation", recordId: id, action: "delete", actionCategory: "delete", activityLabel: "Deleted Designation", description: `Deleted designation ${id}.`, oldValues: designation, newValues: { status: "deleted" } }, request);
 
     return NextResponse.json({ deleted: true });
   } catch (error: any) {

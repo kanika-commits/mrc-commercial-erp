@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { adminClient, applyOrganizationAccess, jsonError, requireProcurementAny, requireProcurementPermission, text } from "@/lib/serverProcurementAccess";
 import { safeObjectKey } from "@/lib/storage/privateStorage";
+import { recordAuditEvent } from "@/lib/auditEvent";
 
 const MODULE = "procurement_purchase_orders";
 const GST_BILLING_MODULE = "procurement_gst_billing_delivery_master";
@@ -10,6 +11,21 @@ const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const PO_TEMPLATE_BUCKET = "procurement-po-template-documents";
 const PO_TEMPLATE_MIMES = new Set(["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]);
 const PO_TEMPLATE_MAX_BYTES = 20 * 1024 * 1024;
+
+async function auditMasterMutation(admin: any, auth: any, request: Request, input: { organizationId: string; moduleCode: string; entityType: string; recordId?: string | null; action: "create" | "update" | "delete"; description: string; oldValues?: unknown; newValues?: unknown }) {
+  await recordAuditEvent(admin, auth.user, {
+    organizationId: input.organizationId,
+    moduleCode: input.moduleCode,
+    entityType: input.entityType,
+    recordId: input.recordId,
+    action: input.action,
+    actionCategory: input.action === "delete" ? "delete" : input.action === "create" ? "create" : "update",
+    activityLabel: `${input.action === "create" ? "Created" : input.action === "delete" ? "Deleted" : "Updated"} ${input.entityType.replaceAll("_", " ")}`,
+    description: input.description,
+    oldValues: input.oldValues,
+    newValues: input.newValues,
+  }, request);
+}
 
 function sourceInput(body: any) {
   const source = body.source || {};
@@ -201,11 +217,13 @@ export async function DELETE(request: Request) {
         const paths = templateVersions.filter((version) => version.source_storage_bucket === PO_TEMPLATE_BUCKET && version.source_storage_path).map((version) => version.source_storage_path);
         if (paths.length) { const removed = await admin.storage.from(PO_TEMPLATE_BUCKET).remove(paths); if (removed.error) throw removed.error; }
       }
+      await auditMasterMutation(admin, auth, request, { organizationId: owned.organizationId, moduleCode: masterModule(kind), entityType: kind, recordId: id, action: "delete", description: `Deleted ${kind.replaceAll("_", " ")} ${id}.`, oldValues: "row" in owned ? owned.row : null });
       return NextResponse.json({ ok: true, deleted: true });
     }
     const values = kind === "terms_section" ? { status: "inactive" } : { status: "inactive", is_default: false };
     const result = await admin.from(table).update(values).eq("id", id);
     if (result.error) throw result.error;
+    await auditMasterMutation(admin, auth, request, { organizationId: owned.organizationId, moduleCode: masterModule(kind), entityType: kind, recordId: id, action: "update", description: `Deactivated ${kind.replaceAll("_", " ")} ${id}.`, oldValues: "row" in owned ? owned.row : null, newValues: values });
     return NextResponse.json({ ok: true });
   } catch (error: any) { return jsonError(error.message || "Failed to deactivate master data.", 500); }
 }
@@ -229,6 +247,7 @@ async function mutate(request: Request, action: "add" | "edit") {
       if (!text(body.label) || !text(body.gstin) || !text(body.address_line1) || !text(body.city) || !text(body.state) || !text(body.pincode)) return jsonError("Company, GSTIN, Label, Address Line 1, City, State and Pincode are required.", 400);
       const atomic = await admin.rpc("save_procurement_address_with_contacts_atomic", { p_kind: kind, p_organization_id: scope.organizationId, p_parent_id: id || null, p_parent: body, p_contacts: Array.isArray(body.contacts) ? body.contacts : [] });
       if (atomic.error) throw atomic.error;
+      await auditMasterMutation(admin, auth, request, { organizationId: scope.organizationId, moduleCode: masterModule(kind), entityType: kind, recordId: atomic.data?.id || id, action: id ? "update" : "create", description: `${id ? "Updated" : "Created"} ${kind.replaceAll("_", " ")}.`, newValues: body });
       return NextResponse.json(atomic.data);
     }
     if (kind === "po_template") {
@@ -259,6 +278,7 @@ async function mutate(request: Request, action: "add" | "edit") {
         const version = await admin.from("procurement_purchase_order_template_versions").insert({ template_id: id, version_number: Number(latest.data?.version_number || 0) + 1, layout_definition: {}, readiness_status: "setup_required", source_storage_bucket: PO_TEMPLATE_BUCKET, source_storage_path: source.path, source_original_filename: source.filename, source_mime_type: source.mimeType, source_size_bytes: source.sizeBytes, source_uploaded_at: new Date().toISOString(), source_uploaded_by: auth.user.id, created_by: auth.user.id });
         if (version.error) throw version.error;
       }
+      await auditMasterMutation(admin, auth, request, { organizationId: scope.organizationId, moduleCode: masterModule(kind), entityType: kind, recordId: result.data!.id, action: id ? "update" : "create", description: `${id ? "Updated" : "Created"} PO template ${values.template_name}.`, newValues: values });
       return NextResponse.json({ id: result.data!.id });
     }
     if (kind === "po_template_version") {
@@ -269,6 +289,7 @@ async function mutate(request: Request, action: "add" | "edit") {
       if (latest.error) throw latest.error;
       const result = await admin.from("procurement_purchase_order_template_versions").insert({ template_id: text(body.template_id), version_number: Number(latest.data?.version_number || 0) + 1, layout_definition: body.layout_definition || {}, header_asset_reference: body.header_asset_reference || null, footer_asset_reference: body.footer_asset_reference || null, created_by: auth.user.id }).select("id").single();
       if (result.error) throw result.error;
+      await auditMasterMutation(admin, auth, request, { organizationId: parent.data.organization_id, moduleCode: masterModule(kind), entityType: kind, recordId: result.data.id, action: "create", description: `Created PO template version ${result.data.id}.`, newValues: body });
       return NextResponse.json({ id: result.data!.id });
     }
     if (kind === "delivery_location") {
@@ -290,6 +311,7 @@ async function mutate(request: Request, action: "add" | "edit") {
       }
       const atomic = await admin.rpc("save_procurement_address_with_contacts_atomic", { p_kind: kind, p_organization_id: scope.organizationId, p_parent_id: id || null, p_parent: { ...body, gstin: shippingGstin, address: legacyDeliveryAddress(body), billing_address_id: billingAddressId }, p_contacts: Array.isArray(body.contacts) ? body.contacts : [] });
       if (atomic.error) throw atomic.error;
+      await auditMasterMutation(admin, auth, request, { organizationId: scope.organizationId, moduleCode: masterModule(kind), entityType: kind, recordId: atomic.data?.id || id, action: id ? "update" : "create", description: `${id ? "Updated" : "Created"} delivery location.`, newValues: body });
       return NextResponse.json(atomic.data);
     }
     if (kind === "terms_template") {
@@ -313,6 +335,7 @@ async function mutate(request: Request, action: "add" | "edit") {
         }
         throw result.error;
       }
+      await auditMasterMutation(admin, auth, request, { organizationId: scope.organizationId, moduleCode: masterModule(kind), entityType: kind, recordId: result.data.id, action: id ? "update" : "create", description: `${id ? "Updated" : "Created"} terms template ${templateName}.`, newValues: values });
       return NextResponse.json({ id: result.data.id });
     }
     if (kind === "terms_section") {
@@ -322,7 +345,11 @@ async function mutate(request: Request, action: "add" | "edit") {
       if (!parent.data || !hasOrg(auth, parent.data.organization_id)) return jsonError("Template is outside your organization access.", 403);
       const values = { template_id: text(body.template_id), heading: text(body.heading), clause_body: text(body.clause_body), sort_order: Number(body.sort_order || 0), status: text(body.status) || "active" };
       const result = id ? await admin.from("company_po_terms_sections").update(values).eq("id", id).select("id").single() : await admin.from("company_po_terms_sections").insert(values).select("id").single();
-      if (result.error) throw result.error; return NextResponse.json({ id: result.data.id });
+      if (result.error) throw result.error;
+      const parentForAudit = await admin.from("company_po_terms_templates").select("organization_id").eq("id", text(body.template_id)).single();
+      if (parentForAudit.error) throw parentForAudit.error;
+      await auditMasterMutation(admin, auth, request, { organizationId: parentForAudit.data.organization_id, moduleCode: masterModule(kind), entityType: kind, recordId: result.data.id, action: id ? "update" : "create", description: `${id ? "Updated" : "Created"} terms section.`, newValues: values });
+      return NextResponse.json({ id: result.data.id });
     }
     return jsonError("Unsupported master-data type.", 400);
   } catch (error: any) { return jsonError(error.message || "Failed to save Purchase Order master data.", 500); }
