@@ -4,10 +4,16 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import AlertMessage from "@/components/AlertMessage";
 import { apiFetch } from "@/components/hr/hrClient";
+import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
 
 const empty = { site_id: "", contact_name: "", designation: "", mobile: "", email: "", contact_type: "other", is_default: false, status: "active" };
 
 export default function SiteContacts() {
+  const { access } = useAccessContext();
+  const permissions = access?.permissions || [];
+  const readable = access?.roleCodes?.includes("platform_owner") || can(permissions, "procurement_site_contact_master", "view");
+  const writable = access?.roleCodes?.includes("platform_owner") || can(permissions, "procurement_site_contact_master", "add") || can(permissions, "procurement_site_contact_master", "edit");
   const [rows, setRows] = useState<any[]>([]);
   const [sites, setSites] = useState<any[]>([]);
   const [form, setForm] = useState<any>(null);
@@ -24,6 +30,7 @@ export default function SiteContacts() {
   };
 
   useEffect(() => { void load().catch((nextError) => setError(nextError.message || "Failed to load site contacts.")); }, []);
+  if (!readable) return <main className="space-y-4"><Link href="/modules/settings" className="text-sm font-semibold text-slate-600">Back to Masters</Link><p className="rounded border bg-white p-5 text-sm text-slate-600">You do not have permission to view Site Contact Master.</p></main>;
 
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -58,8 +65,8 @@ export default function SiteContacts() {
     <header><h1 className="mt-2 text-3xl font-bold">Site Contact Master</h1><p className="mt-1 text-sm text-slate-500">Manage multiple operational contacts for each site.</p></header>
     <AlertMessage type="success" message={message} onClose={() => setMessage("")} />
     <AlertMessage type="error" message={error} onClose={() => setError("")} />
-    {!form && <button type="button" onClick={() => setForm({ ...empty })} className="rounded bg-slate-950 px-4 py-2 text-sm font-semibold text-white">+ Add Site Contact</button>}
-    {form && <form onSubmit={save} className="max-w-3xl space-y-4 rounded border bg-white p-5">
+    {!form && writable && <button type="button" onClick={() => setForm({ ...empty })} className="rounded bg-slate-950 px-4 py-2 text-sm font-semibold text-white">+ Add Site Contact</button>}
+    {form && writable && <form onSubmit={save} className="max-w-3xl space-y-4 rounded border bg-white p-5">
       <h2 className="font-semibold">{form.id ? "Edit" : "Add"} Site Contact</h2>
       <div className="grid gap-3 md:grid-cols-2">
         <label className="text-sm font-semibold">Site<select required value={form.site_id} onChange={(event) => setForm({ ...form, site_id: event.target.value })} className="mt-1 h-10 w-full rounded border px-3"><option value="">Select site</option>{sites.map((site) => <option key={site.id} value={site.id}>{site.site_name}</option>)}</select></label>

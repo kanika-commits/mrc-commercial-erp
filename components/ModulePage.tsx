@@ -270,44 +270,24 @@ export default function ModulePage({
       "/settings/purchase-order-masters/letterheads",
     ].includes(page.route));
 
-    if (globalAccess || can(permissions, "procurement_purchase_orders", "view")) {
-      settingsRows = [
-        ...settingsRows,
-        {
-          id: "settings-gst-billing-delivery-master",
-          module_group: "settings",
-          module_code: "procurement_gst_billing_delivery_master",
-          module_name: "GST / Billing & Delivery Master",
-          route: "/settings/purchase-order-masters?master=billing-delivery",
-          sort_order: 76,
-        },
-        {
-          id: "settings-site-contact-master",
-          module_group: "settings",
-          module_code: "procurement_site_contact_master",
-          module_name: "Site Contact Master",
-          route: "/settings/purchase-order-masters/site-contacts",
-          sort_order: 77,
-        },
-        {
-          id: "settings-letterhead-master",
-          module_group: "settings",
-          module_code: "procurement_letterhead_master",
-          module_name: "Letterhead Master",
-          route: "/settings/purchase-order-masters/letterheads",
-          sort_order: 78,
-        },
-        {
-          id: "settings-po-terms-conditions",
-          module_group: "settings",
-          module_code: "procurement_purchase_orders",
-          module_name: "PO Terms & Conditions",
-          route: "/settings/purchase-order-masters",
-          sort_order: 79,
-        },
-      ];
-    }
-
+    const settingsMasterCards = [
+      globalAccess || can(permissions, "procurement_gst_billing_delivery_master", "view") ? {
+        id: "settings-gst-billing-delivery-master", module_group: "settings", module_code: "procurement_gst_billing_delivery_master", module_name: "Masters - GST / Billing & Delivery", route: "/settings/purchase-order-masters?master=billing-delivery", sort_order: 76,
+      } : null,
+      globalAccess || can(permissions, "procurement_site_contact_master", "view") ? {
+        id: "settings-site-contact-master", module_group: "settings", module_code: "procurement_site_contact_master", module_name: "Masters - Site Contacts", route: "/settings/purchase-order-masters/site-contacts", sort_order: 77,
+      } : null,
+      globalAccess || can(permissions, "procurement_letterhead_master", "view") ? {
+        id: "settings-letterhead-master", module_group: "settings", module_code: "procurement_letterhead_master", module_name: "Masters - Letterheads", route: "/settings/purchase-order-masters/letterheads", sort_order: 78,
+      } : null,
+      globalAccess || can(permissions, "procurement_po_terms_master", "view") ? {
+        id: "settings-po-terms-conditions", module_group: "settings", module_code: "procurement_po_terms_master", module_name: "Masters - PO Terms & Conditions", route: "/settings/purchase-order-masters", sort_order: 79,
+      } : null,
+    ].filter(Boolean) as ModuleRow[];
+    settingsRows = [
+      ...settingsRows,
+      ...settingsMasterCards,
+    ];
     if (!globalAccess && !can(permissions, "hr_employee_attendance_policy", "view")) {
       return settingsRows.sort((first, second) => first.sort_order - second.sort_order);
     }
@@ -339,12 +319,12 @@ export default function ModulePage({
         sort_order: 9.5,
       });
     }
-    if ((globalAccess || can(permissions, "procurement_purchase_orders", "view")) && !hasPurchaseOrderMasters) {
+    if ((globalAccess || can(permissions, "procurement_po_terms_master", "view")) && !hasPurchaseOrderMasters) {
       additionalRows.push({
         id: "settings-po-terms-conditions",
         module_group: "settings",
-        module_code: "procurement_purchase_orders",
-        module_name: "PO Terms & Conditions",
+        module_code: "procurement_po_terms_master",
+        module_name: "Masters - PO Terms & Conditions",
         route: "/settings/purchase-order-masters",
         sort_order: 79,
       });
@@ -393,7 +373,7 @@ function SettingsSections({ pages }: { pages: ModuleRow[] }) {
   const sections = [
     {
       title: "Masters",
-      codes: ["companies", "vendors", "sites", "hr_departments", "hr_designations", "labour_trades", "procurement_items", "company_bank_accounts", "procurement_gst_billing_delivery_master", "procurement_site_contact_master", "procurement_letterhead_master", "procurement_purchase_orders"],
+      codes: ["companies", "vendors", "sites", "hr_departments", "hr_designations", "labour_trades", "procurement_items", "company_bank_accounts", "procurement_gst_billing_delivery_master", "procurement_site_contact_master", "procurement_letterhead_master", "procurement_po_terms_master"],
     },
     {
       title: "Policies",

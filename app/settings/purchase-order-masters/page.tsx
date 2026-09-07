@@ -23,8 +23,9 @@ export default function PurchaseOrderMastersPage() {
   const showingBillingDelivery = searchParams.get("master") === "billing-delivery";
   const { access } = useAccessContext();
   const permissions = access?.permissions || [];
-  const readable = access?.roleCodes?.includes("platform_owner") || ["view", "add", "edit"].some((action) => can(permissions, "procurement_purchase_orders", action));
-  const writable = access?.roleCodes?.includes("platform_owner") || ["add", "edit"].some((action) => can(permissions, "procurement_purchase_orders", action));
+  const masterModule = showingBillingDelivery ? "procurement_gst_billing_delivery_master" : "procurement_po_terms_master";
+  const readable = access?.roleCodes?.includes("platform_owner") || can(permissions, masterModule, "view");
+  const writable = access?.roleCodes?.includes("platform_owner") || ["add", "edit"].some((action) => can(permissions, masterModule, action));
   const [data, setData] = useState<any>({ companies: [], sites: [], billing_addresses: [], terms_templates: [], delivery_locations: [], address_contacts: [], po_templates: [] });
   const [gstRegistrations, setGstRegistrations] = useState<any[]>([]);
   const [tab, setTab] = useState<Tab>(showingBillingDelivery ? "address" : "terms");

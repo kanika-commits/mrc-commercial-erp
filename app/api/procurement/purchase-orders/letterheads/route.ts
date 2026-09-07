@@ -3,13 +3,13 @@ import { NextResponse } from "next/server";
 import { adminClient, applyOrganizationAccess, jsonError, requireProcurementPermission, text } from "@/lib/serverProcurementAccess";
 import { createPrivateStorageAdapter, safeObjectKey } from "@/lib/storage/privateStorage";
 
-const MODULE = "procurement_purchase_orders";
+const MODULE = "procurement_letterhead_master";
 const BUCKET = "procurement-company-letterhead-assets";
 const MAX_BYTES = 10 * 1024 * 1024;
 const LAYOUT_KEYS = ["header_height_points", "footer_height_points", "content_margin_left_points", "content_margin_right_points", "content_gap_after_header_points", "content_gap_before_footer_points"];
 function actor(access: any) { return { id: access.user.id, name: text(access.user.user_metadata?.full_name || access.user.user_metadata?.name || access.user.email), email: access.user.email || null }; }
 function scoped(access: any, organizationId: string, companyId?: string) { return access.isGlobalAccess || ((access.organizations || []).includes(organizationId) && (!companyId || !(access.companies || []).length || access.companies.includes(companyId))); }
-async function guard(request: Request, action: "view" | "add" | "edit") { return requireProcurementPermission(request, MODULE, action); }
+async function guard(request: Request, action: "view" | "add" | "edit" | "delete") { return requireProcurementPermission(request, MODULE, action); }
 async function validatePng(file: File, label: string) {
   if (file.type !== "image/png") return { error: `${label} must be a PNG image.` };
   if (file.size <= 0 || file.size > MAX_BYTES) return { error: `${label} image must not exceed 10 MB.` };
@@ -82,7 +82,7 @@ function snapshotReferences(snapshot: any, letterhead: any, version: any) {
 
 export async function DELETE(request: Request) {
   try {
-    const access = await guard(request, "edit"); if ("response" in access) return access.response;
+    const access = await guard(request, "delete"); if ("response" in access) return access.response;
     const body = await request.json().catch(() => ({})); const versionId = text(body.version_id); const letterheadId = text(body.letterhead_id); if (!versionId && !letterheadId) return jsonError("Letterhead version or master is required.", 400);
     const admin = adminClient();
     if (!versionId) {

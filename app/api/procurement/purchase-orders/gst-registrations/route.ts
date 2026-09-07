@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { adminClient, applyOrganizationAccess, jsonError, requireProcurementPermission, text } from "@/lib/serverProcurementAccess";
 
-async function permission(request: Request, action: "view" | "add" | "edit") { return requireProcurementPermission(request, "procurement_purchase_orders", action); }
+async function permission(request: Request, action: "view" | "add" | "edit") { return requireProcurementPermission(request, "procurement_gst_billing_delivery_master", action); }
 function scoped(query: any, access: any) { const q = applyOrganizationAccess(query, access); if (!q) return null; if (access.isGlobalAccess || (access.roleCodes || []).includes("platform_owner")) return q; return (access.companies || []).length ? q.in("company_id", access.companies) : null; }
 export async function GET(request: Request) { try { const access = await permission(request, "view"); if ("response" in access) return access.response; const q = scoped(adminClient().from("company_gst_registrations").select("*").order("company_id").order("is_default", { ascending: false }), access); if (!q) return NextResponse.json({ registrations: [] }); const result = await q; if (result.error) throw result.error; return NextResponse.json({ registrations: result.data || [] }); } catch (e: any) { return jsonError(e.message || "Failed to load GST registrations.", 500); } }
 export async function POST(request: Request) { return save(request, "add"); }

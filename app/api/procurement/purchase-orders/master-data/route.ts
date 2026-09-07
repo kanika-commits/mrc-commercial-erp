@@ -3,7 +3,8 @@ import { adminClient, applyOrganizationAccess, jsonError, requireProcurementAny,
 import { safeObjectKey } from "@/lib/storage/privateStorage";
 
 const MODULE = "procurement_purchase_orders";
-const checks = ["view", "add", "edit"].map((actionCode) => ({ moduleCode: MODULE, actionCode }));
+const GST_BILLING_MODULE = "procurement_gst_billing_delivery_master";
+const TERMS_MODULE = "procurement_po_terms_master";
 const emptyId = "00000000-0000-0000-0000-000000000000";
 const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const PO_TEMPLATE_BUCKET = "procurement-po-template-documents";
@@ -44,8 +45,15 @@ function legacyDeliveryAddress(body: any) {
   return structured || text(body.address) || null;
 }
 
-async function authorize(request: Request, action: "view" | "add" | "edit") {
-  return action === "view" ? requireProcurementAny(request, checks) : requireProcurementPermission(request, MODULE, action);
+function masterModule(kind: string) {
+  if (["billing_address", "delivery_location"].includes(kind)) return GST_BILLING_MODULE;
+  if (["terms_template", "terms_section"].includes(kind)) return TERMS_MODULE;
+  return MODULE;
+}
+
+async function authorize(request: Request, action: "view" | "add" | "edit", moduleCode = MODULE) {
+  const moduleChecks = ["view", "add", "edit"].map((actionCode) => ({ moduleCode, actionCode }));
+  return action === "view" ? requireProcurementAny(request, moduleChecks) : requireProcurementPermission(request, moduleCode, action);
 }
 
 function hasOrg(auth: any, organizationId: string) {
@@ -104,7 +112,11 @@ async function ownedOrganization(admin: any, auth: any, kind: string, id: string
 
 export async function GET(request: Request) {
   try {
-    const auth = await authorize(request, "view");
+    const auth = await requireProcurementAny(request, [
+      { moduleCode: GST_BILLING_MODULE, actionCode: "view" },
+      { moduleCode: TERMS_MODULE, actionCode: "view" },
+      { moduleCode: MODULE, actionCode: "view" },
+    ]);
     if ("response" in auth) return auth.response;
     const admin = adminClient();
     const [companies, sites, billing, templates, locations, addressContacts, poTemplates] = await Promise.all([
@@ -127,10 +139,10 @@ export async function PUT(request: Request) { return mutate(request, "edit"); }
 
 export async function DELETE(request: Request) {
   try {
-    const auth = await authorize(request, "edit");
-    if ("response" in auth) return auth.response;
     const body = await request.json().catch(() => ({}));
     const kind = text(body.kind); const id = text(body.id);
+    const auth = await authorize(request, "edit", masterModule(kind));
+    if ("response" in auth) return auth.response;
     const owned = await ownedOrganization(adminClient(), auth, kind, id);
     if ("error" in owned) return jsonError(owned.error || "Invalid master-data record.", owned.status || 400);
     const admin = adminClient();
@@ -200,10 +212,10 @@ export async function DELETE(request: Request) {
 
 async function mutate(request: Request, action: "add" | "edit") {
   try {
-    const auth = await authorize(request, action);
-    if ("response" in auth) return auth.response;
     const body = await request.json().catch(() => ({}));
     const admin = adminClient(); const kind = text(body.kind); const id = text(body.id);
+    const auth = await authorize(request, action, masterModule(kind));
+    if ("response" in auth) return auth.response;
     if (action === "edit") { const owned = await ownedOrganization(admin, auth, kind, id); if ("error" in owned) return jsonError(owned.error || "Invalid master-data record.", owned.status || 400); }
     if (kind === "site_contact") {
       return jsonError(
