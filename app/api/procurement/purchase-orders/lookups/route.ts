@@ -19,7 +19,6 @@ export async function GET(request: Request) {
     if (!companies || !sites || !vendors || !items) return NextResponse.json({ companies: [], sites: [], vendors: [], items: [], indents: [] });
     if (!auth.isGlobalAccess && !(auth.roleCodes || []).includes("platform_owner")) {
       if ((auth.sites || []).length > 0) sites = sites.in("id", auth.sites);
-      else if ((auth.companies || []).length > 0) sites = sites.in("company_id", auth.companies);
       if ((auth.companies || []).length > 0) companies = companies.in("id", auth.companies);
     }
     const [companyResult, siteResult, vendorResult, itemResult] = await Promise.all([

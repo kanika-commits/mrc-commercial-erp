@@ -99,3 +99,25 @@ export async function validateCompanySiteAccess(admin: any, context: any, compan
 
   return { company, site, organizationId: company.organization_id } as const;
 }
+
+export async function validateOrganizationSiteAccess(admin: any, context: any, companyId: string, siteId: string) {
+  const [companyResult, siteResult] = await Promise.all([
+    admin.from("companies").select("id, organization_id, company_name, company_code, status").eq("id", companyId).maybeSingle(),
+    admin.from("sites").select("id, organization_id, company_id, site_name, site_code, status").eq("id", siteId).maybeSingle(),
+  ]);
+  if (companyResult.error) throw companyResult.error;
+  if (siteResult.error) throw siteResult.error;
+  const company = companyResult.data;
+  const site = siteResult.data;
+  if (!company) return { error: "Selected company was not found.", status: 404 } as const;
+  if (!site) return { error: "Selected site was not found.", status: 404 } as const;
+  if (company.status !== "active") return { error: "Selected company is inactive.", status: 400 } as const;
+  if (site.status !== "active") return { error: "Selected site is inactive.", status: 400 } as const;
+  if (company.organization_id !== site.organization_id) return { error: "Selected company and site are not in the same organization.", status: 400 } as const;
+  if (!hasGlobalProcurementAccess(context)) {
+    if (!(context.organizations || []).includes(company.organization_id)) return { error: "Selected company/site is outside your organization access.", status: 403 } as const;
+    if ((context.sites || []).length > 0 && !(context.sites || []).includes(siteId)) return { error: "Selected site is outside your access.", status: 403 } as const;
+    if ((context.companies || []).length > 0 && !(context.companies || []).includes(companyId)) return { error: "Selected company is outside your access.", status: 403 } as const;
+  }
+  return { company, site, organizationId: company.organization_id } as const;
+}

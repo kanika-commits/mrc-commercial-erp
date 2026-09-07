@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { adminClient, applyCompanySiteAccess, applyOrganizationAccess, jsonError, requireProcurementPermission, text, validateCompanySiteAccess } from "@/lib/serverProcurementAccess";
+import { adminClient, applyCompanySiteAccess, applyOrganizationAccess, jsonError, requireProcurementPermission, text, validateOrganizationSiteAccess } from "@/lib/serverProcurementAccess";
 import { createPrivateStorageAdapter } from "@/lib/storage/privateStorage";
 
 const MODULE = "procurement_purchase_orders";
@@ -71,7 +71,7 @@ export async function POST(request: Request) {
     const selectedCompanyId: string = String(companyId);
     const selectedSiteId: string = String(siteId);
     const selectedVendorId: string = String(vendorId);
-    const scope = await validateCompanySiteAccess(admin, auth, selectedCompanyId, selectedSiteId); if ("error" in scope) return jsonError(String(scope.error), Number(scope.status || 400));
+    const scope = await validateOrganizationSiteAccess(admin, auth, selectedCompanyId, selectedSiteId); if ("error" in scope) return jsonError(String(scope.error), Number(scope.status || 400));
     const organizationId = "organizationId" in scope ? scope.organizationId : null;
     if (!organizationId) return jsonError("Selected company/site organization is invalid.", 400);
     const vendor = await admin.from("vendors").select("id,organization_id,vendor_name,address,pan,gstin,status,is_deleted").eq("id", selectedVendorId).eq("organization_id", organizationId).maybeSingle();

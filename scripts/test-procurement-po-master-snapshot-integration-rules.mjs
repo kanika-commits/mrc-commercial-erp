@@ -69,7 +69,7 @@ assert.match(lookups, /legacy\.length === 1/);
 assert.match(lookups, /version_status === "ready"/);
 
 assert.match(createRoute, /master_selection: body\.master_selection \|\| \{\}/);
-assert.match(createRoute, /validateCompanySiteAccess\(admin, auth, selectedCompanyId, selectedSiteId\)/, "Direct and Indent PO creation must keep API authorization/scope validation");
+assert.match(createRoute, /validateOrganizationSiteAccess\(admin, auth, selectedCompanyId, selectedSiteId\)/, "Direct and Indent PO creation must keep organization/site authorization validation");
 assert.match(createRoute, /requisition\.data\.company_id !== selectedCompanyId \|\| requisition\.data\.site_id !== selectedSiteId/, "Indent source company/site restrictions must remain exact");
 assert.match(updateRoute, /master_selection: body\.master_selection \|\| \{\}/);
 assert.match(updateRoute, /commercial\.key_terms = body\.key_terms/);

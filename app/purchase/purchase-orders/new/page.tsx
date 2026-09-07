@@ -120,7 +120,7 @@ export default function NewPurchaseOrderPage() {
     };
   }, [materialOpenIndex]);
 
-  const sites = useMemo(() => lookups.sites.filter((site: any) => !companyId || site.company_id === companyId || !site.company_id), [lookups.sites, companyId]);
+  const sites = useMemo(() => lookups.sites, [lookups.sites]);
   const selectedCompany = lookups.companies.find((company: any) => company.id === companyId);
   const selectedVendor = lookups.vendors.find((vendor: any) => vendor.id === vendorId);
   const selectedVendorContact = selectedVendor?.contact || null;
