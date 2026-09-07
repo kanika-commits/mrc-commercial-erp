@@ -57,6 +57,39 @@ function hasAccessibleModuleInGroup(
   );
 }
 
+const settingsViewModules = [
+  "companies",
+  "sites",
+  "vendors",
+  "hr_departments",
+  "hr_designations",
+  "labour_trades",
+  "company_bank_accounts",
+  "procurement_items",
+  "procurement_gst_billing_delivery_master",
+  "procurement_site_contact_master",
+  "procurement_letterhead_master",
+  "procurement_po_terms_master",
+  "hr_employee_attendance_policy",
+  "labour_attendance_policy",
+  "labour_attendance_unlock",
+];
+
+function hasSettingsViewAccess(access: CurrentUserAccess) {
+  return settingsViewModules.some((moduleCode) => can(access.permissions, moduleCode, "view"));
+}
+
+function settingsRouteAccess(pathname: string, access: CurrentUserAccess) {
+  if (pathname === "/settings/items") return can(access.permissions, "procurement_items", "view");
+  if (pathname === "/settings/purchase-order-masters/site-contacts") return can(access.permissions, "procurement_site_contact_master", "view");
+  if (pathname === "/settings/purchase-order-masters/letterheads") return can(access.permissions, "procurement_letterhead_master", "view");
+  if (pathname === "/settings/purchase-order-masters") return can(access.permissions, "procurement_po_terms_master", "view") || can(access.permissions, "procurement_gst_billing_delivery_master", "view");
+  if (pathname === "/settings/policies/employee-attendance") return can(access.permissions, "hr_employee_attendance_policy", "view");
+  if (pathname === "/settings/policies/attendance-date-access") return can(access.permissions, "labour_attendance_unlock", "view");
+  if (pathname === "/settings") return hasSettingsViewAccess(access);
+  return null;
+}
+
 function hasExplicitHrRouteAccess(
   pathname: string,
   access: CurrentUserAccess,
@@ -247,14 +280,10 @@ function hasRouteAccess(
     return can(access.permissions, "reports", "view");
   }
 
-  if (pathname === "/settings" || pathname === "/settings/password") return true;
-
-  if (pathname === "/settings/policies/employee-attendance") {
-    return can(access.permissions, "hr_employee_attendance_policy", "view");
-  }
+  if (pathname === "/settings/password") return true;
 
   if (pathname.startsWith("/settings")) {
-    return globalAccess;
+    return settingsRouteAccess(pathname, access) ?? hasSettingsViewAccess(access);
   }
 
   const explicitHrAccess = hasExplicitHrRouteAccess(pathname, access, navigation);
