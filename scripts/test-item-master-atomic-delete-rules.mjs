@@ -1,0 +1,10 @@
+import fs from "node:fs";
+const migration = fs.readFileSync("supabase/migrations/202609080001_procurement_item_master_atomic_delete.sql", "utf8");
+const route = fs.readFileSync("app/api/procurement/item-masters/route.ts", "utf8");
+const page = fs.readFileSync("app/settings/items/page.tsx", "utf8");
+for (const marker of ["delete_procurement_item_master_atomic", "TYPE_HAS_GROUPS", "TYPE_IN_USE", "GROUP_IN_USE", "UOM_IN_USE", "NOT_FOUND", "INVALID_KIND", "for update", "erp_audit_logs", "revoke all", "grant execute"]) if (!migration.includes(marker)) throw new Error(`Missing atomic delete marker: ${marker}`);
+for (const marker of ["requireProcurementPermission(request, ITEM_MODULE, \"delete\")", "loadActorOrganizationScope", "resolveWriteOrganizationId", "admin.rpc(\"delete_procurement_item_master_atomic\"", "TYPE_HAS_GROUPS", "GROUP_IN_USE", "UOM_IN_USE"]) if (!route.includes(marker)) throw new Error(`Missing API delete marker: ${marker}`);
+for (const marker of ["Manage Item Masters", "Item Types", "Item Groups", "UOMs", "window.confirm", "deleteMaster", "+ Add UOM"]) if (!page.includes(marker)) throw new Error(`Missing management UI marker: ${marker}`);
+for (const marker of ["fixed right-4 top-4 z-[100]", "aria-live", "Unable to delete this Item Master."]) if (!page.includes(marker)) throw new Error(`Missing notification safety marker: ${marker}`);
+if (migration.includes("cascade") || migration.includes("truncate")) throw new Error("Unsafe cascade/truncate found");
+console.log("Item Master atomic delete rules: PASS");
