@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const migration = fs.readFileSync(
-  "supabase/migrations/202609060003_procurement_purchase_orders_non_rfq_master_resolver.sql",
+  "supabase/migrations/202609080002_fix_procurement_po_company_neutral_site_resolver.sql",
   "utf8",
 );
 
@@ -10,7 +10,9 @@ assert.match(migration, /resolve_procurement_po_master_snapshot\(\s*p_organizati
 assert.match(migration, /SECURITY DEFINER/);
 assert.match(migration, /SET search_path TO 'public', 'pg_temp'/);
 assert.match(migration, /public\.companies/);
-assert.match(migration, /s\.company_id = p_company_id or s\.company_id is null/);
+assert.doesNotMatch(migration, /s\.company_id = p_company_id or s\.company_id is null/);
+assert.match(migration, /s\.organization_id = p_organization_id/);
+assert.match(migration, /coalesce\(s\.status, 'active'\) = 'active'/);
 assert.match(migration, /public\.company_gst_registrations/);
 assert.match(migration, /v_gst_count = 0/);
 assert.match(migration, /v_gst_default_count = 1/);
