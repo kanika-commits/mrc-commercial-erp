@@ -1,0 +1,13 @@
+import fs from "node:fs";
+const page = fs.readFileSync("app/settings/items/page.tsx", "utf8");
+const route = fs.readFileSync("app/api/procurement/item-masters/route.ts", "utf8");
+if (!page.includes("+ Add Type") || !page.includes("+ Add Group") || !page.includes("quickCreate === \"type\"")) throw new Error("Quick-create UI is incomplete");
+if (!page.includes("+ Add UOM") || !page.includes("UOM Code / Symbol") || !page.includes("default_uom_id: result.id")) throw new Error("UOM quick-create UI is incomplete");
+if (!page.includes("setForm((current) => quickCreate === \"type\"")) throw new Error("Quick-created values are not auto-selected while preserving form state");
+if (!route.includes("requireProcurementPermission(request, ITEM_MODULE, \"add\")")) throw new Error("Quick-create permission enforcement is missing");
+if (!route.includes("loadActorOrganizationScope") || !route.includes("resolveWriteOrganizationId")) throw new Error("Organization scoping is missing");
+if (!route.includes("Item Type already exists.") || !route.includes("Item Group already exists.")) throw new Error("Duplicate protection is missing");
+if (!route.includes("recordAuditEvent") || !route.includes("procurement_item_type") || !route.includes("procurement_item_group")) throw new Error("Quick-create audit coverage is missing");
+if (!route.includes("item_type_id") || !route.includes("group_name")) throw new Error("Type/group relationship is missing");
+if (!route.includes('kind === "uom"') || !route.includes("UOM already exists") || !route.includes("procurement_uoms")) throw new Error("UOM quick-create contract is missing");
+console.log("Item Master quick-create rules: PASS");
