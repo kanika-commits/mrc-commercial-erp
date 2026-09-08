@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import sharp from "sharp";
 import { PDFDocument, degrees, rgb } from "pdf-lib";
 import { NextResponse } from "next/server";
 import { applyCompanySiteAccess, applyOrganizationAccess, adminClient, jsonError, requireProcurementAny } from "@/lib/serverProcurementAccess";
@@ -61,6 +60,18 @@ function wrapToPointWidth(value: unknown, maxWidth: number, size: number, measur
 const PACKAGE_MIMES = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
 const PACKAGE_LIMIT = 25 * 1024 * 1024;
 
+async function loadSharp() {
+  const module = await import("sharp");
+  return module.default;
+}
+
+function imageDimensions(sourceBuffer: Buffer) {
+  if (sourceBuffer.length >= 24 && sourceBuffer.readUInt32BE(0) === 0x89504e47 && sourceBuffer.readUInt32BE(4) === 0x0d0a1a0a) {
+    return { width: sourceBuffer.readUInt32BE(16), height: sourceBuffer.readUInt32BE(20) };
+  }
+  return { width: PAGE_W, height: PAGE_H };
+}
+
 async function appendPackage(poPdf: Buffer, row: any, admin: any) {
   let query = admin.from("procurement_purchase_order_documents").select("id,original_file_name,mime_type,size_bytes,storage_provider,storage_bucket,storage_key,sort_order,created_at,status").eq("purchase_order_id", row.id).eq("organization_id", row.organization_id).eq("status", "active");
   const { data: documents, error } = await query;
@@ -83,6 +94,7 @@ async function appendPackage(poPdf: Buffer, row: any, admin: any) {
         const pages = await output.copyPages(source, source.getPageIndices());
         pages.forEach((page) => output.addPage(page));
       } else {
+        const sharp = await loadSharp();
         const image = document.mime_type === "image/webp" ? await sharp(bytes).png().toBuffer() : bytes;
         const metadata = await sharp(image).metadata();
         const embedded = document.mime_type === "image/jpeg" ? await output.embedJpg(image) : await output.embedPng(image);
@@ -164,6 +176,7 @@ type ImageAsset = { name: string; data: Buffer; width: number; height: number; f
 type PdfPage = { ops: string[]; images: ImageAsset[] };
 
 async function imageAsset(name: string, file: string, cropHeight?: number) {
+  const sharp = await loadSharp();
   const sourceBuffer = await fs.readFile(path.join(process.cwd(), "public", "letterheads", file));
   const metadata = await sharp(sourceBuffer).metadata();
   const scaledHeight = metadata.width && metadata.height ? Math.floor(metadata.height * PAGE_W / metadata.width) : PAGE_H;
@@ -176,10 +189,10 @@ async function imageAsset(name: string, file: string, cropHeight?: number) {
 }
 
 async function storageImageAsset(name: string, sourceBuffer: Buffer, cropHeight?: number) {
-  const metadata = await sharp(sourceBuffer).metadata();
-  const scaledHeight = metadata.width && metadata.height ? Math.floor(metadata.height * PAGE_W / metadata.width) : PAGE_H;
+  const metadata = imageDimensions(sourceBuffer);
+  const scaledHeight = Math.floor(metadata.height * PAGE_W / Math.max(1, metadata.width));
   const safeCropHeight = cropHeight ? Math.min(cropHeight, Math.max(1, scaledHeight)) : undefined;
-  return { name, data: sourceBuffer, width: metadata.width || PAGE_W, height: metadata.height || scaledHeight, format: "png" } satisfies ImageAsset;
+  return { name, data: sourceBuffer, width: metadata.width, height: safeCropHeight || scaledHeight, format: "png" } satisfies ImageAsset;
 }
 
 async function employeeSignatureImageAsset(admin: any, approverUserId: string | null | undefined) {
@@ -189,6 +202,7 @@ async function employeeSignatureImageAsset(admin: any, approverUserId: string | 
   const downloaded = await admin.storage.from(block.storageBucket).download(block.storageKey);
   if (downloaded.error || !downloaded.data) return { block, asset: null };
   try {
+    const sharp = await loadSharp();
     const source = Buffer.from(await downloaded.data.arrayBuffer());
     const data = await sharp(source)
       .rotate()
