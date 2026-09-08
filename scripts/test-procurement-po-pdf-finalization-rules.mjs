@@ -160,6 +160,8 @@ assert.match(pdf, /const combinedPdf = await appendPackage\(poPackage\.pdf, data
 assert.match(pdf, /width: PAGE_W, height: safeCropHeight \|\| scaledHeight, format: "png"/);
 assert.match(pdf, /const headerRenderedHeight = letterhead\.header \? PAGE_W \* letterhead\.header\.height \/ letterhead\.header\.width : 0/);
 assert.match(pdf, /const contentTop = letterhead\.header \? PAGE_H - headerRenderedHeight - 8 : TOP/);
+assert.match(pdf, /const FIRST_PAGE_TITLE_SAFE_GAP = 8/);
+assert.match(pdf, /newPage\(\);\n  if \(letterhead\.header\) y -= FIRST_PAGE_TITLE_SAFE_GAP;/, "Page 1 title must clear the rendered letterhead header without shifting continuation pages.");
 assert.match(pdf, /y = contentTop/);
 assert.match(pdf, /const footerRenderedHeight = letterhead\.footer \? PAGE_W \* letterhead\.footer\.height \/ letterhead\.footer\.width : 0/);
 assert.match(pdf, /const protectedPdf = \["approved", "issued"\]\.includes\(data\.status\) \? combinedPdf : await watermarkDraftPackage\(combinedPdf\)/);

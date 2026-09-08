@@ -27,6 +27,7 @@ const FOOTER_SAFETY_GAP = 2;
 const PAGE_NUMBER_SIZE = 8;
 const PAGE_NUMBER_OFFSET = 2;
 const PAGE_NUMBER_BODY_GAP = 2;
+const FIRST_PAGE_TITLE_SAFE_GAP = 8;
 
 function text(value: unknown) { return value === null || value === undefined || String(value).trim() === "" ? "—" : String(value); }
 function money(value: unknown) { return `Rs. ${Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
@@ -425,6 +426,7 @@ async function makePdf(row: any, creator: any, approver: any, admin: any) {
   };
 
   newPage();
+  if (letterhead.header) y -= FIRST_PAGE_TITLE_SAFE_GAP;
   if (!letterhead.header) { draw(row.company?.company_name || "Purchase Order", LEFT, y, 16, true); y -= 28; }
   ensure(28); centered("Purchase Order", 13); y -= 22;
 
