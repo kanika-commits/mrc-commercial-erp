@@ -169,7 +169,6 @@ begin
       from public.sites s
      where s.id = p_site_id
        and s.organization_id = p_organization_id
-       and (s.company_id = p_company_id or s.company_id is null)
        and coalesce(s.status,'active') <> 'deleted'
   ) then
     raise exception 'Site is outside the supplied company and organization.';

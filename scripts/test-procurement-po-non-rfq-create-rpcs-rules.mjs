@@ -16,7 +16,8 @@ assert.doesNotMatch(migration, /final_selection|procurement_rfqs|rfq_id|rfq_vend
 assert.match(migration, /rfq_number_snapshot/);
 assert.match(migration, /Authenticated actor is required/);
 assert.match(migration, /c\.organization_id = p_organization_id/);
-assert.match(migration, /s\.company_id = p_company_id or s\.company_id is null/);
+assert.match(migration, /s\.organization_id = p_organization_id[\s\S]*coalesce\(s\.status,'active'\) <> 'deleted'/);
+assert.doesNotMatch(migration, /s\.company_id\s*=\s*p_company_id/);
 assert.match(migration, /v\.organization_id = p_organization_id/);
 assert.match(migration, /standard_terms_template_id/);
 assert.match(migration, /additional_charges/);
