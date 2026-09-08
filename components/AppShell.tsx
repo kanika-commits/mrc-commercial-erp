@@ -46,6 +46,8 @@ import {
   writeSelectedLabourContext,
 } from "@/lib/labour/attendanceSystemContext";
 import { supabase } from "@/lib/supabase";
+import { defaultTenantBranding, resolveTenantBranding, type TenantBranding } from "@/lib/tenantBranding";
+import { TenantBrandingContext, type TenantBrandingStatus } from "@/components/TenantBrandingContext";
 
 type SidebarLeaf = {
   type: "leaf";
@@ -89,6 +91,14 @@ type SidebarSection = {
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "constructiq-sidebar-collapsed";
 const SIDEBAR_EXPANDED_GROUPS_STORAGE_KEY = "constructiq-sidebar-expanded-groups";
 
+function readableTextColor(background: string | null | undefined) {
+  const hex = String(background || "").trim().replace("#", "");
+  if (!/^[0-9a-f]{6}$/i.test(hex)) return "#ffffff";
+  const [red, green, blue] = [0, 2, 4].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255);
+  const luminance = [red, green, blue].map((channel) => channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4).reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
+  return luminance > 0.55 ? "#0f172a" : "#ffffff";
+}
+
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const {
@@ -108,7 +118,51 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [labourWorkspace, setLabourWorkspace] = useState<LabourWorkspaceSummary>({ pairs: [], attendance_systems: [] });
   const [expandedTopGroup, setExpandedTopGroup] = useState<string | null>(null);
   const [expandedNestedGroups, setExpandedNestedGroups] = useState<Set<string>>(new Set());
+  const [branding, setBranding] = useState<TenantBranding>(defaultTenantBranding);
+  const [brandingStatus, setBrandingStatus] = useState<TenantBrandingStatus>("loading");
   const notificationsStartedRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/branding", { credentials: "same-origin" })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Branding unavailable")))
+      .then(async (value) => {
+        const resolved = resolveTenantBranding(value);
+        if (resolved.logoUrl) {
+          await new Promise<void>((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => resolve();
+            image.onerror = () => reject(new Error("Logo unavailable"));
+            image.src = resolved.logoUrl!;
+          });
+        }
+        if (!cancelled) {
+          setBranding(resolved);
+          setBrandingStatus("ready");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setBranding(defaultTenantBranding);
+          setBrandingStatus("fallback");
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const resolvedPrimaryColor = branding.primaryColor || defaultTenantBranding.primaryColor!;
+  const resolvedSecondaryColor = branding.secondaryColor || defaultTenantBranding.secondaryColor!;
+  const tenantThemeStyle = {
+    "--tenant-primary": resolvedPrimaryColor,
+    "--tenant-primary-foreground": readableTextColor(resolvedPrimaryColor),
+    "--tenant-primary-soft": `${resolvedPrimaryColor}22`,
+    "--tenant-primary-hover": resolvedPrimaryColor,
+    "--tenant-secondary": resolvedSecondaryColor,
+    "--tenant-focus": `${resolvedPrimaryColor}66`,
+    "--tenant-border-accent": `${resolvedPrimaryColor}55`,
+  } as React.CSSProperties;
+
+  const brandingContextValue = { branding, status: brandingStatus };
 
   const permissions = access?.permissions || [];
   const globalAccess = hasGlobalAccess(access);
@@ -623,23 +677,36 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     [loadNotificationCounts, notificationCounts, notificationCountsLoaded, notificationCountsLoading],
   );
 
+  if (brandingStatus === "loading") {
+    return (
+      <TenantBrandingContext.Provider value={brandingContextValue}>
+        <div className="flex min-h-screen bg-slate-100" aria-busy="true">
+          <aside className="hidden w-[240px] shrink-0 bg-[#07111f] p-6 lg:block"><div className="h-[76px] rounded-xl bg-white/10" /><div className="mt-10 space-y-3">{Array.from({ length: 7 }).map((_, index) => <div key={index} className="h-11 animate-pulse rounded-lg bg-white/10" />)}</div></aside>
+          <main className="min-w-0 flex-1"><div className="h-[73px] border-b border-slate-200 bg-white" /><div className="space-y-6 p-8"><div className="h-10 w-72 animate-pulse rounded bg-slate-200" /><div className="h-5 w-96 animate-pulse rounded bg-slate-200" /><div className="grid gap-5 md:grid-cols-3"><div className="h-40 animate-pulse rounded-xl bg-white" /><div className="h-40 animate-pulse rounded-xl bg-white" /><div className="h-40 animate-pulse rounded-xl bg-white" /></div></div></main>
+        </div>
+      </TenantBrandingContext.Provider>
+    );
+  }
+
   const sidebarContent = (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className={`mb-7 flex items-center gap-2 ${compactSidebar ? "justify-center px-0" : "px-2"}`}>
         <Link
           href={dashboardHref}
-          className={`min-w-0 ${compactSidebar ? "grid h-11 w-11 place-items-center rounded-xl bg-[#2563eb] shadow-lg shadow-blue-950/30" : "block"}`}
+          className={`min-w-0 ${compactSidebar ? "tenant-primary-bg grid h-11 w-11 place-items-center rounded-xl shadow-lg" : "block"}`}
           onClick={() => setMobileSidebarOpen(false)}
-          title={compactSidebar ? "ConstructIQ" : undefined}
+          title={compactSidebar ? branding.organizationName : undefined}
         >
           {compactSidebar ? (
-            <span className="text-lg font-bold tracking-tight">C</span>
+            branding.logoUrl ? (
+              <img src={branding.logoUrl} alt={`${branding.organizationName} logo`} className="h-7 w-7 object-contain" />
+            ) : (
+              <Building2 className="h-5 w-5 text-white/85" aria-hidden="true" />
+            )
           ) : (
             <>
-              <h1 className="text-2xl font-bold tracking-tight text-white">ConstructIQ</h1>
-              <p className="mt-1 text-sm font-medium text-slate-400">
-                Enterprise ERP
-              </p>
+              <h1 className="truncate text-xl font-bold tracking-tight text-white">{branding.organizationName}</h1>
+              <p className="mt-1 text-sm font-medium text-slate-400">Powered by SiteQube</p>
             </>
           )}
         </Link>
@@ -724,8 +791,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
+    <TenantBrandingContext.Provider value={brandingContextValue}>
     <NotificationCountsProvider value={notificationCountsContextValue}>
-    <div className="min-h-screen overflow-x-hidden bg-[#f3f6f8]">
+    <div className="min-h-screen overflow-x-hidden bg-[#f3f6f8]" style={tenantThemeStyle}>
       {mobileSidebarOpen && (
         <button
           type="button"
@@ -757,8 +825,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <main className={`min-h-screen min-w-0 transition-[padding] duration-200 ${sidebarCollapsed ? "lg:pl-[72px]" : "lg:pl-[240px]"}`}>
-        <header className="sticky top-0 z-30 border-b border-[#d7dde3] bg-[#fbf9fa] px-3 py-3 sm:px-5 lg:px-10 lg:py-4">
-          <div className="flex min-w-0 items-center justify-between gap-2 lg:justify-end">
+        <header className="sticky top-0 z-30 flex h-16 items-center overflow-hidden border-b border-[#d7dde3] bg-[#fbf9fa] px-3 sm:px-5 lg:h-[72px] lg:px-10">
+          <div className="flex h-full w-full min-w-0 items-center justify-end gap-2">
             <button
               type="button"
               onClick={() => setMobileSidebarOpen(true)}
@@ -792,6 +860,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </main>
     </div>
     </NotificationCountsProvider>
+    </TenantBrandingContext.Provider>
   );
 }
 
@@ -838,7 +907,7 @@ function SidebarTopItem({
     <div>
       <div
         className={`flex min-h-11 items-center rounded-lg text-[13px] font-bold transition-colors duration-200 ${compact ? "justify-center" : ""} ${
-          active ? "bg-[#2563eb] text-white shadow-sm shadow-blue-950/30" : "text-slate-300 hover:bg-white/[0.08] hover:text-white"
+          active ? "tenant-primary-bg shadow-sm" : "text-slate-300 hover:bg-white/[0.08] hover:text-white"
         }`}
         title={compact ? group.label : undefined}
       >
@@ -933,7 +1002,7 @@ function SidebarChildItem({
         href={child.href}
         onClick={onNavigate}
         className={`block rounded-lg px-2 py-2 text-xs font-semibold leading-4 transition-colors duration-200 ${
-          active ? "bg-blue-500/20 text-blue-100" : "text-slate-400 hover:bg-white/[0.08] hover:text-white"
+          active ? "tenant-primary-soft text-white" : "text-slate-400 hover:bg-white/[0.08] hover:text-white"
         }`}
       >
         {child.label}
@@ -949,7 +1018,7 @@ function SidebarChildItem({
     <div>
       <div
         className={`flex min-h-9 items-center rounded-lg text-xs font-bold leading-4 transition-colors duration-200 ${
-          active ? "bg-blue-500/20 text-blue-100" : "text-slate-400 hover:bg-white/[0.08] hover:text-white"
+          active ? "tenant-primary-soft text-white" : "text-slate-400 hover:bg-white/[0.08] hover:text-white"
         }`}
       >
         {child.href ? (

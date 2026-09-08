@@ -9,11 +9,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAccessContext } from "@/components/AccessContext";
 import { useNotificationCounts } from "@/components/NotificationCountsContext";
 import { can } from "@/lib/accessControl";
+import { defaultTenantBranding } from "@/lib/tenantBranding";
+import { useTenantBranding } from "@/components/TenantBrandingContext";
 
 export default function Home() {
   const { access } = useAccessContext();
   const { counts, loading: countsLoading } = useNotificationCounts();
   const permissions = access?.permissions || [];
+  const { branding } = useTenantBranding();
   const pendingWOApprovals = counts.pendingWorkOrders || 0;
   const pendingRA = counts.pendingRaBills || 0;
   const pendingDebitNotes = counts.pendingDebitNotes || 0;
@@ -122,7 +125,7 @@ export default function Home() {
   }));
 
   return (
-    <section className="min-h-screen bg-[#f3f6f8] text-[#111316]">
+    <section className="min-h-screen bg-[#f3f6f8] text-[#111316]" style={{ "--tenant-primary": branding.primaryColor || defaultTenantBranding.primaryColor } as React.CSSProperties}>
       <main className="mx-auto max-w-[1180px] px-5 py-9 md:px-10">
             <div className="mb-9 flex flex-wrap items-start justify-between gap-5">
               <div>
@@ -130,15 +133,13 @@ export default function Home() {
                   Dashboard Overview
                 </h1>
                 <p className="mt-2 text-lg font-medium text-slate-600">
-                  {countsLoading
-                    ? "Loading enterprise metrics for MRC Commercial ERP"
-                    : "Real-time enterprise metrics for MRC Commercial ERP"}
+                  {countsLoading ? "Loading real-time operational metrics" : "Real-time operational overview"}
                 </p>
               </div>
 
               <div className="flex items-center gap-3">
                 {can(permissions, "vendors", "add") && (
-                  <Button asChild className="h-14 rounded-md bg-[#04779e] px-5">
+                  <Button asChild className="tenant-primary-bg h-14 rounded-md px-5">
                     <Link href="/vendors/new">
                       <Plus className="h-4 w-4" />
                       Add Vendor
@@ -189,7 +190,7 @@ export default function Home() {
                           <td className="px-5 py-5">
                             <Link
                               href={row.href}
-                              className="text-xs font-black uppercase text-[#04779e]"
+                              className="tenant-primary-text text-xs font-black uppercase"
                             >
                               Open
                             </Link>
@@ -226,12 +227,12 @@ export default function Home() {
                           <td className="px-5 py-5">
                             <Link
                               href={row.href}
-                              className="text-base font-black hover:text-[#04779e]"
+                              className="tenant-primary-text text-base font-black"
                             >
                               {row.label}
                             </Link>
                           </td>
-                          <td className="px-5 py-5 text-[#04779e] font-bold">
+                          <td className="tenant-primary-text px-5 py-5 font-bold">
                             {row.value}
                           </td>
                           <td className="px-5 py-5">
@@ -268,13 +269,13 @@ type MetricCardData = {
 function MetricCard({ card }: { card: MetricCardData }) {
   const borderClass =
     card.accent === "teal"
-      ? "border-[#04779e] border-l-[4px]"
-      : "border-black border-l-[4px]";
+      ? "tenant-primary-border border-l-[4px]"
+      : "border-slate-200 border-l-[4px]";
 
   const bars =
     card.accent === "teal"
-      ? ["bg-[#04779e]", "bg-[#04779e]", "bg-[#c9dce4]", "bg-[#c9dce4]"]
-      : ["bg-black", "bg-black/10"];
+      ? ["tenant-primary-bg", "tenant-primary-bg", "bg-slate-200", "bg-slate-200"]
+      : ["bg-slate-300", "bg-slate-200"];
 
   return (
     <Link href={card.href}>
@@ -291,7 +292,7 @@ function MetricCard({ card }: { card: MetricCardData }) {
                 {card.value}
               </p>
               {card.status && (
-                <span className="pb-1 text-[10px] font-black text-[#04779e]">
+                  <span className="tenant-primary-text pb-1 text-[10px] font-black">
                   {card.status}
                 </span>
               )}
@@ -325,10 +326,10 @@ function Panel({
       <CardHeader className="flex-row items-center justify-between border-b-0 pb-3">
         <CardTitle className="text-lg font-black">{title}</CardTitle>
         {action && (
-          <div className="text-xs font-black text-[#04779e]">{action}</div>
+          <div className="tenant-primary-text text-xs font-black">{action}</div>
         )}
         {badge && (
-          <span className="rounded bg-[#04779e] px-3 py-2 text-[10px] font-black uppercase text-white">
+          <span className="tenant-primary-bg rounded px-3 py-2 text-[10px] font-black uppercase">
             {badge}
           </span>
         )}

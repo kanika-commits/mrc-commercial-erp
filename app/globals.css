@@ -4,6 +4,33 @@
 
 @custom-variant dark (&:is(.dark *));
 
+.tenant-primary-bg {
+  background-color: var(--tenant-primary, #2563eb);
+  color: var(--tenant-primary-foreground, #ffffff);
+}
+
+.tenant-primary-bg:hover {
+  filter: brightness(0.94);
+}
+
+.tenant-primary-bg:focus-visible {
+  outline: 2px solid var(--tenant-focus, #2563eb);
+  outline-offset: 2px;
+}
+
+.tenant-primary-soft {
+  background-color: var(--tenant-primary-soft, rgb(37 99 235 / 0.2));
+  color: var(--tenant-primary-foreground, #ffffff);
+}
+
+.tenant-primary-text {
+  color: var(--tenant-primary, #2563eb);
+}
+
+.tenant-primary-border {
+  border-color: var(--tenant-primary, #2563eb);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
