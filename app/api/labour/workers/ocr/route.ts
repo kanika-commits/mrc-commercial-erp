@@ -29,6 +29,7 @@ const OCR_ERROR_CODES = {
   PROVIDER_NO_CANDIDATE: "PROVIDER_NO_CANDIDATE",
   PROVIDER_MAX_TOKENS: "PROVIDER_MAX_TOKENS",
   PROVIDER_SAFETY_BLOCK: "PROVIDER_SAFETY_BLOCK",
+  NO_USEFUL_DATA: "NO_USEFUL_DATA",
   RESPONSE_MALFORMED: "RESPONSE_MALFORMED",
   RESPONSE_SCHEMA_INVALID: "RESPONSE_SCHEMA_INVALID",
   DOCUMENT_UNREADABLE: "DOCUMENT_UNREADABLE",
@@ -251,7 +252,9 @@ type GeminiAttemptConfig = {
 };
 
 function geminiAttempts(retryReason: string | null = null): GeminiAttemptConfig[] {
-  const primaryModel = normalizeText(process.env.GEMINI_OCR_PRIMARY_MODEL) || OCR_PRIMARY_MODEL;
+  const primaryModel = normalizeText(process.env.GEMINI_OCR_PRIMARY_MODEL)
+    || normalizeText(process.env.GEMINI_OCR_MODEL)
+    || OCR_PRIMARY_MODEL;
   const fallbackModel = normalizeText(process.env.GEMINI_OCR_FALLBACK_MODEL) || OCR_FALLBACK_MODEL;
   return [
     {
@@ -291,7 +294,7 @@ function parseStructuredGeminiPayload(payload: any) {
     const detections = normalizeDetections(parsed);
     const normalized = detections[0] || normalizeExtraction(parsed);
     if (!normalized.name && !normalized.aadhaar_number && !normalized.date_of_birth && !normalized.year_of_birth) {
-      throw new OcrProviderError(OCR_ERROR_CODES.DOCUMENT_UNREADABLE, "This Aadhaar could not be read clearly.", false);
+      throw new OcrProviderError(OCR_ERROR_CODES.NO_USEFUL_DATA, "No useful Aadhaar details were detected.", false);
     }
     return { ...normalized, detections } as AadhaarExtraction & { detections: AadhaarDetection[] };
   } catch (error) {
@@ -305,7 +308,11 @@ function userFacingOcrError(error: any) {
     if (error.code === OCR_ERROR_CODES.PROVIDER_RATE_LIMIT) return safeMessage(error.message) || "Gemini OCR quota is temporarily exhausted. Please retry later.";
     if (error.code === OCR_ERROR_CODES.PROVIDER_5XX) return "OCR service is busy. Please retry shortly.";
     if (error.code === OCR_ERROR_CODES.PROVIDER_TIMEOUT) return "OCR timed out. Please retry this Aadhaar.";
-    if ([OCR_ERROR_CODES.CONFIG_MISSING_KEY, OCR_ERROR_CODES.CONFIG_INVALID_MODEL, OCR_ERROR_CODES.REQUEST_INVALID_FILE].includes(error.code as any)) return "OCR is not configured correctly. Contact the administrator.";
+    if ([OCR_ERROR_CODES.CONFIG_MISSING_KEY, OCR_ERROR_CODES.CONFIG_INVALID_MODEL].includes(error.code as any)) return "OCR service is temporarily unavailable. Please contact the administrator.";
+    if ([OCR_ERROR_CODES.REQUEST_INVALID_FILE, OCR_ERROR_CODES.REQUEST_UNSUPPORTED_MIME].includes(error.code as any)) return "This Aadhaar file could not be processed. Try another image or PDF.";
+    if (error.code === OCR_ERROR_CODES.DOCUMENT_UNREADABLE) return "Could not read the Aadhaar clearly. Retake the photo or upload a clearer copy.";
+    if (error.code === OCR_ERROR_CODES.NO_USEFUL_DATA) return "Could not detect Aadhaar details. You can retry or enter the details manually.";
+    if ([OCR_ERROR_CODES.PROVIDER_TIMEOUT, OCR_ERROR_CODES.PROVIDER_5XX].includes(error.code as any)) return "OCR is temporarily unavailable. Please retry.";
     if ([OCR_ERROR_CODES.RESPONSE_MALFORMED, OCR_ERROR_CODES.RESPONSE_SCHEMA_INVALID, OCR_ERROR_CODES.PROVIDER_EMPTY_RESPONSE, OCR_ERROR_CODES.PROVIDER_NO_CANDIDATE, OCR_ERROR_CODES.PROVIDER_MAX_TOKENS].includes(error.code as any)) return "Aadhaar could not be read automatically. Please retry or enter the details manually.";
     return "This Aadhaar image could not be read clearly. You can retry or enter the details manually.";
   }
@@ -520,10 +527,10 @@ export async function POST(request: Request) {
     const rows = await processWithConcurrency(files, OCR_CONCURRENCY, async (file, index) => {
       const id = normalizeText(formData.get(`client_id_${index}`)) || `row-${index + 1}`;
       if (!SUPPORTED_AADHAAR_MIME_TYPES.has(file.type)) {
-        return { id, file_name: file.name, status: "failed", error: "This file type is not supported. Upload JPG, PNG, WebP or PDF.", extraction: emptyExtraction() };
+        return { id, file_name: file.name, status: "failed", error: "This Aadhaar file could not be processed. Try another image or PDF.", extraction: emptyExtraction() };
       }
       if (file.size > MAX_AADHAAR_FILE_BYTES) {
-        return { id, file_name: file.name, status: "failed", error: "Aadhaar file is too large. Maximum size is 5 MB.", extraction: emptyExtraction() };
+        return { id, file_name: file.name, status: "failed", error: "This Aadhaar file could not be processed. Try another image or PDF.", extraction: emptyExtraction() };
       }
       try {
         const requestId = crypto.randomUUID();
