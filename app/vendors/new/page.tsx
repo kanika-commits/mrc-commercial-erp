@@ -132,12 +132,12 @@ function validateVendorDocumentSizes(files: Record<FileKey, File | null>) {
   return "";
 }
 
-export default function NewVendorPage() {
+export function VendorCreateForm({ returnTo: returnToProp = "", onSuccess, onCancel }: { returnTo?: string; onSuccess?: (vendorId: string) => void; onCancel?: () => void } = {}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const linkWorkOrderId = searchParams.get("link_work_order_id") || "";
   const linkVendorRole = searchParams.get("vendor_role") || "Subcontractor";
-  const returnTo = searchParams.get("return_to") || "/vendors";
+  const returnTo = returnToProp || searchParams.get("return_to") || "/vendors";
 
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -556,7 +556,14 @@ if ((requiresGstin(form.contractor_type) || form.gstin) && !files.GST_CERTIFICAT
         return;
       }
 
-      router.push("/vendors");
+      if (onSuccess) {
+        onSuccess(result.vendor_id);
+        return;
+      }
+      const destination = returnTo.startsWith("/purchase/purchase-orders/new")
+        ? `${returnTo}${returnTo.includes("?") ? "&" : "?"}vendor_id=${encodeURIComponent(result.vendor_id)}`
+        : returnTo;
+      router.push(destination);
     } catch (error: any) {
       console.error(error);
       setMessage(error.message || "Something went wrong while saving vendor.");
@@ -675,12 +682,18 @@ if ((requiresGstin(form.contractor_type) || form.gstin) && !files.GST_CERTIFICAT
           </p>
         </div>
 
-        <Link
+        {onCancel ? <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        >
+          Cancel
+        </button> : <Link
           href="/vendors"
           className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
         >
           Cancel
-        </Link>
+        </Link>}
       </div>
 
       <div className="mb-6">
@@ -1255,4 +1268,8 @@ if ((requiresGstin(form.contractor_type) || form.gstin) && !files.GST_CERTIFICAT
       </div>
     </form>
   );
+}
+
+export default function NewVendorPage() {
+  return <VendorCreateForm />;
 }

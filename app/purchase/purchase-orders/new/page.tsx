@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch, getAccessToken } from "@/components/hr/hrClient";
 import { useAccessContext } from "@/components/AccessContext";
+import { can } from "@/lib/accessControl";
+import { VendorCreateForm } from "@/app/vendors/new/page";
 import { parsePurchaseOrderStandardTerms } from "@/lib/procurement/standardTerms";
 
 type Source = "direct" | "indent";
@@ -60,6 +62,10 @@ export default function NewPurchaseOrderPage() {
   const [materialOpenIndex, setMaterialOpenIndex] = useState<number | null>(null);
   const [materialMenuPosition, setMaterialMenuPosition] = useState<{ index: number; left: number; top: number; width: number } | null>(null);
   const materialInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+  const [vendorModalOpen, setVendorModalOpen] = useState(false);
+  const [vendorFeedback, setVendorFeedback] = useState<any>(null);
+  const [vendorCompletion, setVendorCompletion] = useState({ address: "", gstin: "", phone: "", email: "", contact_name: "" });
+  const [vendorCompletionSaving, setVendorCompletionSaving] = useState(false);
   const [attachments, setAttachments] = useState<AttachmentDraft[]>([]);
   const [existingDocuments, setExistingDocuments] = useState<any[]>([]);
   const [removingDocumentId, setRemovingDocumentId] = useState<string | null>(null);
@@ -67,6 +73,16 @@ export default function NewPurchaseOrderPage() {
   const [createdPoId, setCreatedPoId] = useState<string | null>(null);
   const [creationRequestId] = useState(() => crypto.randomUUID());
   const previousCompanyIdRef = useRef(companyId);
+
+  const canAddVendors = can(access?.permissions || [], "vendors", "add");
+  const canEditVendors = can(access?.permissions || [], "vendors", "edit");
+  const handleVendorCreated = (createdVendorId: string) => {
+    setVendorModalOpen(false);
+    apiFetch("/api/procurement/purchase-orders/lookups").then((nextLookups) => {
+      setLookups(nextLookups);
+      setVendorId(createdVendorId);
+    }).catch((error) => setMessage(error.message || "Vendor was created, but the Vendor list could not be refreshed."));
+  };
 
   useEffect(() => {
     apiFetch("/api/procurement/purchase-orders/lookups")
@@ -126,6 +142,13 @@ export default function NewPurchaseOrderPage() {
   const selectedVendorContact = selectedVendor?.contact || null;
   const contractorType = String(selectedVendor?.contractor_type || "").trim().toLowerCase();
   const gstinRequired = ["company", "proprietorship", "proprietor"].includes(contractorType);
+  const missingVendorFields = {
+    address: !String(selectedVendor?.address || "").trim(),
+    gstin: !String(selectedVendor?.primary_gstin || selectedVendor?.gstin || "").trim(),
+    phone: !String(selectedVendorContact?.contact_number || "").trim(),
+    email: !String(selectedVendorContact?.email || "").trim(),
+  };
+  const missingCompletableVendorFields = Object.values(missingVendorFields).some(Boolean);
   const siteCompatibleBillingIds = new Set((lookups.delivery_locations || []).filter((row: any) => row.site_id === siteId && row.status === "active" && row.billing_address_id).map((row: any) => row.billing_address_id));
   const gstBillingMasters = (lookups.gst_billing_masters || []).filter((row: any) => row.company_id === companyId && (!siteId || siteCompatibleBillingIds.has(row.billing_address?.id))).sort((a: any, b: any) => Number(b.is_default) - Number(a.is_default));
   const selectedGstBilling = gstBillingMasters.find((row: any) => row.is_default) || (gstBillingMasters.length === 1 ? gstBillingMasters[0] : null);
@@ -158,6 +181,10 @@ export default function NewPurchaseOrderPage() {
   useEffect(() => {
     setDelivery((current) => ({ ...current, location: selectedDeliveryLocation?.location_name || "", address: selectedDeliveryLocation ? deliveryAddressFor(selectedDeliveryLocation) : "" }));
   }, [selectedDeliveryLocation?.id]);
+  useEffect(() => {
+    setVendorCompletion({ address: "", gstin: "", phone: "", email: "", contact_name: "" });
+    setVendorFeedback(null);
+  }, [vendorId]);
   const companyTerms = (lookups.terms_templates || []).filter((row: any) => row.company_id === companyId && row.status === "active");
   const selectedTerms = companyTerms.find((row: any) => row.id === termsTemplateId) || companyTerms.sort((a: any, b: any) => Number(b.is_default) - Number(a.is_default))[0];
   useEffect(() => {
@@ -284,7 +311,37 @@ export default function NewPurchaseOrderPage() {
     }
   }
 
-   async function save() {
+  async function completeMissingVendorDetails() {
+    if (!selectedVendor || !canEditVendors) return;
+    setVendorCompletionSaving(true);
+    setVendorFeedback(null);
+    setMessage("");
+    try {
+      const payload = {
+        vendor_id: selectedVendor.id,
+        address: missingVendorFields.address ? vendorCompletion.address : "",
+        gstin: missingVendorFields.gstin ? vendorCompletion.gstin : "",
+        phone: missingVendorFields.phone ? vendorCompletion.phone : "",
+        email: missingVendorFields.email ? vendorCompletion.email : "",
+        contact_name: !selectedVendorContact && (missingVendorFields.phone || missingVendorFields.email) ? vendorCompletion.contact_name : "",
+      };
+      if (!Object.values(payload).some((value) => String(value || "").trim()) || (!selectedVendorContact && (missingVendorFields.phone || missingVendorFields.email) && !vendorCompletion.contact_name.trim())) {
+        setMessage("Enter at least one missing Vendor detail. Contact Name is required when creating a new contact.");
+        return;
+      }
+      const result = await apiFetch("/api/procurement/purchase-orders/vendors/complete-missing", { method: "POST", body: JSON.stringify(payload) });
+      const refreshedLookups = await apiFetch("/api/procurement/purchase-orders/lookups");
+      setLookups(refreshedLookups);
+      setVendorFeedback({ type: "completion-warnings", warnings: result.warnings || {} });
+      setVendorCompletion({ address: "", gstin: "", phone: "", email: "", contact_name: "" });
+    } catch (error: any) {
+      setMessage(error.message || "Failed to save missing Vendor details.");
+    } finally {
+      setVendorCompletionSaving(false);
+    }
+  }
+
+  async function save() {
     setMessage("");
     if (!companyId || !siteId || !vendorId) return setMessage("Company, site and Vendor are required.");
     if (!selectedGstBilling?.billing_address) return setMessage(gstBillingMasters.length > 1 ? "Configure exactly one default GST/Billing Master for the selected Company." : "Configure an active GST/Billing Master for the selected Company.");
@@ -293,7 +350,7 @@ export default function NewPurchaseOrderPage() {
     if (!selectedBillingContact || !selectedDeliveryContact) return setMessage(siteContacts.length > 1 ? "Select Billing and Delivery Contacts for this Site." : "Configure an active Site Contact for the selected Site.");
     if (!items.length || items.some((item) => !item.item_name || Number(item.quantity) <= 0 || Number(item.unit_rate) < 0 || Number(item.gst_rate) < 0)) return setMessage("Add at least one item with a valid quantity, rate and GST.");
     if (additionalCharges.some((charge) => !charge.name.trim() || !Number.isFinite(Number(charge.amount)) || Number(charge.amount) < 0)) return setMessage("Each additional charge needs a name and a valid non-negative amount.");
-    if (!String(selectedVendor?.address || "").trim()) return setMessage("Vendor Address is required before creating the Purchase Order. Save the missing Vendor details first.");
+    if (!String(selectedVendor?.address || "").trim() && !String(vendorCompletion.address || "").trim()) return setMessage("Vendor Address is required before creating the Purchase Order. Save the missing Vendor details first.");
     if (keyTerms.slice(0, 4).some((term) => !term.terms.trim()) || keyTerms.slice(4).some((term) => !term.description.trim() || !term.terms.trim())) return setMessage("All default Key Terms and any additional terms must have meaningful values.");
     setSaving(true);
     try {
@@ -323,7 +380,7 @@ export default function NewPurchaseOrderPage() {
     <header className="flex flex-wrap items-start justify-between gap-4"><div><Link href={editId ? `/purchase/purchase-orders/${editId}` : "/purchase/purchase-orders"} className="text-sm text-slate-500">← {editId ? "Purchase Order" : "Purchase Orders"}</Link><p className="mt-3 text-xs font-semibold uppercase tracking-widest text-amber-700">Purchase</p><h1 className="text-3xl font-bold text-slate-950">{editId ? "Edit Draft Purchase Order" : "Create Purchase Order"}</h1><p className="text-sm text-slate-500">{editId ? "Update the existing Draft Purchase Order." : "Create a simple draft from a direct purchase or approved Material Indent."}</p></div></header>
     {message && <div ref={errorRef} className="scroll-mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert"><div className="flex items-start justify-between gap-3"><div>{message}{createdPoId && <p className="mt-2"><Link className="font-semibold underline" href={`/purchase/purchase-orders/${createdPoId}`}>Open the draft to retry attachments.</Link></p>}</div><button type="button" aria-label="Dismiss error" onClick={() => setMessage("")} className="shrink-0 text-lg font-semibold leading-none text-red-700" title="Dismiss error">×</button></div></div>}
     <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">PO Source</h2><div className="mt-4 grid gap-3 md:grid-cols-3">{(Object.keys(sourceLabels) as Source[]).map((value) => <button type="button" key={value} onClick={() => changeSource(value)} className={`rounded-xl border p-4 text-left ${source === value ? "border-slate-950 bg-slate-50" : "border-slate-200"}`}><p className="font-semibold">{sourceLabels[value]}</p><p className="mt-1 text-xs text-slate-500">{value === "direct" ? "Create manually without an upstream document." : "Use an approved requirement with remaining quantity."}</p></button>)}</div></section>
-    <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">Basic Details</h2><div className="mt-4 grid gap-4 md:grid-cols-3"><label className="text-sm font-semibold">Company *<select value={companyId} onChange={(event) => { setCompanyId(event.target.value); setSiteId(""); setIndentLineKey(""); setSelectedIndentId(""); setDeliveryLocationId(""); setDeliveryContactId(""); setCustomDelivery(false); setTermsTemplateId(""); setStandardTerms(""); }} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">Select company</option>{lookups.companies.map((row: any) => <option key={row.id} value={row.id}>{row.company_name}</option>)}</select></label><label className="text-sm font-semibold">Site / Project *<select value={siteId} onChange={(event) => { const value = event.target.value; const next = sites.find((row: any) => row.id === value); setSiteId(value); setIndentLineKey(""); setSelectedIndentId(""); setDeliveryLocationId(""); setDeliveryContactId(""); setCustomDelivery(false); setDelivery((current) => ({ ...current, location: next?.site_name || "", address: next?.location || "" })); }} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">Select site</option>{sites.map((row: any) => <option key={row.id} value={row.id}>{row.site_name}</option>)}</select></label>{source === "indent" && <label className="text-sm font-semibold">Approved Material Indent *<select value={selectedIndentId} onChange={(event) => { setSelectedIndentId(event.target.value); setIndentLineKey(""); setItems([{ item_name: "", quantity: "", unit_rate: "", gst_rate: "0" }]); }} disabled={loading || !companyId || !siteId || indentGroups.length === 0} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">{!companyId || !siteId ? "Select Company and Site first" : loading ? "Loading approved Material Indents..." : indentGroups.length === 0 ? "No approved Material Indents with remaining quantity" : "Select approved Material Indent"}</option>{indentGroups.map((group: any) => <option key={group.requisition_id} value={group.requisition_id}>{group.requisition_number} — {group.lines.length} materials remaining</option>)}</select></label>}<label className="text-sm font-semibold">Vendor *<div className="flex gap-2"><select value={vendorId} onChange={(event) => setVendorId(event.target.value)} className="mt-1 h-10 min-w-0 flex-1 rounded-lg border px-3 font-normal"><option value="">Select Vendor</option>{lookups.vendors.map((row: any) => <option key={row.id} value={row.id}>{row.vendor_name}</option>)}</select></div></label><label className="text-sm font-semibold">PO Date<input type="date" value={poDate} onChange={(event) => setPoDate(event.target.value)} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal" /></label></div></section>
+    <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">Basic Details</h2><div className="mt-4 grid gap-4 md:grid-cols-3"><label className="text-sm font-semibold">Company *<select value={companyId} onChange={(event) => { setCompanyId(event.target.value); setSiteId(""); setIndentLineKey(""); setSelectedIndentId(""); setDeliveryLocationId(""); setDeliveryContactId(""); setCustomDelivery(false); setTermsTemplateId(""); setStandardTerms(""); }} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">Select company</option>{lookups.companies.map((row: any) => <option key={row.id} value={row.id}>{row.company_name}</option>)}</select></label><label className="text-sm font-semibold">Site / Project *<select value={siteId} onChange={(event) => { const value = event.target.value; const next = sites.find((row: any) => row.id === value); setSiteId(value); setIndentLineKey(""); setSelectedIndentId(""); setDeliveryLocationId(""); setDeliveryContactId(""); setCustomDelivery(false); setDelivery((current) => ({ ...current, location: next?.site_name || "", address: next?.location || "" })); }} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">Select site</option>{sites.map((row: any) => <option key={row.id} value={row.id}>{row.site_name}</option>)}</select></label>{source === "indent" && <label className="text-sm font-semibold">Approved Material Indent *<select value={selectedIndentId} onChange={(event) => { setSelectedIndentId(event.target.value); setIndentLineKey(""); setItems([{ item_name: "", quantity: "", unit_rate: "", gst_rate: "0" }]); }} disabled={loading || !companyId || !siteId || indentGroups.length === 0} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">{!companyId || !siteId ? "Select Company and Site first" : loading ? "Loading approved Material Indents..." : indentGroups.length === 0 ? "No approved Material Indents with remaining quantity" : "Select approved Material Indent"}</option>{indentGroups.map((group: any) => <option key={group.requisition_id} value={group.requisition_id}>{group.requisition_number} — {group.lines.length} materials remaining</option>)}</select></label>}<label className="text-sm font-semibold">Vendor *<div className="flex gap-2"><select value={vendorId} onChange={(event) => setVendorId(event.target.value)} className="mt-1 h-10 min-w-0 flex-1 rounded-lg border px-3 font-normal"><option value="">Select Vendor</option>{lookups.vendors.map((row: any) => <option key={row.id} value={row.id}>{row.vendor_name}</option>)}</select><button type="button" onClick={() => canAddVendors && setVendorModalOpen(true)} disabled={!canAddVendors} className="mt-1 whitespace-nowrap rounded-lg border px-3 text-xs font-semibold">+ Add New Vendor</button></div></label><label className="text-sm font-semibold">PO Date<input type="date" value={poDate} onChange={(event) => setPoDate(event.target.value)} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal" /></label></div></section>
     {(
       <section className="rounded-2xl border bg-white p-5 shadow-sm">
         <h2 className="font-semibold">Vendor Details</h2>
@@ -338,13 +395,15 @@ export default function NewPurchaseOrderPage() {
             <div><span className="block text-xs font-semibold uppercase text-slate-500">Profile Status</span><b>{selectedVendor.profile_status || "Not set"}</b></div>
           </div>
           <div className="mt-4 grid gap-4 text-sm md:grid-cols-2">
-                        <div><span className="block text-xs font-semibold uppercase text-slate-500">Address</span><b>{selectedVendor.address || "Missing"}</b></div>
-            <div><span className="block text-xs font-semibold uppercase text-slate-500">GSTIN{gstinRequired ? " *" : ""}</span><b>{selectedVendor.primary_gstin || selectedVendor.gstin || "Missing"}</b></div>
-            <div><span className="block text-xs font-semibold uppercase text-slate-500">Contact Person</span><b>{selectedVendorContact?.contact_name || "Missing"}</b></div>
-            <div><span className="block text-xs font-semibold uppercase text-slate-500">Designation</span><b>{selectedVendorContact?.designation || "Missing"}</b></div>
-            <div><span className="block text-xs font-semibold uppercase text-slate-500">Phone</span><b>{selectedVendorContact?.contact_number || "Missing"}</b></div>
-            <div><span className="block text-xs font-semibold uppercase text-slate-500">Email</span><b>{selectedVendorContact?.email || "Missing"}</b></div>
+            <div><span className="block text-xs font-semibold uppercase text-slate-500">Address</span>{missingVendorFields.address ? canEditVendors ? <input value={vendorCompletion.address} onChange={(event) => setVendorCompletion({ ...vendorCompletion, address: event.target.value })} placeholder="Enter vendor address" className="mt-1 h-10 w-full rounded-lg border px-3" /> : <span className="text-amber-700">Missing</span> : <b>{selectedVendor.address}</b>}</div>
+            <div><span className="block text-xs font-semibold uppercase text-slate-500">GSTIN{gstinRequired ? " *" : ""}</span>{missingVendorFields.gstin ? canEditVendors ? <input value={vendorCompletion.gstin} onChange={(event) => setVendorCompletion({ ...vendorCompletion, gstin: event.target.value.toUpperCase() })} placeholder={gstinRequired ? "Enter GSTIN (required)" : "Enter GSTIN (optional)"} className="mt-1 h-10 w-full rounded-lg border px-3" /> : <span className="text-amber-700">Missing{gstinRequired ? " (required)" : ""}</span> : <b>{selectedVendor.primary_gstin || selectedVendor.gstin}</b>}</div>
+            <div><span className="block text-xs font-semibold uppercase text-slate-500">Contact Person</span><b>{selectedVendorContact?.contact_name || "Not recorded"}</b>{!selectedVendorContact && canEditVendors && (missingVendorFields.phone || missingVendorFields.email) && <input value={vendorCompletion.contact_name} onChange={(event) => setVendorCompletion({ ...vendorCompletion, contact_name: event.target.value })} placeholder="Enter contact name" className="mt-1 h-10 w-full rounded-lg border px-3" />}</div>
+            <div><span className="block text-xs font-semibold uppercase text-slate-500">Designation</span><b>{selectedVendorContact?.designation || "Not recorded"}</b></div>
+            <div><span className="block text-xs font-semibold uppercase text-slate-500">Phone</span>{missingVendorFields.phone ? canEditVendors ? <input value={vendorCompletion.phone} onChange={(event) => setVendorCompletion({ ...vendorCompletion, phone: event.target.value })} placeholder="Enter phone number" className="mt-1 h-10 w-full rounded-lg border px-3" /> : <span className="text-amber-700">Missing</span> : <b>{selectedVendorContact?.contact_number}</b>}</div>
+            <div><span className="block text-xs font-semibold uppercase text-slate-500">Email</span>{missingVendorFields.email ? canEditVendors ? <input type="email" value={vendorCompletion.email} onChange={(event) => setVendorCompletion({ ...vendorCompletion, email: event.target.value })} placeholder="Enter email address" className="mt-1 h-10 w-full rounded-lg border px-3" /> : <span className="text-amber-700">Missing</span> : <b>{selectedVendorContact?.email}</b>}</div>
           </div>
+          {canEditVendors && missingCompletableVendorFields && <button type="button" onClick={completeMissingVendorDetails} disabled={vendorCompletionSaving} className="mt-4 rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{vendorCompletionSaving ? "Saving Vendor Details..." : "Save Missing Vendor Details"}</button>}
+          {vendorFeedback?.type === "completion-warnings" && <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{vendorFeedback.warnings?.mobile_matches?.length > 0 && <p>Phone number is also used by {vendorFeedback.warnings.mobile_matches.map((row: any) => row.vendor_name).filter(Boolean).join(", ")}.</p>}{vendorFeedback.warnings?.email_matches?.length > 0 && <p>Email address is also used by {vendorFeedback.warnings.email_matches.map((row: any) => row.vendor_name).filter(Boolean).join(", ")}.</p>}{!vendorFeedback.warnings?.mobile_matches?.length && !vendorFeedback.warnings?.email_matches?.length && <p>Vendor details saved successfully.</p>}</div>}
         </> : (
           <p className="mt-4 text-sm text-slate-500">Select a Vendor to view available details.</p>
         )}
@@ -410,7 +469,7 @@ export default function NewPurchaseOrderPage() {
         <div className="mt-5 space-y-3 text-sm"><div className="flex justify-between"><span className="text-slate-300">Items Basic / Taxable</span><b>{money(totals.taxable)}</b></div><div className="flex justify-between"><span className="text-slate-300">GST</span><b>{money(totals.gst)}</b></div>{additionalCharges.map((charge, index) => <div className="flex justify-between" key={`${charge.name}-${index}`}><span className="text-slate-300">{charge.name.trim()}</span><b>{money(Number(charge.amount || 0))}</b></div>)}<div className="flex justify-between border-t border-slate-700 pt-3 text-base"><span>Grand Total</span><b>{money(totals.total)}</b></div></div>
         </aside>
     </section>
-
+{vendorModalOpen && canAddVendors && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"><div className="flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"><div className="flex items-center justify-between border-b p-4"><div><h2 className="text-lg font-bold">Add Vendor from Vendor Master</h2><p className="text-sm text-slate-500">Use the standard Vendor Master creation and validation flow.</p></div><button type="button" onClick={() => setVendorModalOpen(false)} className="text-sm font-semibold">Close</button></div><div className="min-h-0 flex-1 overflow-y-auto p-6"><VendorCreateForm returnTo="/purchase/purchase-orders/new" onSuccess={handleVendorCreated} onCancel={() => setVendorModalOpen(false)} /></div></div></div>}
     <div className="flex justify-end border-t pt-6"><button type="button" onClick={save} disabled={saving} className="rounded-xl bg-slate-950 px-6 py-3 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Generating..." : "Generate PO"}</button></div>
   </section>;
 }

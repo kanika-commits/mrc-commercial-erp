@@ -897,25 +897,35 @@ export async function POST(request: Request) {
       );
     }
 
-    const { data: createdVendor, error: vendorError } = await supabase
-      .from("vendors")
-      .insert({
-        organization_id: organizationId,
-        vendor_name: vendor.vendor_name.trim(),
-        contractor_type: vendor.contractor_type,
-        status: vendor.status,
-        pan: normalizedVendor.pan,
-        aadhaar_cin: normalizedVendor.aadhaar_cin,
-        gstin: normalizedVendor.gstin || null,
-        pan_aadhaar_link_status: normalizedVendor.pan_aadhaar_link_status,
-        msme_registered: vendor.msme_registered === "Yes",
-        msme_number:
-          vendor.msme_registered === "Yes" ? vendor.msme_number?.trim() || null : null,
-        msme_category:
-          vendor.msme_registered === "Yes" ? vendor.msme_category || null : null,
-      })
-      .select("*")
-      .single();
+    const gstinRows = normalizedGstin
+      ? [{
+          gstin: normalizedGstin,
+          state_code: normalizedGstin.slice(0, 2),
+          state_name: null,
+          is_primary: true,
+        }]
+      : [];
+    const { data: createdVendor, error: vendorError } = await supabase.rpc(
+      "create_vendor_master_atomic",
+      {
+        p_organization_id: organizationId,
+        p_vendor: {
+          ...normalizedVendor,
+          vendor_name: vendor.vendor_name.trim(),
+          contractor_type: vendor.contractor_type,
+          status: vendor.status,
+          msme_registered: vendor.msme_registered === "Yes",
+          msme_number:
+            vendor.msme_registered === "Yes" ? vendor.msme_number?.trim() || null : null,
+          msme_category:
+            vendor.msme_registered === "Yes" ? vendor.msme_category || null : null,
+        },
+        p_contacts: contacts,
+        p_bank_accounts: bankAccounts,
+        p_gstins: gstinRows,
+        p_actor_user_id: access.user.id,
+      }
+    );
 
     if (vendorError) throw vendorError;
 
@@ -923,75 +933,11 @@ export async function POST(request: Request) {
     vendorIdForLog = vendorId;
     const createdSnapshot = vendorSnapshot(createdVendor);
 
-    try {
-      await insertVendorAuditLog(supabase, {
-        vendorId,
-        organizationId,
-        action: "created",
-        user: access.user,
-        changedFields: ["vendor_created"],
-        newValues: createdSnapshot,
-        restoreSnapshot: createdSnapshot,
-      });
-    } catch (auditError) {
-      console.error("[Vendor Audit] Legacy vendor create audit failed", auditError);
-    }
-
     const vendorFolder = await ensureVendorDriveFolder(
       supabase,
       vendorId,
       vendor.vendor_name.trim()
     );
-
-    if (contacts.length > 0) {
-      const { error: contactError } = await supabase
-        .from("vendor_contacts")
-        .insert(
-          contacts.map((contact) => ({
-            organization_id: organizationId,
-            vendor_id: vendorId,
-            contact_name: contact.contact_name.trim(),
-            contact_number: contact.contact_number.trim(),
-            email: contact.email?.trim() || null,
-            designation: contact.designation?.trim() || null,
-            is_primary: contact.is_primary === true,
-          }))
-        );
-
-      if (contactError) throw contactError;
-    }
-
-    if (bankAccounts.length > 0) {
-      const { error: bankError } = await supabase
-        .from("vendor_bank_accounts")
-        .insert(
-          bankAccounts.map((bank, index) => ({
-            organization_id: organizationId,
-            vendor_id: vendorId,
-            account_holder_name: bank.account_holder_name.trim(),
-            account_number: bank.account_number.trim(),
-            ifsc_code: bank.ifsc_code.trim(),
-            bank_name: bank.bank_name.trim(),
-            branch_name: bank.branch_name?.trim() || null,
-            is_primary: bank.is_primary === true || index === 0,
-          }))
-        );
-
-      if (bankError) throw bankError;
-    }
-
-    if (normalizedGstin) {
-      const { error: gstinError } = await supabase.from("vendor_gstins").insert({
-        organization_id: organizationId,
-        vendor_id: vendorId,
-        gstin: normalizedGstin,
-        state_code: normalizedGstin.slice(0, 2),
-        state_name: null,
-        is_primary: true,
-      });
-
-      if (gstinError) throw gstinError;
-    }
 
     const documentRows = [];
 
@@ -1015,6 +961,20 @@ export async function POST(request: Request) {
         .insert(documentRows);
 
       if (documentError) throw documentError;
+    }
+
+    try {
+      await insertVendorAuditLog(supabase, {
+        vendorId,
+        organizationId,
+        action: "created",
+        user: access.user,
+        changedFields: ["vendor_created"],
+        newValues: createdSnapshot,
+        restoreSnapshot: createdSnapshot,
+      });
+    } catch (auditError) {
+      console.error("[Vendor Audit] Legacy vendor create audit failed", auditError);
     }
 
     try {
