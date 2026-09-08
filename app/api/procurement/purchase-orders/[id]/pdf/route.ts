@@ -11,7 +11,6 @@ const PAGE_H = 842;
 const LEFT = 42;
 const RIGHT = 553;
 const TOP = 735;
-const LETTERHEAD_CONTENT_TOP = TOP - 24;
 const SECTION_GAP = 6;
 const SECTION_HEADING_BEFORE = 14;
 const HEADING_GAP = 4;
@@ -192,7 +191,7 @@ async function storageImageAsset(name: string, sourceBuffer: Buffer, cropHeight?
   const metadata = imageDimensions(sourceBuffer);
   const scaledHeight = Math.floor(metadata.height * PAGE_W / Math.max(1, metadata.width));
   const safeCropHeight = cropHeight ? Math.min(cropHeight, Math.max(1, scaledHeight)) : undefined;
-  return { name, data: sourceBuffer, width: metadata.width, height: safeCropHeight || scaledHeight, format: "png" } satisfies ImageAsset;
+  return { name, data: sourceBuffer, width: PAGE_W, height: safeCropHeight || scaledHeight, format: "png" } satisfies ImageAsset;
 }
 
 async function employeeSignatureImageAsset(admin: any, approverUserId: string | null | undefined) {
@@ -254,6 +253,8 @@ async function makeLetterhead(row: any, admin: any) {
 async function makePdf(row: any, creator: any, approver: any, admin: any) {
   const letterhead = await makeLetterhead(row, admin);
   const footerRenderedHeight = letterhead.footer ? PAGE_W * letterhead.footer.height / letterhead.footer.width : 0;
+  const headerRenderedHeight = letterhead.header ? PAGE_W * letterhead.header.height / letterhead.header.width : 0;
+  const contentTop = letterhead.header ? PAGE_H - headerRenderedHeight - 8 : TOP;
   const pageNumberBaselineY = footerRenderedHeight + PAGE_NUMBER_OFFSET;
   const pageNumberTopY = pageNumberBaselineY + PAGE_NUMBER_SIZE;
   const bodyBottomY = letterhead.footer ? Math.max(footerRenderedHeight + FOOTER_SAFETY_GAP, pageNumberTopY + PAGE_NUMBER_BODY_GAP) : 72;
@@ -263,7 +264,7 @@ async function makePdf(row: any, creator: any, approver: any, admin: any) {
   const pages: PdfPage[] = [];
   let page: PdfPage;
   let y = TOP;
-  const newPage = () => { page = { ops: [], images: [] }; pages.push(page); y = letterhead.header ? LETTERHEAD_CONTENT_TOP : TOP; if (letterhead.header) { page.images.push(letterhead.header); if (letterhead.header.format === "jpeg") page.ops.push(letterhead.fullPage ? `q ${PAGE_W} 0 0 ${PAGE_H} 0 0 cm /${letterhead.header.name} Do Q` : `q ${PAGE_W} 0 0 ${letterhead.header.height} 0 ${PAGE_H - letterhead.header.height} cm /${letterhead.header.name} Do Q`); } if (letterhead.footer) { page.images.push(letterhead.footer); if (letterhead.footer.format === "jpeg") page.ops.push(`q ${PAGE_W} 0 0 ${letterhead.footer.height} 0 0 cm /${letterhead.footer.name} Do Q`); } };
+  const newPage = () => { page = { ops: [], images: [] }; pages.push(page); y = contentTop; if (letterhead.header) { page.images.push(letterhead.header); if (letterhead.header.format === "jpeg") page.ops.push(letterhead.fullPage ? `q ${PAGE_W} 0 0 ${PAGE_H} 0 0 cm /${letterhead.header.name} Do Q` : `q ${PAGE_W} 0 0 ${headerRenderedHeight} 0 ${PAGE_H - headerRenderedHeight} cm /${letterhead.header.name} Do Q`); } if (letterhead.footer) { page.images.push(letterhead.footer); if (letterhead.footer.format === "jpeg") page.ops.push(`q ${PAGE_W} 0 0 ${footerRenderedHeight} 0 0 cm /${letterhead.footer.name} Do Q`); } };
   const ensure = (height: number) => { if (y - height < bodyBottomY) newPage(); };
   const line = (x: number, yy: number, x2: number, yy2: number) => page.ops.push(`${x} ${yy} m ${x2} ${yy2} l S`);
   const tableLine = (x: number, yy: number, x2: number, yy2: number, strong = false) => page.ops.push(`q ${strong ? "0.45" : "0.78"} G ${strong ? "0.8" : "0.45"} w ${x} ${yy} m ${x2} ${yy2} l S Q`);
