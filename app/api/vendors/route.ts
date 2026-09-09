@@ -29,6 +29,7 @@ const VENDOR_AUDIT_FIELDS = [
 
 type VendorPayload = {
   vendor_name: string;
+  address: string;
   contractor_type: string;
   status: string;
   pan: string;
@@ -690,6 +691,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Vendor Name is required." }, { status: 400 });
     }
 
+    if (!vendor.address?.trim()) {
+      return NextResponse.json({ error: "Vendor address is required." }, { status: 400 });
+    }
+
     if (!vendor.contractor_type?.trim()) {
       return NextResponse.json({ error: "Contractor Type is required." }, { status: 400 });
     }
@@ -911,6 +916,7 @@ export async function POST(request: Request) {
         p_organization_id: organizationId,
         p_vendor: {
           ...normalizedVendor,
+          address: vendor.address.trim(),
           vendor_name: vendor.vendor_name.trim(),
           contractor_type: vendor.contractor_type,
           status: vendor.status,

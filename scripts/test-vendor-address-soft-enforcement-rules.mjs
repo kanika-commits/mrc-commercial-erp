@@ -1,0 +1,31 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const read = (path) => fs.readFileSync(path, "utf8");
+const registration = read("app/vendors/new/page.tsx");
+const createApi = read("app/api/vendors/route.ts");
+const editPage = read("app/vendors/[id]/edit/page.tsx");
+const editApi = read("app/api/vendors/[id]/route.ts");
+const poApi = read("app/api/procurement/purchase-orders/route.ts");
+const quickAdd = read("app/api/procurement/purchase-orders/vendors/route.ts");
+const migration = read("supabase/migrations/202609090003_vendor_address_soft_enforcement.sql");
+
+assert.match(registration, /name="address"/);
+assert.match(registration, /Vendor Address \*/);
+assert.match(registration, /Vendor address is required\./);
+assert.match(createApi, /vendor\.address\?\.trim\(\)/);
+assert.match(createApi, /address: vendor\.address\.trim\(\)/);
+assert.match(editPage, /address: string/);
+assert.match(editPage, /vendor\.address \|\| ""/);
+assert.match(editPage, /name="address"/);
+assert.match(editApi, /address,/);
+assert.match(editApi, /Vendor address is required\./);
+assert.match(migration, /v_address text := nullif\(trim\(p_vendor->>'address'\), ''\)/);
+assert.match(migration, /gstin, address, pan_aadhaar_link_status/);
+assert.match(poApi, /Vendor Address is required before creating the Purchase Order/);
+assert.match(poApi, /address: vendor\.data\.address/);
+assert.match(quickAdd, /const address = text\(body\.address\)/);
+assert.match(quickAdd, /!vendorName \|\| !address/);
+assert.doesNotMatch(migration, /alter table public\.vendors.*not null/i);
+assert.doesNotMatch(migration, /update public\.vendors|delete from public\.vendors/i);
+console.log("Vendor address soft-enforcement rules passed.");

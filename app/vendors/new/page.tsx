@@ -148,6 +148,7 @@ export function VendorCreateForm({ returnTo: returnToProp = "", onSuccess, onCan
 
   const [form, setForm] = useState({
     vendor_name: "",
+    address: "",
     contractor_type: "Company",
     status: "active",
 
@@ -204,6 +205,7 @@ export function VendorCreateForm({ returnTo: returnToProp = "", onSuccess, onCan
     const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
 
     if (!form.vendor_name.trim()) newErrors.vendor_name = "Vendor Name is required.";
+    if (!form.address.trim()) newErrors.address = "Vendor address is required.";
     if (!form.contractor_type.trim())
       newErrors.contractor_type = "Contractor Type is required.";
 
@@ -360,7 +362,7 @@ if ((requiresGstin(form.contractor_type) || form.gstin) && !files.GST_CERTIFICAT
   );
 
   function handleChange(
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) {
     const { name, value } = e.target;
 
@@ -849,6 +851,21 @@ if ((requiresGstin(form.contractor_type) || form.gstin) && !files.GST_CERTIFICAT
                     <option>Individual</option>
                   </select>
                   <ErrorText name="contractor_type" />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Vendor Address *
+                  </label>
+                  <textarea
+                    name="address"
+                    value={form.address}
+                    onChange={handleChange}
+                    rows={3}
+                    className={`${inputClass} h-auto py-2 ${errors.address ? errorClass : ""}`}
+                    placeholder="Enter primary / registered business address"
+                  />
+                  <ErrorText name="address" />
                 </div>
 
               </div>

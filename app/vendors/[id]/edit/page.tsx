@@ -10,6 +10,7 @@ import AlertMessage from "@/components/AlertMessage";
 
 type VendorForm = {
   vendor_name: string;
+  address: string;
   contractor_type: string;
   status: string;
   pan: string;
@@ -170,6 +171,7 @@ export default function EditVendorPage() {
 
   const [form, setForm] = useState<VendorForm>({
     vendor_name: "",
+    address: "",
     contractor_type: "Company",
     status: "active",
     pan: "",
@@ -237,6 +239,7 @@ export default function EditVendorPage() {
 
         setForm({
           vendor_name: vendor.vendor_name || "",
+          address: vendor.address || "",
           contractor_type: contractorType,
           status: vendor.status || "active",
           pan: vendor.pan || "",
@@ -312,7 +315,7 @@ export default function EditVendorPage() {
   }, [access, accessLoading, vendorId]);
 
   function handleChange(
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) {
     const { name, value } = e.target;
     const finalValue = ["pan", "gstin", "cin_number", "ifsc_code"].includes(name)
@@ -694,6 +697,7 @@ export default function EditVendorPage() {
         "vendor",
         JSON.stringify({
           contractor_type: form.contractor_type,
+          address: form.address,
           status: form.status,
           pan: form.pan,
           aadhaar_number: form.aadhaar_number,
@@ -888,6 +892,18 @@ export default function EditVendorPage() {
                 <option>LLP</option>
                 <option>Individual</option>
               </select>
+            </div>
+
+            <div className="md:col-span-2">
+              <label className={labelClass}>Vendor Address *</label>
+              <textarea
+                name="address"
+                value={form.address}
+                onChange={handleChange}
+                rows={3}
+                className={`${inputClass} h-auto py-2`}
+                placeholder="Enter primary / registered business address"
+              />
             </div>
 
           </div>

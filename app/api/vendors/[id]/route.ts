@@ -27,6 +27,7 @@ const VENDOR_AUDIT_FIELDS = [
 ] as const;
 
 type VendorPayload = {
+  address?: string;
   contractor_type: string;
   status: string;
   pan: string;
@@ -569,6 +570,7 @@ export async function GET(
           id,
           organization_id,
           vendor_name,
+          address,
           pan,
           gstin,
           aadhaar_cin,
@@ -829,6 +831,7 @@ export async function PUT(
       : String(vendor.gstin || "").trim().toUpperCase();
     const normalizedVendor = {
       ...vendor,
+      address: String(vendor.address || "").trim(),
       pan: normalizedVendorPan,
       aadhaar_cin: normalizedIdentity.identityValue,
       gstin: normalizedGstin,
@@ -858,6 +861,10 @@ export async function PUT(
 
     if (!vendor.contractor_type?.trim()) {
       validationErrors.push("Contractor Type is required.");
+    }
+
+    if (!normalizedVendor.address) {
+      validationErrors.push("Vendor address is required.");
     }
 
     if (!normalizedVendorPan) {
@@ -1139,6 +1146,7 @@ export async function PUT(
       .from("vendors")
       .update({
         contractor_type: vendor.contractor_type,
+        address: normalizedVendor.address,
         status: vendor.status,
         pan: normalizedVendor.pan,
         aadhaar_cin: normalizedVendor.aadhaar_cin,
