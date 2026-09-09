@@ -295,11 +295,14 @@ async function mutate(request: Request, action: "add" | "edit") {
     if (kind === "delivery_location") {
       const scope = await siteScope(admin, auth, text(body.site_id));
       if ("error" in scope) return jsonError(scope.error || "Invalid site.", scope.status || 400);
-      const shippingGstin = text(body.gstin).toUpperCase();
-      if (!text(body.company_id) || !shippingGstin || !text(body.location_name) || !text(body.address_line1) || !text(body.city) || !text(body.state) || !text(body.pincode)) return jsonError("Company, GSTIN, Location Name, Address Line 1, City, State and Pincode are required.", 400);
-      if (!GSTIN_REGEX.test(shippingGstin)) return jsonError("Invalid Shipping GSTIN format.", 400);
-      const shippingCompany = await companyScope(admin, auth, text(body.company_id));
-      if ("error" in shippingCompany || shippingCompany.organizationId !== scope.organizationId) return jsonError("Shipping company is outside the selected site organization.", 403);
+      const companyId = text(body.company_id) || null;
+      const shippingGstin = text(body.gstin).toUpperCase() || null;
+      if (!text(body.location_name) || !text(body.address_line1) || !text(body.city) || !text(body.state) || !text(body.pincode)) return jsonError("Site, Location Name, Address Line 1, City, State and Pincode are required.", 400);
+      if (shippingGstin && !GSTIN_REGEX.test(shippingGstin)) return jsonError("Invalid Shipping GSTIN format.", 400);
+      if (companyId) {
+        const shippingCompany = await companyScope(admin, auth, companyId);
+        if ("error" in shippingCompany || shippingCompany.organizationId !== scope.organizationId) return jsonError("Shipping company is outside the selected site organization.", 403);
+      }
       const billingAddressId = text(body.billing_address_id) || null;
       const site = await admin.from("sites").select("id,organization_id").eq("id", text(body.site_id)).maybeSingle();
       if (site.error) throw site.error;
@@ -309,7 +312,7 @@ async function mutate(request: Request, action: "add" | "edit") {
         if (parent.error) throw parent.error;
         if (!parent.data || parent.data.organization_id !== scope.organizationId) return jsonError("Selected GSTIN / Billing Address is outside the selected organization.", 400);
       }
-      const atomic = await admin.rpc("save_procurement_address_with_contacts_atomic", { p_kind: kind, p_organization_id: scope.organizationId, p_parent_id: id || null, p_parent: { ...body, gstin: shippingGstin, address: legacyDeliveryAddress(body), billing_address_id: billingAddressId }, p_contacts: Array.isArray(body.contacts) ? body.contacts : [] });
+      const atomic = await admin.rpc("save_procurement_address_with_contacts_atomic", { p_kind: kind, p_organization_id: scope.organizationId, p_parent_id: id || null, p_parent: { ...body, company_id: companyId, gstin: shippingGstin, address: legacyDeliveryAddress(body), billing_address_id: billingAddressId }, p_contacts: Array.isArray(body.contacts) ? body.contacts : [] });
       if (atomic.error) throw atomic.error;
       await auditMasterMutation(admin, auth, request, { organizationId: scope.organizationId, moduleCode: masterModule(kind), entityType: kind, recordId: atomic.data?.id || id, action: id ? "update" : "create", description: `${id ? "Updated" : "Created"} delivery location.`, newValues: body });
       return NextResponse.json(atomic.data);
