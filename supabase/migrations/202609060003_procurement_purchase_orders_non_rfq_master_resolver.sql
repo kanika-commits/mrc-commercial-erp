@@ -64,13 +64,12 @@ begin
 
   if not exists (
     select 1
-      from public.sites s
+     from public.sites s
      where s.id = p_site_id
        and s.organization_id = p_organization_id
-       and (s.company_id = p_company_id or s.company_id is null)
        and coalesce(s.status, 'active') = 'active'
   ) then
-    raise exception 'Selected Site is inactive or outside the Company.';
+    raise exception 'Selected Site is inactive or outside the organization.';
   end if;
 
   select
@@ -168,20 +167,22 @@ begin
        and organization_id = p_organization_id
        and site_id = p_site_id
        and status = 'active'
-       and billing_address_id = v_billing.id
        and (
          company_id is null
-         or exists (
-           select 1
-             from public.companies c
-            where c.id = site_delivery_locations.company_id
-              and c.organization_id = p_organization_id
-              and coalesce(c.status, 'active') = 'active'
+         or (
+           company_id = p_company_id
+           and exists (
+         select 1
+           from public.companies c
+          where c.id = site_delivery_locations.company_id
+            and c.organization_id = p_organization_id
+            and coalesce(c.status, 'active') = 'active'
+           )
          )
        );
 
     if v_delivery.id is null then
-      raise exception 'Selected Delivery Location is inactive, outside the selected Site, or not linked to the selected GST/Billing setup.';
+      raise exception 'Selected Delivery Location is inactive or outside the selected Site.';
     end if;
 
   else
@@ -196,10 +197,10 @@ begin
     where organization_id = p_organization_id
       and site_id = p_site_id
       and status = 'active'
-      and billing_address_id = v_billing.id;
+      ;
 
     if v_delivery_count = 0 then
-      raise exception 'Configure an active Delivery Location linked to the selected GST/Billing setup for this Site.';
+      raise exception 'No active Delivery Location is configured for this Site.';
 
     elsif v_delivery_count = 1 then
 
@@ -209,7 +210,6 @@ begin
        where organization_id = p_organization_id
          and site_id = p_site_id
          and status = 'active'
-         and billing_address_id = v_billing.id
        limit 1;
 
     elsif v_delivery_default_count = 1 then
@@ -220,7 +220,6 @@ begin
        where organization_id = p_organization_id
          and site_id = p_site_id
          and status = 'active'
-         and billing_address_id = v_billing.id
          and is_default
        limit 1;
 

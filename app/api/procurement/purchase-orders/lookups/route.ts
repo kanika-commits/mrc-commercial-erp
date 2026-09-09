@@ -74,8 +74,7 @@ export async function GET(request: Request) {
     const deliveryLocationResult = deliveryLocationQuery ? await deliveryLocationQuery : { data: [], error: null };
     if (deliveryLocationResult.error) throw deliveryLocationResult.error;
     const deliveryLocations = masterRows(deliveryLocationResult)
-      .filter((row: any) => accessibleSiteIds.has(row.site_id))
-      .filter((row: any) => !row.billing_address_id || accessibleBillingIds.has(row.billing_address_id))
+      .filter((row: any) => accessibleSiteIds.has(row.site_id) || !row.billing_address_id || accessibleBillingIds.has(row.billing_address_id))
       .sort((a: any, b: any) => Number(b.is_default) - Number(a.is_default) || String(a.location_name || "").localeCompare(String(b.location_name || "")));
     const siteContacts = masterRows(siteContactResult).filter((row: any) => accessibleSiteIds.has(row.site_id));
     const addressContacts = masterRows(addressContactsResult);
