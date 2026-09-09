@@ -200,6 +200,12 @@ function parseTermsLine(raw: string): TermsLine {
 type ImageAsset = { name: string; data: Buffer; width: number; height: number; format: "jpeg" | "png" };
 type PdfPage = { ops: string[]; images: ImageAsset[] };
 
+function detectedImageFormat(sourceBuffer: Buffer): "png" | "jpeg" | null {
+  if (sourceBuffer.length >= 8 && sourceBuffer.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex"))) return "png";
+  if (sourceBuffer.length >= 3 && sourceBuffer.subarray(0, 3).equals(Buffer.from("ffd8ff", "hex"))) return "jpeg";
+  return null;
+}
+
 async function imageAsset(name: string, file: string, cropHeight?: number) {
   const sharp = await loadSharp();
   const sourceBuffer = await fs.readFile(path.join(process.cwd(), "public", "letterheads", file));
@@ -220,15 +226,32 @@ async function storageImageAsset(name: string, sourceBuffer: Buffer, cropHeight?
   return { name, data: sourceBuffer, width: PAGE_W, height: safeCropHeight || scaledHeight, format: "png" } satisfies ImageAsset;
 }
 
-async function employeeSignatureImageAsset(admin: any, approverUserId: string | null | undefined) {
+async function employeeSignatureImageAsset(admin: any, approverUserId: string | null | undefined, purchaseOrderId: string) {
   if (!approverUserId) return { block: null, asset: null };
   const block = await getEmployeeSignatureBlock(admin, { userId: approverUserId, includeSignedUrl: false });
   if (!block?.storageBucket || !block.storageKey) return { block, asset: null };
   const downloaded = await admin.storage.from(block.storageBucket).download(block.storageKey);
   if (downloaded.error || !downloaded.data) return { block, asset: null };
+  let detectedFormat: "png" | "jpeg" | null = null;
+  let failureStage = "download";
   try {
-    const sharp = await loadSharp();
     const source = Buffer.from(await downloaded.data.arrayBuffer());
+    detectedFormat = detectedImageFormat(source);
+    if (detectedFormat === "png" || detectedFormat === "jpeg") {
+      const metadata = await (detectedFormat === "png" ? PDFDocument.create().then((pdf) => pdf.embedPng(source)) : PDFDocument.create().then((pdf) => pdf.embedJpg(source)));
+      return {
+        block,
+        asset: {
+          name: "approverSignature",
+          data: source,
+          width: metadata.width,
+          height: metadata.height,
+          format: detectedFormat,
+        } satisfies ImageAsset,
+      };
+    }
+    failureStage = "sharp-fallback";
+    const sharp = await loadSharp();
     const data = await sharp(source)
       .rotate()
       .flatten({ background: "#ffffff" })
@@ -245,7 +268,14 @@ async function employeeSignatureImageAsset(admin: any, approverUserId: string | 
         format: "jpeg",
       } satisfies ImageAsset,
     };
-  } catch {
+  } catch (error: any) {
+    console.warn("Approver signature image omitted", {
+      purchaseOrderId,
+      employeeId: block.employeeId,
+      detectedFormat,
+      failureStage,
+      reason: error?.message || "signature preparation failed",
+    });
     return { block, asset: null };
   }
 }
@@ -654,7 +684,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const approverId = approvalEvent?.actor_id || data.approved_by;
     const approverResult = approverId ? await admin.from("hr_employees").select("employee_name,email,phone,personal_phone,company:companies(company_name),designation:hr_designations(designation_name)").eq("user_id", approverId).eq("organization_id", data.organization_id).eq("status", "active").maybeSingle() : { data: null, error: null };
     if (approverResult.error) throw approverResult.error;
-    const approverSignature = await employeeSignatureImageAsset(admin, approverId);
+    const approverSignature = await employeeSignatureImageAsset(admin, approverId, data.id);
     const poPackage = await makePdf(data, creatorResult.data, { ...approverResult.data, signatureBlock: approverSignature.block, signatureAsset: approverSignature.asset, employee_name: approverResult.data?.employee_name || approvalEvent?.actor_name || data.approved_by_name, approval_at: approvalEvent?.created_at || data.approved_at }, admin);
     const combinedPdf = await appendPackage(poPackage.pdf, data, admin);
     const protectedPdf = ["approved", "issued"].includes(data.status) ? combinedPdf : await watermarkDraftPackage(combinedPdf);
