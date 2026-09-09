@@ -5,7 +5,8 @@ const gstRoute = fs.readFileSync("app/api/procurement/purchase-orders/gst-regist
 const contactRoute = fs.readFileSync("app/api/procurement/purchase-orders/site-contacts/route.ts", "utf8");
 const masterRoute = fs.readFileSync("app/api/procurement/purchase-orders/master-data/route.ts", "utf8");
 
-for (const text of [gstRoute, contactRoute]) if (!text.includes("procurement_purchase_orders")) throw new Error("Expected procurement permission guard is missing.");
+if (!gstRoute.includes('requireProcurementPermission(request, "procurement_gst_billing_delivery_master"')) throw new Error("GST permission guard is missing.");
+if (!contactRoute.includes('requireProcurementPermission(request, "procurement_site_contact_master"')) throw new Error("Site Contact permission guard is missing.");
 for (const required of [
   "company_gst_registrations",
   "upper(btrim(gstin))",
@@ -30,5 +31,8 @@ if (!migration.includes("if v_existing_company <> p_company_id") || !migration.i
 if (!migration.includes("v_gst.id") || !migration.includes("gst_registration_id")) throw new Error("Billing GST relationship persistence is missing.");
 if (!migration.includes("nullif(p_parent->>'gst_registration_id','') is not null")) throw new Error("Nullable legacy GST linkage is missing.");
 if (masterRoute.includes("company_gst_registrations")) throw new Error("Shared PO master-data route must remain migration-compatible.");
-if (!contactRoute.includes("access.companies.includes(row.company_id)")) throw new Error("Site contact company scope is missing.");
+if (!contactRoute.includes("function siteIsAuthorized(access: any, site: any)")) throw new Error("Site contact authorization helper is missing.");
+if (!contactRoute.includes("if ((access.sites || []).length > 0 && !(access.sites || []).includes(site.id))")) throw new Error("Site contact explicit site authorization is missing.");
+if (!contactRoute.includes("return !site.company_id ||")) throw new Error("Company-neutral site contact authorization is missing.");
+if (!contactRoute.includes("siteIsAuthorized(access, site)")) throw new Error("Site contact save path does not use the site authorization contract.");
 console.log("GST/site-contact master rules passed.");
