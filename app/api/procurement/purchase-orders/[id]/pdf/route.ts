@@ -616,6 +616,8 @@ async function makePdf(row: any, creator: any, approver: any, admin: any) {
   tableLine(LEFT, signatureTop - signatureTableHeight, LEFT, signatureTop, true);
   tableLine(RIGHT, signatureTop - signatureTableHeight, RIGHT, signatureTop, true);
   tableLine(dividerX, signatureTop - signatureTableHeight, dividerX, signatureTop, true);
+  let approverSignatureDrawX = 0;
+  let approverSignatureDrawY = 0;
   const drawSignatureCell = (lines: Array<[string, boolean, number]>, x: number) => lines.forEach(([value, bold, size], index) => draw(value, x, signatureTop - signaturePadding - signatureLineHeight * 0.78 - index * signatureLineHeight, size, bold));
   const drawApproverCell = () => {
     let cursorY = signatureTop - signaturePadding - signatureLineHeight * 0.78;
@@ -625,8 +627,10 @@ async function makePdf(row: any, creator: any, approver: any, admin: any) {
       if (index === 1 && approverSignatureAsset) {
         const imageX = rightInnerX;
         const imageY = cursorY - signatureImageHeight + 2;
+        approverSignatureDrawX = imageX;
+        approverSignatureDrawY = imageY;
         finalPage.images.push(approverSignatureAsset);
-        finalPage.ops.push(`q ${signatureImageWidth} 0 0 ${signatureImageHeight} ${imageX} ${imageY} cm /${approverSignatureAsset.name} Do Q`);
+        if (approverSignatureAsset.format === "jpeg") finalPage.ops.push(`q ${signatureImageWidth} 0 0 ${signatureImageHeight} ${imageX} ${imageY} cm /${approverSignatureAsset.name} Do Q`);
         cursorY -= signatureImageHeight + 6;
       }
     });
@@ -657,10 +661,12 @@ async function makePdf(row: any, creator: any, approver: any, admin: any) {
       if (image.format !== "png") continue;
       let embedded = embeddedPngs.get(image);
       if (!embedded) { embedded = await pdf.embedPng(image.data); embeddedPngs.set(image, embedded); }
-      const width = PAGE_W;
-      const height = width * image.height / image.width;
-      const yPosition = image.name === "frozenHeader" ? PAGE_H - height : 0;
-      pdfPage.drawImage(embedded, { x: 0, y: yPosition, width, height });
+      const isApproverSignature = image.name === "approverSignature";
+      const width = isApproverSignature ? signatureImageWidth : PAGE_W;
+      const height = isApproverSignature ? signatureImageHeight : width * image.height / image.width;
+      const xPosition = isApproverSignature ? approverSignatureDrawX : 0;
+      const yPosition = isApproverSignature ? approverSignatureDrawY : image.name === "frozenHeader" ? PAGE_H - height : 0;
+      pdfPage.drawImage(embedded, { x: xPosition, y: yPosition, width, height });
     }
   }
   return { pdf: Buffer.from(await pdf.save()), pageCount: pages.length, footerRenderedHeight };
