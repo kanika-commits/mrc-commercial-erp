@@ -411,7 +411,7 @@ export default function DailyAttendancePage() {
 
       {readOnlyReason && rows.length > 0 && <AlertMessage type="warning" message={readOnlyReason} />}
 
-      <section className="overflow-x-auto rounded-2xl border bg-white shadow-sm">
+      <section className="rounded-2xl border bg-white shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
           <div>
             <h2 className="font-semibold text-slate-950">Mark Attendance</h2>
@@ -427,7 +427,8 @@ export default function DailyAttendancePage() {
             {hasEditableRows && canSubmit && <button type="button" onClick={requestSubmitAttendance} disabled={saving || rows.length === 0} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"><Send className="h-4 w-4" />{sentBack ? "Resubmit Attendance" : "Submit Attendance"}</button>}
           </div>
         </div>
-        <table className="min-w-[760px] w-full text-left text-sm">
+        <div className="hidden overflow-x-auto md:block">
+        <table className="w-full text-left text-sm">
           <thead className="border-b bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
             <tr>
               <th className="px-4 py-3">S. No.</th>
@@ -462,7 +463,31 @@ export default function DailyAttendancePage() {
             })}
           </tbody>
         </table>
+        </div>
+        <div className="space-y-3 p-3 md:hidden">
+          {filteredRows.length === 0 ? <div className="rounded-xl border px-4 py-10 text-center text-sm text-slate-500">No employees loaded.</div> : filteredRows.map((item, index) => {
+            const current = draft[item.employee.id] || { employee_id: item.employee.id, status: item.attendance?.status || null, company_id: item.employee.company_id };
+            const incomplete = !current.status;
+            const editableRow = rowEditable(item);
+            return <article key={item.employee.id} className={`rounded-xl border p-4 ${incomplete ? "border-amber-300 bg-amber-50/60" : "bg-white"}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0"><p className="font-semibold text-slate-950">{item.employee.employee_name}</p><p className="mt-1 text-xs text-slate-500">{item.employee.employee_code || "Employee"} · {item.employee.designation_name || "-"}</p></div>
+                <span className="shrink-0 text-xs font-semibold text-slate-400">#{index + 1}</span>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600"><span>Company: <b>{item.employee.company_name || "-"}</b></span><span>Department: <b>{item.employee.department_name || "-"}</b></span></div>
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                {PHASE1_ATTENDANCE_STATUSES.slice(0, 2).map((status) => <button key={status} type="button" disabled={!editableRow} aria-pressed={current.status === status} onClick={() => updateRow(item.employee.id, { status })} className={`min-h-11 rounded-lg border text-sm font-bold ${current.status === status ? status === "present" ? "border-emerald-600 bg-emerald-600 text-white" : "border-rose-600 bg-rose-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50"} disabled:opacity-50`}>{ATTENDANCE_STATUS_LABELS[status]}</button>)}
+              </div>
+              <label className="mt-3 block text-xs font-semibold uppercase tracking-wide text-slate-500">Other status<select disabled={!editableRow} value={current.status && !PHASE1_ATTENDANCE_STATUSES.includes(current.status as any) ? current.status : ""} onChange={(event) => updateRow(item.employee.id, { status: event.target.value || null })} className="mt-1 h-11 w-full rounded-lg border bg-white px-3 text-sm font-normal normal-case tracking-normal text-slate-950"><option value="">Select if applicable</option>{ATTENDANCE_STATUS_LABELS && Object.entries(ATTENDANCE_STATUS_LABELS).filter(([value]) => !PHASE1_ATTENDANCE_STATUSES.includes(value as any)).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+            </article>;
+          })}
+        </div>
       </section>
+
+      {hasEditableRows && <div className="sticky bottom-2 z-20 flex gap-2 rounded-xl border bg-white/95 p-2 shadow-lg backdrop-blur md:hidden">
+        <button type="button" onClick={() => save()} disabled={saving} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-slate-950 px-3 text-sm font-semibold text-white disabled:opacity-60"><Save className="h-4 w-4" />{saving ? "Saving..." : "Save Draft"}</button>
+        {canSubmit && <button type="button" onClick={requestSubmitAttendance} disabled={saving || rows.length === 0} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-emerald-700 px-3 text-sm font-semibold text-white disabled:opacity-60"><Send className="h-4 w-4" />{sentBack ? "Resubmit" : "Submit"}</button>}
+      </div>}
 
       {submitConfirmationOpen && <SubmitConfirmation
         siteName={lookups.sites.find((site) => site.id === siteId)?.label || siteId}

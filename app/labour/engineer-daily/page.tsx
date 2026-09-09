@@ -493,8 +493,9 @@ export default function EngineerDailyLabourPage() {
   function renderLabourTable(tableRows: any[], options: { selectable?: boolean; group?: any } = {}) {
     const canModifyGroup = options.group && !readOnly && options.group.status === "draft";
     return (
-      <div className="overflow-x-auto">
-        <table className="min-w-[980px] w-full text-sm">
+      <>
+      <div className="hidden overflow-x-auto md:block">
+        <table className="w-full text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
             <tr>
               {options.selectable && <th className="w-12 px-3 py-3">Select</th>}
@@ -560,6 +561,22 @@ export default function EngineerDailyLabourPage() {
           </tbody>
         </table>
       </div>
+      <div className="space-y-3 md:hidden">
+        {!tableRows.length && <div className="rounded-lg border bg-white px-3 py-6 text-center text-sm text-slate-500">No labourers in this section.</div>}
+        {tableRows.map((row) => (
+          <article key={row.labour_worker_id} className="rounded-lg border bg-white p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0"><p className="font-semibold text-slate-950">{row.worker_name || "-"}</p><p className="mt-1 font-mono text-xs text-slate-500">{row.labour_code || "-"}</p><p className="mt-1 text-xs text-slate-500">{row.contractor_name || "-"} · {row.category_name || "-"}</p></div>
+              {options.selectable && <input type="checkbox" checked={selectedWorkerIds.includes(row.labour_worker_id)} disabled={readOnly || saving} onChange={() => toggleSelectedWorker(row.labour_worker_id)} aria-label={`Select ${row.worker_name || "labourer"}`} className="h-5 w-5 rounded border-slate-300" />}
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600"><span>Rate: <b>{row.daily_rate_label || "Not Set"}</b></span><span>Site in: <b>{formatTime(row.site_in_time)}</b></span></div>
+            {canModifyGroup && <button type="button" onClick={() => removeWorkerFromGroup(options.group, row.labour_worker_id)} disabled={saving} className="mt-3 h-10 rounded-lg border border-red-200 px-3 text-xs font-semibold text-red-700 disabled:opacity-60">Remove from group</button>}
+            <div className="mt-4 grid gap-3 rounded-lg bg-slate-50 p-3"><div><p className="text-xs font-bold uppercase tracking-wide text-slate-500">First Half</p><div className="mt-1">{attendanceToggle(row, "first_shift_status", "First Half")}</div></div><div><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Second Half</p><div className="mt-1">{attendanceToggle(row, "second_shift_status", "Second Half")}</div></div></div>
+            <div className="mt-3 grid grid-cols-2 gap-3"><label className="text-xs font-bold uppercase tracking-wide text-slate-500">OT Hours<input disabled={readOnly || saving} value={row.ot_hours ?? ""} onChange={(event) => updateRow(row.labour_worker_id, { ot_hours: event.target.value })} className="mt-1 h-11 w-full rounded-lg border px-2 text-sm font-normal normal-case tracking-normal text-slate-950" inputMode="numeric" /></label><label className="text-xs font-bold uppercase tracking-wide text-slate-500">Bonus Hours<input disabled={readOnly || saving} value={row.bonus_hours ?? ""} onChange={(event) => updateRow(row.labour_worker_id, { bonus_hours: event.target.value })} className="mt-1 h-11 w-full rounded-lg border px-2 text-sm font-normal normal-case tracking-normal text-slate-950" inputMode="numeric" /></label></div>
+          </article>
+        ))}
+      </div>
+      </>
     );
   }
 
@@ -941,6 +958,10 @@ export default function EngineerDailyLabourPage() {
             <Send className="h-4 w-4" />
             {sendBackFeedback ? "Resubmit Attendance" : "Submit Daily Labour"}
           </button>
+        </div>
+        <div className="sticky bottom-2 z-20 flex gap-2 rounded-xl border bg-white/95 p-2 shadow-lg backdrop-blur md:hidden">
+          <button type="button" onClick={() => save("save_draft")} disabled={!canSave || readOnly || saving || loading} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg border bg-white px-3 text-sm font-semibold disabled:opacity-60"><Save className="h-4 w-4" />{saving ? "Saving..." : "Save Draft"}</button>
+          <button type="button" onClick={() => save("submit")} disabled={!canSubmit || readOnly || saving || loading} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 text-sm font-semibold text-white disabled:opacity-60"><Send className="h-4 w-4" />{sendBackFeedback ? "Resubmit" : "Submit"}</button>
         </div>
         {renderCameraModal()}
       </div>
