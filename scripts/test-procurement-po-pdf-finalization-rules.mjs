@@ -157,6 +157,11 @@ assert.match(pdf, /approverSignatureBlock\?\.employeeName \|\| approver\?\.emplo
 assert.match(pdf, /approverSignatureBlock\?\.designation \|\| approver\?\.designation\?\.designation_name/, "Approver employee designation must be preferred when available");
 assert.match(pdf, /const poPackage = await makePdf/);
 assert.match(pdf, /const combinedPdf = await appendPackage\(poPackage\.pdf, data, admin\)/);
+assert.match(pdf, /Skipping unreadable supporting document/);
+assert.match(pdf, /document\.mime_type === "image\/jpeg"/);
+assert.match(pdf, /output\.embedJpg\(image\)/);
+assert.match(pdf, /document\.mime_type === "image\/webp"/);
+assert.match(pdf, /logSkippedSupportingDocument\(row, document/);
 assert.match(pdf, /width: PAGE_W, height: safeCropHeight \|\| scaledHeight, format: "png"/);
 assert.match(pdf, /const headerRenderedHeight = letterhead\.header \? PAGE_W \* letterhead\.header\.height \/ letterhead\.header\.width : 0/);
 assert.match(pdf, /const contentTop = letterhead\.header \? PAGE_H - headerRenderedHeight - 8 : TOP/);

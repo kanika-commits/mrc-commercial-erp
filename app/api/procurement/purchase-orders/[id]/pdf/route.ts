@@ -72,6 +72,15 @@ function imageDimensions(sourceBuffer: Buffer) {
   return { width: PAGE_W, height: PAGE_H };
 }
 
+function logSkippedSupportingDocument(row: any, document: any, reason: string) {
+  console.warn("Skipping unreadable supporting document", {
+    purchaseOrderId: row.id,
+    documentId: document.id || null,
+    fileName: document.original_file_name || "unknown",
+    reason,
+  });
+}
+
 async function appendPackage(poPdf: Buffer, row: any, admin: any) {
   let query = admin.from("procurement_purchase_order_documents").select("id,original_file_name,mime_type,size_bytes,storage_provider,storage_bucket,storage_key,sort_order,created_at,status").eq("purchase_order_id", row.id).eq("organization_id", row.organization_id).eq("status", "active");
   const { data: documents, error } = await query;
@@ -94,16 +103,32 @@ async function appendPackage(poPdf: Buffer, row: any, admin: any) {
         const pages = await output.copyPages(source, source.getPageIndices());
         pages.forEach((page) => output.addPage(page));
       } else {
-        const sharp = await loadSharp();
-        const image = document.mime_type === "image/webp" ? await sharp(bytes).png().toBuffer() : bytes;
-        const metadata = await sharp(image).metadata();
-        const embedded = document.mime_type === "image/jpeg" ? await output.embedJpg(image) : await output.embedPng(image);
+        let image = bytes;
+        let metadata: { width?: number; height?: number };
+        if (document.mime_type === "image/webp") {
+          const sharp = await loadSharp();
+          image = await sharp(bytes).png().toBuffer();
+          metadata = await sharp(image).metadata();
+        } else if (document.mime_type === "image/jpeg") {
+          const embedded = await output.embedJpg(image);
+          metadata = { width: embedded.width, height: embedded.height };
+          const page = output.addPage([595, 842]);
+          const scale = Math.min(535 / Math.max(1, metadata.width || 1), 782 / Math.max(1, metadata.height || 1));
+          const width = (metadata.width || 1) * scale; const height = (metadata.height || 1) * scale;
+          page.drawImage(embedded, { x: (595 - width) / 2, y: (842 - height) / 2, width, height });
+          continue;
+        } else {
+          metadata = imageDimensions(image);
+        }
+        const embedded = await output.embedPng(image);
         const page = output.addPage([595, 842]);
-        const scale = Math.min(535 / (metadata.width || 1), 782 / (metadata.height || 1));
+        const scale = Math.min(535 / Math.max(1, metadata.width || 1), 782 / Math.max(1, metadata.height || 1));
         const width = (metadata.width || 1) * scale; const height = (metadata.height || 1) * scale;
         page.drawImage(embedded, { x: (595 - width) / 2, y: (842 - height) / 2, width, height });
       }
-    } catch { throw new Error(`Supporting document ${text(document.original_file_name)} is unreadable.`); }
+    } catch (error: any) {
+      logSkippedSupportingDocument(row, document, error?.message || "decode or embed failed");
+    }
   }
   return Buffer.from(await output.save());
 }
