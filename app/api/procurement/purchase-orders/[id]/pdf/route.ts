@@ -226,9 +226,9 @@ async function storageImageAsset(name: string, sourceBuffer: Buffer, cropHeight?
   return { name, data: sourceBuffer, width: PAGE_W, height: safeCropHeight || scaledHeight, format: "png" } satisfies ImageAsset;
 }
 
-async function employeeSignatureImageAsset(admin: any, approverUserId: string | null | undefined, purchaseOrderId: string) {
+async function employeeSignatureImageAsset(admin: any, approverUserId: string | null | undefined, purchaseOrderId: string, signatureProfileId?: string | null) {
   if (!approverUserId) return { block: null, asset: null };
-  const block = await getEmployeeSignatureBlock(admin, { userId: approverUserId, includeSignedUrl: false });
+  const block = await getEmployeeSignatureBlock(admin, { userId: approverUserId, signatureProfileId, includeSignedUrl: false });
   if (!block?.storageBucket || !block.storageKey) return { block, asset: null };
   const downloaded = await admin.storage.from(block.storageBucket).download(block.storageKey);
   if (downloaded.error || !downloaded.data) return { block, asset: null };
@@ -556,8 +556,8 @@ async function makePdf(row: any, creator: any, approver: any, admin: any) {
   const approverSignatureBlock = finalStatus ? approver?.signatureBlock : null;
   const approverSignatureAsset = finalStatus ? approver?.signatureAsset as ImageAsset | null : null;
   const internalName = formatCreatorName(finalStatus ? approverSignatureBlock?.employeeName || approver?.employee_name || row.approved_by_name : creator?.employee_name || row.created_by_name);
-  const internalDesignation = finalStatus ? approverSignatureBlock?.designation || approver?.designation?.designation_name : creator?.designation?.designation_name;
-  const internalCompany = finalStatus ? cleanDisplay(approverSignatureBlock?.company || approver?.company?.company_name) : null;
+  const internalDesignation = finalStatus ? row.approved_by_designation_name || approverSignatureBlock?.designation || approver?.designation?.designation_name : creator?.designation?.designation_name;
+  const internalCompany = finalStatus ? cleanDisplay(row.approved_by_company_name || approverSignatureBlock?.company || approver?.company?.company_name) : null;
   const signaturePadding = 9;
   const dividerX = LEFT + (RIGHT - LEFT) / 2;
   const leftInnerX = LEFT + signaturePadding;
@@ -690,7 +690,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const approverId = approvalEvent?.actor_id || data.approved_by;
     const approverResult = approverId ? await admin.from("hr_employees").select("employee_name,email,phone,personal_phone,company:companies(company_name),designation:hr_designations(designation_name)").eq("user_id", approverId).eq("organization_id", data.organization_id).eq("status", "active").maybeSingle() : { data: null, error: null };
     if (approverResult.error) throw approverResult.error;
-    const approverSignature = await employeeSignatureImageAsset(admin, approverId, data.id);
+    const approverSignature = await employeeSignatureImageAsset(admin, approverId, data.id, data.approved_signature_profile_id);
     const poPackage = await makePdf(data, creatorResult.data, { ...approverResult.data, signatureBlock: approverSignature.block, signatureAsset: approverSignature.asset, employee_name: approverResult.data?.employee_name || approvalEvent?.actor_name || data.approved_by_name, approval_at: approvalEvent?.created_at || data.approved_at }, admin);
     const combinedPdf = await appendPackage(poPackage.pdf, data, admin);
     const protectedPdf = ["approved", "issued"].includes(data.status) ? combinedPdf : await watermarkDraftPackage(combinedPdf);
