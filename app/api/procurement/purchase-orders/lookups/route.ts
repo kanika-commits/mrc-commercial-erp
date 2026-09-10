@@ -81,36 +81,9 @@ export async function GET(request: Request) {
     const gstBillingMasters = gstRows.map((gst: any) => {
       const linked = billingAddresses.filter((row: any) => row.company_id === gst.company_id && row.gst_registration_id === gst.id);
       const legacy = billingAddresses.filter((row: any) => row.company_id === gst.company_id && !row.gst_registration_id);
-      const billing = linked.find((row: any) => row.is_default) || linked[0] || (legacy.length === 1 ? legacy[0] : null);
+      const billing = linked.find((row: any) => row.is_default) || linked[0] || null;
       return { ...gst, billing_address: billing ? { id: billing.id, label: billing.label, address_line1: billing.address_line1, address_line2: billing.address_line2, city: billing.city, state: billing.state, pincode: billing.pincode, address: [billing.address_line1, billing.address_line2, billing.city, billing.state, billing.pincode].filter(Boolean).join(", ") } : null };
     });
-    const gstKeys = new Set(gstRows.map((row: any) => `${row.company_id}:${String(row.gstin || "").toUpperCase()}`));
-    for (const billing of billingAddresses) {
-      if (billing.gst_registration_id || !billing.gstin || gstKeys.has(`${billing.company_id}:${String(billing.gstin || "").toUpperCase()}`)) continue;
-      gstBillingMasters.push({
-        id: `legacy-${billing.id}`,
-        organization_id: billing.organization_id,
-        company_id: billing.company_id,
-        gstin: billing.gstin,
-        legal_name: billing.label,
-        trade_name: billing.label,
-        state: billing.state,
-        state_code: null,
-        registration_type: null,
-        is_default: billing.is_default,
-        status: billing.status,
-        billing_address: {
-          id: billing.id,
-          label: billing.label,
-          address_line1: billing.address_line1,
-          address_line2: billing.address_line2,
-          city: billing.city,
-          state: billing.state,
-          pincode: billing.pincode,
-          address: [billing.address_line1, billing.address_line2, billing.city, billing.state, billing.pincode].filter(Boolean).join(", "),
-        },
-      });
-    }
     const letterheads = masterRows(letterheadResult).flatMap((row: any) => {
       const ready = (row.versions || []).filter((version: any) => version.version_status === "ready" && version.header_content_hash && version.footer_content_hash).sort((a: any, b: any) => Number(b.version_number || 0) - Number(a.version_number || 0))[0];
       return ready ? [{ id: row.id, company_id: row.company_id, letterhead_name: row.letterhead_name, version_id: ready.id, version_number: ready.version_number }] : [];

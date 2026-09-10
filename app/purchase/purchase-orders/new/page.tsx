@@ -52,6 +52,7 @@ export default function NewPurchaseOrderPage() {
   const [billingContactId, setBillingContactId] = useState("");
   const [deliveryContactId, setDeliveryContactId] = useState("");
   const [deliveryLocationId, setDeliveryLocationId] = useState("");
+  const [gstRegistrationId, setGstRegistrationId] = useState("");
   const [additionalCharges, setAdditionalCharges] = useState<AdditionalCharge[]>([]);
   const [keyTerms, setKeyTerms] = useState([{ description: "Price Validity", terms: "" }, { description: "Freight", terms: "" }, { description: "Delivery Timeline", terms: "" }, { description: "Payment Terms", terms: "" }]);
   const [message, setMessage] = useState("");
@@ -102,6 +103,7 @@ export default function NewPurchaseOrderPage() {
       setCompanyId(po.company_id || ""); setSiteId(po.site_id || ""); setVendorId(po.vendor_id || ""); setPoDate(po.po_date || today());
       setDelivery(po.delivery_snapshot || {}); setCommercial(po.commercial_snapshot || {});
       setDeliveryLocationId(po.delivery_snapshot?.master_selection?.delivery_location_id || po.delivery_snapshot?.delivery_location_id || "");
+      setGstRegistrationId(po.delivery_snapshot?.master_selection?.gst_registration_id || po.delivery_snapshot?.gst_registration_id || "");
       setBillingContactId(po.delivery_snapshot?.master_selection?.billing_contact_id || po.delivery_snapshot?.billing_contact?.site_contact_id || po.delivery_snapshot?.master_selection?.site_contact_id || "");
       setDeliveryContactId(po.delivery_snapshot?.master_selection?.delivery_contact_id || po.delivery_snapshot?.delivery_contact?.site_contact_id || po.delivery_snapshot?.master_selection?.site_contact_id || po.delivery_snapshot?.site_contact_id || "");
       setAdditionalCharges(Array.isArray(po.commercial_snapshot?.additional_charges) ? po.commercial_snapshot.additional_charges.map((charge: any) => ({ name: String(charge.name || ""), amount: String(charge.amount ?? "") })) : []);
@@ -149,23 +151,22 @@ export default function NewPurchaseOrderPage() {
     email: !String(selectedVendorContact?.email || "").trim(),
   };
   const missingCompletableVendorFields = Object.values(missingVendorFields).some(Boolean);
-  const gstBillingMasters = (lookups.gst_billing_masters || []).filter((row: any) => row.company_id === companyId).sort((a: any, b: any) => Number(b.is_default) - Number(a.is_default));
-  const billingAddresses = lookups.billing_addresses || [];
+  const gstBillingMasters = (lookups.gst_billing_masters || []).filter((row: any) => row.company_id === companyId && row.billing_address?.id).sort((a: any, b: any) => String(a.gstin || "").localeCompare(String(b.gstin || "")));
   const selectedLetterhead = (lookups.letterheads || []).find((row: any) => row.company_id === companyId);
   const deliveryAddressFor = (row: any) => [row?.address_line1, row?.address_line2, row?.city, row?.state, row?.pincode].filter(Boolean).join(", ") || row?.address || "";
   const deliveryCompanyName = (row: any) => row?.company?.company_name || lookups.companies.find((company: any) => company.id === row?.company_id)?.company_name || "";
-  const deliveryLocations = (lookups.delivery_locations || []).filter((row: any) => row.site_id === siteId && row.status === "active" && (!row.company_id || row.company_id === companyId)).sort((a: any, b: any) => Number(b.is_default) - Number(a.is_default) || String(a.location_name || "").localeCompare(String(b.location_name || "")));
+  const selectedGstBilling = gstBillingMasters.find((row: any) => row.id === gstRegistrationId) || (gstBillingMasters.length === 1 ? gstBillingMasters[0] : null);
+  const selectedBilling = selectedGstBilling?.billing_address || null;
+  const deliveryLocations = (lookups.delivery_locations || []).filter((row: any) => row.billing_address_id === selectedBilling?.id && row.site_id === siteId && row.status === "active").sort((a: any, b: any) => Number(b.is_default) - Number(a.is_default) || String(a.location_name || "").localeCompare(String(b.location_name || "")));
   const defaultDeliveryLocation = deliveryLocations.find((row: any) => row.is_default) || (deliveryLocations.length === 1 ? deliveryLocations[0] : null);
   const selectedDeliveryLocation = deliveryLocations.find((row: any) => row.id === deliveryLocationId) || defaultDeliveryLocation;
-  const selectedDeliveryBilling = billingAddresses.find((row: any) => row.id === selectedDeliveryLocation?.billing_address_id) || null;
-  const selectedDeliveryGst = selectedDeliveryBilling ? gstBillingMasters.find((row: any) => row.id === selectedDeliveryBilling.gst_registration_id || (String(row.gstin || "").toUpperCase() === String(selectedDeliveryBilling.gstin || "").toUpperCase())) : null;
-  const mappedGstBilling = selectedDeliveryBilling ? (selectedDeliveryGst || { company_id: selectedDeliveryBilling.company_id, gstin: selectedDeliveryBilling.gstin, billing_address: { id: selectedDeliveryBilling.id, label: selectedDeliveryBilling.label, address_line1: selectedDeliveryBilling.address_line1, address_line2: selectedDeliveryBilling.address_line2, city: selectedDeliveryBilling.city, state: selectedDeliveryBilling.state, pincode: selectedDeliveryBilling.pincode, address: [selectedDeliveryBilling.address_line1, selectedDeliveryBilling.address_line2, selectedDeliveryBilling.city, selectedDeliveryBilling.state, selectedDeliveryBilling.pincode].filter(Boolean).join(", ") } }) : null;
-  const selectedGstBilling = mappedGstBilling || gstBillingMasters.find((row: any) => row.is_default) || (gstBillingMasters.length === 1 ? gstBillingMasters[0] : null);
-  const selectedBilling = selectedGstBilling?.billing_address || null;
   const siteContacts = (lookups.site_contacts || []).filter((row: any) => row.site_id === siteId && row.status === "active").sort((a: any, b: any) => Number(b.is_default) - Number(a.is_default) || String(a.contact_name || "").localeCompare(String(b.contact_name || "")));
   const defaultSiteContact = siteContacts.find((row: any) => row.is_default) || (siteContacts.length === 1 ? siteContacts[0] : null);
   const selectedDeliveryContact = siteContacts.find((row: any) => row.id === deliveryContactId) || defaultSiteContact;
   const selectedBillingContact = siteContacts.find((row: any) => row.id === billingContactId) || defaultSiteContact;
+  useEffect(() => {
+    setGstRegistrationId((current) => gstBillingMasters.some((row: any) => row.id === current) ? current : gstBillingMasters.length === 1 ? gstBillingMasters[0].id : "");
+  }, [companyId, gstBillingMasters.length]);
   useEffect(() => {
     if (!siteId) {
       setDeliveryContactId("");
@@ -347,7 +348,7 @@ export default function NewPurchaseOrderPage() {
   async function save() {
     setMessage("");
     if (!companyId || !siteId || !vendorId) return setMessage("Company, site and Vendor are required.");
-    if (!selectedGstBilling?.billing_address) return setMessage(gstBillingMasters.length > 1 ? "Configure exactly one default GST/Billing Master for the selected Company." : "Configure an active GST/Billing Master for the selected Company.");
+    if (!selectedGstBilling?.billing_address) return setMessage(gstBillingMasters.length > 1 ? "Select a GST/Billing Master for the selected Company." : "Configure an active GST/Billing Master for the selected Company.");
     if (!selectedLetterhead) return setMessage("Configure a default Ready Letterhead Master for the selected Company.");
     if (!selectedDeliveryLocation) return setMessage(deliveryLocations.length > 1 ? "Select a Delivery Location for this Site." : "Configure an active Delivery Location for the selected Site.");
     if (!selectedBillingContact || !selectedDeliveryContact) return setMessage(siteContacts.length > 1 ? "Select Billing and Delivery Contacts for this Site." : "Configure an active Site Contact for the selected Site.");
@@ -358,7 +359,7 @@ export default function NewPurchaseOrderPage() {
     setSaving(true);
     try {
       const deliveryPayload = { expected_date: delivery.expected_date, location: selectedDeliveryLocation.location_name, address: deliveryAddressFor(selectedDeliveryLocation), delivery_location_id: selectedDeliveryLocation.id, site_contact_id: selectedDeliveryContact.id };
-      const body = { source_type: source, company_id: companyId, site_id: siteId, vendor_id: vendorId, po_date: poDate, source_requisition_id: selectedIndent?.requisition_id || params.get("requisition_id") || null, items: items.map((item) => ({ ...item, item_id: item.item_id || undefined, unit_rate: Number(item.unit_rate), quantity: Number(item.quantity), gst_rate: Number(item.gst_rate), make_snapshot: item.make })), master_selection: { delivery_location_id: selectedDeliveryLocation.id, billing_contact_id: selectedBillingContact.id, delivery_contact_id: selectedDeliveryContact.id }, delivery: deliveryPayload, commercial: { ...commercial, additional_charges: additionalCharges.map((charge) => ({ name: charge.name.trim(), amount: Number(charge.amount) })) }, standard_terms: standardTerms, standard_terms_template_id: selectedTerms?.id || null, standard_terms_sections: selectedTerms?.sections?.filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order) || [], key_terms: keyTerms };
+      const body = { source_type: source, company_id: companyId, site_id: siteId, vendor_id: vendorId, po_date: poDate, source_requisition_id: selectedIndent?.requisition_id || params.get("requisition_id") || null, items: items.map((item) => ({ ...item, item_id: item.item_id || undefined, unit_rate: Number(item.unit_rate), quantity: Number(item.quantity), gst_rate: Number(item.gst_rate), make_snapshot: item.make })), master_selection: { gst_registration_id: selectedGstBilling.id, billing_contact_id: selectedBillingContact.id, delivery_location_id: selectedDeliveryLocation.id, delivery_contact_id: selectedDeliveryContact.id }, delivery: deliveryPayload, commercial: { ...commercial, additional_charges: additionalCharges.map((charge) => ({ name: charge.name.trim(), amount: Number(charge.amount) })) }, standard_terms: standardTerms, standard_terms_template_id: selectedTerms?.id || null, standard_terms_sections: selectedTerms?.sections?.filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order) || [], key_terms: keyTerms };
       (body as any).creation_request_id = creationRequestId;
       if (editId) {
         await apiFetch(`/api/procurement/purchase-orders/${editId}`, { method: "PUT", body: JSON.stringify(body) });
@@ -441,8 +442,9 @@ export default function NewPurchaseOrderPage() {
               <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Bill To / Billing Details</h3>
               <div className="mt-3 grid gap-4 md:grid-cols-2">
                 <div className="text-sm"><span className="block text-xs font-semibold uppercase text-slate-500">Billing Company</span><p className="mt-1 font-semibold">{selectedCompany?.company_name || (companyId ? "Company unavailable" : "Select a company")}</p></div>
+                <label className="text-sm"><span className="block text-xs font-semibold uppercase text-slate-500">GST / Billing Master</span><select value={selectedGstBilling?.id || ""} onChange={(event) => setGstRegistrationId(event.target.value)} disabled={!companyId || gstBillingMasters.length <= 1} className="mt-1 h-10 w-full rounded-lg border px-3"><option value="">{companyId ? "Select GST / Billing Master" : "Select a company"}</option>{gstBillingMasters.map((row: any) => <option key={row.id} value={row.id}>{[row.gstin, row.billing_address?.label, row.state].filter(Boolean).join(" — ")}</option>)}</select></label>
                 <div className="text-sm"><span className="block text-xs font-semibold uppercase text-slate-500">GSTIN</span><p className="mt-1 font-semibold">{selectedGstBilling?.gstin || (companyId ? "GSTIN unavailable" : "—")}</p></div>
-                <div className="text-sm md:col-span-2"><span className="block text-xs font-semibold uppercase text-slate-500">Billing Address</span><p className="mt-1 text-slate-700">{selectedGstBilling && selectedBilling ? `${selectedBilling.label || "Billing Address"} — ${selectedBilling.address}` : siteId ? "No GST/Billing configuration with an active Delivery Location is configured for this Company and Site." : companyId ? "Select a site to resolve the compatible GST/Billing identity." : "Select a company to view Billing Address."}</p></div>
+                <div className="text-sm md:col-span-2"><span className="block text-xs font-semibold uppercase text-slate-500">Billing Address</span><p className="mt-1 text-slate-700">{selectedGstBilling && selectedBilling ? `${selectedBilling.label || "Billing Address"} — ${selectedBilling.address}` : companyId ? "No active GST/Billing configuration is configured for this Company." : "Select a company to view Billing Address."}</p></div>
                 <label className="text-sm">Billing Contact Person<select value={selectedBillingContact?.id || ""} onChange={(event) => setBillingContactId(event.target.value)} disabled={!siteId || siteContacts.length <= 1} className="mt-1 h-10 w-full rounded-lg border px-3"><option value="">{siteId ? "Select billing contact" : "Select a site first"}</option>{siteContacts.map((row: any) => <option key={row.id} value={row.id}>{row.contact_name}{row.designation ? ` — ${row.designation}` : ""}{row.mobile ? ` — ${row.mobile}` : ""}</option>)}</select>{siteId && siteContacts.length > 1 && !defaultSiteContact && !billingContactId && <span className="mt-1 block text-xs text-amber-700">Select a Billing Contact for this Site.</span>}</label>
                 <div className="text-sm"><span className="block text-xs font-semibold uppercase text-slate-500">Letterhead</span><p className="mt-1 text-slate-700">{selectedLetterhead ? `${selectedCompany?.company_name || "Company"} / ${selectedLetterhead.letterhead_name} — Version ${selectedLetterhead.version_number}` : companyId ? "Configure a default Ready Letterhead Master for this Company." : "Select a company to view Letterhead."}</p></div>
               </div>
