@@ -20,7 +20,7 @@ export type EmployeeSignatureBlock = {
 
 export async function getEmployeeSignatureBlock(
   admin: AdminClient,
-  input: { employeeId?: string | null; userId?: string | null; expiresIn?: number; includeSignedUrl?: boolean },
+  input: { employeeId?: string | null; userId?: string | null; signatureProfileId?: string | null; expiresIn?: number; includeSignedUrl?: boolean },
 ): Promise<EmployeeSignatureBlock | null> {
   let query = admin
     .from("hr_employees")
@@ -41,12 +41,13 @@ export async function getEmployeeSignatureBlock(
   if (employeeError) throw employeeError;
   if (!employee) return null;
 
-  const { data: signature, error: signatureError } = await admin
+  let signatureQuery = admin
     .from("employee_signature_profiles")
     .select("id, storage_provider, storage_bucket, storage_key, initials, display_title, is_active")
     .eq("employee_id", employee.id)
-    .eq("is_active", true)
-    .maybeSingle();
+    .eq("is_active", true);
+  if (input.signatureProfileId) signatureQuery = signatureQuery.eq("id", input.signatureProfileId);
+  const { data: signature, error: signatureError } = await signatureQuery.maybeSingle();
 
   if (signatureError) throw signatureError;
 

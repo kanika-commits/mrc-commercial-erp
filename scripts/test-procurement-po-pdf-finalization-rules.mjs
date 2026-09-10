@@ -10,8 +10,8 @@ assert.match(pdf, /const approvalEvent = .*filter\(.*\["approve", "approved"\]/s
 assert.match(pdf, /const approverId = approvalEvent\?\.actor_id \|\| data\.approved_by/);
 assert.doesNotMatch(pdf, /approverId = .*auth\.user/);
 assert.match(pdf, /import \{ getEmployeeSignatureBlock \} from "@\/lib\/hr\/employeeSignature"/, "PO PDF must reuse the Employee Signature Block helper");
-assert.match(pdf, /async function employeeSignatureImageAsset\(admin: any, approverUserId: string \| null \| undefined, purchaseOrderId: string\)/, "PO PDF must resolve a signature asset by approver user id");
-assert.match(pdf, /getEmployeeSignatureBlock\(admin, \{ userId: approverUserId, includeSignedUrl: false \}\)/, "PO PDF must resolve the linked approver employee through hr_employees.user_id without creating public preview URLs");
+assert.match(pdf, /async function employeeSignatureImageAsset\(admin: any, approverUserId: string \| null \| undefined, purchaseOrderId: string(?:, signatureProfileId\?: string \| null)?\)/, "PO PDF must resolve a signature asset by approver user id");
+assert.match(pdf, /getEmployeeSignatureBlock\(admin, \{ userId: approverUserId, signatureProfileId, includeSignedUrl: false \}\)/, "PO PDF must resolve the linked approver employee through hr_employees.user_id without creating public preview URLs");
 assert.match(pdf, /admin\.storage\.from\(block\.storageBucket\)\.download\(block\.storageKey\)/, "PO PDF must download the private approver signature object server-side");
 assert.doesNotMatch(pdf, /getPublicUrl|storage\/v1\/object\/public/, "PO PDF must not use public signature URLs");
 assert.match(pdf, /Vendor Acceptance/);
@@ -151,7 +151,7 @@ assert.ok(addressRowBottom - 12 < addressRowBottom, "Items begins strictly below
 assert.match(pdf, /y -= 20;\n  if \(y - signatureTableHeight < bodyBottomY\) newPage\(\);\n  const finalPage/);
 assert.doesNotMatch(pdf, /SYSTEM APPROVED|rect\(internalX - 10, signatureTop - 40, 225, 50\)/);
 assert.doesNotMatch(pdf.slice(pdf.indexOf("const finalStatus"), pdf.indexOf("const objects")), /Phone|personal_phone|vendorContact/);
-assert.match(pdf, /const approverSignature = await employeeSignatureImageAsset\(admin, approverId, data\.id\)/, "PO PDF must use the actual approved_by actor for the signature lookup");
+assert.match(pdf, /const approverSignature = await employeeSignatureImageAsset\(admin, approverId, data\.id, data\.approved_signature_profile_id\)/, "PO PDF must use the actual approved_by actor and frozen signature reference");
 assert.match(pdf, /signatureBlock: approverSignature\.block, signatureAsset: approverSignature\.asset/, "PO PDF must pass the approver signature block into the Approved By renderer");
 assert.match(pdf, /approverSignatureBlock\?\.employeeName \|\| approver\?\.employee_name \|\| row\.approved_by_name/, "Approver employee name must be preferred when available");
 assert.match(pdf, /approverSignatureBlock\?\.designation \|\| approver\?\.designation\?\.designation_name/, "Approver employee designation must be preferred when available");
@@ -177,7 +177,7 @@ assert.match(pdf, /pdf\.embedPng\(source\)/);
 assert.match(pdf, /pdf\.embedJpg\(source\)/);
 assert.match(pdf, /failureStage = "sharp-fallback"/);
 assert.match(pdf, /Approver signature image omitted/);
-assert.match(pdf, /employeeSignatureImageAsset\(admin, approverId, data\.id\)/);
+assert.match(pdf, /employeeSignatureImageAsset\(admin, approverId, data\.id, data\.approved_signature_profile_id\)/);
 assert.match(pdf, /width: PAGE_W, height: safeCropHeight \|\| scaledHeight, format: "png"/);
 assert.match(pdf, /const headerRenderedHeight = letterhead\.header \? PAGE_W \* letterhead\.header\.height \/ letterhead\.header\.width : 0/);
 assert.match(pdf, /const contentTop = letterhead\.header \? PAGE_H - headerRenderedHeight - 8 : TOP/);

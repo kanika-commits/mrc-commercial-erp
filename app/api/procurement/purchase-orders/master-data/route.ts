@@ -322,24 +322,18 @@ async function mutate(request: Request, action: "add" | "edit") {
       if ("error" in scope) return jsonError(scope.error || "Invalid company.", scope.status || 400);
       const templateName = text(body.template_name) || "Standard Purchase Order Terms";
       if (!id && !templateName) return jsonError("Add at least one clause before creating Standard PO Terms.", 400);
-      if (!id && templateName) {
-        const existing = await admin.from("company_po_terms_templates").select("id").eq("organization_id", scope.organizationId).eq("company_id", text(body.company_id)).eq("template_name", templateName).eq("status", "active").maybeSingle();
-        if (existing.error) throw existing.error;
-        if (existing.data) return NextResponse.json({ id: existing.data.id, reused: true });
-      }
-      const values = { organization_id: scope.organizationId, company_id: text(body.company_id), template_name: templateName, is_default: body.is_default === true, status: text(body.status) || "active" };
-      if (values.is_default) { const cleared = await admin.from("company_po_terms_templates").update({ is_default: false }).eq("company_id", values.company_id).eq("status", "active").neq("id", id || emptyId); if (cleared.error) throw cleared.error; }
-      const result = id ? await admin.from("company_po_terms_templates").update(values).eq("id", id).select("id").single() : await admin.from("company_po_terms_templates").insert(values).select("id").single();
-      if (result.error) {
-        if (!id && result.error.code === "23505") {
-          const existing = await admin.from("company_po_terms_templates").select("id").eq("organization_id", scope.organizationId).eq("company_id", text(body.company_id)).eq("template_name", templateName).eq("status", "active").maybeSingle();
-          if (existing.error) throw existing.error;
-          if (existing.data) return NextResponse.json({ id: existing.data.id, reused: true });
-        }
-        throw result.error;
-      }
-      await auditMasterMutation(admin, auth, request, { organizationId: scope.organizationId, moduleCode: masterModule(kind), entityType: kind, recordId: result.data.id, action: id ? "update" : "create", description: `${id ? "Updated" : "Created"} terms template ${templateName}.`, newValues: values });
-      return NextResponse.json({ id: result.data.id });
+      const atomic = await admin.rpc("save_procurement_terms_template_with_sections_atomic", {
+        p_organization_id: scope.organizationId,
+        p_template_id: id || null,
+        p_company_id: text(body.company_id),
+        p_template_name: templateName,
+        p_is_default: body.is_default === true,
+        p_status: text(body.status) || "active",
+        p_sections: Array.isArray(body.sections) ? body.sections.map((section: any, index: number) => ({ ...section, sort_order: index, status: "active" })) : [],
+      });
+      if (atomic.error) throw atomic.error;
+      await auditMasterMutation(admin, auth, request, { organizationId: scope.organizationId, moduleCode: masterModule(kind), entityType: kind, recordId: atomic.data?.id || id, action: id ? "update" : "create", description: `${id ? "Updated" : "Created"} terms template ${templateName}.`, newValues: { ...body, sections: Array.isArray(body.sections) ? body.sections : [] } });
+      return NextResponse.json(atomic.data);
     }
     if (kind === "terms_section") {
       if (!text(body.template_id) || !text(body.heading) || !text(body.clause_body)) return jsonError("Template, Heading and Clause Body are required.", 400);
