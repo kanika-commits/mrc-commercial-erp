@@ -1,0 +1,30 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const page = fs.readFileSync("app/settings/purchase-order-masters/page.tsx", "utf8");
+const route = fs.readFileSync("app/api/procurement/purchase-orders/master-data/route.ts", "utf8");
+const migration = fs.readFileSync("supabase/migrations/202609100011_procurement_master_graph_delete.sql", "utf8");
+const deliveryResolverMigration = fs.readFileSync("supabase/migrations/202609100012_procurement_po_delivery_no_default_selection.sql", "utf8");
+const po = fs.readFileSync("app/purchase/purchase-orders/new/page.tsx", "utf8");
+
+assert.doesNotMatch(page, /Active and default/);
+assert.equal((page.match(/row\.is_default \? " · Default"/g) || []).length, 1);
+assert.match(page, /checked=\{form\.status === "active"\}/);
+assert.match(page, /is_default: false/);
+assert.match(route, /delete_procurement_master_graph_atomic/);
+assert.match(route, /p_organization_id: owned\.organizationId/);
+assert.match(migration, /procurement_purchase_orders/);
+assert.match(migration, /procurement_address_contacts/);
+assert.match(migration, /site_delivery_locations/);
+assert.match(migration, /company_gst_registrations/);
+assert.match(migration, /using errcode = 'P0001'/);
+assert.match(migration, /p_organization_id uuid/);
+assert.match(migration, /organization_id = p_organization_id/);
+assert.match(deliveryResolverMigration, /v_delivery_count = 1/);
+assert.doesNotMatch(deliveryResolverMigration, /v_delivery_default_count/);
+assert.doesNotMatch(deliveryResolverMigration, /gst_registration_id is null/);
+assert.doesNotMatch(deliveryResolverMigration, /order by is_default/);
+assert.match(po, /gstBillingMasters\.length === 1/);
+assert.doesNotMatch(po, /row\.is_default\) \|\| \(gstBillingMasters/);
+assert.doesNotMatch(po, /row\.is_default\) \|\| \(deliveryLocations/);
+console.log("Procurement master cleanup rules passed.");
