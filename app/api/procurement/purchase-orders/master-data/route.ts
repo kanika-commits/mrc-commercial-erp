@@ -245,7 +245,7 @@ async function mutate(request: Request, action: "add" | "edit") {
       const scope = await companyScope(admin, auth, text(body.company_id));
       if ("error" in scope) return jsonError(scope.error || "Invalid company.", scope.status || 400);
       if (!text(body.label) || !text(body.gstin) || !text(body.address_line1) || !text(body.city) || !text(body.state) || !text(body.pincode)) return jsonError("Company, GSTIN, Label, Address Line 1, City, State and Pincode are required.", 400);
-      const atomic = await admin.rpc("save_procurement_address_with_contacts_atomic", { p_kind: kind, p_organization_id: scope.organizationId, p_parent_id: id || null, p_parent: body, p_contacts: Array.isArray(body.contacts) ? body.contacts : [] });
+      const atomic = await admin.rpc("save_procurement_combined_gst_billing_atomic", { p_organization_id: scope.organizationId, p_parent_id: id || null, p_parent: body, p_contacts: Array.isArray(body.contacts) ? body.contacts : [] });
       if (atomic.error) throw atomic.error;
       await auditMasterMutation(admin, auth, request, { organizationId: scope.organizationId, moduleCode: masterModule(kind), entityType: kind, recordId: atomic.data?.id || id, action: id ? "update" : "create", description: `${id ? "Updated" : "Created"} ${kind.replaceAll("_", " ")}.`, newValues: body });
       return NextResponse.json(atomic.data);
