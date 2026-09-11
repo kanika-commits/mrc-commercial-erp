@@ -14,7 +14,7 @@ export async function GET(request: Request) {
     query = query && applyCompanySiteAccess(query, access);
     const { data: grns, error } = query ? await query : { data: [], error: null };
     if (error) throw error;
-    let poQuery: any = applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id,po_number,po_date,organization_id,company_id,site_id,total_amount,vendor_name_snapshot,company:companies(id,company_name),site:sites(id,site_name),items:procurement_purchase_order_items(*)").in("status", ["approved", "issued"]).order("po_date", { ascending: false }), access);
+    let poQuery: any = applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id,po_number,po_date,organization_id,company_id,site_id,total_amount,vendor_name_snapshot,company:companies!procurement_purchase_orders_company_id_fkey(id,company_name),site:sites(id,site_name),items:procurement_purchase_order_items(*)").in("status", ["approved", "issued"]).order("po_date", { ascending: false }), access);
     poQuery = poQuery && applyCompanySiteAccess(poQuery, access);
     const { data: purchaseOrders, error: poError } = poQuery ? await poQuery : { data: [], error: null };
     if (poError) throw poError;
