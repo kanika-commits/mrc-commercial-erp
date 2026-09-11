@@ -22,6 +22,9 @@ const checks = [
   [assignmentsApi.includes("organization_id",) && assignmentsApi.includes("Selected company is not available for this organization") && assignmentsApi.includes("Selected designation is not available for this organization"), "assignment API enforces organization ownership"],
   [employeeEdit.includes("Company Assignments") && employeeEdit.includes("+ Add Company Assignment") && employeeEdit.includes("Inactivate"), "employee edit exposes assignment management"],
   [employeeEdit.includes("const refreshed = await apiFetch(`/api/hr/employees/${params.id}/assignments`)") , "assignment mutations refetch persisted state"],
+  [employeeEdit.includes("assignment.status === \"active\"") && employeeEdit.includes("!activeAssignmentCompanyIds.has(company.id)"), "add mode hides active assignment companies"],
+  [employeeEdit.includes("assignmentForm.id || !activeAssignmentCompanyIds.has(company.id)"), "edit mode preserves current company option"],
+  [employeeEdit.includes("All available companies already have active assignments for this employee."), "empty add state is explained"],
 ];
 
 for (const [ok, label] of checks) if (!ok) throw new Error(`FAIL: ${label}`);
