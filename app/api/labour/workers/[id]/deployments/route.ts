@@ -186,7 +186,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     const { data: openDeployment, error: openError } = await access.admin
       .from("labour_deployments")
-      .select("id, effective_from")
+      .select("id, effective_from, company_id, site_id, contractor_profile_id, work_order_id, manpower_work_order_id, commercial_model, labour_trade_id, wage_rate")
       .eq("labour_worker_id", id)
       .eq("status", "active")
       .is("effective_to", null)
@@ -208,6 +208,44 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (overlapError) throw overlapError;
     if (overlapping) return jsonError("Another deployment already exists for the selected effective date.");
     const deploymentReason = text(payload.deployment_reason);
+    const expectedWorkOrderId = commercialModel === "daily_wage" ? text(payload.work_order_id) : null;
+    const expectedManpowerWorkOrderId = isReactivation && commercialModel === "contract_basis" ? manpowerWorkOrderId : null;
+    if (
+      isReactivation && openDeployment &&
+      openDeployment.company_id === companyId &&
+      openDeployment.site_id === siteId &&
+      openDeployment.contractor_profile_id === contractorProfileId &&
+      openDeployment.work_order_id === expectedWorkOrderId &&
+      openDeployment.manpower_work_order_id === expectedManpowerWorkOrderId &&
+      openDeployment.commercial_model === commercialModel &&
+      openDeployment.labour_trade_id === labourTradeId
+    ) {
+      const { error: workerError } = await access.admin.from("labour_workers").update({
+        status: "active",
+        current_contractor_profile_id: contractorProfileId,
+        current_company_id: companyId,
+        current_site_id: siteId,
+        current_work_order_id: openDeployment.work_order_id,
+        labour_trade_id: labourTradeId,
+        trade: tradeCheck.trade?.trade_name || worker.trade || null,
+        updated_at: new Date().toISOString(),
+      }).eq("id", id).eq("status", "inactive");
+      if (workerError) throw workerError;
+      await audit(access, request, {
+        moduleCode: "labour_deployments",
+        action: "update",
+        entityType: "labour_deployment",
+        recordId: openDeployment.id,
+        parentEntityType: "labour_worker",
+        parentRecordId: id,
+        organizationId: worker.organization_id,
+        companyId,
+        siteId,
+        description: `Reactivated labourer ${worker.labour_code} using the existing deployment.`,
+        newValues: { deployment_id: openDeployment.id, effective_from: effectiveFrom, deployment_reason: deploymentReason },
+      } as any);
+      return NextResponse.json({ deployment_id: openDeployment.id, reactivated: true, reused_existing_deployment: true });
+    }
     if (openDeployment && (!deploymentReason || deploymentReason.trim().length < 10)) {
       return jsonError("Transfer reason must be at least 10 characters.");
     }

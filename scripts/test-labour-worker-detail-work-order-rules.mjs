@@ -65,6 +65,9 @@ assert.match(detailApi, /daily_rate_effective_label: dailyRate\.effective_label/
 assert.match(detailApi, /reason, created_by_name, created_by_email, created_at[\s\S]+companies\(company_name\), sites\(site_name\), work_orders\(id, wo_number, wo_type\)/, "detail API returns wage-rate audit fields and deployment context");
 assert.match(importExecuteApi, /work_order_id:\s*n\.work_order_id \|\| undefined/, "import execution persistence remains unchanged");
 assert.match(deploymentApi, /requireLabourPermission\(request, "labour_workers", "change_deployment"\)/, "Deployment API enforces labour_workers:change_deployment server-side");
+assert.match(deploymentApi, /reused_existing_deployment: true/, "Reactivation may reuse a matching open deployment without creating a duplicate");
+assert.match(deploymentApi, /openDeployment\.company_id === companyId[\s\S]+openDeployment\.site_id === siteId[\s\S]+openDeployment\.contractor_profile_id === contractorProfileId/, "Open-deployment reuse must require the same assignment scope");
+assert.match(deploymentApi, /eq\("id", id\)\.eq\("status", "inactive"\)/, "Open-deployment reuse must only reactivate an inactive worker");
 assert.match(wageRateApi, /requireLabourPermission\(request, "labour_workers", "change_rate"\)/, "Wage-rate API enforces labour_workers:change_rate server-side");
 assert.match(wageRateApi, /Reason must be at least 10 characters/, "Rate update requires a meaningful reason");
 assert.match(wageRateApi, /New Daily Rate must be a positive whole rupee amount/, "Rate update requires a positive whole-rupee rate");
