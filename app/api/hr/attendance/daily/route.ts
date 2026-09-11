@@ -43,7 +43,7 @@ export async function GET(request: Request) {
     if (!dateAllowed.allowed) return jsonError(dateAllowed.error || "Attendance date cannot be loaded.", 403);
 
     const month = monthStart(params.attendanceDate)!;
-    const [employees, rows, period, dayLock, policy, dailySubmission] = await Promise.all([
+    let [employees, rows, period, dayLock, policy, dailySubmission] = await Promise.all([
       loadEligibleEmployees(admin, {
         organizationId: scope.organizationId,
         companyId: params.companyId,
@@ -82,6 +82,25 @@ export async function GET(request: Request) {
       }),
     ]);
     if (!policy) return jsonError("Employee Attendance Policy is not configured for the selected site.", 409);
+
+    // A submitted/approved day is a historical snapshot: retain saved employees
+    // in its display even if their live HR status changed afterward.
+    if (["submitted", "approved"].includes(String(dailySubmission?.status || "").toLowerCase())) {
+      const missingEmployeeIds = rows
+        .map((row: any) => row.employee_id)
+        .filter((employeeId: string) => !employees.some((employee: any) => employee.id === employeeId));
+      if (missingEmployeeIds.length > 0) {
+        const historicalEmployees = await admin
+          .from("hr_employees")
+          .select("id, employee_code, employee_name, department_id, designation_id, date_of_joining, date_of_exit, status, company_id, site_id")
+          .eq("organization_id", scope.organizationId)
+          .eq("company_id", params.companyId)
+          .eq("site_id", params.siteId)
+          .in("id", missingEmployeeIds);
+        if (historicalEmployees.error) throw historicalEmployees.error;
+        employees = [...employees, ...(historicalEmployees.data || [])];
+      }
+    }
 
     const rowsByEmployee = new Map(rows.map((row: any) => [row.employee_id, row]));
     const departmentIds = Array.from(new Set(employees.map((employee: any) => employee.department_id).filter(Boolean)));
