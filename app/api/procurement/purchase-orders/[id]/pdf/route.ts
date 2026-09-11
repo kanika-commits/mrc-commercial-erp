@@ -197,6 +197,21 @@ function parseTermsLine(raw: string): TermsLine {
   return { raw: trimmed, level: "body", marker: "", content: trimmed, indent: termIndent(trimmed), markerOffset: 0, spacingBefore: 0, spacingAfter: 1, bold: false };
 }
 
+function withoutClauseNumber(value: string) { return value.replace(/^\s*\d+[.)]\s*/, "").trim(); }
+
+function numberedTerms(snapshot: unknown) {
+  const parsed = parsePurchaseOrderStandardTerms(snapshot);
+  if (!parsed) return ["No standard terms added."];
+  if (parsed.kind === "structured") return parsed.clauses.flatMap((clause, index) => [`${index + 1}. ${withoutClauseNumber(clause.heading)}`, ...clause.clause_body.split(/\r?\n/)]);
+  let clauseNumber = 0;
+  return parsed.text.split(/\r?\n/).map((raw) => {
+    const line = raw.trim();
+    if (!line) return raw;
+    const normalized = parseTermsLine(line);
+    return normalized.level === "main" ? `${++clauseNumber}. ${withoutClauseNumber(normalized.content)}` : raw;
+  });
+}
+
 type ImageAsset = { name: string; data: Buffer; width: number; height: number; format: "jpeg" | "png" };
 type PdfPage = { ops: string[]; images: ImageAsset[] };
 
@@ -553,8 +568,7 @@ async function makePdf(row: any, creator: any, approver: any, admin: any) {
   heading("KEY TERMS", 22);
   table(["S.No.", "Description", "Terms"], keyTerms.length ? keyTerms.map((term: any, index: number) => [String(index + 1), text(term.description || term.label), text(term.value || term.terms || term.text)]) : [["—", "—", "No key terms added."]], [38, 160, 313], 9);
 
-  const parsedTerms = parsePurchaseOrderStandardTerms(row.standard_terms_snapshot);
-  const terms = !parsedTerms ? ["No standard terms added."] : parsedTerms.kind === "structured" ? parsedTerms.clauses.flatMap((clause, index) => [`${index + 1}. ${clause.heading}`, ...clause.clause_body.split(/\r?\n/)]) : parsedTerms.text.split(/\r?\n/);
+  const terms = numberedTerms(row.standard_terms_snapshot);
   const firstTerm = terms.map((entry) => entry.trim()).find(Boolean);
   const firstTermParsed = firstTerm ? parseTermsLine(firstTerm) : null;
   const firstTermHeight = firstTermParsed ? firstTermParsed.spacingBefore + TERMS_LEADING + firstTermParsed.spacingAfter : TERMS_LEADING;

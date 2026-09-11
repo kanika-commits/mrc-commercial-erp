@@ -187,6 +187,8 @@ assert.match(pdf, /y = contentTop/);
 assert.match(pdf, /const footerRenderedHeight = letterhead\.footer \? PAGE_W \* letterhead\.footer\.height \/ letterhead\.footer\.width : 0/);
 assert.match(pdf, /const protectedPdf = \["approved", "issued"\]\.includes\(data\.status\) \? combinedPdf : await watermarkDraftPackage\(combinedPdf\)/);
 assert.match(pdf, /const finalPdf = await numberPackage\(protectedPdf, poPackage\.pageCount, poPackage\.footerRenderedHeight\)/);
+assert.match(pdf, /function numberedTerms\(snapshot: unknown\)/);
+assert.match(pdf, /withoutClauseNumber\(clause\.heading\)/);
 assert.match(pdf, /const label = `\$\{index \+ 1\} of \$\{pages\.length\}`/);
 assert.match(pdf, /pdf\.getPages\(\)/);
 assert.match(pdf, /const pageHeight = currentPage\.getHeight\(\)/);
