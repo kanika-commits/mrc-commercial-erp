@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { User } from "@supabase/supabase-js";
 import { loadActiveAccountContext } from "@/lib/serverAccountAccess";
+import { supabaseServerFetch } from "@/lib/serverSupabase";
 
 export type ServerPermission = {
   module_code: string;
@@ -49,8 +50,8 @@ export async function loadPermissionContext(request: Request) {
     throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY.");
   }
 
-  const authClient = createClient(supabaseUrl, anonKey);
-  const admin = createClient(supabaseUrl, serviceRoleKey);
+  const authClient = createClient(supabaseUrl, anonKey, { global: { fetch: supabaseServerFetch } });
+  const admin = createClient(supabaseUrl, serviceRoleKey, { global: { fetch: supabaseServerFetch } });
 
   const {
     data: { user },
