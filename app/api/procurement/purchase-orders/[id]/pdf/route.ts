@@ -375,6 +375,40 @@ async function makePdf(row: any, creator: any, approver: any, admin: any) {
     };
       line(LEFT, y, RIGHT, y); renderRow(headers, true); rows.forEach((rowData) => renderRow(rowData)); y -= 3;
   };
+  const labeledTable = (cells: string[], widths: number[], size = 9) => {
+    const lineHeight = size + 2;
+    const padding = CELL_PAD_X;
+    const labelValueGap = 4;
+    const renderCell = (cell: string, cellX: number, cellW: number, topY: number, drawLines = true) => {
+      const logicalLines = String(cell).split(/\r?\n/);
+      const rendered: Array<{ label: string; value: string }> = [];
+      for (const logicalLine of logicalLines) {
+        const match = logicalLine.match(/^([^:]+:\s*)(.*)$/);
+        const label = match?.[1] || "";
+        const value = match?.[2] || logicalLine;
+        const firstWidth = Math.max(8, cellW - padding * 2 - termsTextWidth(label, size) - (label ? labelValueGap : 0));
+        const valueLines = wrapToPointWidth(value, firstWidth, size, termsTextWidth);
+        if (!valueLines.length) rendered.push({ label, value: "" });
+        else valueLines.forEach((lineText, index) => rendered.push({ label: index === 0 ? label : "", value: lineText }));
+      }
+      if (!drawLines) return rendered.length;
+      rendered.forEach((lineData, index) => {
+        const yy = topY - padding - lineHeight * 0.78 - index * lineHeight;
+        const labelWidth = termsTextWidth(lineData.label, size);
+        if (lineData.label) draw(lineData.label, cellX + padding, yy, size, true);
+        draw(lineData.value, cellX + padding + labelWidth + (lineData.label ? labelValueGap : 0), yy, size, false);
+      });
+      return rendered.length;
+    };
+    const lineCounts = cells.map((cell, index) => renderCell(cell, LEFT + widths.slice(0, index).reduce((sum, width) => sum + width, 0), widths[index], y, false));
+    const height = Math.max(...lineCounts) * lineHeight + CELL_PAD_TOP + CELL_PAD_BOTTOM;
+    if (y - height < bodyBottomY) newPage();
+    const topY = y;
+    let x = LEFT;
+    cells.forEach((cell, index) => { renderCell(cell, x, widths[index], topY); x += widths[index]; });
+    rowGrid(LEFT, y, widths, height);
+    y -= height;
+  };
   const addressTable = (cells: string[]) => {
     const widths = [270, 241];
     const padding = 8;
@@ -415,7 +449,7 @@ async function makePdf(row: any, creator: any, approver: any, admin: any) {
     };
     line(LEFT, y, RIGHT, y);
     renderRow(["Billing Address", "Shipping / Delivery Address"], true);
-    renderRow(cells);
+    labeledTable(cells, widths, 9);
     y -= 3;
   };
   const itemTable = (rows: string[][], widths: number[]) => {
@@ -500,10 +534,11 @@ async function makePdf(row: any, creator: any, approver: any, admin: any) {
     deliveryCompany = firstDisplayValue(legacyCompany.data?.company_name);
   }
   const shippingAddress = shipping.address || [shipping.address_line1, shipping.address_line2, shipping.city, shipping.state, shipping.pincode].filter(Boolean).join(", ");
-  table(["Vendor Details", "Purchase Order Details"], [[
+  table(["Vendor Details", "Purchase Order Details"], [], [270, 241], 9);
+  labeledTable([
     `Vendor Name: ${text(row.vendor_name_snapshot)}\nContact Person: ${text(vendor.contact_person || vendor.contact_name)}\nAddress: ${text(vendor.address)}\nMobile: ${text(vendor.phone || vendor.mobile)}\nEmail: ${text(vendor.email)}\nGSTIN: ${text(vendor.gstin)}`,
     `Purchase Order No: ${text(row.po_number)}\nDate: ${date(row.po_date)}\nCompany: ${text(row.company?.company_name)}\nSite: ${text(row.site?.site_name)}`,
-  ]], [270, 241], 9);
+  ], [270, 241], 9);
 
   y -= SECTION_GAP;
   addressTable([
