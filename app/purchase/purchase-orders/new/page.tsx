@@ -197,8 +197,8 @@ export default function NewPurchaseOrderPage() {
     setVendorCompletion({ address: "", gstin: "", phone: "", email: "", contact_name: "" });
     setVendorFeedback(null);
   }, [vendorId]);
-  const companyTerms = (lookups.terms_templates || []).filter((row: any) => row.company_id === companyId && row.status === "active");
-  const selectedTerms = companyTerms.find((row: any) => row.id === termsTemplateId) || companyTerms.sort((a: any, b: any) => Number(b.is_default) - Number(a.is_default))[0];
+  const companyTerms = useMemo(() => (lookups.terms_templates || []).filter((row: any) => row.company_id === companyId && row.status === "active"), [lookups.terms_templates, companyId]);
+  const selectedTerms = companyTerms.find((row: any) => row.id === termsTemplateId) || null;
   useEffect(() => {
     if (previousCompanyIdRef.current !== companyId) {
       setTermsTemplateId("");
@@ -207,11 +207,13 @@ export default function NewPurchaseOrderPage() {
     previousCompanyIdRef.current = companyId;
   }, [companyId]);
   useEffect(() => {
-    setTermsTemplateId(companyTerms.find((row: any) => row.is_default)?.id || companyTerms[0]?.id || "");
+    setTermsTemplateId((current) => companyTerms.some((row: any) => row.id === current) ? current : companyTerms.find((row: any) => row.is_default)?.id || companyTerms[0]?.id || "");
+  }, [companyTerms]);
+  useEffect(() => {
     if (!selectedTerms || standardTerms.trim()) return;
     const clauses = (selectedTerms.sections || []).filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order).map((section: any) => `${section.heading}\n${section.clause_body}`).join("\n\n");
     if (clauses) setStandardTerms(clauses);
-  }, [selectedTerms, standardTerms]);
+  }, [selectedTerms]);
   const indents = useMemo(() => {
     if (!companyId || !siteId) return [];
     return lookups.indents.filter((row: any) => row.company_id === companyId && row.site_id === siteId);
