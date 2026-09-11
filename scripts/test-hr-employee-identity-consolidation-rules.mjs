@@ -1,0 +1,20 @@
+import fs from "node:fs";
+import assert from "node:assert/strict";
+
+const sql = fs.readFileSync("supabase/migrations/202609110002_hr_employee_identity_consolidation_auth_order_fix.sql", "utf8");
+assert.match(sql, /create or replace function public\.consolidate_hr_employee_identity_atomic/);
+assert.match(sql, /for update/);
+assert.match(sql, /organization_id = p_organization_id/);
+assert.match(sql, /employee_code <> 'MRC0260'/);
+assert.match(sql, /employee_code <> '02'/);
+assert.match(sql, /status <> 'active'/);
+assert.match(sql, /user_id is not null/);
+assert.match(sql, /set user_id = p_expected_user_id/);
+assert.match(sql, /set user_id = null/);
+assert.ok(sql.indexOf("\n     set user_id = null,") < sql.indexOf("\n     set user_id = p_expected_user_id"), "duplicate linkage is cleared before canonical assignment");
+assert.match(sql, /status = 'deleted'/);
+assert.match(sql, /for update/);
+assert.match(sql, /Duplicate employee record consolidated into MRC0260/);
+assert.match(sql, /revoke all on function/);
+assert.match(sql, /grant execute on function .* to service_role/);
+console.log("HR employee identity consolidation rules passed.");
