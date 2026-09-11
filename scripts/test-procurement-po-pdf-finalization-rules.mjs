@@ -121,7 +121,7 @@ assert.match(pdf, /const widths = \[270, 241\]/);
 assert.match(pdf, /const padding = 8/);
 assert.match(pdf, /termsTextWidth\(candidate, 9\) > maxWidth/);
 assert.match(pdf, /const height = Math\.max\(\.\.\.lines\.map\(\(items\) => items\.length\)\) \* lineHeight \+ padding \* 2/);
-assert.match(pdf, /renderRow\(cells\);\n    y -= 3;/);
+assert.match(pdf, /labeledTable\(cells, widths, 9\);\n    y -= 3;/);
 assert.match(pdf, /rowGrid\(LEFT, y, widths, height\)/);
 assert.match(pdf, /function frozenBillingContactName\(address: any\)/);
 assert.match(pdf, /function frozenBillingContactMobile\(address: any\)/);
