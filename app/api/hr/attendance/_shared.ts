@@ -1,6 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { supabaseServerFetch } from "@/lib/serverSupabase";
 import { hasServerPermission, loadPermissionContext, requirePermission, requireAnyPermission, type ServerPermissionContext } from "@/lib/serverPermissions";
 import {
   applyOrganizationScope,
@@ -36,7 +35,7 @@ export function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
   if (!serviceRoleKey) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY.");
-  return createClient(supabaseUrl, serviceRoleKey, { global: { fetch: supabaseServerFetch } });
+  return createClient(supabaseUrl, serviceRoleKey);
 }
 
 export function jsonError(message: string, status = 400) {
