@@ -21,7 +21,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const eligible = (docs || []).filter((d: any) => !excluded.has(String(d.document_type || "").toLowerCase()));
     const copiedObjects = await copyObjectsWithCompensation(storage, eligible.map((d: any) => ({ bucket: d.storage_bucket, sourcePath: d.storage_key, destinationPath: safeObjectKey([po.organization_id,"purchase-orders",targetId,"supporting",d.original_file_name]), originalFileName: d.original_file_name, mimeType: d.mime_type, sizeBytes: d.size_bytes })));
     copied.push(...copiedObjects.map((o) => ({ bucket: o.bucket, key: o.key })));
-    const metadata = copiedObjects.map((o, i) => ({ ...o, source_document_id: eligible[i].id, storage_provider: o.provider, storage_key: o.key, document_type: eligible[i].document_type, sort_order: eligible[i].sort_order }));
+    const metadata = copiedObjects.map((o, i) => ({ ...o, source_document_id: eligible[i].id, original_file_name: eligible[i].original_file_name || o.originalFileName, storage_provider: o.provider, storage_key: o.key, document_type: eligible[i].document_type, sort_order: eligible[i].sort_order }));
     const result = await admin.rpc("create_procurement_purchase_order_revision_atomic", { p_source_purchase_order_id: id, p_target_purchase_order_id: targetId, p_organization_id: po.organization_id, p_documents: metadata, p_actor: actor(auth) });
     if (result.error) throw result.error;
     return NextResponse.json(result.data, { status: 201 });

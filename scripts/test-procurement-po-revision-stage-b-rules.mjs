@@ -25,6 +25,7 @@ assert.match(route, /copyObjectsWithCompensation/);
 assert.match(route, /crypto\.randomUUID\(\)/);
 assert.match(route, /signed_po.*generated_po.*approved_po/);
 assert.match(route, /source_document_id: eligible\[i\]\.id/);
+assert.match(route, /original_file_name: eligible\[i\]\.original_file_name \|\| o\.originalFileName/);
 assert.match(route, /admin\.rpc\("create_procurement_purchase_order_revision_atomic"/);
 assert.match(route, /copied\.reverse\(\)/);
 
