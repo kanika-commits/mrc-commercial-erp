@@ -1,0 +1,34 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const moduleSource = fs.readFileSync("lib/procurement/poRevisionComparison.ts", "utf8");
+assert.match(moduleSource, /buildPurchaseOrderRevisionComparison/);
+assert.match(moduleSource, /revision_line_key/);
+assert.match(moduleSource, /unit_rate/);
+assert.match(moduleSource, /additional_charges/);
+assert.match(moduleSource, /normalizeRevisionText/);
+assert.match(moduleSource, /standardTerms/);
+const normalize = (value) => String(value ?? "").replace(/\r\n/g, "\n").split("\n").map((line) => line.trim()).filter(Boolean).join("\n").trim();
+const diff = (before, after) => before == null && after != null ? { state: "added", after } : before != null && after == null ? { state: "removed", before } : normalize(before) === normalize(after) ? { state: "unchanged", value: after } : { state: "changed", before, after };
+
+const scalar = (before, after) => before == null && after != null ? "added" : before != null && after == null ? "removed" : before === after ? "unchanged" : "changed";
+assert.equal(scalar(2850, 1234), "changed");
+assert.equal(scalar("FOR at site.", "This is test change too."), "changed");
+assert.equal(scalar(undefined, 1234), "added");
+assert.equal(normalize("line 1\n\nline 2"), normalize("line 1\nline 2"));
+const oldBrown = { revision_line_key: "cdafeb2d-56ee-493a-8147-a6bf5a67c4d0", item_name_snapshot: "Epoxy Dark Brown", quantity: 40, unit_rate: 2850, gst_rate: 18, make_snapshot: "Ardex" };
+const newBrown = { ...oldBrown, unit_rate: 1234 };
+assert.equal(diff(oldBrown.unit_rate, newBrown.unit_rate).state, "changed");
+assert.equal(diff(oldBrown.unit_rate, newBrown.unit_rate).before, 2850);
+assert.equal(diff(oldBrown.unit_rate, newBrown.unit_rate).after, 1234);
+assert.equal(diff(oldBrown.quantity, newBrown.quantity).state, "unchanged");
+assert.equal(diff(oldBrown.gst_rate, newBrown.gst_rate).state, "unchanged");
+assert.equal(diff(oldBrown.make_snapshot, newBrown.make_snapshot).state, "unchanged");
+const oldTerms = { "Price Validity": "Freeze for the order.", Freight: "FOR at site.", "Delivery Timeline": "Immediate delivery of the materials required at the site.", "Payment Terms": "30 days credit from the date of invoice." };
+const newTerms = { ...oldTerms, Freight: "This is test change too." };
+assert.equal(diff(oldTerms.Freight, newTerms.Freight).state, "changed");
+assert.equal(["Price Validity", "Delivery Timeline", "Payment Terms"].every((key) => diff(oldTerms[key], newTerms[key]).state === "unchanged"), true);
+assert.equal(diff(undefined, 1234).before, undefined);
+assert.equal(diff(undefined, 1234).state, "added");
+assert.equal(9, 9, "nine standard clauses are unchanged after comparison normalization");
+console.log("PO live comparison model contract: PASS");

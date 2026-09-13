@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import assert from "node:assert/strict";
 
-const pdf = fs.readFileSync("app/api/procurement/purchase-orders/[id]/pdf/route.ts", "utf8");
+const pdf = fs.readFileSync("lib/procurement/poPdfRenderer.server.ts", "utf8") + "\n" + fs.readFileSync("app/api/procurement/purchase-orders/[id]/pdf/route.ts", "utf8");
 
 assert.match(pdf, /const labeledTable = \(cells: string\[\], widths: number\[\], size = 9\)/);
 assert.match(pdf, /const match = logicalLine\.match\(\/\^\(\[\^:\]\+:\\s\*\)\(\.\*\)\$\/\)/);

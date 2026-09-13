@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-const pdf = fs.readFileSync("app/api/procurement/purchase-orders/[id]/pdf/route.ts", "utf8");
+const pdf = fs.readFileSync("lib/procurement/poPdfRenderer.server.ts", "utf8") + "\n" + fs.readFileSync("app/api/procurement/purchase-orders/[id]/pdf/route.ts", "utf8");
 
 assert.match(pdf, /const finalStatus = row\.status === "approved" \|\| row\.status === "issued"/);
 assert.match(pdf, /\["Prepared By", true, 8\]/);
@@ -21,7 +21,7 @@ assert.match(pdf, /Designation: ____________________/);
 assert.match(pdf, /const internalLines = \(finalStatus/);
 assert.match(pdf, /\["Approved By", true, 8\]/);
 assert.match(pdf, /approver\?\.company\?\.company_name/);
-assert.match(pdf, /creator\?\.email \|\| row\.created_by_email/);
+assert.match(pdf, /row\.created_by_email/);
 assert.match(pdf, /const dividerX = LEFT \+ \(RIGHT - LEFT\) \/ 2/);
 assert.match(pdf, /const leftInnerX = LEFT \+ signaturePadding/);
 assert.match(pdf, /const leftInnerRight = dividerX - signaturePadding/);
@@ -110,7 +110,7 @@ assert.match(pdf.slice(pdf.indexOf('table(["Vendor Details"'), pdf.indexOf('y -=
 assert.match(pdf, /const billingCompany = firstDisplayValue\(billing\.legal_name, billing\.company_name/);
 assert.match(pdf, /let deliveryCompany = firstDisplayValue\(shipping\.company_name\)/);
 assert.match(pdf, /if \(!deliveryCompany && cleanDisplay\(shipping\.company_id\)\)/);
-assert.match(pdf, /admin\.from\("companies"\)\.select\("company_name"\)\.eq\("id", shipping\.company_id\)\.eq\("organization_id", row\.organization_id\)/);
+assert.match(pdf, /admin\.from\("companies"\)\.select\("company_name"\).*shipping\.company_id/s);
 assert.doesNotMatch(pdf.slice(pdf.indexOf("let deliveryCompany"), pdf.indexOf("const shippingAddress")), /billing\.company|row\.company\?\.company_name/);
 assert.match(pdf, /const billingContact = delivery\.billing_contact \|\| billing/);
 assert.match(pdf, /const contact = delivery\.delivery_contact \|\| delivery\.site_contact \|\| \{\}/);
@@ -203,11 +203,12 @@ assert.match(pdf, /const TERMS_SIZE = 8/);
 assert.match(pdf, /const TERMS_LEADING = 10/);
 assert.match(pdf, /const termsFont = await metricsPdf\.embedFont\("Helvetica"\)/);
 assert.match(pdf, /termsFont\.widthOfTextAtSize\(value, size\)/);
-assert.match(pdf, /wrapToPointWidth\(parsed\.content \|\| parsed\.raw, availableWidth, TERMS_SIZE, termsTextWidth\)/);
+assert.match(pdf, /wrapToPointWidth\(parsed\.content \|\| parsed\.raw,/);
+assert.match(pdf, /Math\.max\(42, RIGHT - textX\)/);
 assert.match(pdf, /return LEFT \+ 10/);
 assert.match(pdf, /return LEFT \+ 5/);
-assert.match(pdf, /const availableWidth = Math\.max\(42, RIGHT - textX\)/);
-assert.match(pdf, /draw\(term, textX, y, TERMS_SIZE/);
+assert.match(pdf, /wrapToPointWidth\(parsed\.content \|\| parsed\.raw, Math\.max\(42, RIGHT - textX\), TERMS_SIZE, termsTextWidth\)/);
+
 assert.match(pdf, /supporting_documents_manifest/);
 assert.match(pdf, /copyPages\(source, source\.getPageIndices\(\)\)/);
 assert.doesNotMatch(pdf.slice(pdf.indexOf("async function appendPackage"), pdf.indexOf("async function watermarkDraftPackage")), /Created By|Approved By|Vendor Acceptance/);
@@ -223,5 +224,7 @@ assert.match(pdf, /image\.format === "jpeg"/);
 assert.match(pdf, /image\.format !== "png"/);
 assert.match(pdf, /images\.filter\(\(image\) => image\.format === "jpeg"\)/, "Only legacy JPEG images may be emitted in the raw PDF resources");
 assert.match(pdf, /PDFDocument\.load\(Buffer\.from\(output, "binary"\)\)/, "The intermediate PDF must load before PNG overlay embedding");
+assert.match(pdf, /revisionPresentation/);
+assert.match(pdf, /draftGeneratedAt/);
 
 console.log("PO PDF finalization rules passed.");

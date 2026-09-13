@@ -12,7 +12,7 @@ export async function GET(request: Request) {
     if ("response" in auth) return auth.response;
     const admin = adminClient();
     let query: any = applyOrganizationAccess(
-      admin.from("procurement_purchase_orders").select("id,organization_id,company_id,site_id,po_number,po_date,status,total_amount,created_by_name,created_by_email,submitted_at,vendor_name_snapshot,company:companies!procurement_purchase_orders_company_id_fkey(id,company_name),site:sites(id,site_name)").eq("status", "pending_approval").order("submitted_at", { ascending: false }),
+      admin.from("procurement_purchase_orders").select("id,organization_id,company_id,site_id,po_number,po_date,status,total_amount,created_by_name,created_by_email,submitted_at,revision_no,previous_revision_id,vendor_name_snapshot,company:companies!procurement_purchase_orders_company_id_fkey(id,company_name),site:sites(id,site_name)").eq("status", "pending_approval").order("submitted_at", { ascending: false }),
       auth,
     );
     query = query && applyCompanySiteAccess(query, auth);
@@ -20,6 +20,12 @@ export async function GET(request: Request) {
     const { data, error } = await query;
     if (error) throw error;
     const purchaseOrders = data || [];
+    const previousIds = purchaseOrders.map((row: any) => row.previous_revision_id).filter(Boolean);
+    const previousRows = previousIds.length
+      ? await applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id,po_number").in("id", previousIds), auth)
+      : { data: [], error: null };
+    if (previousRows?.error) throw previousRows.error;
+    const previousById = new Map((previousRows?.data || []).map((row: any) => [row.id, row]));
     const ids = purchaseOrders.map((row: any) => row.id).filter(Boolean);
     const { data: events, error: eventError } = ids.length
       ? await admin.from("procurement_purchase_order_events").select("purchase_order_id,event_type,actor_name,actor_email,created_at").in("purchase_order_id", ids).in("event_type", ["submit", "submitted_for_approval", "resubmitted"]).order("created_at", { ascending: false })
@@ -27,7 +33,7 @@ export async function GET(request: Request) {
     if (eventError) throw eventError;
     const latestSubmission = new Map<string, any>();
     for (const event of events || []) if (!latestSubmission.has(event.purchase_order_id)) latestSubmission.set(event.purchase_order_id, event);
-    return NextResponse.json({ purchase_orders: purchaseOrders.map((row: any) => ({ ...row, submission_event: latestSubmission.get(row.id) || null })) });
+    return NextResponse.json({ purchase_orders: purchaseOrders.map((row: any) => ({ ...row, previous: previousById.get(row.previous_revision_id) || null, submission_event: latestSubmission.get(row.id) || null })) });
   } catch (error: any) {
     return jsonError(error.message || "Failed to load Purchase Order approvals.", 500);
   }

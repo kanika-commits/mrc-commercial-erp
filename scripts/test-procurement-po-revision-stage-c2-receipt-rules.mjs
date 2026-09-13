@@ -1,0 +1,15 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+const sql=fs.readFileSync("supabase/migrations/202609120005_procurement_po_revision_stage_c2_receipt_guards.sql","utf8");
+const grn=fs.readFileSync("app/api/procurement/goods-receipts/route.ts","utf8");
+const helper=fs.readFileSync("lib/procurement/poRevisionEffective.ts","utf8");
+assert.match(sql,/procurement_purchase_order_cumulative_received/);
+assert.match(sql,/revision_family_id/);
+assert.match(sql,/revision_line_key/);
+assert.match(sql,/gr\.status='finalized'/);
+assert.match(sql,/new\.status not in \('pending_approval','approved'\)/);
+assert.match(sql,/below cumulative received quantity/);
+assert.match(sql,/before update of status/);
+assert.match(grn,/latest effective Purchase Order revision/);
+assert.match(helper,/latestEffectiveByFamily/);
+console.log("PO revision Stage C2 receipt rules: PASS");

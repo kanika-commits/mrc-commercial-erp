@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { applyCompanySiteAccess, applyOrganizationAccess, adminClient, requireProcurementAny } from "@/lib/serverProcurementAccess";
+import { latestEffectiveByFamily } from "@/lib/procurement/poRevisionEffective";
 
 const QUEUE = "procurement_purchase_queue";
 
@@ -26,14 +27,16 @@ export async function GET(request: Request) {
     const requisitionIds = rows.map((row: any) => row.id);
     const [lineStateResult, orderedResult] = await Promise.all([
       admin.from("purchase_requisition_line_approval_state").select("requisition_id,requisition_item_line_key,approval_status,current_approval_layer").in("requisition_id", requisitionIds),
-      admin.from("procurement_purchase_order_items").select("source_requisition_id,source_requisition_line_key,quantity,purchase_order:procurement_purchase_orders!inner(status)").in("source_requisition_id", requisitionIds),
+      admin.from("procurement_purchase_order_items").select("source_requisition_id,source_requisition_line_key,quantity,purchase_order:procurement_purchase_orders!inner(id,revision_family_id,revision_no,status,superseded_by_revision_id,created_at)").in("source_requisition_id", requisitionIds),
     ]);
     for (const result of [lineStateResult, orderedResult]) if (result.error) throw result.error;
     const quantitiesByLine = new Map<string, any>();
+    const effectiveIds = new Set(latestEffectiveByFamily((orderedResult.data || []).flatMap((row: any) => Array.isArray(row.purchase_order) ? row.purchase_order : [row.purchase_order]).filter(Boolean).map((po: any) => po)).map((po: any) => po?.id));
     for (const row of orderedResult.data || []) {
       const key = `${row.source_requisition_id}:${row.source_requisition_line_key}`;
       const quantity = Number(row.quantity || 0);
       const status = relationOne(row.purchase_order)?.status;
+      if (["approved", "issued"].includes(status) && !effectiveIds.has(relationOne(row.purchase_order)?.id)) continue;
       const current = quantitiesByLine.get(key) || { reserved: 0, ordered: 0 };
       if (["draft", "pending_approval", "sent_back"].includes(status)) current.reserved += quantity;
       else if (["approved", "issued"].includes(status)) current.ordered += quantity;

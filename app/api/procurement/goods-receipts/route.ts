@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { adminClient, applyCompanySiteAccess, applyOrganizationAccess, jsonError, requireProcurementAny, requireProcurementPermission, actorName, text } from "@/lib/serverProcurementAccess";
+import { effectiveRevisionIds } from "@/lib/procurement/poRevisionEffective";
+import { loadFamilyReceiptTotals, remainingQuantity } from "@/lib/procurement/poRevisionRuntime";
 
 const MODULE = "procurement_goods_receipts";
 function actor(user: any) { return { id: user.id, name: actorName(user), email: user.email || null }; }
@@ -14,12 +16,14 @@ export async function GET(request: Request) {
     query = query && applyCompanySiteAccess(query, access);
     const { data: grns, error } = query ? await query : { data: [], error: null };
     if (error) throw error;
-    let poQuery: any = applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id,po_number,po_date,organization_id,company_id,site_id,total_amount,vendor_name_snapshot,company:companies!procurement_purchase_orders_company_id_fkey(id,company_name),site:sites(id,site_name),items:procurement_purchase_order_items(*)").in("status", ["approved", "issued"]).order("po_date", { ascending: false }), access);
+    let poQuery: any = applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id,po_number,po_date,organization_id,company_id,site_id,total_amount,vendor_name_snapshot,revision_family_id,revision_no,superseded_by_revision_id,created_at,company:companies!procurement_purchase_orders_company_id_fkey(id,company_name),site:sites(id,site_name),items:procurement_purchase_order_items(*)").in("status", ["approved", "issued"]).order("po_date", { ascending: false }), access);
     poQuery = poQuery && applyCompanySiteAccess(poQuery, access);
     const { data: purchaseOrders, error: poError } = poQuery ? await poQuery : { data: [], error: null };
     if (poError) throw poError;
-    const enrichedOrders = await Promise.all((purchaseOrders || []).map(async (order: any) => {
+    const effectiveIds = effectiveRevisionIds(purchaseOrders || []);
+    const enrichedOrders = await Promise.all((purchaseOrders || []).filter((order: any) => effectiveIds.has(order.id)).map(async (order: any) => {
       const orderGrns = (grns || []).filter((grn: any) => grn.purchase_order_id === order.id);
+      const lineage = await loadFamilyReceiptTotals(admin, order);
       const draftCount = orderGrns.filter((grn: any) => grn.status === "draft").length;
       const { data: finalized, error: finalizedError } = await admin.from("procurement_goods_receipts").select("id").eq("purchase_order_id", order.id).eq("status", "finalized");
       if (finalizedError) throw finalizedError;
@@ -33,7 +37,7 @@ export async function GET(request: Request) {
           totalsByItem.set(row.purchase_order_item_id, { received: current.received + Number(row.received_quantity || 0), accepted: current.accepted + Number(row.accepted_quantity || 0), rejected: current.rejected + Number(row.rejected_quantity || 0), hold: current.hold + Number(row.hold_quantity || 0) });
         }
       }
-      const items = (order.items || []).map((item: any) => { const totals = totalsByItem.get(item.id) || { received: 0, accepted: 0, rejected: 0, hold: 0 }; return { ...item, previously_accepted_quantity: totals.accepted, finalized_received_quantity: totals.received, finalized_accepted_quantity: totals.accepted, finalized_rejected_quantity: totals.rejected, finalized_hold_quantity: totals.hold, remaining_quantity: Math.max(0, Number(item.quantity || 0) - totals.accepted), received_quantity: 0, accepted_quantity: 0, rejected_quantity: 0, hold_quantity: 0, rejection_reason: "", remarks: "" }; });
+      const items = (order.items || []).map((item: any) => { const accepted = Number(lineage.received.get(`${order.revision_family_id || order.id}:${item.revision_line_key || item.id}`) || 0); const totals = totalsByItem.get(item.id) || { received: accepted, accepted, rejected: 0, hold: 0 }; return { ...item, previously_accepted_quantity: accepted, finalized_received_quantity: totals.received, finalized_accepted_quantity: accepted, finalized_rejected_quantity: totals.rejected, finalized_hold_quantity: totals.hold, remaining_quantity: remainingQuantity(lineage.orders, item, lineage.received), received_quantity: 0, accepted_quantity: 0, rejected_quantity: 0, hold_quantity: 0, rejection_reason: "", remarks: "" }; });
       const totals = items.reduce((sum: any, item: any) => ({ po_quantity: sum.po_quantity + Number(item.quantity || 0), received: sum.received + Number(item.finalized_received_quantity || 0), accepted: sum.accepted + Number(item.finalized_accepted_quantity || 0), rejected: sum.rejected + Number(item.finalized_rejected_quantity || 0), hold: sum.hold + Number(item.finalized_hold_quantity || 0), remaining: sum.remaining + Number(item.remaining_quantity || 0) }), { po_quantity: 0, received: 0, accepted: 0, rejected: 0, hold: 0, remaining: 0 });
       return { ...order, items, receipt_count: orderGrns.length, finalized_receipt_count: receiptIds.length, draft_receipt_count: draftCount, totals, receipt_status: receiptStatus(items, draftCount), draft_exists: draftCount > 0, grns: orderGrns };
     }));
@@ -54,6 +58,12 @@ export async function POST(request: Request) {
     const { data: po, error: poError } = await poQuery;
     if (poError) throw poError;
     if (!po) return jsonError("Only an approved Purchase Order can create a GRN.", 400);
+    const lineage = await loadFamilyReceiptTotals(admin, po);
+    if (po.revision_family_id) {
+      const family = await admin.from("procurement_purchase_orders").select("id,revision_family_id,revision_no,status,superseded_by_revision_id,created_at").eq("organization_id", po.organization_id).eq("revision_family_id", po.revision_family_id).in("status", ["approved", "issued"]);
+      if (family.error) throw family.error;
+      if (!effectiveRevisionIds(family.data || []).has(po.id)) return jsonError("Only the latest effective Purchase Order revision can receive new material.", 409);
+    }
     const existingDraft = await admin.from("procurement_goods_receipts").select("id").eq("purchase_order_id", po.id).eq("organization_id", po.organization_id).eq("company_id", po.company_id).eq("site_id", po.site_id).eq("status", "draft").order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (existingDraft.error) throw existingDraft.error;
     if (existingDraft.data?.id) return NextResponse.json({ id: existingDraft.data.id, reused: true });
@@ -77,7 +87,7 @@ export async function POST(request: Request) {
       for (const row of acceptedRows || []) acceptedByItem.set(row.purchase_order_item_id, (acceptedByItem.get(row.purchase_order_item_id) || 0) + Number(row.accepted_quantity || 0));
     }
     const items = (po.items || []).map((item: any) => {
-      const previouslyAccepted = acceptedByItem.get(item.id) || 0;
+      const previouslyAccepted = Number(lineage.received.get(`${po.revision_family_id || po.id}:${item.revision_line_key || item.id}`) || acceptedByItem.get(item.id) || 0);
       const submitted = submittedItems.get(String(item.id)) || {};
       const quantities = ["received_quantity", "accepted_quantity", "rejected_quantity", "hold_quantity"].map((key) => Number(submitted[key] ?? 0));
       return {

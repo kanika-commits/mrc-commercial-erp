@@ -1,0 +1,12 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+const moduleSource = fs.readFileSync("lib/procurement/poRevisionPdfRenderer.ts", "utf8");
+const routeSource = fs.readFileSync("lib/procurement/poPdfRenderer.server.ts", "utf8") + "\n" + fs.readFileSync("app/api/procurement/purchase-orders/[id]/pdf/route.ts", "utf8");
+assert.match(moduleSource, /buildPurchaseOrderRevisionPdfRenderModel/);
+assert.doesNotMatch(moduleSource, /supabase|revision_diff_snapshot|JSON\.stringify/);
+for (const state of ["unchanged", "added", "removed"]) assert.match(moduleSource, new RegExp(`state === "${state}"`));
+assert.match(moduleSource, /strike: true/);
+assert.match(routeSource, /revisionRenderModel/);
+assert.match(routeSource, /revisionRenderModel\.items/);
+assert.match(routeSource, /revisionRenderModel\?\.standardTerms/);
+console.log("revision PDF render model rules: PASS");

@@ -1,0 +1,16 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+const helper=fs.readFileSync("lib/procurement/poRevisionRuntime.ts","utf8");
+const grn=fs.readFileSync("app/api/procurement/goods-receipts/route.ts","utf8");
+const queue=fs.readFileSync("app/api/procurement/purchase-queue/route.ts","utf8");
+const lookup=fs.readFileSync("app/api/procurement/purchase-orders/lookups/route.ts","utf8");
+const detail=fs.readFileSync("app/api/procurement/goods-receipts/purchase-orders/[id]/route.ts","utf8");
+for(const marker of ["effectiveItems","receivedByLineage","remainingQuantity","revision_line_key","revision_family_id"]) assert.match(helper,new RegExp(marker));
+assert.match(helper,/accepted_quantity/);
+assert.match(grn,/latestEffectiveByFamily|effectiveRevisionIds|effectiveIds/);
+assert.match(queue,/latestEffectiveByFamily|effectiveRevisionIds|effectiveIds/);
+assert.doesNotMatch(lookup,/effectiveRevisionIds|latestEffectiveByFamily/);
+assert.match(detail,/loadFamilyReceiptTotals/);
+assert.match(detail,/lineage\.received/);
+assert.match(detail,/remainingQuantity\(lineage\.orders/);
+console.log("PO revision Stage C2 runtime rules: PASS");
