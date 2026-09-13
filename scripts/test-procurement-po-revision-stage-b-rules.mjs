@@ -26,6 +26,11 @@ assert.match(route, /crypto\.randomUUID\(\)/);
 assert.match(route, /signed_po.*generated_po.*approved_po/);
 assert.match(route, /source_document_id: eligible\[i\]\.id/);
 assert.match(route, /original_file_name: eligible\[i\]\.original_file_name \|\| o\.originalFileName/);
+assert.match(route, /storage_provider: o\.provider/);
+assert.match(route, /storage_bucket: o\.bucket/);
+assert.match(route, /storage_key: o\.key/);
+assert.match(route, /mime_type: eligible\[i\]\.mime_type \|\| o\.mimeType/);
+assert.match(route, /size_bytes: eligible\[i\]\.size_bytes \?\? o\.sizeBytes/);
 assert.match(route, /admin\.rpc\("create_procurement_purchase_order_revision_atomic"/);
 assert.match(route, /copied\.reverse\(\)/);
 
