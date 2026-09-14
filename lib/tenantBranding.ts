@@ -8,7 +8,7 @@ export type TenantBranding = {
 };
 
 export const defaultTenantBranding: TenantBranding = {
-  organizationName: "MRC Group",
+  organizationName: "SiteQube",
   logoUrl: null,
   logoPath: null,
   primaryColor: "#1769aa",

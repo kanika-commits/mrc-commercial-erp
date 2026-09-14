@@ -30,8 +30,6 @@ export default function NewCompanyPage() {
     try {
       setSaving(true);
 
-      const organizationId = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
-
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -47,7 +45,6 @@ export default function NewCompanyPage() {
           Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
-          organization_id: organizationId,
           company_name: companyName.trim(),
           company_code: companyCode.trim(),
           status,

@@ -4,8 +4,6 @@ type ServiceClient = any;
 
 export type OrganizationScope = string[] | null;
 
-const MRC_ORGANIZATION_ID = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
-
 function uniqueIds(rows: any[], key: string) {
   return Array.from(
     new Set(
@@ -94,7 +92,7 @@ export function resolveWriteOrganizationId(
   const requested = String(requestedOrganizationId || "").trim();
 
   if (scope === null) {
-    return requested || MRC_ORGANIZATION_ID;
+    return requested || null;
   }
 
   if (requested) {

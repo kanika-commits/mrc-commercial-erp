@@ -67,11 +67,6 @@ async function resolveOrganizationId(admin: TenantContextClient, access: ActiveA
   const requestedId = String(requested || "").trim();
   if (requestedId && (access.isGlobalAccess || access.organizations.includes(requestedId))) return requestedId;
   if (access.organizations.length === 1) return access.organizations[0];
-  if (access.isGlobalAccess) {
-    const result = await admin.from("organizations").select("id").eq("status", "active").order("created_at").limit(1).maybeSingle();
-    if (result.error) throw result.error;
-    return result.data?.id || null;
-  }
   return null;
 }
 

@@ -1,0 +1,43 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const resolver = fs.readFileSync("lib/tenantHostnameResolver.ts", "utf8");
+const context = fs.readFileSync("lib/managedTenant/context.ts", "utf8");
+const branding = fs.readFileSync("app/api/branding/route.ts", "utf8");
+const trustedHost = fs.readFileSync("lib/managedTenant/trustedHost.ts", "utf8");
+const scope = fs.readFileSync("lib/serverOrganizationScope.ts", "utf8");
+const tenantContext = fs.readFileSync("lib/serverTenantContext.ts", "utf8");
+const brandingModel = fs.readFileSync("lib/tenantBranding.ts", "utf8");
+const companyForm = fs.readFileSync("app/companies/new/page.tsx", "utf8");
+const siteForm = fs.readFileSync("app/sites/new/page.tsx", "utf8");
+const vendors = fs.readFileSync("app/api/vendors/route.ts", "utf8");
+const vendorDetail = fs.readFileSync("app/api/vendors/[id]/route.ts", "utf8");
+const brandingResolver = fs.readFileSync("lib/serverTenantBranding.ts", "utf8");
+
+assert.match(resolver, /iq\.consolpro\.co\.in/);
+assert.match(resolver, /localhost/);
+assert.match(resolver, /platform\.\$\{SITEQUBE_ROOT_DOMAIN\}/);
+assert.match(resolver, /organization_domains/);
+assert.match(resolver, /eq\("hostname", classified\.hostname\)/);
+assert.match(resolver, /eq\("status", "active"\)/);
+assert.match(resolver, /type: "unknown"/);
+assert.match(resolver, /RESERVED_TENANT_SLUGS/);
+assert.match(branding, /trustedHostFromRequest\(request\)/);
+assert.match(branding, /defaultTenantBranding/);
+assert.match(context, /resolveTenantHostname/);
+assert.match(context, /membership_status.*active/);
+assert.match(context, /managed_tenant_user_roles/);
+assert.match(context, /organization_modules/);
+assert.match(trustedHost, /TRUSTED_PROXY_HEADERS/);
+assert.doesNotMatch(scope, /3b65abde-9f9f-4f1b-bd40-fa261a76920b/);
+assert.doesNotMatch(tenantContext, /order\("created_at"\)/);
+assert.match(brandingModel, /organizationName: "SiteQube"/);
+assert.doesNotMatch(companyForm, /3b65abde-9f9f-4f1b-bd40-fa261a76920b/);
+assert.doesNotMatch(siteForm, /3b65abde-9f9f-4f1b-bd40-fa261a76920b/);
+assert.doesNotMatch(vendors, /3b65abde-9f9f-4f1b-bd40-fa261a76920b/);
+assert.doesNotMatch(vendorDetail, /3b65abde-9f9f-4f1b-bd40-fa261a76920b/);
+assert.match(brandingResolver, /organization_domains/);
+assert.match(brandingResolver, /allowLocalDevelopmentFallback/);
+assert.doesNotMatch(brandingResolver, /limit\(2\).*data\.length > 1/);
+
+console.log("SiteQube tenant hostname resolution rules: PASS");

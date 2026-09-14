@@ -40,8 +40,6 @@ export default function NewSitePage() {
     try {
       setSaving(true);
 
-      const organizationId = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
-
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -57,7 +55,6 @@ export default function NewSitePage() {
           Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
-          organization_id: organizationId,
           site_name: siteName.trim(),
           site_code: siteCode.trim(),
           location: location.trim() || null,

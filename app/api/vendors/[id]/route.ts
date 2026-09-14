@@ -8,7 +8,6 @@ import {
   loadOrganizationScopeForUser,
 } from "@/lib/serverOrganizationScope";
 
-const ORGANIZATION_ID = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
 const DOCUMENT_BUCKET = "Vendor-Documents";
 const VENDOR_MASTER_DRIVE_ROOT_FOLDER_ID = "1_3FCygGl8wOMS8IBEInhIkEFt-C93I-5";
 const VENDOR_AUDIT_FIELDS = [
@@ -432,7 +431,7 @@ async function createDocumentSignedUrl(
 
     if (!basePath.includes("/")) {
       candidates.add(
-        `${document.organization_id || ORGANIZATION_ID}/${document.vendor_id}/${basePath}`
+        `${document.organization_id}/${document.vendor_id}/${basePath}`
       );
     }
   }
@@ -447,7 +446,8 @@ async function createDocumentSignedUrl(
     }
   }
 
-  const folder = `${document.organization_id || ORGANIZATION_ID}/${document.vendor_id}`;
+  if (!document.organization_id) throw new Error("Vendor document organization is missing.");
+  const folder = `${document.organization_id}/${document.vendor_id}`;
   const safeName = document.file_name ? safeFileName(document.file_name) : "";
   const { data: files, error: listError } = await supabase.storage
     .from(DOCUMENT_BUCKET)
@@ -856,7 +856,10 @@ export async function PUT(
       return NextResponse.json({ error: "Vendor was not found." }, { status: 404 });
     }
 
-    const organizationId = existingVendor.organization_id || ORGANIZATION_ID;
+    const organizationId = existingVendor.organization_id;
+    if (!organizationId) {
+      return NextResponse.json({ error: "Vendor organization context is missing." }, { status: 409 });
+    }
     const validationErrors: string[] = [];
 
     if (!vendor.contractor_type?.trim()) {

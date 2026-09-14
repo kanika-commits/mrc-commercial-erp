@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { loadPermissionContext } from "@/lib/serverPermissions";
 import { createPrivateStorageAdapter, safeObjectKey } from "@/lib/storage/privateStorage";
-import { createBrandingAdmin, resolveCurrentOrganization, TENANT_BRANDING_BUCKET } from "@/lib/serverTenantBranding";
+import { createBrandingAdmin, resolveOrganizationForBranding, TENANT_BRANDING_BUCKET } from "@/lib/serverTenantBranding";
+import { trustedHostFromRequest } from "@/lib/managedTenant/trustedHost";
 import { isTenantBrandingColor, resolveTenantBranding } from "@/lib/tenantBranding";
 import { recordAuditEvent } from "@/lib/auditEvent";
 
@@ -10,7 +11,9 @@ async function authorize(request: Request) {
   if ("response" in access) return { response: access.response };
   if (!access.roleCodes.includes("platform_owner")) return { response: NextResponse.json({ error: "Platform Owner access required." }, { status: 403 }) };
   const admin = createBrandingAdmin();
-  return { admin, user: access.user, organization: await resolveCurrentOrganization(admin) };
+  const organization = await resolveOrganizationForBranding(admin, trustedHostFromRequest(request), { allowLocalDevelopmentFallback: true });
+  if (!organization) return { response: NextResponse.json({ error: "An explicit tenant hostname is required for branding administration." }, { status: 400 }) };
+  return { admin, user: access.user, organization };
 }
 
 async function responseFor(admin: any, organization: any) {

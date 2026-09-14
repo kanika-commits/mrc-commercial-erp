@@ -8,7 +8,6 @@ import {
   resolveWriteOrganizationId,
 } from "@/lib/serverOrganizationScope";
 
-const ORGANIZATION_ID = "3b65abde-9f9f-4f1b-bd40-fa261a76920b";
 const VENDOR_MASTER_DRIVE_ROOT_FOLDER_ID =
   process.env.GOOGLE_DRIVE_VENDOR_MASTER_FOLDER_ID ||
   "1_3FCygGl8wOMS8IBEInhIkEFt-C93I-5";
