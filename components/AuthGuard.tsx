@@ -29,6 +29,10 @@ function isUnrestrictedPath(pathname: string) {
   return pathname === "/modules";
 }
 
+function isPlatformHost() {
+  return typeof window !== "undefined" && window.location.hostname.toLowerCase() === "platform.siteqube.com";
+}
+
 function actionForPath(pathname: string) {
   if (pathname.endsWith("/new")) return "add";
   if (pathname.includes("/edit")) return "edit";
@@ -265,6 +269,10 @@ function hasRouteAccess(
   if (isUnrestrictedPath(pathname)) return true;
 
   const globalAccess = hasGlobalAccess(access);
+
+  if (pathname === "/platform" || pathname.startsWith("/platform/")) {
+    return globalAccess;
+  }
 
   if (globalAccess) return true;
 
@@ -545,11 +553,16 @@ export default function AuthGuard({
     if (isUnrestrictedPath(pathname)) return false;
     if (error && !access) return true;
     if (accessLoading || !access) return false;
+    if (isPlatformHost() && pathname === "/") return !access.roleCodes.includes("platform_owner");
     return !hasRouteAccess(pathname, access, moduleNavigation);
   }, [access, accessLoading, authChecked, error, isLoginPage, moduleNavigation, pathname]);
 
   useEffect(() => {
-    if (pathname === "/" && accessDenied && access) {
+    if (isPlatformHost() && pathname === "/" && access?.roleCodes.includes("platform_owner")) {
+      router.replace("/platform");
+      return;
+    }
+    if (pathname === "/" && accessDenied && access && !isPlatformHost()) {
       router.replace("/modules");
     }
   }, [access, accessDenied, pathname, router]);
@@ -575,6 +588,10 @@ export default function AuthGuard({
   }
 
   if (accessDenied) {
+    const isPlatformRoute = pathname === "/platform" || pathname.startsWith("/platform/");
+    if (isPlatformRoute) {
+      return <AccessProvider value={contextValue}>{children}</AccessProvider>;
+    }
     return (
       <AccessProvider value={contextValue}>
         <AppShell>
@@ -592,6 +609,9 @@ export default function AuthGuard({
   }
 
   if (accessLoading && !access && !isUnrestrictedPath(pathname)) {
+    if (pathname === "/platform" || pathname.startsWith("/platform/")) {
+      return <AccessProvider value={contextValue}>{children}</AccessProvider>;
+    }
     return (
       <AccessProvider value={contextValue}>
         <AppShell>
@@ -601,6 +621,10 @@ export default function AuthGuard({
         </AppShell>
       </AccessProvider>
     );
+  }
+
+  if (pathname === "/platform" || pathname.startsWith("/platform/")) {
+    return <AccessProvider value={contextValue}>{children}</AccessProvider>;
   }
 
   return (

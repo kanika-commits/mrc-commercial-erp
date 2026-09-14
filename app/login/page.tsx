@@ -85,7 +85,16 @@ export default function LoginPage() {
       const accessResult = await accessResponse.json().catch(() => null);
       if (!accessResponse.ok) { await supabase.auth.signOut(); throw new Error(accessResult?.error || INACTIVE_ACCOUNT_MESSAGE); }
       await startSessionActivity().catch(() => null);
-      router.push("/");
+      const isPlatformHost = window.location.hostname.toLowerCase() === "platform.siteqube.com";
+      if (isPlatformHost) {
+        if (!accessResult?.access?.roleCodes?.includes("platform_owner")) {
+          await supabase.auth.signOut();
+          throw new Error("Platform Owner access required.");
+        }
+        router.push("/platform");
+      } else {
+        router.push("/");
+      }
     } catch (error: any) { setMessage(error.message || "Login failed."); }
     finally { setLoading(false); }
   }
