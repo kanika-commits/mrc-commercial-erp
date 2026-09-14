@@ -54,7 +54,7 @@ export default function NewPurchaseOrderPage() {
   const [deliveryLocationId, setDeliveryLocationId] = useState("");
   const [gstRegistrationId, setGstRegistrationId] = useState("");
   const [additionalCharges, setAdditionalCharges] = useState<AdditionalCharge[]>([]);
-  const [keyTerms, setKeyTerms] = useState([{ description: "Price Validity", terms: "" }, { description: "Delivery Timeline", terms: "" }, { description: "Payment Terms", terms: "" }]);
+  const [keyTerms, setKeyTerms] = useState([{ description: "Price Validity", terms: "" }, { description: "Freight", terms: "" }, { description: "Delivery Timeline", terms: "" }, { description: "Payment Terms", terms: "" }]);
   const [message, setMessage] = useState("");
   const errorRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
@@ -113,7 +113,7 @@ export default function NewPurchaseOrderPage() {
       setBillingContactId(po.delivery_snapshot?.master_selection?.billing_contact_id || po.delivery_snapshot?.billing_contact?.site_contact_id || po.delivery_snapshot?.master_selection?.site_contact_id || "");
       setDeliveryContactId(po.delivery_snapshot?.master_selection?.delivery_contact_id || po.delivery_snapshot?.delivery_contact?.site_contact_id || po.delivery_snapshot?.master_selection?.site_contact_id || po.delivery_snapshot?.site_contact_id || "");
       setAdditionalCharges(Array.isArray(po.commercial_snapshot?.additional_charges) ? po.commercial_snapshot.additional_charges.map((charge: any) => ({ name: String(charge.name || ""), amount: String(charge.amount ?? "") })) : []);
-      setKeyTerms(Array.isArray(po.commercial_snapshot?.key_terms) && po.commercial_snapshot.key_terms.length ? po.commercial_snapshot.key_terms : [{ description: "Price Validity", terms: "" }, { description: "Delivery Timeline", terms: "" }, { description: "Payment Terms", terms: "" }]);
+      setKeyTerms(Array.isArray(po.commercial_snapshot?.key_terms) && po.commercial_snapshot.key_terms.length ? po.commercial_snapshot.key_terms : [{ description: "Price Validity", terms: "" }, { description: "Freight", terms: "" }, { description: "Delivery Timeline", terms: "" }, { description: "Payment Terms", terms: "" }]);
       const parsedTerms = parsePurchaseOrderStandardTerms(po.standard_terms_snapshot);
       setStandardTerms(parsedTerms?.kind === "structured" ? parsedTerms.clauses.map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n") : parsedTerms?.text || "");
       setItems((po.items || []).map((item: any) => ({ po_item_id: item.id, item_id: item.item_id, item_name: item.item_name_snapshot || "", item_code: item.item_code_snapshot, description: item.description_snapshot || item.specification_snapshot || "", specification: item.specification_snapshot, make: item.make_snapshot || "", quantity: String(item.quantity ?? ""), uom: item.uom_snapshot || "", unit_rate: String(item.unit_rate ?? ""), gst_rate: String(item.gst_rate ?? "0"), source_requisition_line_key: item.source_requisition_line_key, isMaterialMasterLinked: false })));
