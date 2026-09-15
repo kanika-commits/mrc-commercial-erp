@@ -85,6 +85,8 @@ export default function LoginPage() {
       const accessResult = await accessResponse.json().catch(() => null);
       if (!accessResponse.ok) { await supabase.auth.signOut(); throw new Error(accessResult?.error || INACTIVE_ACCOUNT_MESSAGE); }
       await startSessionActivity().catch(() => null);
+      const nextPath = new URLSearchParams(window.location.search).get("next");
+      if (nextPath && nextPath.startsWith("/")) { router.push(nextPath); return; }
       const isPlatformHost = window.location.hostname.toLowerCase() === "platform.siteqube.com";
       if (isPlatformHost) {
         if (!accessResult?.access?.roleCodes?.includes("platform_owner")) {
