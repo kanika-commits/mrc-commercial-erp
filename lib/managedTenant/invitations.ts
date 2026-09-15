@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { platformAdminClient, requirePlatformOwner } from "@/lib/serverPlatform";
+
+const SITEQUBE_PLATFORM_INVITATION_URL = "https://platform.siteqube.com/invitations/accept";
 export async function createManagedTenantInvitation(request: Request, input: { invitationId?: string }) {
   const access = await requirePlatformOwner(request);
   if ("response" in access) return access;
@@ -10,7 +12,7 @@ export async function createManagedTenantInvitation(request: Request, input: { i
   if (invitation.error) return { response: NextResponse.json({ error: "Unable to load the invitation." }, { status: 500 }) } as const;
   if (!invitation.data || !["pending", "sent"].includes(invitation.data.status)) return { response: NextResponse.json({ error: "This invitation is no longer available." }, { status: 409 }) } as const;
   if (new Date(invitation.data.expires_at).getTime() <= Date.now()) return { response: NextResponse.json({ error: "This invitation has expired." }, { status: 409 }) } as const;
-  const redirectTo = new URL(`/invitations/accept?invitationId=${encodeURIComponent(invitation.data.id)}`, request.url).toString();
+  const redirectTo = `${SITEQUBE_PLATFORM_INVITATION_URL}?invitationId=${encodeURIComponent(invitation.data.id)}`;
   const sent = await admin.auth.admin.inviteUserByEmail(invitation.data.invited_email, { data: { managed_tenant_invitation_id: invitation.data.id, invited_name: invitation.data.invited_name }, redirectTo });
   if (sent.error) return { response: NextResponse.json({ error: "Invitation email could not be sent. Check the configured Supabase Auth email delivery settings." }, { status: 502 }) } as const;
   const updated = await admin.from("managed_tenant_invitations").update({ status: "sent", updated_at: new Date().toISOString() }).eq("id", invitation.data.id).in("status", ["pending", "sent"]);
