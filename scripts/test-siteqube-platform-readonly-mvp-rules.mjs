@@ -13,9 +13,9 @@ assert.match(detail, /organization_modules/);
 assert.match(detail, /organization_domains/);
 assert.match(detail, /maybeSingle/);
 assert.match(shell, /\/platform\/organizations/);
-assert.doesNotMatch(shell, /\/platform\/role-templates/);
-assert.doesNotMatch(list, /Add Organization/);
-assert.doesNotMatch(list, /\/platform\/organizations\/new/);
+assert.match(shell, /\/platform\/role-templates/);
+assert.match(list, /Add Organization/);
+assert.match(list, /\/platform\/organizations\/new/);
 assert.doesNotMatch(overview, /rpc\(/);
 assert.doesNotMatch(detail, /rpc\(/);
 
