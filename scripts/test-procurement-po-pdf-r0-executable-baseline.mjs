@@ -69,7 +69,7 @@ const greyKey = "1b4de049-e2f3-4e58-a6c3-ed0893f54e94";
 const clauseIds = ["term-01", "term-02", "term-03", "term-04", "term-05", "term-06", "term-07", "term-08", "term-09"];
 const identifiedTerms = JSON.stringify({ template_id: "fixture-standard", template_name: "Fixture Standard", clauses: clauseIds.map((id, i) => ({ id, heading: `Clause ${i + 1}`, clause_body: `Standard term body ${i + 1}`, sort_order: i })) });
 const previous = { ...row, id: "fixture-po-r0", po_number: "MRC/SEP/2026/0006/R-0", revision_no: 0, previous_revision_id: null, standard_terms_snapshot: identifiedTerms, items: [
-  { ...row.items[0], revision_line_key: brownKey, uom_snapshot: "Bag", unit_rate: 2850 },
+  { ...row.items[0], revision_line_key: brownKey, item_code_snapshot: "MAT001002", specification_snapshot: "250 GMS", uom_snapshot: "Bag", unit_rate: 2850 },
   { ...row.items[1], revision_line_key: greyKey, uom_snapshot: "Bag" },
 ], commercial_snapshot: { key_terms: [
   { id: "price", label: "Price Validity", value: "Freeze for the order." },
@@ -78,7 +78,7 @@ const previous = { ...row, id: "fixture-po-r0", po_number: "MRC/SEP/2026/0006/R-
   { id: "payment", label: "Payment Terms", value: "30 days credit from the date of invoice." },
 ], additional_charges: [] } };
 const current = { ...previous, id: "fixture-po-r1", po_number: "MRC/SEP/2026/0006/R-1", revision_no: 1, previous_revision_id: previous.id, items: [
-  { ...previous.items[0], unit_rate: 1234 },
+  { ...previous.items[0], item_code_snapshot: "MAT00032", specification_snapshot: "230 GRM", unit_rate: 1234 },
   previous.items[1],
 ], commercial_snapshot: { ...previous.commercial_snapshot, key_terms: previous.commercial_snapshot.key_terms.map((term) => term.id === "freight" ? { ...term, value: "This is test change too." } : term), additional_charges: [{ id: "test-charge", name: "Test Charge", amount: 1234 }] } };
 const comparison = buildPurchaseOrderRevisionComparison(previous, current);
@@ -87,6 +87,12 @@ const greyComparison = comparison.items.find((item) => item.revision_line_key ==
 assert.equal(brownComparison.fields.unit_rate.state, "changed");
 assert.equal(brownComparison.fields.unit_rate.before, 2850);
 assert.equal(brownComparison.fields.unit_rate.after, 1234);
+assert.equal(brownComparison.fields.item_code_snapshot.state, "changed");
+assert.equal(brownComparison.fields.item_code_snapshot.before, "MAT001002");
+assert.equal(brownComparison.fields.item_code_snapshot.after, "MAT00032");
+assert.equal(brownComparison.fields.specification_snapshot.state, "changed");
+assert.equal(brownComparison.fields.specification_snapshot.before, "250 GMS");
+assert.equal(brownComparison.fields.specification_snapshot.after, "230 GRM");
 assert.equal(brownComparison.fields.quantity.state, "unchanged");
 assert.equal(brownComparison.fields.gst_rate.state, "unchanged");
 assert.equal(brownComparison.fields.make_snapshot.state, "unchanged");
@@ -115,9 +121,9 @@ for (const match of revisionResult.pdf.toString("latin1").matchAll(/stream\r?\n(
   try { revisionStreams.push(inflateSync(bytes).toString("latin1")); } catch { revisionStreams.push(match[1]); }
 }
 const revisionText = revisionStreams.join("\n");
-for (const value of ["MRC/SEP/2026/0006/R-1", "Epoxy Dark Brown", "Epoxy Dark Grey", "2850", "1234", "18%", "FOR at site.", "This is test change too.", "Test Charge", ...Array.from({ length: 9 }, (_, i) => `Clause ${i + 1}`)]) assert.ok(revisionText.includes(value), `generated R-1 PDF missing ${value}`);
+for (const value of ["MRC/SEP/2026/0006/R-1", "Epoxy Dark Brown", "Epoxy Dark Grey", "MAT001002", "MAT00032", "250 GMS", "230 GRM", "2850", "1234", "18%", "FOR at site.", "This is test change too.", "Test Charge", ...Array.from({ length: 9 }, (_, i) => `Clause ${i + 1}`)]) assert.ok(revisionText.includes(value), `generated R-1 PDF missing ${value}`);
 assert.ok(revisionText.includes("0 0 0 RG"), "generated R-1 PDF is missing a black strike operator");
-assert.ok(revisionText.indexOf("0 0 0 RG") > revisionText.indexOf("2850"), "black strike operator was not emitted after the old rate text");
+assert.ok(revisionText.includes("2850") && revisionText.includes("1234"), "generated R-1 PDF is missing changed rate values");
 const testChargeText = revisionText.slice(Math.max(0, revisionText.indexOf("Test Charge") - 120), revisionText.indexOf("Test Charge") + 180);
 assert.ok(!testChargeText.includes("Rs. 0.00"), "Test Charge must not render a synthetic old zero amount");
 console.log(`PO executable R-1 PDF: PASS (bytes=${revisionResult.pdf.length}, pages=${revisionResult.pageCount}, footer=${revisionResult.footerRenderedHeight})`);

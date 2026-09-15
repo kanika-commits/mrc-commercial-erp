@@ -13,7 +13,7 @@ export type RevisionItemComparison = {
   fields: Record<string, RevisionField<unknown>>;
 };
 
-const ITEM_FIELDS = ["item_name_snapshot", "specification_snapshot", "make_snapshot", "quantity", "uom_snapshot", "unit_rate", "discount_percent", "discount_amount", "taxable_amount", "gst_rate", "gst_amount", "total_amount", "remarks_snapshot"];
+const ITEM_FIELDS = ["item_name_snapshot", "item_code_snapshot", "specification_snapshot", "make_snapshot", "quantity", "uom_snapshot", "unit_rate", "discount_percent", "discount_amount", "taxable_amount", "gst_rate", "gst_amount", "total_amount", "remarks_snapshot"];
 
 export function normalizeRevisionText(value: unknown): string {
   return String(value ?? "").replace(/\r\n/g, "\n").split("\n").map((line) => line.trim()).filter(Boolean).join("\n").trim();
