@@ -40,8 +40,18 @@ export function visibleRevisionClause(clause: any) {
 }
 
 export function buildPurchaseOrderRevisionComparison(previous: any, current: any) {
-  const beforeItems: Map<string, any> = new Map((Array.isArray(previous?.items) ? previous.items : []).filter((item: any) => item?.revision_line_key).map((item: any) => [String(item.revision_line_key), item] as [string, any]));
-  const afterItems: Map<string, any> = new Map((Array.isArray(current?.items) ? current.items : []).filter((item: any) => item?.revision_line_key).map((item: any) => [String(item.revision_line_key), item] as [string, any]));
+  const previousItems = Array.isArray(previous?.items) ? previous.items : [];
+  const currentItems = Array.isArray(current?.items) ? current.items : [];
+  const legacySingleLineKey = previousItems.length === 1 && currentItems.length === 1 && !previousItems[0]?.revision_line_key && !currentItems[0]?.revision_line_key
+    ? "__legacy_single_line__"
+    : null;
+  const itemKey = (item: any) => item?.revision_line_key ? String(item.revision_line_key) : legacySingleLineKey;
+  const keyedEntries = (items: any[]) => items
+    .map((item: any) => [itemKey(item), item] as [string | null, any])
+    .filter(([key]: [string | null, any]) => key)
+    .map((entry: [string | null, any]) => [entry[0] as string, entry[1]] as [string, any]);
+  const beforeItems: Map<string, any> = new Map(keyedEntries(previousItems));
+  const afterItems: Map<string, any> = new Map(keyedEntries(currentItems));
   const items: RevisionItemComparison[] = [];
   const keys = new Set([...beforeItems.keys(), ...afterItems.keys()]);
   for (const key of keys) {

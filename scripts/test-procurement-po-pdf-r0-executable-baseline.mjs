@@ -128,6 +128,21 @@ const testChargeText = revisionText.slice(Math.max(0, revisionText.indexOf("Test
 assert.ok(!testChargeText.includes("Rs. 0.00"), "Test Charge must not render a synthetic old zero amount");
 console.log(`PO executable R-1 PDF: PASS (bytes=${revisionResult.pdf.length}, pages=${revisionResult.pageCount}, footer=${revisionResult.footerRenderedHeight})`);
 
+const legacyPrevious = { ...previous, id: "live-shaped-r0", po_number: "GLC/SEP/2026/0009/R-0", revision_no: 0, items: [{ ...previous.items[0], revision_line_key: null, item_name_snapshot: "SS 316 Chair Type Clamp 50 – 65 mm", item_code_snapshot: "MAT001002", specification_snapshot: "250 GMS" }] };
+const legacyCurrent = { ...legacyPrevious, id: "live-shaped-r1", po_number: "GLC/SEP/2026/0009/R-1", revision_no: 1, previous_revision_id: legacyPrevious.id, items: [{ ...legacyPrevious.items[0], revision_line_key: null, item_name_snapshot: "Chair Clamp 50X65MM", item_code_snapshot: "MAT000032", specification_snapshot: "230 GRM" }] };
+const legacyPresentation = buildPurchaseOrderRevisionPdfRenderModel(legacyCurrent, buildPurchaseOrderRevisionComparison(legacyPrevious, legacyCurrent));
+const legacyResult = await makePdf(legacyCurrent, { employee_name: "Test Creator", email: "creator@example.test", designation: "Procurement Manager" }, { employee_name: "Test Approver", company: "MRC Infracon Limited", designation: "Director", signatureBlock: "Approved By", signatureAsset: null }, { letterhead: { header: image, footer: image, fullPage: false }, deliveryCompany: "MRC Infracon Limited" }, legacyPresentation);
+const legacyStreams = [];
+for (const match of legacyResult.pdf.toString("latin1").matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
+  const bytes = Buffer.from(match[1], "latin1");
+  try { legacyStreams.push(inflateSync(bytes).toString("latin1")); } catch { legacyStreams.push(match[1]); }
+}
+const legacyText = legacyStreams.join("\n");
+for (const value of ["SS 316 Chair Type Clamp 50", "Chair Clamp 50X65MM", "MAT001002", "MAT000032", "250 GMS", "230 GRM"]) assert.ok(legacyText.includes(value), `legacy null-key R-1 PDF missing ${value}`);
+assert.ok(legacyText.includes("0.72 0.08 0.08 rg"), "legacy null-key R-1 PDF missing red styling operator");
+assert.ok(legacyText.includes("0 0 0 RG"), "legacy null-key R-1 PDF missing black strike styling operator");
+console.log(`PO executable legacy NULL-key R-1 PDF: PASS (bytes=${legacyResult.pdf.length}, pages=${legacyResult.pageCount})`);
+
 const longTerms = JSON.stringify({ template_id: "fixture-long", clauses: Array.from({ length: 40 }, (_, i) => ({ id: `long-${i + 1}`, heading: `Long clause heading ${i + 1}`, clause_body: `This is a deliberately long standard term body for clause ${i + 1} that must wrap across measured lines without colliding with the next clause or overflowing the page boundary.`, sort_order: i })) });
 const longRow = { ...row, standard_terms_snapshot: longTerms };
 const longResult = await makePdf(longRow, { employee_name: "Test Creator", email: "creator@example.test", designation: "Procurement Manager" }, { employee_name: "Test Approver", company: "MRC Infracon Limited", designation: "Director", signatureBlock: "Approved By", signatureAsset: null }, { letterhead: { header: image, footer: image, fullPage: false }, deliveryCompany: "MRC Infracon Limited" });

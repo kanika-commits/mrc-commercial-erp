@@ -521,6 +521,7 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
 
   heading("ITEMS", 19);
   const diffs = Number(row.revision_no || 0) > 0 && revisionRenderModel ? new Map(revisionRenderModel.items.map((item: any) => [String(item.revision_line_key), item])) : new Map();
+  const legacySingleLineKey = (row.items || []).length === 1 && !row.items[0]?.revision_line_key ? "__legacy_single_line__" : null;
   const renderedItems: Array<Array<string | Array<{ value: string; red?: boolean; strike?: boolean }>>> = [];
   const itemFields = ["item_name_snapshot", "item_code_snapshot", "make_snapshot", "quantity", "uom_snapshot", "unit_rate", "gst_rate", "gst_amount", "total_amount"];
   const formatItemValue = (field: string, item: any) => {
@@ -538,7 +539,8 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
     return revisionRuns(fieldDiff, (value) => formatItemValue(field, value));
   };
   for (const [index, item] of (row.items || []).entries()) {
-    const diff = item?.revision_line_key ? diffs.get(String(item.revision_line_key)) : null;
+    const diffKey = item?.revision_line_key ? String(item.revision_line_key) : legacySingleLineKey;
+    const diff = diffKey ? diffs.get(diffKey) : null;
     const itemCell = (field: string) => redlineCell(field, item, diff);
     renderedItems.push([
       String(index + 1),
