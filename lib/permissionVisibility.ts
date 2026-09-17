@@ -108,7 +108,7 @@ const PERMISSION_PRESENTATION: Record<string, VisiblePermissionPresentation> = {
     visible_group: "Reports",
     visible_name: "Reports",
     visible_sort_order: 10,
-    visible_actions: ["view", "export"],
+    visible_actions: ["view"],
   },
 
   hr_employees: {

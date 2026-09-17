@@ -70,7 +70,7 @@ const ACTION_LABELS: Record<PermissionAction, string> = {
 
 const MODULE_ACTIONS: Record<string, PermissionAction[]> = {
   dashboard: ["view"],
-  reports: ["view", "export"],
+  reports: ["view"],
 
   organizations: ["view", "add", "edit", "delete"],
   users: ["view", "add", "edit", "delete"],
