@@ -22,7 +22,7 @@ const fontScales: Array<{
   {
     value: "comfortable",
     label: "Comfortable",
-    description: "Default ConstructIQ spacing and type scale.",
+    description: "Default SiteQube spacing and type scale.",
   },
   {
     value: "large",
@@ -96,7 +96,7 @@ export default function AppearanceSettingsPage() {
       <div>
         <h1 className="text-3xl font-bold">Appearance</h1>
         <p className="text-gray-500">
-          Controlled design settings for the ConstructIQ Industrial system.
+          Controlled design settings for the SiteQube Industrial system.
         </p>
       </div>
 
@@ -169,7 +169,7 @@ export default function AppearanceSettingsPage() {
               }
             />
             <span className="font-semibold">
-              ConstructIQ Industrial default
+              SiteQube Industrial default
             </span>
           </div>
           <p className="mt-2 text-sm text-gray-500">

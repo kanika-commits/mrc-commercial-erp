@@ -16,7 +16,7 @@ assert.match(labourValidate, /downloadDriveFile/, "Labour Import validation must
 assert.doesNotMatch(pageSource, /\/api\/labour\/import\/folder/, "Labour Import visible flow must not call folder listing for direct-link workbooks");
 assert.match(labourExecute, /downloadDriveFile/, "Labour Import execution must still use the same Drive file download helper for ERP-owned copies");
 assert.match(driveHelper, /action: "download_file"/, "shared Drive helper keeps the Employee Import-supported download_file action");
-assert.match(pageSource, /Allow ConstructIQ to access and import the available worker documents from Google Drive\?/, "Labour Import must use a confirmation step before direct document access");
+assert.match(pageSource, /Allow SiteQube to access and import the available worker documents from Google Drive\?/, "Labour Import must use a confirmation step before direct document access");
 assert.doesNotMatch(pageSource, /Unsupported action/, "Labour Import UI must not expose raw unsupported-action text");
 
 console.log("Labour import Drive consistency tests passed.");

@@ -124,7 +124,7 @@ export function labourMonthlyAttendancePdf(context: any, rows: any[]) {
 }
 export async function labourMonthlyAttendanceXlsx(context: any, rows: any[]) {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "ConstructIQ";
+  workbook.creator = "SiteQube";
   const days = Number(context.days || 31);
   const dayHeaders = Array.from({ length: days }, (_, index) => String(index + 1).padStart(2, "0"));
   const metadata = [

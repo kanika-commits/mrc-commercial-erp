@@ -64,7 +64,7 @@ assert.match(uploadRoute, /mapping,/, "upload response must include the inserted
 assert.doesNotMatch(uploadRoute, /listDriveFolderFiles/, "upload must not access Drive before user confirmation");
 
 assert.match(pageSource, />Continue<\/button>/, "UI must expose the same concise confirmation action as Employee Import");
-assert.match(pageSource, /Allow ConstructIQ to access and import the available worker documents from Google Drive\?/, "UI must ask before direct Drive document access");
+assert.match(pageSource, /Allow SiteQube to access and import the available worker documents from Google Drive\?/, "UI must ask before direct Drive document access");
 assert.doesNotMatch(pageSource, /Google Drive Document Folder Link/, "UI must not ask for a folder link in the direct-link workflow");
 assert.doesNotMatch(pageSource, /Paste the Google Drive folder link/, "folder-link input must not appear in the direct-link workflow");
 assert.doesNotMatch(pageSource, /Add Folder Link Manually/, "UI must not expose a separate manual folder-entry workflow");
@@ -78,7 +78,7 @@ assert.match(folderRoute, /The Google Drive document source could not be detecte
 assert.match(folderRoute, /status: "detected"/, "entered folder source must be persisted before folder listing");
 assert.match(folderRoute, /\.\.\.currentMapping/, "folder source persistence must preserve existing master mappings and folder metadata");
 assert.match(folderRoute, /listDriveFolderFiles\(\{ folderId \}\)/, "confirmed verification must use the shared Drive listing helper");
-assert.match(pageSource, /ConstructIQ could not access the worker documents\./, "UI must show a friendly Drive access failure");
+assert.match(pageSource, /SiteQube could not access the worker documents\./, "UI must show a friendly Drive access failure");
 assert.match(folderRoute, /Enter a valid Google Drive folder link\./, "folder endpoint must reject invalid folder URLs clearly");
 assert.doesNotMatch(pageSource, /Unsupported action/, "UI must not expose raw Apps Script unsupported-action errors");
 assert.match(validateRoute, /folderFilesByName\(mapping\)/, "revalidation must reuse persisted folder inventory");

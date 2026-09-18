@@ -96,7 +96,7 @@ const driveSource = fs.readFileSync(new URL("../src/lib/googleDrive.ts", import.
 assert.ok(driveSource.includes("export function extractGoogleDriveFileId"), "shared Google Drive helper exposes reusable file ID extraction");
 
 const pageSource = fs.readFileSync(new URL("../app/labour/workers/import/page.tsx", import.meta.url), "utf8");
-assert.ok(pageSource.includes("Allow ConstructIQ to access and import the available worker documents from Google Drive?"), "Labour Import UI uses the approved direct-link document-access confirmation language");
+assert.ok(pageSource.includes("Allow SiteQube to access and import the available worker documents from Google Drive?"), "Labour Import UI uses the approved direct-link document-access confirmation language");
 assert.ok(pageSource.includes("Continue"), "Labour Import UI exposes a concise confirmation action");
 assert.ok(!pageSource.includes("Paste the Google Drive folder link"), "Labour Import UI does not require a folder link for direct document imports");
 assert.ok(!pageSource.includes("Upload ZIP"), "Labour Import UI no longer shows ZIP upload");

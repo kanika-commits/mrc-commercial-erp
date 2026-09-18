@@ -10,7 +10,7 @@ assert.match(pageSource, /entry\?\.original_file_name/, "document display must s
 assert.match(pageSource, /rowMessage \? rowMessage\.replace/, "unmatched document badges must display the exact matching reason");
 assert.match(pageSource, /documentSummary\(n, row, documentAccessChecked\)/, "results table must use a readable document summary");
 assert.match(pageSource, /Worker Preview/, "page must show a worker preview before document access");
-assert.match(pageSource, /Allow ConstructIQ to access and import the available worker documents from Google Drive\?/, "review page must use the shared direct document-access confirmation wording");
+assert.match(pageSource, /Allow SiteQube to access and import the available worker documents from Google Drive\?/, "review page must use the shared direct document-access confirmation wording");
 assert.match(pageSource, />Continue<\/button>/, "review page must expose the concise confirmation action");
 assert.match(pageSource, /Checking worker documents\.\.\./, "document access must run behind a single checking state");
 assert.match(pageSource, /Final Review/, "document-checked batches must show a final review");

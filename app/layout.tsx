@@ -15,8 +15,11 @@ const jetBrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ConstructIQ",
-  description: "Enterprise Construction Platform",
+  title: "SiteQube",
+  description: "SiteQube ERP workspace",
+  icons: {
+    icon: "/icon.png",
+  },
 };
 
 export default function RootLayout({

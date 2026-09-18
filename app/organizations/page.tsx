@@ -48,7 +48,7 @@ export default async function OrganizationsPage() {
         <div>
           <h1 className="text-3xl font-bold">Organizations</h1>
           <p className="text-gray-500">
-            Manage customer organizations using ConstructIQ.
+            Manage customer organizations using SiteQube.
           </p>
         </div>
 

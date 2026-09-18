@@ -13,7 +13,7 @@ function mappingObject(value: unknown): Record<string, any> {
 function friendlyAccessError(message: string) {
   if (/valid google drive folder link/i.test(message)) return message;
   if (/document source could not be detected/i.test(message)) return message;
-  return "ConstructIQ could not access this folder. Check that the folder is shared with the configured Drive integration and try again.";
+  return "SiteQube could not access this folder. Check that the folder is shared with the configured Drive integration and try again.";
 }
 
 export async function POST(request: Request) {

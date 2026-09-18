@@ -455,7 +455,7 @@ export async function listDriveFolderFiles(input: DriveFolderListInput) {
   if (!response.ok || !result?.success) {
     const message = firstString(result?.error, result?.message);
     if (/unsupported action/i.test(message)) {
-      throw new Error("ConstructIQ could not access this folder. Share it with the configured Drive integration and try again. The configured Drive integration must support folder file listing.");
+      throw new Error("SiteQube could not access this folder. Share it with the configured Drive integration and try again. The configured Drive integration must support folder file listing.");
     }
     throw new Error(result?.error || "Failed to list Google Drive folder files.");
   }

@@ -296,7 +296,7 @@ export default function LabourImportPage() {
       setStep("review");
     } catch (error: any) {
       setStep("permission");
-      setMessage({ type: "error", text: error.message || "ConstructIQ could not access the worker documents." });
+      setMessage({ type: "error", text: error.message || "SiteQube could not access the worker documents." });
     } finally {
       setBusy("");
     }
@@ -501,8 +501,8 @@ export default function LabourImportPage() {
         {batchId && !importCompleted && step === "permission" && (
           <section className="rounded-lg border bg-white p-4 shadow-sm">
             <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Document Access</p>
-            <h2 className="mt-1 text-lg font-semibold">Allow ConstructIQ to access and import the available worker documents from Google Drive?</h2>
-            <p className="mt-1 text-sm text-slate-600">ConstructIQ will verify each document link shown in the worker rows and copy available files into private ERP storage during import.</p>
+            <h2 className="mt-1 text-lg font-semibold">Allow SiteQube to access and import the available worker documents from Google Drive?</h2>
+            <p className="mt-1 text-sm text-slate-600">SiteQube will verify each document link shown in the worker rows and copy available files into private ERP storage during import.</p>
             <div className="mt-4 flex flex-wrap gap-2">
               <button type="button" disabled={Boolean(busy)} onClick={() => setStep("preview")} className="inline-flex h-10 items-center justify-center rounded-md border bg-white px-4 text-sm font-semibold disabled:opacity-50">Back</button>
               <button type="button" disabled={!batchId || Boolean(busy)} onClick={verifyFolder} className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white disabled:opacity-50">Continue</button>

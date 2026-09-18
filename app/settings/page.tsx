@@ -36,7 +36,7 @@ export default function SettingsPage() {
           >
             <h2 className="text-xl font-semibold text-slate-950">Appearance</h2>
             <p className="mt-2 text-sm leading-6 text-slate-500">
-              Adjust ConstructIQ display density and typography on this device.
+              Adjust SiteQube display density and typography on this device.
             </p>
           </Link>
         )}

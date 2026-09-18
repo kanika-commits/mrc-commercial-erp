@@ -14,7 +14,7 @@ assert.match(pageSource, /Save Mapping & Continue/, "mapping stage must continue
 assert.match(pageSource, /Worker Preview/, "worker preview stage must exist before document access");
 assert.match(
   pageSource,
-  /Allow ConstructIQ to access and import the available worker documents from Google Drive\?/,
+  /Allow SiteQube to access and import the available worker documents from Google Drive\?/,
   "permission stage must use approved direct-link user-facing copy"
 );
 assert.match(pageSource, /Checking worker documents\.\.\./, "checking stage must show a clear processing state");
