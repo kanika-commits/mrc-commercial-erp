@@ -49,7 +49,21 @@ export async function GET(request: Request) {
     const submitters = dateStatuses.map((entry: any) => entry.submitted_by_name || entry.submitted_by_email).filter(Boolean);
     const submittedTimes = dateStatuses.map((entry: any) => entry.submitted_at).filter(Boolean).sort().reverse();
     const context = { company_name: company?.company_name || company?.company_code || "-", site_name: site?.site_name || site?.site_code || "-", work_date: attendanceDate, status: status === "submitted" ? "Submitted" : status === "finalized" ? "Finalized" : status === "reopened" ? "Reopened" : "Draft", submitted_by_name: submitters.join(", ") || "Not Submitted", submitted_at: submittedTimes.length ? formatAttendanceExportTimestamp(submittedTimes[0]) : "Not Submitted" };
-    const body = format === "xlsx" ? labourAttendanceXlsx(context, rows) : labourAttendancePdf(context, rows);
+    let excelRows = rows;
+    if (format === "xlsx") {
+      const labourWorkerIds = Array.from(new Set(rows.map((row: any) => row.labour_worker_id).filter(Boolean)));
+      if (labourWorkerIds.length) {
+        const { data: workers, error: workerError } = await access.admin
+          .from("labour_workers")
+          .select("id, status")
+          .eq("organization_id", first.organization_id)
+          .in("id", labourWorkerIds);
+        if (workerError) throw workerError;
+        const workerStatusById = new Map((workers || []).map((worker: any) => [worker.id, worker.status]));
+        excelRows = rows.map((row: any) => ({ ...row, worker_status: workerStatusById.get(row.labour_worker_id) || null }));
+      }
+    }
+    const body = format === "xlsx" ? await labourAttendanceXlsx(context, excelRows) : labourAttendancePdf(context, rows);
     const extension = format === "xlsx" ? "xlsx" : "pdf";
     const filename = `Labour_Attendance_${sanitizeFilename(context.site_name)}_${context.work_date || "register"}.${extension}`;
     return new Response(body as BodyInit, { headers: { "Content-Type": format === "xlsx" ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "application/pdf", "Content-Disposition": `attachment; filename="${filename}"`, "Cache-Control": "no-store" } });

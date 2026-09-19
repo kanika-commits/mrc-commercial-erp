@@ -1148,7 +1148,7 @@ export async function loadStandardApprovalRows(access: any, input: {
         contractor_name: row.contractor_name_snapshot || "-", period_month: snapshotPeriod.period_month, work_date: snapshot.attendance_date,
         labour_worker_id: row.labour_worker_id, labour_code: row.labour_code_snapshot, labour_name: row.worker_name_snapshot,
         category: row.trade_snapshot || "-", first_half_present: row.first_half_present, second_half_present: row.second_half_present,
-        deployment_id: row.deployment_id, daily_rate: snapshotDeploymentById.get(row.deployment_id)?.wage_rate ?? null,
+        deployment_id: row.deployment_id, daily_rate_snapshot: row.daily_rate_snapshot ?? null, daily_rate: snapshotDeploymentById.get(row.deployment_id)?.wage_rate ?? null,
         overtime_minutes: row.overtime_minutes, bonus_minutes: row.bonus_minutes, status: row.derived_status,
         register_status: resolveStandardApprovalStatus(snapshotPeriod, input.workDate || snapshot.attendance_date, true), submitted_by_name: snapshot.submitted_by_name, submitted_by_email: snapshot.submitted_by_email,
         submitted_at: snapshot.submitted_at, attendance_exception: false,
