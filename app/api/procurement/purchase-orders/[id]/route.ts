@@ -1,9 +1,11 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { adminClient, applyCompanySiteAccess, applyOrganizationAccess, jsonError, requireProcurementAny, requireProcurementPermission, text } from "@/lib/serverProcurementAccess";
 import { insertDeleteAudit } from "@/lib/serverDeleteAudit";
 import { createPrivateStorageAdapter } from "@/lib/storage/privateStorage";
 import { loadFrozenSupportingDocuments } from "@/lib/procurement/poSupportingDocumentIntegrity";
 import { buildPurchaseOrderStandardTermsSnapshot, parsePurchaseOrderStandardTerms } from "@/lib/procurement/standardTerms";
+import { archiveApprovedPo } from "@/lib/procurement/poOfficialArtifact.server";
+import { renderApprovedPurchaseOrderBasePdf } from "@/lib/procurement/poPdfBaseGeneration.server";
 const MODULE = "procurement_purchase_orders";
 function actor(auth: any) { return { user_id: auth.user.id, name: text(auth.user.user_metadata?.full_name || auth.user.user_metadata?.name || auth.user.email), email: auth.user.email || null }; }
 async function load(request: Request, id: string, action: string) {
@@ -71,4 +73,25 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const packageState = await loadFrozenSupportingDocuments(result.admin, result.row);
     if (packageState.integrityError) return jsonError(packageState.integrityError, 409);
   }
-  const rpc = await result.admin.rpc("transition_procurement_purchase_order_atomic", { p_purchase_order_id: id, p_organization_id: result.row.organization_id, p_action: action, p_actor: actor(result.auth), p_note: text(body.note) || null }); if (rpc.error) throw rpc.error; return NextResponse.json({ result: rpc.data }); } catch (error: any) { return jsonError(error.message || "Failed to update Purchase Order workflow.", 500); } }
+  const rpc = await result.admin.rpc("transition_procurement_purchase_order_atomic", { p_purchase_order_id: id, p_organization_id: result.row.organization_id, p_action: action, p_actor: actor(result.auth), p_note: text(body.note) || null }); if (rpc.error) throw rpc.error;
+  if (action === "approve" && rpc.data?.status === "approved") {
+    const organizationId = result.row.organization_id;
+    const generatedBy = result.auth.user.id;
+    try {
+      after(async () => {
+        try {
+          await archiveApprovedPo(result.admin, {
+            organizationId,
+            purchaseOrderId: id,
+            generatedBy,
+            render: () => renderApprovedPurchaseOrderBasePdf(result.admin, organizationId, id),
+          });
+        } catch (archiveError) {
+          console.error("Approved Purchase Order succeeded but official PDF archiving failed", { purchaseOrderId: id, organizationId, error: archiveError });
+        }
+      });
+    } catch (scheduleError) {
+      console.error("Approved Purchase Order succeeded but official PDF archive scheduling failed", { purchaseOrderId: id, organizationId, error: scheduleError });
+    }
+  }
+  return NextResponse.json({ result: rpc.data }); } catch (error: any) { return jsonError(error.message || "Failed to update Purchase Order workflow.", 500); } }
