@@ -5,6 +5,7 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { sortCompanies } from "@/lib/companyOrdering";
 import AlertMessage from "@/components/AlertMessage";
+import { mapPaymentGridPaste, matchPaymentOption, normalizePaymentDate, transferredPaymentAmount } from "@/lib/payments/paymentGrid";
 
 const PAYMENT_TYPES = [
   "Work Order",
@@ -188,9 +189,7 @@ export default function NewPaymentPage() {
   }
 
   function transferred(row: Row) {
-    const total = Math.round(Number(row.total_payment || 0));
-    const tds = Math.round(Number(row.tds_amount || 0));
-    return total - tds;
+    return transferredPaymentAmount(row.total_payment, row.tds_amount);
   }
 
   function newPaymentRow(): Row {
@@ -260,14 +259,13 @@ export default function NewPaymentPage() {
     Other: "Reference / Remarks",
   };
 
-  async function loadVendorForWorkOrder(index: number, workOrderId: string) {
+  async function fetchVendorsForWorkOrder(workOrderId: string) {
     const {
       data: { session },
     } = await supabase.auth.getSession();
 
     if (!session?.access_token) {
-      setMessage("Please sign in again to load vendor for work order.");
-      return;
+      throw new Error("Please sign in again to load vendor for work order.");
     }
 
     const response = await fetch(
@@ -282,8 +280,7 @@ export default function NewPaymentPage() {
     const result = await response.json();
 
     if (!response.ok) {
-      setMessage(result.error || "Failed to load vendor for work order.");
-      return;
+      throw new Error(result.error || "Failed to load vendor for work order.");
     }
 
     const linkedVendors = (result.all_vendors?.[workOrderId] || [])
@@ -298,28 +295,27 @@ export default function NewPaymentPage() {
         ? linkedVendors[0]
         : result.vendors?.[workOrderId];
 
-    if (linkedVendors.length === 0 && !linkedVendor?.vendor_id) {
-      setMessage("No vendor linked to selected Work Order");
-      setRows((prev) =>
-        prev.map((row, i) =>
-          i === index ? { ...row, vendor_id: "", vendor_name: "", linked_vendors: [] } : row
-        )
-      );
-      return;
-    }
+    return { linkedVendors, linkedVendor };
+  }
 
-    setRows((prev) =>
-      prev.map((row, i) =>
-        i === index
-          ? {
-              ...row,
-              linked_vendors: linkedVendors,
-              vendor_id: linkedVendors.length === 1 ? linkedVendor.vendor_id || "" : "",
-              vendor_name: linkedVendors.length === 1 ? linkedVendor.vendor_name || "" : "",
-            }
-          : row
-      )
-    );
+  async function loadVendorForWorkOrder(index: number, workOrderId: string) {
+    try {
+      const { linkedVendors, linkedVendor } = await fetchVendorsForWorkOrder(workOrderId);
+      if (linkedVendors.length === 0 && !linkedVendor?.vendor_id) {
+        setMessage("No vendor linked to selected Work Order");
+        setRows((prev) => prev.map((row, i) => i === index ? { ...row, vendor_id: "", vendor_name: "", linked_vendors: [] } : row));
+        return;
+      }
+
+      setRows((prev) => prev.map((row, i) => i === index ? {
+        ...row,
+        linked_vendors: linkedVendors,
+        vendor_id: linkedVendors.length === 1 ? linkedVendor.vendor_id || "" : "",
+        vendor_name: linkedVendors.length === 1 ? linkedVendor.vendor_name || "" : "",
+      } : row));
+    } catch (error: any) {
+      setMessage(error.message || "Failed to load vendor for work order.");
+    }
   }
 
   function updateRow(index: number, field: keyof Row, value: string) {
@@ -426,49 +422,174 @@ export default function NewPaymentPage() {
     });
   }
 
-  function handlePaste(
-    e: React.ClipboardEvent<HTMLInputElement>,
-    rowIndex: number
-  ) {
-    const text = e.clipboardData.getData("text");
-    if (!text.includes("\t") && !text.includes("\n")) return;
-
+  async function handlePaste(e: React.ClipboardEvent<HTMLElement>, startRow: number, startColumn: number) {
+    const clipboardText = e.clipboardData.getData("text");
+    if (!clipboardText.includes("\t") && !clipboardText.includes("\n")) return;
     e.preventDefault();
+    setMessage("");
 
-    const pastedRows = text
-      .trim()
-      .split("\n")
-      .map((line) => line.split("\t"));
+    const pasteRows = mapPaymentGridPaste(clipboardText, startRow, startColumn);
+    const nextRows = [...rows];
+    const changedWorkOrderRows: number[] = [];
+    const pendingWorkOrderParty = new Map<number, string>();
 
-    setRows((prev) => {
-      const updated = [...prev];
+    try {
+      for (const pasteRow of pasteRows) {
+        while (nextRows.length <= pasteRow.rowIndex) nextRows.push(newPaymentRow());
+        let row = { ...nextRows[pasteRow.rowIndex] };
+        const values = pasteRow.values;
 
-      while (updated.length < rowIndex + pastedRows.length) {
-        updated.push(newPaymentRow());
+        if (values.company !== undefined) {
+          if (!values.company) {
+            if (row.company_id && values.from_account === undefined) row.company_bank_account_id = "";
+            row.company_id = "";
+          }
+          else {
+            const company = matchPaymentOption(values.company, companies, (item) => [item.id, item.company_name, item.company_code, `${item.company_code || ""} - ${item.company_name || ""}`, `${item.company_name || ""} (${item.company_code || ""})`]);
+            if (!company) throw new Error(`Paste rejected: Company “${values.company}” does not match one available company.`);
+            if (row.company_id !== company.id && values.from_account === undefined) row.company_bank_account_id = "";
+            row.company_id = company.id;
+          }
+        }
+
+        if (values.payment_type !== undefined && values.payment_type) {
+          const paymentType = PAYMENT_TYPES.find((value) => value.toLowerCase() === values.payment_type!.toLowerCase());
+          if (!paymentType) throw new Error(`Paste rejected: Payment Against “${values.payment_type}” is not an available option.`);
+          if (row.payment_type !== paymentType) row = { ...row, payment_type: paymentType, reference_number: "", work_order_id: "", invoice_id: "", to_company_bank_account_id: "", vendor_id: "", vendor_name: "", linked_vendors: [] };
+        }
+
+        if (values.reference !== undefined) {
+          if (row.payment_type === "Work Order") {
+            if (!values.reference) {
+              row = { ...row, reference_number: "", work_order_id: "", invoice_id: "", vendor_id: "", vendor_name: "", linked_vendors: [] };
+            } else {
+              const workOrder = matchPaymentOption(values.reference, workOrders, (item) => [item.id, item.wo_number, workOrderLabel(item)]);
+              if (!workOrder) throw new Error(`Paste rejected: Work Order “${values.reference}” does not match an available Work Order.`);
+              row = { ...row, company_id: row.company_id || workOrder.company_id || defaultCompanyId, reference_number: workOrder.wo_number || "", work_order_id: workOrder.id, invoice_id: "", vendor_id: "", vendor_name: "", linked_vendors: [] };
+              changedWorkOrderRows.push(pasteRow.rowIndex);
+            }
+          } else {
+            row.reference_number = values.reference;
+          }
+        }
+
+        if (values.from_account !== undefined) {
+          if (!values.from_account) row.company_bank_account_id = "";
+          else {
+            const availableAccounts = accountsForCompany(row.company_id);
+            const account = matchPaymentOption(values.from_account, availableAccounts, (item) => [item.id, accountLabel(item), item.bank_name, item.account_number]);
+            if (!account) throw new Error(`Paste rejected: From Account “${values.from_account}” does not match an available account for this company.`);
+            row.company_bank_account_id = account.id;
+          }
+        }
+
+        if (values.payment_date !== undefined) {
+          const paymentDate = normalizePaymentDate(values.payment_date);
+          if (paymentDate === null) throw new Error(`Paste rejected: Payment Date “${values.payment_date}” is not a valid date.`);
+          row.payment_date = paymentDate;
+        }
+        if (values.total_payment !== undefined) row.total_payment = onlyNumber(values.total_payment);
+        if (values.tds_amount !== undefined) row.tds_amount = onlyNumber(values.tds_amount);
+
+        if (values.party !== undefined) {
+          if (row.payment_type === "Work Order") {
+            if (values.party) pendingWorkOrderParty.set(pasteRow.rowIndex, values.party);
+            else { row.vendor_id = ""; row.vendor_name = ""; }
+          } else if (row.payment_type === "Purchase Order") {
+            if (!values.party) { row.vendor_id = ""; row.vendor_name = ""; }
+            else {
+              const vendor = matchPaymentOption(values.party, purchaseOrderVendors, (item) => [item.id, item.vendor_name]);
+              if (!vendor) throw new Error(`Paste rejected: Vendor / Party “${values.party}” does not match an available vendor.`);
+              row.vendor_id = vendor.id;
+              row.vendor_name = vendor.vendor_name || "";
+            }
+          } else if (row.payment_type === "Internal Transfer") {
+            if (!values.party) row.to_company_bank_account_id = "";
+            else {
+              const account = matchPaymentOption(values.party, bankAccounts.filter((item) => item.id !== row.company_bank_account_id), (item) => [item.id, `${companyLabel(item.company_id)} - ${accountLabel(item)}`, accountLabel(item), item.bank_name, item.account_number]);
+              if (!account) throw new Error(`Paste rejected: To Account “${values.party}” does not match an available account.`);
+              row.to_company_bank_account_id = account.id;
+              row.reference_number = `Internal Transfer to ${companyLabel(account.company_id)} - ${accountLabel(account)}`;
+            }
+          } else {
+            row.vendor_id = "";
+            row.vendor_name = values.party;
+          }
+        }
+
+        nextRows[pasteRow.rowIndex] = row;
       }
 
-      pastedRows.forEach((cols, i) => {
-        const targetIndex = rowIndex + i;
+      const vendorOptionsByWorkOrder = new Map<string, { linkedVendors: any[]; linkedVendor: any }>();
+      const workOrderRows = new Set([...changedWorkOrderRows, ...Array.from(pendingWorkOrderParty.keys())]);
+      const workOrderIds = Array.from(new Set(Array.from(workOrderRows).map((index) => nextRows[index]?.work_order_id).filter(Boolean)));
+      await Promise.all(workOrderIds.map(async (workOrderId) => {
+        const cached = nextRows.find((row) => row.work_order_id === workOrderId && row.linked_vendors.length > 0);
+        if (cached) vendorOptionsByWorkOrder.set(workOrderId, { linkedVendors: cached.linked_vendors, linkedVendor: cached.linked_vendors.length === 1 ? cached.linked_vendors[0] : null });
+        else vendorOptionsByWorkOrder.set(workOrderId, await fetchVendorsForWorkOrder(workOrderId));
+      }));
 
-        updated[targetIndex] = {
-          company_id: defaultCompanyId,
-          payment_type: cols[0] || "Work Order",
-          reference_number: cols[1] || "",
-          work_order_id: "",
-          invoice_id: "",
-          company_bank_account_id: "",
-          to_company_bank_account_id: "",
-          vendor_id: "",
-          vendor_name: cols[3] || "",
-          linked_vendors: [],
-          payment_date: cols[4] || "",
-          total_payment: onlyNumber(cols[5] || ""),
-          tds_amount: onlyNumber(cols[6] || "0"),
-        };
-      });
+      for (const rowIndex of workOrderRows) {
+        const row = nextRows[rowIndex];
+        if (!row?.work_order_id) continue;
+        const options = vendorOptionsByWorkOrder.get(row.work_order_id);
+        if (!options) continue;
+        row.linked_vendors = options.linkedVendors;
+        const pastedParty = pendingWorkOrderParty.get(rowIndex);
+        if (pastedParty) {
+          const vendorChoices = options.linkedVendor && !options.linkedVendors.some((item) => item.vendor_id === options.linkedVendor.vendor_id)
+            ? [...options.linkedVendors, options.linkedVendor]
+            : options.linkedVendors;
+          const vendor = matchPaymentOption(pastedParty, vendorChoices, (item) => [item.vendor_id, item.vendor_name, `${item.vendor_name} — ${item.vendor_role}`]);
+          if (!vendor) throw new Error(`Paste rejected: Vendor / Party “${pastedParty}” is not linked to the selected Work Order.`);
+          row.vendor_id = vendor.vendor_id;
+          row.vendor_name = vendor.vendor_name || "";
+        } else if (options.linkedVendors.length === 1) {
+          row.vendor_id = options.linkedVendor?.vendor_id || "";
+          row.vendor_name = options.linkedVendor?.vendor_name || "";
+        }
+      }
 
-      return updated;
-    });
+      setRows(nextRows);
+      setMessage(`Pasted ${pasteRows.length} payment row${pasteRows.length === 1 ? "" : "s"}.`);
+    } catch (error: any) {
+      setMessage(error.message || "Paste rejected. Check the pasted values against the available options.");
+    }
+  }
+
+  function handleGridKeyDown(event: React.KeyboardEvent<HTMLTableSectionElement>) {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return;
+    const cells = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("[data-payment-grid-cell='true']"))
+      .filter((cell) => !cell.hasAttribute("readonly") && !cell.hasAttribute("disabled"));
+    const currentIndex = cells.indexOf(target);
+    if (currentIndex < 0) return;
+
+    if (event.key === "Tab") {
+      const nextIndex = currentIndex + (event.shiftKey ? -1 : 1);
+      if (nextIndex >= 0 && nextIndex < cells.length) {
+        event.preventDefault();
+        cells[nextIndex]?.focus();
+      }
+      return;
+    }
+
+    if (event.key === "Enter" && target instanceof HTMLInputElement && target.type !== "date") {
+      event.preventDefault();
+      (cells[currentIndex + 1] || cells[0])?.focus();
+      return;
+    }
+
+    if (target instanceof HTMLInputElement && target.type === "text" && ["ArrowUp", "ArrowDown"].includes(event.key)) {
+      const rowIndex = Number(target.closest("tr")?.getAttribute("data-payment-grid-row"));
+      const column = target.getAttribute("data-payment-grid-column");
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      const nextRow = event.currentTarget.querySelector<HTMLElement>(`[data-payment-grid-row="${rowIndex + direction}"] [data-payment-grid-column="${column}"]`);
+      if (nextRow && nextRow.tagName === "INPUT" && !nextRow.hasAttribute("readonly")) {
+        event.preventDefault();
+        nextRow.focus();
+      }
+    }
   }
 
   async function savePayments() {
@@ -619,7 +740,7 @@ export default function NewPaymentPage() {
       </div>
 
       <AlertMessage
-        type={message === "Payments saved successfully." ? "success" : "error"}
+        type={message === "Payments saved successfully." || message.startsWith("Pasted ") ? "success" : "error"}
         message={message}
         onClose={() => setMessage("")}
       />
@@ -634,33 +755,36 @@ export default function NewPaymentPage() {
           </p>
         </div>
 
-        <div className="overflow-x-auto">
-        <table className="w-full min-w-[1600px] text-sm">
-          <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-600">
+        <div className="max-h-[70vh] overflow-auto">
+        <table className="w-full min-w-[1500px] border-collapse text-sm">
+          <thead className="sticky top-0 z-20 bg-slate-100 text-xs uppercase tracking-wide text-slate-600 shadow-[0_1px_0_0_#cbd5e1]">
             <tr>
-              <th className="px-3 py-3 text-left font-semibold">Company</th>
-              <th className="px-3 py-3 text-left font-semibold">Payment Against</th>
-              <th className="px-3 py-3 text-left font-semibold">Reference</th>
-              <th className="px-3 py-3 text-left font-semibold">From Account</th>
-              <th className="px-3 py-3 text-left font-semibold">Vendor / Party</th>
-              <th className="px-3 py-3 text-left font-semibold">Payment Date</th>
-              <th className="px-3 py-3 text-left font-semibold">Total Payment</th>
-              <th className="px-3 py-3 text-left font-semibold">TDS Deducted</th>
-              <th className="px-3 py-3 text-left font-semibold">Transferred Amount</th>
-              <th className="px-3 py-3 text-left font-semibold">Remove</th>
+              <th className="border border-slate-200 px-2.5 py-2 text-left font-semibold">Company</th>
+              <th className="border border-slate-200 px-2.5 py-2 text-left font-semibold">Payment Against</th>
+              <th className="border border-slate-200 px-2.5 py-2 text-left font-semibold">Reference</th>
+              <th className="border border-slate-200 px-2.5 py-2 text-left font-semibold">From Account</th>
+              <th className="border border-slate-200 px-2.5 py-2 text-left font-semibold">Vendor / Party</th>
+              <th className="border border-slate-200 px-2.5 py-2 text-left font-semibold">Payment Date</th>
+              <th className="border border-slate-200 px-2.5 py-2 text-right font-semibold">Total Payment</th>
+              <th className="border border-slate-200 px-2.5 py-2 text-right font-semibold">TDS Deducted</th>
+              <th className="border border-slate-200 px-2.5 py-2 text-right font-semibold">Transferred Amount</th>
+              <th className="border border-slate-200 px-2.5 py-2 text-center font-semibold">Remove</th>
             </tr>
           </thead>
 
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-slate-100" onKeyDown={handleGridKeyDown}>
             {rows.map((row, index) => (
-              <tr key={index} className="transition hover:bg-slate-50">
-                <td className="px-3 py-3 align-top">
+              <tr key={index} data-payment-grid-row={index} className={`transition hover:bg-sky-50/70 ${index % 2 ? "bg-slate-50/70" : "bg-white"}`}>
+                <td className="border border-slate-200 p-1 align-middle">
                   <select
+                    data-payment-grid-cell="true"
+                    data-payment-grid-column="0"
                     value={row.company_id}
                     onChange={(e) =>
                       updateRow(index, "company_id", e.target.value)
                     }
-                    className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
+                    onPaste={(e) => handlePaste(e, index, 0)}
+                    className="h-8 w-full rounded border border-transparent bg-white px-2 text-[13px] outline-none transition hover:border-slate-300 focus:border-sky-600 focus:bg-sky-50 focus:ring-2 focus:ring-sky-100"
                   >
                     <option value="">Select Company</option>
                     {companies.map((company) => (
@@ -674,13 +798,16 @@ export default function NewPaymentPage() {
                   </select>
                 </td>
 
-                <td className="px-3 py-3 align-top">
+                <td className="border border-slate-200 p-1 align-middle">
                   <select
+                    data-payment-grid-cell="true"
+                    data-payment-grid-column="1"
                     value={row.payment_type}
                     onChange={(e) =>
                       updateRow(index, "payment_type", e.target.value)
                     }
-                    className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
+                    onPaste={(e) => handlePaste(e, index, 1)}
+                    className="h-8 w-full rounded border border-transparent bg-white px-2 text-[13px] outline-none transition hover:border-slate-300 focus:border-sky-600 focus:bg-sky-50 focus:ring-2 focus:ring-sky-100"
                   >
                     {PAYMENT_TYPES.map((type) => (
                       <option key={type}>{type}</option>
@@ -688,14 +815,17 @@ export default function NewPaymentPage() {
                   </select>
                 </td>
 
-                <td className="px-3 py-3 align-top">
+                <td className="border border-slate-200 p-1 align-middle">
                   {row.payment_type === "Work Order" ? (
                     <select
+                      data-payment-grid-cell="true"
+                      data-payment-grid-column="2"
                       value={row.work_order_id}
                       onChange={(e) =>
                         handleWorkOrderSelect(index, e.target.value)
                       }
-                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
+                      onPaste={(e) => handlePaste(e, index, 2)}
+                      className="h-8 w-full rounded border border-transparent bg-white px-2 text-[13px] outline-none transition hover:border-slate-300 focus:border-sky-600 focus:bg-sky-50 focus:ring-2 focus:ring-sky-100"
                     >
                       <option value="">Select Work Order</option>
 
@@ -707,22 +837,26 @@ export default function NewPaymentPage() {
                     </select>
                   ) : (
                     <input
+                      data-payment-grid-cell="true"
+                      data-payment-grid-column="2"
                       value={row.reference_number}
                       onChange={(e) =>
                         updateRow(index, "reference_number", e.target.value)
                       }
-                      onPaste={(e) => handlePaste(e, index)}
-                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
+                      onPaste={(e) => handlePaste(e, index, 2)}
+                      className="h-8 w-full rounded border border-transparent bg-white px-2 text-[13px] outline-none transition hover:border-slate-300 focus:border-sky-600 focus:bg-sky-50 focus:ring-2 focus:ring-sky-100"
                       placeholder={textReferenceLabels[row.payment_type] || "Reference"}
                     />
                   )}
                 </td>
 
-                <td className="px-3 py-3 align-top">
+                <td className="border border-slate-200 p-1 align-middle">
                   {(() => {
                     const companyAccounts = accountsForCompany(row.company_id);
                     return (
                   <select
+                    data-payment-grid-cell="true"
+                    data-payment-grid-column="3"
                     value={row.company_bank_account_id}
                     onChange={(e) =>
                       updateRow(
@@ -732,7 +866,8 @@ export default function NewPaymentPage() {
                       )
                     }
                     disabled={!row.company_id || companyAccounts.length === 0}
-                    className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400 disabled:bg-slate-100"
+                    onPaste={(e) => handlePaste(e, index, 3)}
+                    className="h-8 w-full rounded border border-transparent bg-white px-2 text-[13px] outline-none transition hover:border-slate-300 focus:border-sky-600 focus:bg-sky-50 focus:ring-2 focus:ring-sky-100 disabled:bg-slate-100"
                   >
                       <option value="">
                         {row.company_id
@@ -752,9 +887,11 @@ export default function NewPaymentPage() {
                   })()}
                 </td>
 
-                <td className="px-3 py-3 align-top">
+                <td className="border border-slate-200 p-1 align-middle">
                   {row.payment_type === "Work Order" && row.linked_vendors.length > 1 ? (
                     <select
+                      data-payment-grid-cell="true"
+                      data-payment-grid-column="4"
                       value={row.vendor_id}
                       onChange={(e) => {
                         const vendor = row.linked_vendors.find(
@@ -763,7 +900,8 @@ export default function NewPaymentPage() {
                         updateRow(index, "vendor_id", e.target.value);
                         updateRow(index, "vendor_name", vendor?.vendor_name || "");
                       }}
-                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
+                      onPaste={(e) => handlePaste(e, index, 4)}
+                      className="h-8 w-full rounded border border-transparent bg-white px-2 text-[13px] outline-none transition hover:border-slate-300 focus:border-sky-600 focus:bg-sky-50 focus:ring-2 focus:ring-sky-100"
                     >
                       <option value="">Select Vendor</option>
                       {row.linked_vendors.map((vendor: any) => (
@@ -774,6 +912,8 @@ export default function NewPaymentPage() {
                     </select>
                   ) : row.payment_type === "Purchase Order" ? (
                     <select
+                      data-payment-grid-cell="true"
+                      data-payment-grid-column="4"
                       value={row.vendor_id}
                       onChange={(e) => {
                         const vendor = purchaseOrderVendors.find(
@@ -782,7 +922,8 @@ export default function NewPaymentPage() {
                         updateRow(index, "vendor_id", e.target.value);
                         updateRow(index, "vendor_name", vendor?.vendor_name || "");
                       }}
-                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
+                      onPaste={(e) => handlePaste(e, index, 4)}
+                      className="h-8 w-full rounded border border-transparent bg-white px-2 text-[13px] outline-none transition hover:border-slate-300 focus:border-sky-600 focus:bg-sky-50 focus:ring-2 focus:ring-sky-100"
                     >
                       <option value="">Select Vendor</option>
                       {purchaseOrderVendors.map((vendor) => (
@@ -793,11 +934,14 @@ export default function NewPaymentPage() {
                     </select>
                   ) : row.payment_type === "Internal Transfer" ? (
                     <select
+                      data-payment-grid-cell="true"
+                      data-payment-grid-column="4"
                       value={row.to_company_bank_account_id}
                       onChange={(e) =>
                         handleInternalTransferSelect(index, e.target.value)
                       }
-                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
+                      onPaste={(e) => handlePaste(e, index, 4)}
+                      className="h-8 w-full rounded border border-transparent bg-white px-2 text-[13px] outline-none transition hover:border-slate-300 focus:border-sky-600 focus:bg-sky-50 focus:ring-2 focus:ring-sky-100"
                     >
                       <option value="">Select To Account</option>
                       {bankAccounts.map((account) => (
@@ -812,6 +956,8 @@ export default function NewPaymentPage() {
                     </select>
                   ) : (
                     <input
+                      data-payment-grid-cell="true"
+                      data-payment-grid-column="4"
                       value={row.vendor_name}
                       onChange={(e) =>
                         updateRow(index, "vendor_name", e.target.value)
@@ -820,7 +966,8 @@ export default function NewPaymentPage() {
                         row.payment_type === "Work Order" ||
                         row.payment_type === "Invoice"
                       }
-                      className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition focus:border-slate-400 read-only:text-slate-600"
+                      onPaste={(e) => handlePaste(e, index, 4)}
+                      className="h-8 w-full rounded border border-transparent bg-slate-50 px-2 text-[13px] outline-none transition hover:border-slate-300 focus:border-sky-600 focus:ring-2 focus:ring-sky-100 read-only:text-slate-600"
                       placeholder="Vendor / Party"
                     />
                   )}
@@ -829,12 +976,19 @@ export default function NewPaymentPage() {
                 <Cell
                   value={row.payment_date}
                   type="date"
+                  rowIndex={index}
+                  columnIndex={5}
+                  onPaste={(e) => handlePaste(e, index, 5)}
                   onChange={(value) => updateRow(index, "payment_date", value)}
                 />
 
                 <Cell
                   value={row.total_payment}
                   type="number"
+                  rowIndex={index}
+                  columnIndex={6}
+                  onPaste={(e) => handlePaste(e, index, 6)}
+                  prefix="₹"
                   onChange={(value) =>
                     updateRow(index, "total_payment", onlyNumber(value))
                   }
@@ -843,22 +997,26 @@ export default function NewPaymentPage() {
                 <Cell
                   value={row.tds_amount}
                   type="number"
+                  rowIndex={index}
+                  columnIndex={7}
+                  onPaste={(e) => handlePaste(e, index, 7)}
+                  prefix="₹"
                   onChange={(value) =>
                     updateRow(index, "tds_amount", onlyNumber(value))
                   }
                 />
 
-                <td className="p-2 font-medium">
-                  <div className="flex h-10 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 font-semibold text-slate-950">
+                <td className="border border-slate-200 p-1 font-medium">
+                  <div aria-readonly="true" className="flex h-8 items-center justify-end rounded border border-slate-200 bg-slate-100 px-2 font-semibold tabular-nums text-slate-700">
                     ₹ {transferred(row).toLocaleString("en-IN")}
                   </div>
                 </td>
 
-                <td className="px-3 py-3 align-top">
+                <td className="border border-slate-200 p-1 text-center align-middle">
                   <button
                     type="button"
                     onClick={() => removeRow(index)}
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-red-200 bg-red-50 text-sm font-bold text-red-700 transition hover:bg-red-100"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded border border-red-200 bg-red-50 text-xs font-bold text-red-700 transition hover:bg-red-100"
                   >
                     X
                   </button>
@@ -900,22 +1058,37 @@ export default function NewPaymentPage() {
 function Cell({
   value,
   onChange,
+  rowIndex,
+  columnIndex,
+  onPaste,
+  prefix,
   type = "text",
 }: {
   value: string;
   onChange: (value: string) => void;
+  rowIndex: number;
+  columnIndex: number;
+  onPaste: (event: React.ClipboardEvent<HTMLInputElement>) => void;
+  prefix?: string;
   type?: string;
 }) {
   return (
-    <td className="px-3 py-3 align-top">
-      <input
-        type={type}
-        step="1"
-        min={type === "number" ? "0" : undefined}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400"
-      />
+    <td className="border border-slate-200 p-1 align-middle">
+      <div className="relative">
+        {prefix && <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">{prefix}</span>}
+        <input
+          data-payment-grid-cell="true"
+          data-payment-grid-column={columnIndex}
+          data-payment-grid-row={rowIndex}
+          type={type}
+          step="1"
+          min={type === "number" ? "0" : undefined}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onPaste={onPaste}
+          className={`h-8 w-full rounded border border-transparent bg-white px-2 text-[13px] outline-none transition hover:border-slate-300 focus:border-sky-600 focus:bg-sky-50 focus:ring-2 focus:ring-sky-100 ${type === "number" ? "text-right tabular-nums" : ""} ${prefix ? "pl-6" : ""}`}
+        />
+      </div>
     </td>
   );
 }

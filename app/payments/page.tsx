@@ -3,12 +3,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { CreditCard, Plus, Search, Trash2, X } from "lucide-react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { formatIstTimestamp } from "@/lib/dateTime";
 import { recordClientAuditEvent } from "@/lib/clientAudit";
+import { filterPaymentRegisterRows, paymentRegisterFilterOptions, type PaymentRegisterFilters } from "@/lib/payments/paymentGrid";
 
 const PAGE_SIZE = 50;
 
@@ -22,6 +23,7 @@ function formatDateTime(value: string | null | undefined) {
 
 export default function PaymentsPage() {
   const { access } = useAccessContext();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const search = String(searchParams.get("q") || "").trim();
 
@@ -34,6 +36,7 @@ export default function PaymentsPage() {
   const [deletePayment, setDeletePayment] = useState<any | null>(null);
   const [deletionReason, setDeletionReason] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [filters, setFilters] = useState<PaymentRegisterFilters>({});
 
   const canDelete = can(access?.permissions || [], "payments", "delete");
 
@@ -139,6 +142,25 @@ export default function PaymentsPage() {
   const hasNextPage = (page + 1) * PAGE_SIZE < total;
   const rangeStart = total === 0 ? 0 : page * PAGE_SIZE + 1;
   const rangeEnd = Math.min(page * PAGE_SIZE + payments.length, total);
+  const visiblePayments = filterPaymentRegisterRows(payments, filters);
+  const filterOptions = {
+    companies: Array.from(new Set(payments.map((payment) => payment.company_id).filter(Boolean))),
+    paymentTypes: paymentRegisterFilterOptions(payments, "payment_type"),
+    parties: paymentRegisterFilterOptions(payments, "party"),
+    accounts: paymentRegisterFilterOptions(payments, "account_name"),
+    statuses: paymentRegisterFilterOptions(payments, "status"),
+  };
+
+  function updateFilter<Key extends keyof PaymentRegisterFilters>(key: Key, value: PaymentRegisterFilters[Key]) {
+    setPage(0);
+    setFilters((current) => ({ ...current, [key]: value || undefined }));
+  }
+
+  function clearFilters() {
+    setFilters({});
+    setPage(0);
+    if (search) router.replace("/payments");
+  }
 
   if (loading) {
     return <p className="text-sm text-slate-500">Loading payments...</p>;
@@ -192,7 +214,7 @@ export default function PaymentsPage() {
                 Payment Register
               </h2>
               <p className="mt-1 text-sm text-slate-500">
-                Showing {rangeStart}–{rangeEnd} of {total}
+                Showing {visiblePayments.length} matching rows on this page · {rangeStart}–{rangeEnd} of {total} for search
               </p>
             </div>
 
@@ -201,16 +223,59 @@ export default function PaymentsPage() {
               <input
                 name="q"
                 defaultValue={search}
-                className="h-10 w-80 rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none transition focus:border-slate-400 focus:bg-white"
+                className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none transition focus:border-slate-400 focus:bg-white sm:w-80"
                 placeholder="Search payments..."
               />
             </form>
           </div>
+          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-7">
+            <label className="text-xs font-semibold text-slate-600">
+              Company
+              <select value={filters.companyId || ""} onChange={(event) => updateFilter("companyId", event.target.value)} className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-100">
+                <option value="">All Companies</option>
+                {filterOptions.companies.map((id: string) => <option key={id} value={id}>Company · {id.slice(0, 8)}</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-semibold text-slate-600">
+              Payment Against
+              <select value={filters.paymentType || ""} onChange={(event) => updateFilter("paymentType", event.target.value)} className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-100">
+                <option value="">All Types</option>
+                {filterOptions.paymentTypes.map((value: string) => <option key={value}>{value}</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-semibold text-slate-600">
+              Vendor / Party
+              <select value={filters.party || ""} onChange={(event) => updateFilter("party", event.target.value)} className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-100">
+                <option value="">All Parties</option>
+                {filterOptions.parties.map((value: string) => <option key={value}>{value}</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-semibold text-slate-600">
+              From Account
+              <select value={filters.fromAccount || ""} onChange={(event) => updateFilter("fromAccount", event.target.value)} className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-100">
+                <option value="">All Accounts</option>
+                {filterOptions.accounts.map((value: string) => <option key={value}>{value}</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-semibold text-slate-600">Date From<input type="date" value={filters.dateFrom || ""} onChange={(event) => updateFilter("dateFrom", event.target.value)} className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-100" /></label>
+            <label className="text-xs font-semibold text-slate-600">Date To<input type="date" value={filters.dateTo || ""} onChange={(event) => updateFilter("dateTo", event.target.value)} className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-100" /></label>
+            <label className="text-xs font-semibold text-slate-600">
+              Status
+              <select value={filters.status || ""} onChange={(event) => updateFilter("status", event.target.value)} className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-100">
+                <option value="">All Statuses</option>
+                {filterOptions.statuses.map((value: string) => <option key={value}>{value}</option>)}
+              </select>
+            </label>
+            <div className="flex items-end xl:col-span-7 xl:justify-end">
+              <button type="button" onClick={clearFilters} className="h-9 rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">Clear Filters</button>
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-slate-500">Search is server-side. The toolbar filters the rows on the current page.</p>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="max-h-[70vh] overflow-auto">
           <table className="w-full min-w-[1350px] text-sm">
-            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+            <thead className="sticky top-0 z-10 bg-slate-50 text-xs uppercase tracking-wide text-slate-500 shadow-[0_1px_0_0_#e2e8f0]">
               <tr>
                 <th className="px-4 py-3 text-left font-semibold">S. No.</th>
                 <th className="px-4 py-3 text-left font-semibold">Payment Date</th>
@@ -228,38 +293,38 @@ export default function PaymentsPage() {
             </thead>
 
             <tbody className="divide-y divide-slate-100">
-              {payments.map((payment, index) => {
+              {visiblePayments.map((payment, index) => {
                 const createdBy =
                   payment.created_by_email || payment.created_by_name || "-";
 
                 return (
-                  <tr key={payment.id} className="transition hover:bg-slate-50">
-                    <td className="px-4 py-4 font-medium text-slate-950">
+                  <tr key={payment.id} className={`transition hover:bg-sky-50/60 ${index % 2 ? "bg-slate-50/50" : "bg-white"}`}>
+                    <td className="whitespace-nowrap border-r border-slate-100 px-3 py-2.5 font-medium text-slate-950">
                       {page * PAGE_SIZE + index + 1}
                     </td>
-                    <td className="px-4 py-4 text-slate-700">
+                    <td className="whitespace-nowrap border-r border-slate-100 px-3 py-2.5 text-slate-700">
                       {payment.payment_date || "-"}
                     </td>
-                    <td className="px-4 py-4 text-slate-700">
+                    <td className="border-r border-slate-100 px-3 py-2.5 text-slate-700">
                       {payment.payment_type || "-"}
                     </td>
-                    <td className="px-4 py-4 text-slate-700">{payment.reference || "-"}</td>
-                    <td className="px-4 py-4 text-slate-700">{payment.party || "-"}</td>
-                    <td className="px-4 py-4 text-slate-700">{payment.account_name || "-"}</td>
-                    <td className="px-4 py-4 text-right font-semibold text-slate-950">
+                    <td className="max-w-64 truncate border-r border-slate-100 px-3 py-2.5 text-slate-700" title={payment.reference || "-"}>{payment.reference || "-"}</td>
+                    <td className="max-w-56 truncate border-r border-slate-100 px-3 py-2.5 text-slate-700" title={payment.party || "-"}>{payment.party || "-"}</td>
+                    <td className="max-w-52 truncate border-r border-slate-100 px-3 py-2.5 text-slate-700" title={payment.account_name || "-"}>{payment.account_name || "-"}</td>
+                    <td className="whitespace-nowrap border-r border-slate-100 px-3 py-2.5 text-right font-semibold tabular-nums text-slate-950">
                       {money(payment.total_payment)}
                     </td>
-                    <td className="px-4 py-4 text-right text-slate-700">
+                    <td className="whitespace-nowrap border-r border-slate-100 px-3 py-2.5 text-right tabular-nums text-slate-700">
                       {money(payment.tds_amount)}
                     </td>
-                    <td className="px-4 py-4 text-right font-semibold text-slate-950">
+                    <td className="whitespace-nowrap border-r border-slate-100 px-3 py-2.5 text-right font-semibold tabular-nums text-slate-950">
                       {money(payment.transferred_amount || payment.payment_amount)}
                     </td>
-                    <td className="px-4 py-4 text-slate-700">{createdBy}</td>
-                    <td className="px-4 py-4 text-slate-700">
+                    <td className="border-r border-slate-100 px-3 py-2.5 text-slate-700">{createdBy}</td>
+                    <td className="whitespace-nowrap border-r border-slate-100 px-3 py-2.5 text-slate-700">
                       {formatDateTime(payment.created_at_user || payment.created_at)}
                     </td>
-                    <td className="px-4 py-4 text-center">
+                    <td className="whitespace-nowrap px-3 py-2.5 text-center">
                       <div className="flex justify-center gap-2">
                         <Link
                           href={`/payments/${payment.id}`}
@@ -289,10 +354,10 @@ export default function PaymentsPage() {
                 );
               })}
 
-              {payments.length === 0 && (
+              {visiblePayments.length === 0 && (
                 <tr>
-                  <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
-                    No payments found.
+                    <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
+                    No payments on this page match the selected filters.
                   </td>
                 </tr>
               )}
