@@ -1,4 +1,5 @@
 import { type RevisionValueDiff, diffScalar, PAGE_W, PAGE_H, text, PAGE_NUMBER_OFFSET, PAGE_NUMBER_SIZE, type ImageAsset, makePdf, firstDisplayValue, cleanDisplay } from "@/lib/procurement/poPdfRenderer.server";
+import { formatPoGenerationTime } from "@/lib/procurement/poGenerationTime";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PDFDocument, degrees, rgb } from "pdf-lib";
@@ -277,7 +278,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       deliveryCompany = firstDisplayValue(legacyCompany.data?.company_name);
     }
     const isDraft = !["approved", "issued"].includes(data.status);
-    const draftGeneratedAt = isDraft ? new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }).format(new Date()) : null;
+    const draftGeneratedAt = isDraft ? formatPoGenerationTime(new Date()) : null;
     const poPackage = await makePdf(data, preparedBy, { ...approverResult.data, signatureBlock: approverSignature.block, signatureAsset: approverSignature.asset, employee_name: approverResult.data?.employee_name || approvalEvent?.actor_name || data.approved_by_name, approval_at: approvalEvent?.created_at || data.approved_at }, { letterhead, deliveryCompany }, revisionPresentation, draftGeneratedAt);
     const combinedPdf = await appendPackage(poPackage.pdf, data, admin);
     const protectedPdf = ["approved", "issued"].includes(data.status) ? combinedPdf : await watermarkDraftPackage(combinedPdf);
