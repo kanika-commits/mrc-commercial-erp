@@ -25,7 +25,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (!idempotencyKey) return jsonError("Idempotency key is required.", 400);
     const id = (await context.params).id;
     const admin = adminClient();
-    const completed = await admin.from("procurement_purchase_order_artifact_current").select("artifact_id,previous_artifact_id").eq("organization_id", auth.organizations?.[0] || "").eq("purchase_order_id", id).eq("idempotency_key", idempotencyKey).maybeSingle();
+    const organizationId = auth.organizations?.[0];
+    let completedQuery = admin.from("procurement_purchase_order_artifact_current").select("artifact_id,previous_artifact_id").eq("purchase_order_id", id).eq("idempotency_key", idempotencyKey);
+    if (organizationId) completedQuery = completedQuery.eq("organization_id", organizationId);
+    const completed = await completedQuery.maybeSingle();
     if (completed.error) throw completed.error;
     if (completed.data) return NextResponse.json({ purchase_order_id: id, artifact_id: completed.data.artifact_id, previous_artifact_id: completed.data.previous_artifact_id, idempotent: true });
     let query: any = applyOrganizationAccess(admin.from("procurement_purchase_orders").select("*, company:companies!procurement_purchase_orders_company_id_fkey(company_name,company_code), site:sites(site_name,site_code), items:procurement_purchase_order_items(*), events:procurement_purchase_order_events(event_type,actor_id,actor_name,actor_email,created_at)").eq("id", id).maybeSingle(), auth);
