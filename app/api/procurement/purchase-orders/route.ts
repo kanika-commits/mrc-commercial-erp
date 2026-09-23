@@ -99,7 +99,8 @@ export async function POST(request: Request) {
     if (additional.error) return jsonError(additional.error, 400);
     const keyTerms = Array.isArray(body.key_terms) ? body.key_terms : [];
     if (keyTerms.length < 4 || keyTerms.slice(0, 4).some((term: any) => !text(term?.terms)) || keyTerms.slice(4).some((term: any) => !text(term?.description) || !text(term?.terms))) return jsonError("All default Key Terms and any additional terms must have meaningful values.", 400);
-    const itemIds = [...new Set(items.map((item: any) => text(item.item_id || item.procurement_item_id)).filter(Boolean))];
+    const normalizedItems = items.map((item: any) => ({ ...item, item_id: text(item.item_id || item.procurement_item_id) || null }));
+    const itemIds = [...new Set(normalizedItems.map((item: any) => text(item.item_id)).filter(Boolean))];
     if (itemIds.length) {
       const itemResult = await admin.from("procurement_items").select("id").in("id", itemIds).eq("organization_id", organizationId).eq("status", "active");
       if (itemResult.error) throw itemResult.error;
@@ -122,8 +123,8 @@ export async function POST(request: Request) {
     const vendorSnapshot = { vendor_name: vendor.data.vendor_name, address: vendor.data.address || null, gstin: primaryGstin.data?.gstin || vendor.data.gstin || null, pan: vendor.data.pan || null, contact_person: contact.data?.contact_name || null, phone: contact.data?.contact_number || null, email: contact.data?.email || null, designation: contact.data?.designation || null };
     const creationRequestId = text(body.creation_request_id) || null;
     if (creationRequestId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(creationRequestId)) return jsonError("Creation request ID is invalid.", 400);
-    const rpcArgs: any = { p_source_type: sourceType, p_organization_id: organizationId, p_company_id: selectedCompanyId, p_site_id: selectedSiteId, p_vendor_id: selectedVendorId, p_vendor_snapshot: vendorSnapshot, p_source_requisition_id: requisitionId, p_source_requisition_number: requisitionNumber, p_items: items, p_fields: { po_date: text(body.po_date), delivery: body.delivery || {}, master_selection: body.master_selection || {}, commercial: { ...(body.commercial || {}), additional_charges: additional.charges, key_terms: keyTerms }, standard_terms: text(body.standard_terms), standard_terms_template_id: text(body.standard_terms_template_id), standard_terms_sections: Array.isArray(body.standard_terms_sections) ? body.standard_terms_sections : [] }, p_actor: actor(auth) };
-    const rpcName = creationRequestId ? "create_procurement_purchase_order_draft_idempotent_atomic" : "create_procurement_purchase_order_draft_atomic";
+    const rpcArgs: any = { p_source_type: sourceType, p_organization_id: organizationId, p_company_id: selectedCompanyId, p_site_id: selectedSiteId, p_vendor_id: selectedVendorId, p_vendor_snapshot: vendorSnapshot, p_source_requisition_id: requisitionId, p_source_requisition_number: requisitionNumber, p_items: normalizedItems, p_fields: { po_date: text(body.po_date), delivery: body.delivery || {}, master_selection: body.master_selection || {}, commercial: { ...(body.commercial || {}), additional_charges: additional.charges, key_terms: keyTerms }, standard_terms: text(body.standard_terms), standard_terms_template_id: text(body.standard_terms_template_id), standard_terms_sections: Array.isArray(body.standard_terms_sections) ? body.standard_terms_sections : [] }, p_actor: actor(auth) };
+    const rpcName = creationRequestId ? "create_procurement_purchase_order_draft_idempotent_v2_atomic" : "create_procurement_purchase_order_draft_v2_atomic";
     if (creationRequestId) rpcArgs.p_creation_request_id = creationRequestId;
     const result = await admin.rpc(rpcName, rpcArgs);
     if (result.error) {

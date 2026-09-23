@@ -6,7 +6,7 @@ import { loadFrozenSupportingDocuments } from "@/lib/procurement/poSupportingDoc
 import { buildPurchaseOrderStandardTermsSnapshot, parsePurchaseOrderStandardTerms } from "@/lib/procurement/standardTerms";
 import { archiveApprovedPo } from "@/lib/procurement/poOfficialArtifact.server";
 import { renderApprovedPurchaseOrderBasePdf } from "@/lib/procurement/poPdfBaseGeneration.server";
-import { resolvePoMasterProjection } from "@/lib/procurement/poDraftMasterView.server";
+import { resolveDraftPoMasterView, resolvePoMasterProjection } from "@/lib/procurement/poDraftMasterView.server";
 const MODULE = "procurement_purchase_orders";
 function actor(auth: any) { return { user_id: auth.user.id, name: text(auth.user.user_metadata?.full_name || auth.user.user_metadata?.name || auth.user.email), email: auth.user.email || null }; }
 async function load(request: Request, id: string, action: string) {
@@ -16,7 +16,7 @@ async function load(request: Request, id: string, action: string) {
   if (data.revision_family_id) { const familyQuery = applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id,po_number,revision_no,status,revision_family_id,previous_revision_id,superseded_by_revision_id,created_at,submitted_at,approved_at,company_id,site_id,vendor_id").eq("revision_family_id", data.revision_family_id).order("revision_no", { ascending: false }), auth); if (familyQuery) { const familyResult = await familyQuery; if (familyResult.error) throw familyResult.error; revisionHistory = familyResult.data || revisionHistory; } }
   return { auth, admin, row: data, revisionHistory } as const;
 }
-export async function GET(request: Request, context: { params: Promise<{ id: string }> }) { try { const { id } = await context.params; const result = await load(request, id, "view"); if ("response" in result) return result.response; return NextResponse.json({ purchase_order: result.row, revision_history: result.revisionHistory }); } catch (error: any) { return jsonError(error.message || "Failed to load Purchase Order.", 500); } }
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) { try { const { id } = await context.params; const result = await load(request, id, "view"); if ("response" in result) return result.response; const projected = await resolveDraftPoMasterView(result.admin, result.row); return NextResponse.json({ purchase_order: projected, revision_history: result.revisionHistory }); } catch (error: any) { return jsonError(error.message || "Failed to load Purchase Order.", 500); } }
 export async function PUT(request: Request, context: { params: Promise<{ id: string }> }) { try { const { id } = await context.params; const result = await load(request, id, "edit"); if ("response" in result) return result.response; const body = await request.json().catch(() => ({})); const commercial = body.commercial || {}; if (Array.isArray(body.key_terms)) commercial.key_terms = body.key_terms; if (Object.prototype.hasOwnProperty.call(commercial, "additional_charges")) { if (!Array.isArray(commercial.additional_charges) || commercial.additional_charges.some((charge: any) => !text(charge?.name) || !Number.isFinite(Number(charge?.amount)) || Number(charge.amount) < 0)) return jsonError("Each additional charge needs a name and a valid non-negative amount.", 400); commercial.additional_charges = commercial.additional_charges.map((charge: any) => ({ name: text(charge.name), amount: Number(charge.amount) })); } const items = Array.isArray(body.items) ? body.items : [];
     let expectedOriginalItemIds: string[] | undefined;
     if (items.length) {
@@ -36,7 +36,7 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
       if (templates.data?.length === 1) standardTerms = buildPurchaseOrderStandardTermsSnapshot(templates.data[0]);
       else if (existingTerms?.kind === "structured") standardTerms = result.row.standard_terms_snapshot;
     }
-    const rpc = await result.admin.rpc(items.length ? "update_procurement_purchase_order_draft_with_items_atomic" : (Object.prototype.hasOwnProperty.call(commercial, "additional_charges") ? "update_procurement_po_draft_with_additional_charges_atomic" : "update_procurement_purchase_order_draft_atomic"), { p_purchase_order_id: id, p_organization_id: result.row.organization_id, p_fields: { po_date: text(body.po_date), delivery: body.delivery || {}, master_selection: body.master_selection || {}, commercial, standard_terms: standardTerms, items, ...(expectedOriginalItemIds ? { expected_original_item_ids: expectedOriginalItemIds } : {}) }, p_actor: actor(result.auth) }); if (rpc.error) throw rpc.error; if (Object.prototype.hasOwnProperty.call(commercial, "freight_amount")) { const freightResult = await result.admin.rpc("set_procurement_purchase_order_freight_atomic", { p_purchase_order_id: id, p_organization_id: result.row.organization_id, p_freight_amount: Number(commercial.freight_amount || 0), p_actor: actor(result.auth) }); if (freightResult.error) throw new Error(`Purchase Order draft was updated, but Freight could not be saved: ${freightResult.error.message}`); } return NextResponse.json({ result: rpc.data }); } catch (error: any) { return jsonError(error.message || "Failed to save Purchase Order draft.", 500); } }
+    const rpc = await result.admin.rpc(items.length ? "update_procurement_purchase_order_draft_with_items_v2_atomic" : (Object.prototype.hasOwnProperty.call(commercial, "additional_charges") ? "update_procurement_po_draft_with_additional_charges_atomic" : "update_procurement_purchase_order_draft_atomic"), { p_purchase_order_id: id, p_organization_id: result.row.organization_id, p_fields: { po_date: text(body.po_date), delivery: body.delivery || {}, master_selection: body.master_selection || {}, commercial, standard_terms: standardTerms, items, ...(expectedOriginalItemIds ? { expected_original_item_ids: expectedOriginalItemIds } : {}) }, p_actor: actor(result.auth) }); if (rpc.error) throw rpc.error; if (Object.prototype.hasOwnProperty.call(commercial, "freight_amount")) { const freightResult = await result.admin.rpc("set_procurement_purchase_order_freight_atomic", { p_purchase_order_id: id, p_organization_id: result.row.organization_id, p_freight_amount: Number(commercial.freight_amount || 0), p_actor: actor(result.auth) }); if (freightResult.error) throw new Error(`Purchase Order draft was updated, but Freight could not be saved: ${freightResult.error.message}`); } return NextResponse.json({ result: rpc.data }); } catch (error: any) { return jsonError(error.message || "Failed to save Purchase Order draft.", 500); } }
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await context.params;
@@ -75,21 +75,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const total = Number(result.row.total_amount ?? result.row.grand_total ?? 0);
     if (!Number.isFinite(total) || total < 0) return jsonError("Purchase Order totals are invalid.", 400);
   }
-  if (frozenProjection) {
-    const persisted = await result.admin.from("procurement_purchase_orders").update({
-      vendor_name_snapshot: frozenProjection.vendor_name_snapshot,
-      vendor_snapshot: frozenProjection.vendor_snapshot,
-      delivery_snapshot: frozenProjection.delivery_snapshot,
-      updated_at: new Date().toISOString(),
-    }).eq("id", id).eq("organization_id", result.row.organization_id).in("status", ["draft", "sent_back"]).select("id").maybeSingle();
-    if (persisted.error) throw persisted.error;
-    if (!persisted.data) return jsonError("Purchase Order changed before its master snapshot could be frozen. Reload and try again.", 409);
-  }
   if (action === "approve" && result.row.status !== "draft" && Array.isArray(result.row.supporting_documents_manifest)) {
     const packageState = await loadFrozenSupportingDocuments(result.admin, result.row);
     if (packageState.integrityError) return jsonError(packageState.integrityError, 409);
   }
-  const rpc = await result.admin.rpc("transition_procurement_purchase_order_atomic", { p_purchase_order_id: id, p_organization_id: result.row.organization_id, p_action: action, p_actor: actor(result.auth), p_note: text(body.note) || null }); if (rpc.error) throw rpc.error;
+  const freezePayload = frozenProjection ? { ...frozenProjection, _identity: { company_id: result.row.company_id, site_id: result.row.site_id, vendor_id: result.row.vendor_id } } : null;
+  const rpc = await result.admin.rpc("transition_procurement_purchase_order_atomic", { p_purchase_order_id: id, p_organization_id: result.row.organization_id, p_action: action, p_actor: actor(result.auth), p_note: text(body.note) || null, p_freeze_projection: freezePayload }); if (rpc.error) throw rpc.error;
   if (action === "approve" && rpc.data?.status === "approved") {
     const organizationId = result.row.organization_id;
     const generatedBy = result.auth.user.id;

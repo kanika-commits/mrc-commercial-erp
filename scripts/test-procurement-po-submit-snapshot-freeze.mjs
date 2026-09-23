@@ -85,9 +85,9 @@ assert.deepEqual(resolveProjection(revision, masters), revision);
 
 assert.match(route, /resolvePoMasterProjection\(result\.admin, result\.row, \{ strict: true \}\)/);
 assert.match(route, /revision_no \|\| 0\) === 0/);
-assert.match(route, /vendor_name_snapshot: frozenProjection\.vendor_name_snapshot/);
-assert.match(route, /vendor_snapshot: frozenProjection\.vendor_snapshot/);
-assert.match(route, /delivery_snapshot: frozenProjection\.delivery_snapshot/);
+assert.match(route, /p_freeze_projection: freezePayload/);
+assert.doesNotMatch(route, /vendor_name_snapshot: frozenProjection\.vendor_name_snapshot/);
+assert.doesNotMatch(route, /updated_at: new Date\(\)\.toISOString\(\)/);
 assert.doesNotMatch(route, /sites\.company_id/);
 assert.doesNotMatch(route, /items:\s*frozenProjection|total_amount:\s*frozenProjection|standard_terms_snapshot:\s*frozenProjection/);
 assert.match(projectionSource, /if \(Number\(row\?\.revision_no \|\| 0\) !== 0 \|\| row\?\.previous_revision_id\) return row/);

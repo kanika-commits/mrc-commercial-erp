@@ -11,6 +11,7 @@ const createRoute = fs.readFileSync("app/api/procurement/purchase-orders/route.t
 const updateRoute = fs.readFileSync("app/api/procurement/purchase-orders/[id]/route.ts", "utf8");
 const page = fs.readFileSync("app/purchase/purchase-orders/new/page.tsx", "utf8");
 const pdf = fs.readFileSync("app/api/procurement/purchase-orders/[id]/pdf/route.ts", "utf8");
+const pdfRenderer = fs.readFileSync("lib/procurement/poPdfRenderer.server.ts", "utf8");
 const procurementAccess = fs.readFileSync("lib/serverProcurementAccess.ts", "utf8");
 
 assert.doesNotMatch(masterResolver, /pg_get_functiondef|execute v_definition/i);
@@ -108,9 +109,9 @@ assert.doesNotMatch(page, /Selected Site Contact/);
 const mastersPage = fs.readFileSync("app/settings/purchase-order-masters/page.tsx", "utf8");
 assert.doesNotMatch(mastersPage, /ContactEditor|Office \/ Billing Contacts|Site \/ Delivery Contacts|\+ Add Contact Person|Primary Contact/);
 
-assert.match(pdf, /delivery\.gst_billing \|\| delivery\.billing_address/);
-assert.match(pdf, /delivery\.delivery_contact \|\| delivery\.site_contact/);
-assert.match(pdf, /frozen\?\.header_storage_bucket/);
-assert.match(pdf, /frozenFooter/);
+assert.match(pdfRenderer, /const billing = delivery\.gst_billing \|\| delivery\.billing_address/);
+assert.match(pdfRenderer, /delivery\.delivery_contact \|\| delivery\.site_contact/);
+assert.match(fs.readFileSync("lib/procurement/poPdfBaseGeneration.server.ts", "utf8"), /frozen\?\.header_storage_bucket/);
+assert.match(fs.readFileSync("lib/procurement/poPdfBaseGeneration.server.ts", "utf8"), /frozenFooter/);
 assert.match(pdf, /const combinedPdf = await appendPackage\(poPackage\.pdf, data, admin\)/);
 console.log("PO master snapshot integration rules passed.");
