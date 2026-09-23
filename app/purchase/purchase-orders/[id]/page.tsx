@@ -7,6 +7,11 @@ import { apiFetch, getAccessToken } from "@/components/hr/hrClient";
 import { useAccessContext } from "@/components/AccessContext";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
 import { parsePurchaseOrderStandardTerms } from "@/lib/procurement/standardTerms";
+import { supabase } from "@/lib/supabase";
+
+const ADMINISTRATIVE_CORRECTION_PO_ID = "a2bff8a1-0dc0-4a33-a3e4-65c034ddc8ac";
+const ADMINISTRATIVE_CORRECTION_IDEMPOTENCY_KEY = "2c713c13-3e99-4413-9b16-9ca8daae2f3a";
+const ADMINISTRATIVE_CORRECTION_REASON = "Administrative correction to synchronize the approved PO vendor contact details with the current verified Vendor Master contact. No commercial, contractual, approval, revision, company, site, vendor identity, or PO amount changes.";
 
 function display(value: unknown) {
   return value === null || value === undefined || String(value).trim() === "" ? "—" : String(value);
@@ -61,6 +66,7 @@ export default function PurchaseOrderDetailPage() {
   const [reasonAction, setReasonAction] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [approvalReview, setApprovalReview] = useState(false);
+  const [correctionSaving, setCorrectionSaving] = useState(false);
 
   async function load() {
     try {
@@ -194,6 +200,31 @@ export default function PurchaseOrderDetailPage() {
     } catch (error: any) { setMessage(error.message || "Failed to open Purchase Order PDF."); }
   }
 
+  async function applyAdministrativeCorrection() {
+    if (!row || row.id !== ADMINISTRATIVE_CORRECTION_PO_ID || row.po_number !== "GLC/SEP/2026/0020/R-0" || row.status !== "approved") return;
+    const confirmed = window.confirm(`Apply the approved vendor contact correction?\n\nAarti Gaur\n8826663147\nbecin@becconduits.in\nContact Person\n\n→\n\nB.K JHA\n9311088865\nbecin@becconduits.in\nSales Manager\n\nPO number remains unchanged. R-0 remains unchanged. Approved status remains unchanged. Commercial values remain unchanged. The original PDF is preserved and the corrected PDF becomes current.`);
+    if (!confirmed) return;
+    setCorrectionSaving(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Your session expired. Please log in again.");
+      const response = await fetch(`/api/procurement/purchase-orders/${ADMINISTRATIVE_CORRECTION_PO_ID}/administrative-correction`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ contact_person: "B.K JHA", phone: "9311088865", email: "becin@becconduits.in", designation: "Sales Manager", reason: ADMINISTRATIVE_CORRECTION_REASON, idempotency_key: ADMINISTRATIVE_CORRECTION_IDEMPOTENCY_KEY }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Administrative correction failed.");
+      await load();
+      setPackageRefresh((current) => current + 1);
+      setMessage(`Vendor contact correction applied successfully.${result.artifact_id ? ` New artifact: ${result.artifact_id}` : ""}`);
+    } catch (error: any) {
+      setMessage(error.message || "Administrative correction failed.");
+    } finally {
+      setCorrectionSaving(false);
+    }
+  }
+
 
   if (!row) return <p className="text-sm text-slate-500">{message || "Loading Purchase Order..."}</p>;
 
@@ -202,6 +233,7 @@ export default function PurchaseOrderDetailPage() {
   const revisionDisplay = row.superseded_by_revision_id ? "Superseded" : ["approved", "issued"].includes(row.status) ? "Current Effective Revision" : ["draft", "pending_approval", "sent_back"].includes(row.status) ? "Revision in Progress" : "";
   const canApprove = hasGlobalAccess(access) || can(access?.permissions || [], "procurement_purchase_orders", "approve");
   const canReject = hasGlobalAccess(access) || can(access?.permissions || [], "procurement_purchase_orders", "reject");
+  const canAdministrativeCorrect = row.id === ADMINISTRATIVE_CORRECTION_PO_ID && row.po_number === "GLC/SEP/2026/0020/R-0" && row.status === "approved" && (hasGlobalAccess(access) || access?.roleCodes.includes("super_admin"));
   const sourceLabel = row.source_type === "indent" ? "Material Indent" : "Direct Purchase";
   const vendor = row.vendor_snapshot || {};
   const delivery = row.delivery_snapshot || {};
@@ -235,6 +267,7 @@ export default function PurchaseOrderDetailPage() {
       {row.status === "pending_approval" && approvalReview && canApprove && <button disabled={saving} onClick={() => action("approve")} className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white">Approve</button>}
       {row.status === "pending_approval" && approvalReview && canReject && <><button disabled={saving} onClick={() => setReasonAction("send_back")} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold">Send Back</button><button disabled={saving} onClick={() => setReasonAction("reject")} className="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700">Reject</button></>}
       <button type="button" disabled={pdfLoading} onClick={openPdf} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold">{pdfLoading ? "Opening PDF..." : "View / Download PO PDF"}</button>
+      {canAdministrativeCorrect && <button type="button" disabled={correctionSaving} onClick={() => void applyAdministrativeCorrection()} className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-900">{correctionSaving ? "Applying Correction..." : "Apply Vendor Contact Correction"}</button>}
     </div>
     {message && <p className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">{message}</p>}
     {isRevision && <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm"><p className="font-bold">Revision R-{row.revision_no}{revisionDisplay && <span className="ml-2 font-semibold">· {revisionDisplay}</span>}</p>{row.previous_revision_id && <p className="mt-1 text-slate-700">Previous Revision: {row.revision_history?.find((candidate: any) => candidate.id === row.previous_revision_id)?.po_number || "Previous Purchase Order"}</p>}</div>}
