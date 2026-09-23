@@ -516,7 +516,7 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
   y -= SECTION_GAP;
   addressTable([
     `Company: ${text(billingCompany)}\nGSTIN: ${text(billing.gstin)}\nAddress: ${text(billing.address || [billing.address_line1, billing.address_line2, billing.city, billing.state, billing.pincode].filter(Boolean).join(", "))}\nContact Person: ${text(frozenBillingContactName(billingContact))}\nMobile: ${text(frozenBillingContactMobile(billingContact))}`,
-    `Company: ${text(deliveryCompany)}\nGSTIN: ${text(shipping.gstin || delivery.shipping_gstin)}\nSite / Location: ${text(shipping.location_name || shipping.location || row.site?.site_name)}\nAddress: ${text(shippingAddress)}\nContact Person: ${text(contact.contact_name || shipping.contact_name)}\nMobile: ${text(contact.mobile || shipping.mobile)}`,
+    `Company: ${text(deliveryCompany)}\nGSTIN: ${text(shipping.gstin || delivery.shipping_gstin)}\nSite / Location: ${text(shipping.location_name || shipping.location || row.site?.site_name)}\nAddress: ${text(shippingAddress)}\nContact Person: ${text(contact.contact_name || shipping.contact_name)}\nMobile: ${text(contact.mobile || shipping.mobile)}\nEmail: ${text(contact.email || shipping.email)}`,
   ]);
 
   heading("ITEMS", 19);

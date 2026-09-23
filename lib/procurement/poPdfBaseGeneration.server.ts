@@ -6,6 +6,7 @@ import { PDFDocument } from "pdf-lib";
 import { getEmployeeSignatureBlock } from "@/lib/hr/employeeSignature";
 import { buildPurchaseOrderRevisionComparison } from "@/lib/procurement/poRevisionComparison";
 import { buildPurchaseOrderRevisionPdfRenderModel } from "@/lib/procurement/poRevisionPdfRenderer";
+import { resolveDraftPoMasterView } from "@/lib/procurement/poDraftMasterView.server";
 
 async function loadSharp() {
   const module = await import("sharp");
@@ -84,6 +85,7 @@ async function makeLetterhead(row: any, admin: any) {
 }
 
 export async function renderPurchaseOrderBasePdf(admin: any, data: any, previousRevisionData: any = null) {
+  data = await resolveDraftPoMasterView(admin, data);
   if (Number(data.revision_no || 0) > 0 && previousRevisionData) data.revisionComparison = buildPurchaseOrderRevisionComparison(previousRevisionData, data);
   const creatorResult = data.created_by ? await admin.from("hr_employees").select("employee_name,email,phone,personal_phone,company:companies(company_name),designation:hr_designations(designation_name)").eq("user_id", data.created_by).eq("organization_id", data.organization_id).eq("status", "active").maybeSingle() : { data: null, error: null };
   if (creatorResult.error) throw creatorResult.error;
