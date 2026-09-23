@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import AlertMessage from "@/components/AlertMessage";
 import { apiFetch } from "@/components/hr/hrClient";
 import { useAccessContext } from "@/components/AccessContext";
@@ -19,6 +19,7 @@ export default function SiteContacts() {
   const [form, setForm] = useState<any>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const editFormRef = useRef<HTMLFormElement | null>(null);
 
   const load = async () => {
     const [contacts, masters] = await Promise.all([
@@ -30,6 +31,10 @@ export default function SiteContacts() {
   };
 
   useEffect(() => { void load().catch((nextError) => setError(nextError.message || "Failed to load site contacts.")); }, []);
+  useEffect(() => {
+    if (!form?.id) return;
+    window.requestAnimationFrame(() => editFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }, [form?.id]);
   if (!readable) return <main className="space-y-4"><Link href="/modules/settings" className="text-sm font-semibold text-slate-600">Back to Masters</Link><p className="rounded border bg-white p-5 text-sm text-slate-600">You do not have permission to view Site Contact Master.</p></main>;
 
   const save = async (event: React.FormEvent) => {
@@ -66,7 +71,7 @@ export default function SiteContacts() {
     <AlertMessage type="success" message={message} onClose={() => setMessage("")} />
     <AlertMessage type="error" message={error} onClose={() => setError("")} />
     {!form && writable && <button type="button" onClick={() => setForm({ ...empty })} className="rounded bg-slate-950 px-4 py-2 text-sm font-semibold text-white">+ Add Site Contact</button>}
-    {form && writable && <form onSubmit={save} className="max-w-3xl space-y-4 rounded border bg-white p-5">
+    {form && writable && <form ref={editFormRef} onSubmit={save} className="scroll-mt-24 max-w-3xl space-y-4 rounded border bg-white p-5">
       <h2 className="font-semibold">{form.id ? "Edit" : "Add"} Site Contact</h2>
       <div className="grid gap-3 md:grid-cols-2">
         <label className="text-sm font-semibold">Site<select required value={form.site_id} onChange={(event) => setForm({ ...form, site_id: event.target.value })} className="mt-1 h-10 w-full rounded border px-3"><option value="">Select site</option>{sites.map((site) => <option key={site.id} value={site.id}>{site.site_name}</option>)}</select></label>
