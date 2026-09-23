@@ -112,6 +112,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   );
   const [notificationCountsLoading, setNotificationCountsLoading] = useState(false);
   const [notificationCountsLoaded, setNotificationCountsLoaded] = useState(false);
+  const [notificationCountsError, setNotificationCountsError] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [labourContext, setLabourContext] = useState<SelectedLabourContext | null>(null);
@@ -120,7 +121,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [expandedNestedGroups, setExpandedNestedGroups] = useState<Set<string>>(new Set());
   const [branding, setBranding] = useState<TenantBranding>(defaultTenantBranding);
   const [brandingStatus, setBrandingStatus] = useState<TenantBrandingStatus>("loading");
-  const notificationsStartedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -558,11 +558,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const loadNotificationCounts = useCallback(async () => {
     try {
       setNotificationCountsLoading(true);
+      setNotificationCountsError(false);
       const {
         data: { session },
       } = await supabase.auth.getSession();
 
       if (!session?.access_token) {
+        setNotificationCountsError(true);
         return;
       }
 
@@ -592,6 +594,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       });
       setNotificationCountsLoaded(true);
     } catch (error) {
+      setNotificationCountsError(true);
       console.error("Notification count load failed:", error);
     } finally {
       setNotificationCountsLoading(false);
@@ -600,11 +603,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
 
   useEffect(() => {
-    if (!user || notificationsStartedRef.current) return;
+    if (!user) return;
 
-    notificationsStartedRef.current = true;
     const timer = window.setTimeout(() => {
-      loadNotificationCounts();
+      void loadNotificationCounts();
     }, 0);
 
     return () => window.clearTimeout(timer);
@@ -839,7 +841,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </button>
 
             <div className="flex min-w-0 items-center gap-2 sm:gap-4 lg:gap-5">
-              <NotificationCenter workflowCounts={notificationCounts} />
+              <NotificationCenter workflowCounts={notificationCounts} workflowCountsLoaded={notificationCountsLoaded} workflowCountsError={notificationCountsError} />
               <button
                 type="button"
                 onClick={() => window.location.reload()}

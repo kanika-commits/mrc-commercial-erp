@@ -2,6 +2,7 @@ import { insertErpAuditLog } from "@/lib/serverAudit";
 import { actorName } from "@/lib/hr/attendance";
 import { adminClient, canReviewEmployeeAttendancePeriod, hasAttendanceApprovalPermission, isCurrentLevelApprover, jsonError, requireAttendanceApprovalActor } from "../../../_shared";
 import { loadScopedPeriod } from "../_shared";
+import { notifyWorkflowRecipients } from "@/lib/notificationWorkflow.server";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -55,6 +56,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       newValues: data,
       source: "system",
     }, request);
+    await notifyWorkflowRecipients(admin, {
+      eventType: "employee_attendance_sent_back",
+      entityType: "employee_attendance_period",
+      entityId: period.id,
+      cycleId: String(period.submission_version || period.submitted_at || period.id),
+      organizationId: period.organization_id,
+      companyId: period.company_id,
+      siteId: period.site_id,
+      title: "Employee Attendance sent back",
+      message: `Employee attendance was sent back: ${reason}`,
+      targetUrl: `/hr/attendance/daily?period_id=${encodeURIComponent(period.id)}`,
+      recipientIds: [period.submitted_by],
+      actorId: auth.user.id,
+    });
     return Response.json({ period: data });
   } catch (error: any) {
     return jsonError(error.message || "Failed to send back attendance period.", 500);

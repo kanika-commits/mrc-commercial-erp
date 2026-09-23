@@ -2,6 +2,7 @@ import { insertErpAuditLog } from "@/lib/serverAudit";
 import { actorName, datesForMonth } from "@/lib/hr/attendance";
 import { adminClient, assertCanFinalizeMonth, canReviewEmployeeAttendancePeriod, hasAttendanceApprovalPermission, isCurrentLevelApprover, jsonError, loadAttendanceRows, loadEligibleEmployees, nextApprovedStatusForLevel, requireAttendanceApprovalActor } from "../../../_shared";
 import { loadScopedPeriod } from "../_shared";
+import { notifyWorkflowRecipients, approvalLayerRecipientIds } from "@/lib/notificationWorkflow.server";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -63,6 +64,25 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       newValues: data,
       source: "system",
     }, request);
+    const recipientIds = nextStatus === "finalized"
+      ? [period.submitted_by]
+      : approvalLayerRecipientIds(snapshot, currentLevel + 1);
+    await notifyWorkflowRecipients(admin, {
+      eventType: nextStatus === "finalized" ? "employee_attendance_approved" : "employee_attendance_awaiting_approval",
+      entityType: "employee_attendance_period",
+      entityId: period.id,
+      cycleId: String(period.submission_version || period.submitted_at || period.id),
+      organizationId: period.organization_id,
+      companyId: period.company_id,
+      siteId: period.site_id,
+      title: nextStatus === "finalized" ? "Employee Attendance approved" : "Employee Attendance awaiting approval",
+      message: nextStatus === "finalized" ? `Employee attendance for ${period.site_name || "the selected site"} was approved.` : `Employee attendance for ${period.site_name || "the selected site"} is waiting for your approval.`,
+      targetUrl: `/hr/attendance-approval?period_id=${encodeURIComponent(period.id)}`,
+      recipientIds: recipientIds.filter(Boolean),
+      actorId: auth.user.id,
+      stage: nextStatus === "finalized" ? "outcome" : currentLevel + 1,
+      requiredPermission: nextStatus === "finalized" ? undefined : { moduleCode: "hr_attendance_approval", actionCode: "approve" },
+    });
     return Response.json({ period: data });
   } catch (error: any) {
     return jsonError(error.message || "Failed to finalize attendance period.", 500);

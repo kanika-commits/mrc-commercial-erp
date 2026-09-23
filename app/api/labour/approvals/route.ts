@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { buildNotificationEventKey, insertNotificationOnce } from "@/lib/notificationEvent.server";
 import {
   actorFields,
   audit,
@@ -18,6 +19,7 @@ import {
 import { normalizeText } from "@/lib/labour/constants";
 import { dateText } from "@/lib/labour/v2";
 import type { ErpAuditAction } from "@/lib/serverAudit";
+import { notifyWorkflowRecipients } from "@/lib/notificationWorkflow.server";
 
 const ACTIVE_STATUSES = ["pending_pm_approval", "pending_ho_approval", "sent_back_by_pm", "sent_back_by_ho", "final_approved"];
 const EDITABLE_STATUSES = ["draft", "sent_back_by_pm", "sent_back_by_ho"];
@@ -1943,8 +1945,12 @@ async function transitionStandardPeriod(access: any, request: Request, payload: 
     .order("id", { ascending: false });
   if (submittedSnapshotError && submittedSnapshotError.code !== "42P01") throw submittedSnapshotError;
   const submittedPeriodIds = new Set<string>();
+  const submittedSnapshotByPeriod = new Map<string, any>();
   for (const snapshot of submittedSnapshots || []) {
-    if (!submittedPeriodIds.has(snapshot.period_id)) submittedPeriodIds.add(snapshot.period_id);
+    if (!submittedPeriodIds.has(snapshot.period_id)) {
+      submittedPeriodIds.add(snapshot.period_id);
+      submittedSnapshotByPeriod.set(snapshot.period_id, snapshot);
+    }
   }
   const approvalStatus = (period: any) => resolveStandardApprovalStatus(period, workDate, submittedPeriodIds.has(period.id));
   const now = new Date().toISOString();
@@ -2002,21 +2008,35 @@ async function transitionStandardPeriod(access: any, request: Request, payload: 
       const dateSummary = patch.summary?.date_statuses?.[workDate] || {};
       const recipientUserId = dateSummary.submitted_by || period.submitted_by;
       if (recipientUserId && recipientUserId !== access.auth.user.id) {
-        const approverName = actorName(access) || access.auth.user.email || "Approver";
-        const { data: site } = await access.admin.from("sites").select("site_name").eq("id", period.site_id).maybeSingle();
-        const notification = await access.admin.from("user_notifications").insert({
-          organization_id: period.organization_id,
-          recipient_user_id: recipientUserId,
-          notification_type: "labour_attendance_sent_back",
-          title: "Labour Attendance Sent Back",
-          message: `${site?.site_name || "Selected site"} attendance for ${workDate} was sent back by ${approverName}. Reason: ${reason}`,
-          target_url: `/labour/attendance/daily?company_id=${encodeURIComponent(period.company_id)}&site_id=${encodeURIComponent(period.site_id)}&attendance_date=${encodeURIComponent(workDate)}`,
-          related_entity_type: "labour_attendance_period",
-          related_entity_id: period.id,
-          created_by: access.auth.user.id,
-          created_by_name: approverName,
-        });
-        if (notification.error) console.error("Labour attendance notification creation failed:", notification.error.message);
+        try {
+          const approverName = actorName(access) || access.auth.user.email || "Approver";
+          const snapshot = submittedSnapshotByPeriod.get(period.id);
+          const cycleId = snapshot?.id
+            || `version:${dateSummary.submission_version || period.summary?.date_statuses?.[workDate]?.submission_version || "unknown"}:${dateSummary.submitted_at || period.summary?.date_statuses?.[workDate]?.submitted_at || period.updated_at || "legacy"}`;
+          const eventKey = buildNotificationEventKey({
+            eventType: "labour_attendance_sent_back",
+            entityType: "labour_attendance_period",
+            entityId: period.id,
+            cycleId: `${workDate}:${cycleId}`,
+          });
+          const { data: site, error: siteError } = await access.admin.from("sites").select("site_name").eq("id", period.site_id).maybeSingle();
+          if (siteError) console.error("Labour attendance notification site lookup failed:", siteError.message);
+          await insertNotificationOnce(access.admin, {
+            organization_id: period.organization_id,
+            recipient_user_id: recipientUserId,
+            notification_type: "labour_attendance_sent_back",
+            event_key: eventKey,
+            title: "Labour Attendance Sent Back",
+            message: `${site?.site_name || "Selected site"} attendance for ${workDate} was sent back by ${approverName}. Reason: ${reason}`,
+            target_url: `/labour/attendance/daily?company_id=${encodeURIComponent(period.company_id)}&site_id=${encodeURIComponent(period.site_id)}&attendance_date=${encodeURIComponent(workDate)}`,
+            related_entity_type: "labour_attendance_period",
+            related_entity_id: period.id,
+            created_by: access.auth.user.id,
+            created_by_name: approverName,
+          });
+        } catch (notificationError: any) {
+          console.error("Labour attendance notification delivery failed:", notificationError?.message || "Unknown notification error.");
+        }
       }
     }
     return NextResponse.json({ updated: true, status: "reopened" });
@@ -2838,6 +2858,35 @@ export async function PATCH(request: Request) {
     }
     await insertEvent(access, updated, permissionAction, previousStatus, updated.snapshot || {}, reason, remarks);
     await auditTransition(access, request, updated, auditAction, `Labour approval transition: ${permissionAction}.`, { status: previousStatus }, { status: nextStatus, reason, remarks, submission_version: updated.submission_version });
+    let recipientIds: string[] = [];
+    if (nextStatus === "pending_ho_approval") {
+      const { data: configs } = await access.admin.from("labour_organization_configurations").select("ho_hr_user_id").eq("organization_id", updated.organization_id).eq("status", "active").limit(1);
+      recipientIds = (configs || []).map((row: any) => row.ho_hr_user_id).filter(Boolean);
+    } else if (nextStatus === "pending_pm_approval") {
+      const { data: configs } = await access.admin.from("labour_site_configurations").select("pm_user_id").eq("organization_id", updated.organization_id).eq("site_id", updated.site_id).eq("status", "active").limit(1);
+      recipientIds = (configs || []).map((row: any) => row.pm_user_id).filter(Boolean);
+    } else if (["final_approved", "sent_back_by_pm", "sent_back_by_ho"].includes(nextStatus)) {
+      recipientIds = [updated.submitted_by].filter(Boolean);
+    }
+    if (recipientIds.length) {
+      const outcome = nextStatus === "final_approved" ? "approved" : nextStatus.startsWith("sent_back") ? "sent back" : "awaiting approval";
+      await notifyWorkflowRecipients(access.admin, {
+        eventType: `labour_daily_${outcome.replaceAll(" ", "_")}`,
+        entityType: "labour_daily_submission",
+        entityId: updated.id,
+        cycleId: String(updated.submission_version || updated.submitted_at || updated.id),
+        organizationId: updated.organization_id,
+        companyId: updated.company_id,
+        siteId: updated.site_id,
+        title: `Labour attendance ${outcome}`,
+        message: reason ? `Labour attendance was ${outcome}: ${reason}` : `Labour attendance is ${outcome}.`,
+        targetUrl: `/labour/approvals?submission_id=${encodeURIComponent(updated.id)}`,
+        recipientIds,
+        actorId: access.auth.user.id,
+        stage: nextStatus === "pending_pm_approval" ? "pm" : nextStatus === "pending_ho_approval" ? "ho" : "outcome",
+        requiredPermission: nextStatus === "pending_pm_approval" ? { moduleCode: "labour_daily_submission", actionCode: "pm_approve" } : nextStatus === "pending_ho_approval" ? { moduleCode: "labour_daily_submission", actionCode: "ho_approve" } : undefined,
+      });
+    }
     return NextResponse.json({ updated: true, status: nextStatus });
   } catch (error: any) {
     return jsonError(error.message || "Failed to update Labour approval.", 500);

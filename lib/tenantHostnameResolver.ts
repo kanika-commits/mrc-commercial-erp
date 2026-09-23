@@ -26,6 +26,24 @@ export function classifyTenantHostname(value: string | null | undefined) {
 
 export async function resolveTenantHostname(admin: { from: (table: string) => any }, value: string | null | undefined): Promise<TenantHostResolution> {
   const classified = classifyTenantHostname(value);
+  if (classified.type === "local" && process.env.NODE_ENV !== "production") {
+    const configuredCode = String(process.env.SITEQUBE_DEV_TENANT_CODE || "").trim();
+    if (!configuredCode) return { type: "unknown", hostname: classified.hostname };
+    const organizationResult = await admin.from("organizations")
+      .select("id, name, status, code")
+      .eq("code", configuredCode)
+      .eq("status", "active")
+      .maybeSingle();
+    if (organizationResult.error) throw organizationResult.error;
+    if (!organizationResult.data) return { type: "unknown", hostname: classified.hostname };
+    return {
+      type: "tenant",
+      hostname: classified.hostname,
+      slug: configuredCode.toLowerCase(),
+      domain: null,
+      organization: organizationResult.data,
+    };
+  }
   if (classified.type !== "tenant") return classified;
   const domainResult = await admin.from("organization_domains")
     .select("id, organization_id, hostname, slug, status")

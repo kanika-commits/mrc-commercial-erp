@@ -25,7 +25,12 @@ const COUNT_PERMISSIONS = [
   { moduleCode: "itc_claims", actionCode: "approve" },
   { moduleCode: "vendors", actionCode: "view" },
   { moduleCode: "hr_attendance", actionCode: "view" },
+  { moduleCode: "hr_attendance", actionCode: "add" },
+  { moduleCode: "hr_attendance", actionCode: "edit" },
+  { moduleCode: "hr_attendance", actionCode: "submit" },
   { moduleCode: "labour_attendance", actionCode: "view" },
+  { moduleCode: "labour_attendance", actionCode: "submit" },
+  { moduleCode: "labour_daily_submission", actionCode: "submit" },
 ];
 
 function adminClient() {
@@ -160,8 +165,11 @@ export async function GET(request: Request) {
       canAny(auth.permissions, "invoices", ["view"]) ||
       canAny(auth.permissions, "itc_claims", ["view", "approve"]);
     const canVendors = canAny(auth.permissions, "vendors", ["view"]);
-    const canEmployeeAttendance = canAny(auth.permissions, "hr_attendance", ["view", "add", "edit", "submit"]);
-    const canLabourAttendance = canAny(auth.permissions, "labour_attendance", ["view", "add", "edit", "submit"]);
+    const canEmployeeAttendance = canAny(auth.permissions, "hr_attendance", ["view"]) &&
+      canAny(auth.permissions, "hr_attendance", ["add", "edit", "submit"]);
+    const canLabourStandardAttendance = canAny(auth.permissions, "labour_attendance", ["view"]) &&
+      canAny(auth.permissions, "labour_attendance", ["submit"]);
+    const canLabourEngineerAttendance = canAny(auth.permissions, "labour_daily_submission", ["submit"]);
 
     const pendingWorkOrdersQuery = canWorkOrders
       ? applyWorkOrderScope(
@@ -275,7 +283,7 @@ export async function GET(request: Request) {
           assignments
         )
       : null;
-    const labourStandardSentBackQuery = canLabourAttendance
+    const labourStandardSentBackQuery = canLabourStandardAttendance
       ? applyCompanySiteAssignmentScope(
           applyOrganizationScope(
             admin
@@ -288,7 +296,7 @@ export async function GET(request: Request) {
           assignments
         )
       : null;
-    const labourEngineerSentBackQuery = canLabourAttendance
+    const labourEngineerSentBackQuery = canLabourEngineerAttendance
       ? applyCompanySiteAssignmentScope(
           applyOrganizationScope(
             admin

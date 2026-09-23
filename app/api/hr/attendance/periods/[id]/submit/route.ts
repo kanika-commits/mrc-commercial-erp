@@ -2,6 +2,7 @@ import { insertErpAuditLog } from "@/lib/serverAudit";
 import { actorName } from "@/lib/hr/attendance";
 import { adminClient, ensureDailySubmission, jsonError, loadAttendanceRows, loadEligibleEmployees, loadEmployeeAttendancePolicyForScope, loadDailySubmission, requireAttendancePermission } from "../../../_shared";
 import { loadScopedPeriod } from "../_shared";
+import { notifyWorkflowRecipients, approvalLayerRecipientIds } from "@/lib/notificationWorkflow.server";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -54,6 +55,22 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       newValues: data,
       source: "system",
     }, request);
+    await notifyWorkflowRecipients(admin, {
+      eventType: "employee_attendance_awaiting_approval",
+      entityType: "employee_attendance_daily_submission",
+      entityId: data.id,
+      cycleId: String(data.submission_version || data.submitted_at || data.id),
+      organizationId: period.organization_id,
+      companyId: period.company_id,
+      siteId: period.site_id,
+      title: "Employee Attendance awaiting approval",
+      message: `Employee attendance for ${period.site_name || "the selected site"} on ${attendanceDate} is waiting for your approval.`,
+      targetUrl: `/hr/attendance-approval?period_id=${encodeURIComponent(period.id)}`,
+      recipientIds: approvalLayerRecipientIds(period.approval_workflow_snapshot, 1),
+      actorId: auth.user.id,
+      stage: 1,
+      requiredPermission: { moduleCode: "hr_attendance_approval", actionCode: "approve" },
+    });
     return Response.json({ period, daily_submission: data });
   } catch (error: any) {
     return jsonError(error.message || "Failed to submit attendance period.", 500);

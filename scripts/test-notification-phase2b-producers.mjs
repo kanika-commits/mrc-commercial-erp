@@ -1,0 +1,30 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const read = (path) => fs.readFileSync(path, "utf8");
+const producer = read("lib/notificationWorkflow.server.ts");
+const submit = read("app/api/hr/attendance/periods/[id]/submit/route.ts");
+const finalize = read("app/api/hr/attendance/periods/[id]/finalize/route.ts");
+const sendBack = read("app/api/hr/attendance/periods/[id]/send-back/route.ts");
+const labour = read("app/api/labour/approvals/route.ts");
+
+assert.match(producer, /insertNotificationOnce/);
+assert.match(producer, /profiles[\s\S]*status.*active/);
+assert.match(producer, /user_access_assignments/);
+assert.match(producer, /organization_id/);
+assert.match(producer, /companyId/);
+assert.match(producer, /siteId/);
+assert.match(producer, /catch \(error\)/);
+assert.match(producer, /Workflow notification delivery failed/);
+assert.match(submit, /employee_attendance_awaiting_approval/);
+assert.match(submit, /approvalLayerRecipientIds\(period\.approval_workflow_snapshot, 1\)/);
+assert.match(finalize, /employee_attendance_approved/);
+assert.match(finalize, /approvalLayerRecipientIds\(snapshot, currentLevel \+ 1\)/);
+assert.match(sendBack, /employee_attendance_sent_back/);
+assert.match(sendBack, /recipientIds: \[period\.submitted_by\]/);
+assert.match(labour, /insertNotificationOnce/);
+assert.match(labour, /catch \(notificationError/);
+assert.match(submit, /await notifyWorkflowRecipients/);
+assert.match(finalize, /await notifyWorkflowRecipients/);
+assert.match(sendBack, /await notifyWorkflowRecipients/);
+console.log("Notification Phase 2B producer contracts passed.");

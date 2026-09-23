@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { actorName } from "@/lib/hr/attendance";
 import { insertErpAuditLog } from "@/lib/serverAudit";
 import { adminClient, filterAccessibleDailySubmissions, hasAttendanceApprovalPermission, requireAttendanceApprovalActor } from "../../_shared";
+import { notifyWorkflowRecipients } from "@/lib/notificationWorkflow.server";
 
 export async function POST(request: Request) {
   try {
@@ -21,6 +22,21 @@ export async function POST(request: Request) {
       const updated = await admin.from("employee_attendance_daily_submissions").update({ status: "approved", approved_by: auth.user.id, approved_by_name: actorName(auth.user), approved_by_email: auth.user.email || null, approved_at: now, updated_by: auth.user.id, updated_by_name: actorName(auth.user), updated_by_email: auth.user.email || null, updated_at: now }).eq("id", state.id).eq("status", "submitted").select("*").single();
       if (updated.error) { results.push({ daily_submission_id: state.id, attendance_date: state.attendance_date, company_id: state.company_id, success: false, error: updated.error.message }); continue; }
       await insertErpAuditLog(admin, auth.user, { organizationId: state.organization_id, companyId: state.company_id, siteId: state.site_id, moduleCode: "hr_attendance_approval", entityType: "employee_attendance_daily_submission", recordId: state.id, action: "approve", description: "Daily employee attendance approved.", oldValues: state, newValues: updated.data, source: "system" }, request);
+      await notifyWorkflowRecipients(admin, {
+        eventType: "employee_attendance_approved",
+        entityType: "employee_attendance_daily_submission",
+        entityId: state.id,
+        cycleId: String(state.submission_version || state.submitted_at || state.id),
+        organizationId: state.organization_id,
+        companyId: state.company_id,
+        siteId: state.site_id,
+        title: "Employee Attendance approved",
+        message: "Your employee attendance submission was approved.",
+        targetUrl: `/hr/attendance/daily?period_id=${encodeURIComponent(state.period_id || state.id)}`,
+        recipientIds: [state.submitted_by],
+      actorId: auth.user.id,
+      stage: "outcome",
+      });
       results.push({ daily_submission_id: state.id, attendance_date: state.attendance_date, company_id: state.company_id, success: true, daily_submission: updated.data });
     }
     return NextResponse.json({ results });
