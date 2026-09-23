@@ -10,6 +10,7 @@ import {
   loadActorOrganizationScope,
   loadOrganizationScopeForUser,
 } from "@/lib/serverOrganizationScope";
+import { validateManualPurchaseOrderSelection, validateSiteQubePaymentSelection } from "@/lib/payments/purchaseOrderPayment";
 
 const MODULE_CODE = "payments";
 const DOCUMENT_BUCKET = "payment-documents";
@@ -56,6 +57,18 @@ function roundAmount(value: FormDataEntryValue | null) {
 
 function normalized(value: string) {
   return value.trim().toLowerCase();
+}
+
+async function loadPaymentAssignments(admin: ReturnType<typeof adminClient>, userId: string) {
+  const { data, error } = await admin
+    .from("user_access_assignments")
+    .select("company_id,site_id")
+    .eq("user_id", userId);
+  if (error) throw error;
+  return {
+    companyIds: [...new Set((data || []).map((row: any) => row.company_id).filter(Boolean))] as string[],
+    siteIds: [...new Set((data || []).map((row: any) => row.site_id).filter(Boolean))] as string[],
+  };
 }
 
 function duplicateErrorMessage(error: any) {
@@ -180,6 +193,9 @@ export async function POST(request: Request) {
       const companyId = String(formData.get("company_id") || "").trim();
       const workOrderId = String(formData.get("work_order_id") || "").trim();
       const vendorId = String(formData.get("vendor_id") || "").trim();
+      const poSource = String(formData.get("po_source") || "").trim();
+      const submittedPurchaseOrderId = String(formData.get("purchase_order_id") || "").trim();
+      const submittedSiteId = String(formData.get("site_id") || "").trim();
       const toCompanyBankAccountId = String(
         formData.get("to_company_bank_account_id") || ""
       ).trim();
@@ -189,6 +205,10 @@ export async function POST(request: Request) {
           { error: "Payment Against is required." },
           { status: 400 }
         );
+      }
+
+      if (paymentType === "Purchase Order" && !companyId) {
+        return NextResponse.json({ error: "Company is required for a Purchase Order payment." }, { status: 400 });
       }
 
       if (!paymentDate) {
@@ -362,17 +382,103 @@ export async function POST(request: Request) {
       if (companyId) {
         const { data: company, error: companyError } = await admin
           .from("companies")
-          .select("id, organization_id")
+          .select("id, organization_id, status")
           .eq("id", companyId)
           .maybeSingle();
 
         if (companyError) throw companyError;
 
-        if (!company || company.organization_id !== organizationId) {
+        if (!company || company.organization_id !== organizationId || (paymentType === "Purchase Order" && company.status !== "active")) {
           return NextResponse.json(
             { error: "Selected company is not available for this organization." },
             { status: 403 }
           );
+        }
+      }
+
+      let persistedSiteId: string | null = null;
+      let persistedPurchaseOrderId: string | null = null;
+      if (paymentType === "Purchase Order") {
+        if (!companyId || !submittedSiteId || !vendorId || !referenceNumber) {
+          return NextResponse.json({ error: "Company, Site / Project, PO reference and Vendor are required for a Purchase Order payment." }, { status: 400 });
+        }
+        if (account.company_id !== companyId) {
+          return NextResponse.json({ error: "From Account must belong to the selected company." }, { status: 400 });
+        }
+
+        const assignments = await loadPaymentAssignments(admin, auth.user.id);
+        if (assignments.companyIds.length && !assignments.companyIds.includes(companyId)) {
+          return NextResponse.json({ error: "Selected company is outside your access scope." }, { status: 403 });
+        }
+        if (assignments.siteIds.length && !assignments.siteIds.includes(submittedSiteId)) {
+          return NextResponse.json({ error: "Selected Site / Project is outside your access scope." }, { status: 403 });
+        }
+
+        const { data: selectedSite, error: siteError } = await admin
+          .from("sites")
+          .select("id,organization_id,status")
+          .eq("id", submittedSiteId)
+          .maybeSingle();
+        if (siteError) throw siteError;
+        if (!selectedSite || selectedSite.organization_id !== organizationId || selectedSite.status !== "active") {
+          return NextResponse.json({ error: "Selected Site / Project is not active in this organization." }, { status: 403 });
+        }
+
+        if (poSource === "siteqube") {
+          if (!submittedPurchaseOrderId) {
+            return NextResponse.json({ error: "Select a current SiteQube Purchase Order." }, { status: 400 });
+          }
+          const { data: selectedPo, error: selectedPoError } = await admin
+            .from("procurement_purchase_orders")
+            .select("id,organization_id")
+            .eq("id", submittedPurchaseOrderId)
+            .maybeSingle();
+          if (selectedPoError) throw selectedPoError;
+          if (!selectedPo) return NextResponse.json({ error: "Selected Purchase Order was not found." }, { status: 404 });
+          if (selectedPo.organization_id !== organizationId || !isInOrganizationScope(organizationScope, selectedPo.organization_id)) {
+            return NextResponse.json({ error: "Selected Purchase Order is outside your organization scope." }, { status: 403 });
+          }
+
+          const { data: effectivePo, error: effectivePoError } = await admin.rpc(
+            "procurement_purchase_order_effective_revision",
+            { p_purchase_order_id: submittedPurchaseOrderId },
+          );
+          if (effectivePoError) throw effectivePoError;
+          const validationError = validateSiteQubePaymentSelection({
+            purchase_order_id: submittedPurchaseOrderId,
+            company_id: companyId,
+            site_id: submittedSiteId,
+            vendor_id: vendorId,
+            reference_number: referenceNumber,
+          }, effectivePo || null);
+          if (validationError) return NextResponse.json({ error: validationError }, { status: 400 });
+          if (effectivePo.organization_id !== organizationId || (assignments.companyIds.length && !assignments.companyIds.includes(effectivePo.company_id)) || (assignments.siteIds.length && !assignments.siteIds.includes(effectivePo.site_id))) {
+            return NextResponse.json({ error: "Selected Purchase Order is outside your access scope." }, { status: 403 });
+          }
+          persistedSiteId = effectivePo.site_id;
+          persistedPurchaseOrderId = effectivePo.id;
+        } else if (poSource === "manual") {
+          const validationError = validateManualPurchaseOrderSelection({
+            company_id: companyId,
+            site_id: submittedSiteId,
+            vendor_id: vendorId,
+            reference_number: referenceNumber,
+            purchase_order_id: submittedPurchaseOrderId,
+          });
+          if (validationError) return NextResponse.json({ error: validationError }, { status: 400 });
+          const { data: manualVendor, error: manualVendorError } = await admin
+            .from("vendors")
+            .select("id,organization_id,status,is_deleted")
+            .eq("id", vendorId)
+            .maybeSingle();
+          if (manualVendorError) throw manualVendorError;
+          if (!manualVendor || manualVendor.organization_id !== organizationId || manualVendor.status !== "active" || manualVendor.is_deleted) {
+            return NextResponse.json({ error: "Select an active Vendor Master record for the Manual / Old PO." }, { status: 400 });
+          }
+          persistedSiteId = submittedSiteId;
+          persistedPurchaseOrderId = null;
+        } else {
+          return NextResponse.json({ error: "Choose SiteQube PO or Manual / Old PO." }, { status: 400 });
         }
       }
 
@@ -459,6 +565,8 @@ export async function POST(request: Request) {
         .insert({
           organization_id: organizationId,
           company_id: companyId || workOrder?.company_id || account.company_id || null,
+          site_id: persistedSiteId,
+          purchase_order_id: persistedPurchaseOrderId,
           work_order_id: workOrderId || null,
           vendor_id: vendorId || null,
           invoice_id: null,
@@ -492,8 +600,8 @@ export async function POST(request: Request) {
           entityType: "payment",
           recordId: payment.id,
           recordNumber: paymentNumber,
-          parentEntityType: workOrderId ? "work_order" : null,
-          parentRecordId: workOrderId || null,
+          parentEntityType: workOrderId ? "work_order" : persistedPurchaseOrderId ? "purchase_order" : null,
+          parentRecordId: workOrderId || persistedPurchaseOrderId || null,
           action: "create",
           actionCategory: "create",
           activityLabel: "Created Payment",
@@ -504,6 +612,8 @@ export async function POST(request: Request) {
             payment_number: paymentNumber,
             payment_date: paymentDate,
             payment_type: paymentType,
+            site_id: persistedSiteId,
+            purchase_order_id: persistedPurchaseOrderId,
             work_order_id: workOrderId || null,
             vendor_id: vendorId || null,
             reference_number: referenceNumber || null,

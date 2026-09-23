@@ -104,6 +104,24 @@ export default function PaymentDetailPage() {
         }
       }
 
+      if (!paymentData.work_order_id && paymentData.company_id) {
+        const { data: companyData } = await supabase
+          .from("companies")
+          .select("id, company_name, company_code")
+          .eq("id", paymentData.company_id)
+          .maybeSingle();
+        setCompany(companyData);
+      }
+
+      if (paymentData.site_id) {
+        const { data: siteData } = await supabase
+          .from("sites")
+          .select("id, site_name, site_code")
+          .eq("id", paymentData.site_id)
+          .maybeSingle();
+        setSite(siteData);
+      }
+
       if (paymentData.vendor_id) {
         const { data: vendorData } = await supabase
           .from("vendors")
@@ -155,7 +173,7 @@ export default function PaymentDetailPage() {
             {payment.payment_number || "Payment"}
           </h1>
           <p className="text-sm text-slate-500">
-            Invoice-linked payment record and transfer details.
+            Payment record and transfer details.
           </p>
         </div>
 
@@ -182,9 +200,12 @@ export default function PaymentDetailPage() {
         <Card icon={<CreditCard className="h-5 w-5" />} title="Payment Details">
           <Info label="Payment Date" value={payment.payment_date || "-"} />
           <Info label="Payment Against" value={payment.payment_type || "Invoice"} />
+          {payment.payment_type === "Purchase Order" && (
+            <Info label="PO Source" value={payment.purchase_order_id ? "SiteQube PO" : "Manual / Old PO"} />
+          )}
           <Info
-            label="Reference Number"
-            value={payment.utr_number || payment.reference_number || "-"}
+            label={payment.payment_type === "Purchase Order" ? payment.purchase_order_id ? "Purchase Order" : "Manual PO Number" : "Reference Number"}
+            value={payment.payment_type === "Purchase Order" ? payment.reference_number || "-" : payment.utr_number || payment.reference_number || "-"}
           />
           <Info label="From Account" value={accountLabel(account, payment.payment_number)} />
           <Info label="Status" value={payment.status || "-"} />

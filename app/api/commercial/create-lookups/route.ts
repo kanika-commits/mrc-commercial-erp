@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { requireAnyPermission } from "@/lib/serverPermissions";
+import { loadClaimedInvoicesForWorkOrders } from "@/lib/commercial/claimedInvoiceLookups";
 import {
   isInOrganizationScope,
   loadActorOrganizationScope,
@@ -309,16 +310,7 @@ export async function GET(request: Request) {
 
     const workOrderIds = workOrders.map((workOrder) => workOrder.id).filter(Boolean);
 
-    const { data: invoices, error: invoicesError } = workOrderIds.length
-      ? await admin
-          .from("invoices")
-          .select("id, invoice_number, work_order_id, vendor_id, invoice_amount, itc_status")
-          .in("work_order_id", workOrderIds)
-          .ilike("itc_status", "claimed")
-          .order("invoice_number")
-      : { data: [], error: null };
-
-    if (invoicesError) throw invoicesError;
+    const invoices = await loadClaimedInvoicesForWorkOrders(admin, workOrderIds);
 
     const invoiceVendorIds = Array.from(
       new Set((invoices || []).map((invoice) => invoice.vendor_id).filter(Boolean)),
@@ -334,6 +326,7 @@ export async function GET(request: Request) {
       .from("vendors")
       .select("id, vendor_name, organization_id")
       .eq("status", "active")
+      .or("is_deleted.is.null,is_deleted.eq.false")
       .order("vendor_name");
 
     vendorQuery = applyScopeToQuery(vendorQuery, organizationScope);
@@ -347,7 +340,7 @@ export async function GET(request: Request) {
       companies,
       sites,
       work_orders: workOrders,
-      invoices: invoices || [],
+      invoices,
       vendors: invoiceVendors || [],
       purchase_order_vendors: purchaseOrderVendors || [],
     });

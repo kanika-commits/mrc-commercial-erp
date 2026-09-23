@@ -88,6 +88,7 @@ export type PaymentRegisterFilters = {
   dateFrom?: string;
   dateTo?: string;
   status?: string;
+  createdBy?: string;
 };
 
 export function filterPaymentRegisterRows<T extends Record<string, any>>(rows: T[], filters: PaymentRegisterFilters) {
@@ -99,6 +100,7 @@ export function filterPaymentRegisterRows<T extends Record<string, any>>(rows: T
     if (filters.dateFrom && String(row.payment_date || "") < filters.dateFrom) return false;
     if (filters.dateTo && String(row.payment_date || "") > filters.dateTo) return false;
     if (filters.status && String(row.status || "") !== filters.status) return false;
+    if (filters.createdBy && (row.created_by_filter_value || "") !== filters.createdBy) return false;
     return true;
   });
 }

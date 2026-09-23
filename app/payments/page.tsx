@@ -9,9 +9,11 @@ import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { formatIstTimestamp } from "@/lib/dateTime";
 import { recordClientAuditEvent } from "@/lib/clientAudit";
-import { filterPaymentRegisterRows, paymentRegisterFilterOptions, type PaymentRegisterFilters } from "@/lib/payments/paymentGrid";
+import type { PaymentRegisterFilters } from "@/lib/payments/paymentGrid";
+import { formatPaymentDate } from "@/lib/payments/formatPaymentDate";
 
 const PAGE_SIZE = 50;
+const EMPTY_FILTER_OPTIONS = { companies: [], paymentTypes: [], parties: [], accounts: [], creators: [] };
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -37,12 +39,13 @@ export default function PaymentsPage() {
   const [deletionReason, setDeletionReason] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [filters, setFilters] = useState<PaymentRegisterFilters>({});
+  const [filterOptions, setFilterOptions] = useState<any>(EMPTY_FILTER_OPTIONS);
 
   const canDelete = can(access?.permissions || [], "payments", "delete");
 
   useEffect(() => {
     loadPayments();
-  }, [page, search]);
+  }, [page, search, filters]);
 
   async function loadPayments() {
     try {
@@ -66,6 +69,13 @@ export default function PaymentsPage() {
       if (search) {
         params.set("search", search);
       }
+      if (filters.companyId) params.set("company_id", filters.companyId);
+      if (filters.paymentType) params.set("payment_type", filters.paymentType);
+      if (filters.party) params.set("party", filters.party);
+      if (filters.fromAccount) params.set("from_account", filters.fromAccount);
+      if (filters.dateFrom) params.set("date_from", filters.dateFrom);
+      if (filters.dateTo) params.set("date_to", filters.dateTo);
+      if (filters.createdBy) params.set("created_by", filters.createdBy);
 
       const response = await fetch(`/api/payments/register?${params.toString()}`, {
         headers: {
@@ -81,6 +91,7 @@ export default function PaymentsPage() {
 
       setPayments(result.rows || []);
       setTotal(Number(result.total || 0));
+      setFilterOptions(result.filter_options || EMPTY_FILTER_OPTIONS);
     } catch (loadError: any) {
       setError(loadError.message || "Failed to load payments.");
     } finally {
@@ -142,14 +153,7 @@ export default function PaymentsPage() {
   const hasNextPage = (page + 1) * PAGE_SIZE < total;
   const rangeStart = total === 0 ? 0 : page * PAGE_SIZE + 1;
   const rangeEnd = Math.min(page * PAGE_SIZE + payments.length, total);
-  const visiblePayments = filterPaymentRegisterRows(payments, filters);
-  const filterOptions = {
-    companies: Array.from(new Set(payments.map((payment) => payment.company_id).filter(Boolean))),
-    paymentTypes: paymentRegisterFilterOptions(payments, "payment_type"),
-    parties: paymentRegisterFilterOptions(payments, "party"),
-    accounts: paymentRegisterFilterOptions(payments, "account_name"),
-    statuses: paymentRegisterFilterOptions(payments, "status"),
-  };
+  const visiblePayments = payments;
 
   function updateFilter<Key extends keyof PaymentRegisterFilters>(key: Key, value: PaymentRegisterFilters[Key]) {
     setPage(0);
@@ -214,7 +218,7 @@ export default function PaymentsPage() {
                 Payment Register
               </h2>
               <p className="mt-1 text-sm text-slate-500">
-                Showing {visiblePayments.length} matching rows on this page · {rangeStart}–{rangeEnd} of {total} for search
+                Showing {rangeStart}–{rangeEnd} of {total} matching payments
               </p>
             </div>
 
@@ -233,7 +237,7 @@ export default function PaymentsPage() {
               Company
               <select value={filters.companyId || ""} onChange={(event) => updateFilter("companyId", event.target.value)} className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-100">
                 <option value="">All Companies</option>
-                {filterOptions.companies.map((id: string) => <option key={id} value={id}>Company · {id.slice(0, 8)}</option>)}
+                {filterOptions.companies.map((option: any) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </label>
             <label className="text-xs font-semibold text-slate-600">
@@ -247,30 +251,30 @@ export default function PaymentsPage() {
               Vendor / Party
               <select value={filters.party || ""} onChange={(event) => updateFilter("party", event.target.value)} className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-100">
                 <option value="">All Parties</option>
-                {filterOptions.parties.map((value: string) => <option key={value}>{value}</option>)}
+                {filterOptions.parties.map((option: any) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </label>
             <label className="text-xs font-semibold text-slate-600">
               From Account
               <select value={filters.fromAccount || ""} onChange={(event) => updateFilter("fromAccount", event.target.value)} className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-100">
                 <option value="">All Accounts</option>
-                {filterOptions.accounts.map((value: string) => <option key={value}>{value}</option>)}
+                {filterOptions.accounts.map((option: any) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </label>
             <label className="text-xs font-semibold text-slate-600">Date From<input type="date" value={filters.dateFrom || ""} onChange={(event) => updateFilter("dateFrom", event.target.value)} className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-100" /></label>
             <label className="text-xs font-semibold text-slate-600">Date To<input type="date" value={filters.dateTo || ""} onChange={(event) => updateFilter("dateTo", event.target.value)} className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-100" /></label>
             <label className="text-xs font-semibold text-slate-600">
-              Status
-              <select value={filters.status || ""} onChange={(event) => updateFilter("status", event.target.value)} className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-100">
-                <option value="">All Statuses</option>
-                {filterOptions.statuses.map((value: string) => <option key={value}>{value}</option>)}
+              Created By
+              <select value={filters.createdBy || ""} onChange={(event) => updateFilter("createdBy", event.target.value)} className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-100">
+                <option value="">All Users</option>
+                {filterOptions.creators.map((option: any) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </label>
             <div className="flex items-end xl:col-span-7 xl:justify-end">
               <button type="button" onClick={clearFilters} className="h-9 rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">Clear Filters</button>
             </div>
           </div>
-          <p className="mt-2 text-xs text-slate-500">Search is server-side. The toolbar filters the rows on the current page.</p>
+          <p className="mt-2 text-xs text-slate-500">Search and filters apply across all matching payments within your accessible organization scope.</p>
         </div>
 
         <div className="max-h-[70vh] overflow-auto">
@@ -294,8 +298,7 @@ export default function PaymentsPage() {
 
             <tbody className="divide-y divide-slate-100">
               {visiblePayments.map((payment, index) => {
-                const createdBy =
-                  payment.created_by_email || payment.created_by_name || "-";
+                const createdBy = payment.created_by_display || payment.created_by_name || payment.created_by_email || "-";
 
                 return (
                   <tr key={payment.id} className={`transition hover:bg-sky-50/60 ${index % 2 ? "bg-slate-50/50" : "bg-white"}`}>
@@ -303,12 +306,19 @@ export default function PaymentsPage() {
                       {page * PAGE_SIZE + index + 1}
                     </td>
                     <td className="whitespace-nowrap border-r border-slate-100 px-3 py-2.5 text-slate-700">
-                      {payment.payment_date || "-"}
+                      {formatPaymentDate(payment.payment_date)}
                     </td>
                     <td className="border-r border-slate-100 px-3 py-2.5 text-slate-700">
                       {payment.payment_type || "-"}
                     </td>
-                    <td className="max-w-64 truncate border-r border-slate-100 px-3 py-2.5 text-slate-700" title={payment.reference || "-"}>{payment.reference || "-"}</td>
+                    <td className="max-w-64 border-r border-slate-100 px-3 py-2.5 text-slate-700" title={payment.reference || "-"}>
+                      <div className="truncate">{payment.reference || "-"}</div>
+                      {payment.payment_type === "Purchase Order" && (
+                        <div className="mt-0.5 truncate text-[11px] text-slate-500" title={payment.site_name || "Site not recorded"}>
+                          {payment.purchase_order_source || "Purchase Order"}{payment.site_name ? ` · ${payment.site_code ? `${payment.site_code} — ` : ""}${payment.site_name}` : ""}
+                        </div>
+                      )}
+                    </td>
                     <td className="max-w-56 truncate border-r border-slate-100 px-3 py-2.5 text-slate-700" title={payment.party || "-"}>{payment.party || "-"}</td>
                     <td className="max-w-52 truncate border-r border-slate-100 px-3 py-2.5 text-slate-700" title={payment.account_name || "-"}>{payment.account_name || "-"}</td>
                     <td className="whitespace-nowrap border-r border-slate-100 px-3 py-2.5 text-right font-semibold tabular-nums text-slate-950">

@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { sortCompanies } from "@/lib/companyOrdering";
 import AlertMessage from "@/components/AlertMessage";
 import { mapPaymentGridPaste, matchPaymentOption, normalizePaymentDate, transferredPaymentAmount } from "@/lib/payments/paymentGrid";
+import { paymentPurchaseOrderLabel } from "@/lib/payments/purchaseOrderPayment";
 
 const PAYMENT_TYPES = [
   "Work Order",
@@ -20,6 +21,9 @@ const PAYMENT_TYPES = [
 type Row = {
   company_id: string;
   payment_type: string;
+  po_source: "siteqube" | "manual";
+  purchase_order_id: string;
+  site_id: string;
   reference_number: string;
   work_order_id: string;
   invoice_id: string;
@@ -36,6 +40,9 @@ type Row = {
 const emptyRow = (): Row => ({
   company_id: "",
   payment_type: "Work Order",
+  po_source: "siteqube",
+  purchase_order_id: "",
+  site_id: "",
   reference_number: "",
   work_order_id: "",
   invoice_id: "",
@@ -87,12 +94,15 @@ function friendlyPaymentError(error: any) {
 export default function NewPaymentPage() {
   const [rows, setRows] = useState<Row[]>(Array.from({ length: 10 }, emptyRow));
   const [companies, setCompanies] = useState<any[]>([]);
+  const [paymentCompanies, setPaymentCompanies] = useState<any[]>([]);
   const [allCompanies, setAllCompanies] = useState<any[]>([]);
   const [defaultCompanyId, setDefaultCompanyId] = useState("");
   const [workOrders, setWorkOrders] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [vendors, setVendors] = useState<any[]>([]);
   const [purchaseOrderVendors, setPurchaseOrderVendors] = useState<any[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<any[]>([]);
+  const [paymentSites, setPaymentSites] = useState<any[]>([]);
   const [bankAccounts, setBankAccounts] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -119,13 +129,15 @@ export default function NewPaymentPage() {
 
   async function loadData() {
     try {
-      const [lookupResponse, accountResponse] = await Promise.all([
+      const [lookupResponse, accountResponse, poLookupResponse] = await Promise.all([
         fetchWithToken("/api/commercial/create-lookups"),
         fetchWithToken("/api/payments/company-bank-accounts"),
+        fetchWithToken("/api/payments/purchase-order-lookups"),
       ]);
 
       const lookupResult = await lookupResponse.json();
       const accountResult = await accountResponse.json();
+      const poLookupResult = await poLookupResponse.json();
 
       if (!lookupResponse.ok) {
         throw new Error(lookupResult.error || "Failed to load payment form data.");
@@ -133,6 +145,9 @@ export default function NewPaymentPage() {
 
       if (!accountResponse.ok) {
         throw new Error(accountResult.error || "Failed to load company bank accounts.");
+      }
+      if (!poLookupResponse.ok) {
+        throw new Error(poLookupResult.error || "Failed to load Purchase Order payment lookups.");
       }
 
       const lookupCompanies = (lookupResult.companies || []) as any[];
@@ -150,13 +165,18 @@ export default function NewPaymentPage() {
       const sortedCompanies: any[] = sortCompanies(companySource as any[]);
       setAllCompanies(sortedCompanies);
       setCompanies(sortedCompanies);
+      const sortedPaymentCompanies: any[] = sortCompanies(poLookupResult.companies || []);
+      setPaymentCompanies(sortedPaymentCompanies);
+      setAllCompanies((previous) => Array.from(new Map([...previous, ...sortedPaymentCompanies].map((company: any) => [company.id, company])).values()));
       setDefaultCompanyId(sortedCompanies[0]?.id || "");
       setWorkOrders(lookupResult.work_orders || []);
       setInvoices(lookupResult.invoices || []);
       setVendors(lookupResult.vendors || []);
       setPurchaseOrderVendors(lookupResult.purchase_order_vendors || []);
+      setPurchaseOrders(poLookupResult.purchase_orders || []);
+      setPaymentSites(poLookupResult.sites || []);
 
-      const allowedCompanyIds = new Set(sortedCompanies.map((company: any) => company.id));
+      const allowedCompanyIds = new Set([...sortedCompanies, ...sortedPaymentCompanies].map((company: any) => company.id));
       const activeAccounts = (accountResult.accounts || []).filter(
         (account: any) =>
           String(account.status || "active").toLowerCase() === "active" &&
@@ -200,6 +220,64 @@ export default function NewPaymentPage() {
     return bankAccounts.filter((account) => account.company_id === companyId);
   }
 
+  function companiesForRow(row: Row) {
+    return row.payment_type === "Purchase Order" && paymentCompanies.length ? paymentCompanies : companies;
+  }
+
+  function sitesForRow(row: Row) {
+    const company = [...companies, ...paymentCompanies].find((item) => item.id === row.company_id);
+    return paymentSites.filter((site) => !company?.organization_id || site.organization_id === company.organization_id);
+  }
+
+  function siteLabel(siteId: string) {
+    const site = paymentSites.find((item) => item.id === siteId);
+    return site ? [site.site_code, site.site_name].filter(Boolean).join(" — ") : "";
+  }
+
+  function handleCompanySelect(index: number, companyId: string) {
+    setRows((previous) => previous.map((current, rowIndex) => {
+      if (rowIndex !== index) return current;
+      let row = { ...current, company_id: companyId, company_bank_account_id: "" };
+      if (row.payment_type === "Purchase Order" && row.po_source === "siteqube") {
+        const selectedPo = purchaseOrders.find((item) => item.id === row.purchase_order_id);
+        if (selectedPo && selectedPo.company_id !== companyId) {
+          row = { ...row, purchase_order_id: "", site_id: "", vendor_id: "", vendor_name: "", reference_number: "" };
+        }
+      }
+      return row;
+    }));
+  }
+
+  function handlePurchaseOrderSelect(index: number, purchaseOrderId: string) {
+    const purchaseOrder = purchaseOrders.find((item) => item.id === purchaseOrderId);
+    setRows((previous) => previous.map((row, rowIndex) => rowIndex === index ? {
+      ...row,
+      ...(purchaseOrder ? {
+        company_id: purchaseOrder.company_id,
+        purchase_order_id: purchaseOrder.id,
+        site_id: purchaseOrder.site_id,
+        vendor_id: purchaseOrder.vendor_id,
+        vendor_name: purchaseOrder.vendor_name || "",
+        reference_number: purchaseOrder.po_number,
+        company_bank_account_id: row.company_id === purchaseOrder.company_id ? row.company_bank_account_id : "",
+      } : {
+        purchase_order_id: "", site_id: "", vendor_id: "", vendor_name: "", reference_number: "",
+      }),
+    } : row));
+  }
+
+  function handlePurchaseOrderSourceSelect(index: number, source: "siteqube" | "manual") {
+    setRows((previous) => previous.map((row, rowIndex) => rowIndex === index ? {
+      ...row,
+      po_source: source,
+      purchase_order_id: "",
+      site_id: "",
+      vendor_id: "",
+      vendor_name: "",
+      reference_number: "",
+    } : row));
+  }
+
   function workOrdersForCompany(_companyId: string) {
     return workOrders;
   }
@@ -239,6 +317,8 @@ export default function NewPaymentPage() {
   function isPaymentRowFilled(row: Row) {
     return Boolean(
         row.reference_number.trim() ||
+        row.purchase_order_id ||
+        row.site_id ||
         row.work_order_id ||
         row.invoice_id ||
         row.payment_date ||
@@ -335,6 +415,9 @@ export default function NewPaymentPage() {
         row.vendor_id = "";
         row.vendor_name = "";
         row.linked_vendors = [];
+        row.po_source = "siteqube";
+        row.purchase_order_id = "";
+        row.site_id = "";
       }
 
       if (field === "total_payment" || field === "tds_amount") {
@@ -449,6 +532,12 @@ export default function NewPaymentPage() {
             if (!company) throw new Error(`Paste rejected: Company “${values.company}” does not match one available company.`);
             if (row.company_id !== company.id && values.from_account === undefined) row.company_bank_account_id = "";
             row.company_id = company.id;
+            if (row.payment_type === "Purchase Order" && row.po_source === "siteqube") {
+              const selectedPo = purchaseOrders.find((item) => item.id === row.purchase_order_id);
+              if (selectedPo && selectedPo.company_id !== company.id) {
+                row = { ...row, purchase_order_id: "", site_id: "", vendor_id: "", vendor_name: "", reference_number: "" };
+              }
+            }
           }
         }
 
@@ -467,6 +556,14 @@ export default function NewPaymentPage() {
               if (!workOrder) throw new Error(`Paste rejected: Work Order “${values.reference}” does not match an available Work Order.`);
               row = { ...row, company_id: row.company_id || workOrder.company_id || defaultCompanyId, reference_number: workOrder.wo_number || "", work_order_id: workOrder.id, invoice_id: "", vendor_id: "", vendor_name: "", linked_vendors: [] };
               changedWorkOrderRows.push(pasteRow.rowIndex);
+            }
+          } else if (row.payment_type === "Purchase Order" && row.po_source === "siteqube") {
+            if (!values.reference) {
+              row = { ...row, purchase_order_id: "", site_id: "", reference_number: "", vendor_id: "", vendor_name: "" };
+            } else {
+              const purchaseOrder = matchPaymentOption(values.reference, purchaseOrders, (item) => [item.id, item.po_number, paymentPurchaseOrderLabel(item)]);
+              if (!purchaseOrder) throw new Error(`Paste rejected: SiteQube PO “${values.reference}” does not match an available current Purchase Order. Choose Manual / Old PO to enter a legacy reference.`);
+              row = { ...row, company_bank_account_id: row.company_id !== purchaseOrder.company_id ? "" : row.company_bank_account_id, company_id: purchaseOrder.company_id, purchase_order_id: purchaseOrder.id, site_id: purchaseOrder.site_id, vendor_id: purchaseOrder.vendor_id, vendor_name: purchaseOrder.vendor_name || "", reference_number: purchaseOrder.po_number };
             }
           } else {
             row.reference_number = values.reference;
@@ -496,7 +593,13 @@ export default function NewPaymentPage() {
             if (values.party) pendingWorkOrderParty.set(pasteRow.rowIndex, values.party);
             else { row.vendor_id = ""; row.vendor_name = ""; }
           } else if (row.payment_type === "Purchase Order") {
-            if (!values.party) { row.vendor_id = ""; row.vendor_name = ""; }
+            if (row.po_source === "siteqube") {
+              const selectedPo = purchaseOrders.find((item) => item.id === row.purchase_order_id);
+              if (values.party && (!selectedPo || !matchPaymentOption(values.party, [selectedPo], (item) => [item.vendor_id, item.vendor_name]))) {
+                throw new Error(`Paste rejected: Vendor / Party “${values.party}” does not match the selected SiteQube PO.`);
+              }
+            }
+            else if (!values.party) { row.vendor_id = ""; row.vendor_name = ""; }
             else {
               const vendor = matchPaymentOption(values.party, purchaseOrderVendors, (item) => [item.id, item.vendor_name]);
               if (!vendor) throw new Error(`Paste rejected: Vendor / Party “${values.party}” does not match an available vendor.`);
@@ -657,6 +760,21 @@ export default function NewPaymentPage() {
         throw new Error(`Row ${rowNo}: Vendor / Party is required.`);
       }
 
+      if (row.payment_type === "Purchase Order") {
+        if (row.po_source === "siteqube") {
+          const selectedPo = purchaseOrders.find((item) => item.id === row.purchase_order_id);
+          if (!selectedPo) throw new Error(`Row ${rowNo}: Select a current SiteQube Purchase Order.`);
+          if (row.company_id !== selectedPo.company_id || row.site_id !== selectedPo.site_id || row.vendor_id !== selectedPo.vendor_id || row.reference_number !== selectedPo.po_number) {
+            throw new Error(`Row ${rowNo}: Purchase Order, Company, Site, Vendor and Reference must match.`);
+          }
+        } else if (row.po_source === "manual") {
+          if (!row.site_id) throw new Error(`Row ${rowNo}: Site / Project is required for a Manual / Old PO.`);
+          if (!row.reference_number.trim()) throw new Error(`Row ${rowNo}: Manual PO Number / Reference is required.`);
+        } else {
+          throw new Error(`Row ${rowNo}: Choose SiteQube PO or Manual / Old PO.`);
+        }
+      }
+
       if (!row.total_payment || Number(row.total_payment || 0) <= 0) {
         throw new Error(`Row ${rowNo}: Total Payment must be greater than 0.`);
       }
@@ -677,6 +795,9 @@ export default function NewPaymentPage() {
       const formData = new FormData();
       formData.append("company_id", row.company_id);
       formData.append("payment_type", row.payment_type);
+      formData.append("po_source", row.payment_type === "Purchase Order" ? row.po_source : "");
+      formData.append("purchase_order_id", row.payment_type === "Purchase Order" && row.po_source === "siteqube" ? row.purchase_order_id : "");
+      formData.append("site_id", row.payment_type === "Purchase Order" ? row.site_id : "");
       formData.append("reference_number", reference);
       formData.append("work_order_id", row.work_order_id || "");
       formData.append("invoice_id", row.invoice_id || "");
@@ -780,14 +901,13 @@ export default function NewPaymentPage() {
                     data-payment-grid-cell="true"
                     data-payment-grid-column="0"
                     value={row.company_id}
-                    onChange={(e) =>
-                      updateRow(index, "company_id", e.target.value)
-                    }
+                    onChange={(e) => handleCompanySelect(index, e.target.value)}
+                    disabled={row.payment_type === "Purchase Order" && row.po_source === "siteqube" && Boolean(row.purchase_order_id)}
                     onPaste={(e) => handlePaste(e, index, 0)}
-                    className="h-8 w-full rounded border border-transparent bg-white px-2 text-[13px] outline-none transition hover:border-slate-300 focus:border-sky-600 focus:bg-sky-50 focus:ring-2 focus:ring-sky-100"
+                    className="h-8 w-full rounded border border-transparent bg-white px-2 text-[13px] outline-none transition hover:border-slate-300 focus:border-sky-600 focus:bg-sky-50 focus:ring-2 focus:ring-sky-100 disabled:bg-slate-100"
                   >
                     <option value="">Select Company</option>
-                    {companies.map((company) => (
+                    {companiesForRow(row).map((company) => (
                       <option key={company.id} value={company.id}>
                         {company.company_name}
                         {company.company_code
@@ -816,7 +936,69 @@ export default function NewPaymentPage() {
                 </td>
 
                 <td className="border border-slate-200 p-1 align-middle">
-                  {row.payment_type === "Work Order" ? (
+                  {row.payment_type === "Purchase Order" ? (
+                    <div className="min-w-44 space-y-1.5">
+                      <select
+                        data-payment-grid-cell="true"
+                        data-payment-grid-column="2"
+                        aria-label={`PO Source row ${index + 1}`}
+                        value={row.po_source}
+                        onChange={(event) => handlePurchaseOrderSourceSelect(index, event.target.value as "siteqube" | "manual")}
+                        className="h-7 w-full rounded border border-slate-200 bg-slate-50 px-2 text-[11px] font-semibold text-slate-700 outline-none focus:border-sky-600"
+                      >
+                        <option value="siteqube">SiteQube PO</option>
+                        <option value="manual">Manual / Old PO</option>
+                      </select>
+                      {row.po_source === "siteqube" ? (
+                        <select
+                          data-payment-grid-cell="true"
+                          data-payment-grid-column="2"
+                          aria-label={`SiteQube Purchase Order row ${index + 1}`}
+                          value={row.purchase_order_id}
+                          onChange={(event) => handlePurchaseOrderSelect(index, event.target.value)}
+                          onPaste={(event) => handlePaste(event, index, 2)}
+                          className="h-8 w-full rounded border border-slate-200 bg-white px-2 text-[12px] outline-none focus:border-sky-600"
+                        >
+                          <option value="">Select current PO</option>
+                          {purchaseOrders.filter((po) => !row.company_id || po.company_id === row.company_id).map((po) => (
+                            <option key={po.id} value={po.id}>
+                              {paymentPurchaseOrderLabel(po)}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          data-payment-grid-cell="true"
+                          data-payment-grid-column="2"
+                          aria-label={`Manual PO Number row ${index + 1}`}
+                          value={row.reference_number}
+                          onChange={(event) => updateRow(index, "reference_number", event.target.value)}
+                          onPaste={(event) => handlePaste(event, index, 2)}
+                          placeholder="Manual PO Number *"
+                          className="h-8 w-full rounded border border-slate-200 bg-white px-2 text-[12px] outline-none focus:border-sky-600"
+                        />
+                      )}
+                      {row.po_source === "manual" ? (
+                        <select
+                          data-payment-grid-cell="true"
+                          data-payment-grid-column="2"
+                          aria-label={`Site / Project row ${index + 1}`}
+                          value={row.site_id}
+                          onChange={(event) => updateRow(index, "site_id", event.target.value)}
+                          className="h-7 w-full rounded border border-slate-200 bg-white px-2 text-[11px] outline-none focus:border-sky-600"
+                        >
+                          <option value="">Select Site / Project *</option>
+                          {sitesForRow(row).map((site) => (
+                            <option key={site.id} value={site.id}>{siteLabel(site.id)}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div className="truncate px-1 text-[11px] text-slate-600" title={siteLabel(row.site_id)}>
+                          Site: {siteLabel(row.site_id) || "Selected from PO"}
+                        </div>
+                      )}
+                    </div>
+                  ) : row.payment_type === "Work Order" ? (
                     <select
                       data-payment-grid-cell="true"
                       data-payment-grid-column="2"
@@ -910,10 +1092,22 @@ export default function NewPaymentPage() {
                         </option>
                       ))}
                     </select>
+                  ) : row.payment_type === "Purchase Order" && row.po_source === "siteqube" ? (
+                    <input
+                      data-payment-grid-cell="true"
+                      data-payment-grid-column="4"
+                      aria-label={`PO Vendor row ${index + 1}`}
+                      value={row.vendor_name}
+                      readOnly
+                      onPaste={(event) => handlePaste(event, index, 4)}
+                      className="h-8 w-full rounded border border-transparent bg-slate-100 px-2 text-[13px] text-slate-700 outline-none"
+                      placeholder="Vendor from PO"
+                    />
                   ) : row.payment_type === "Purchase Order" ? (
                     <select
                       data-payment-grid-cell="true"
                       data-payment-grid-column="4"
+                      aria-label={`Manual PO Vendor row ${index + 1}`}
                       value={row.vendor_id}
                       onChange={(e) => {
                         const vendor = purchaseOrderVendors.find(
@@ -925,7 +1119,7 @@ export default function NewPaymentPage() {
                       onPaste={(e) => handlePaste(e, index, 4)}
                       className="h-8 w-full rounded border border-transparent bg-white px-2 text-[13px] outline-none transition hover:border-slate-300 focus:border-sky-600 focus:bg-sky-50 focus:ring-2 focus:ring-sky-100"
                     >
-                      <option value="">Select Vendor</option>
+                      <option value="">Select Vendor *</option>
                       {purchaseOrderVendors.map((vendor) => (
                         <option key={vendor.id} value={vendor.id}>
                           {vendor.vendor_name}

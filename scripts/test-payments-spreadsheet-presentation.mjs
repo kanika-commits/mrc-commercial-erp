@@ -48,12 +48,12 @@ const registerRows = [
   { company_id: "company-1", payment_type: "Work Order", party: "A Vendor", account_name: "HDFC • ****4821", payment_date: "2026-09-22", status: "paid" },
   { company_id: "company-2", payment_type: "Fuel", party: "Driver", account_name: "ICICI • ****0099", payment_date: "2026-09-23", status: "pending" },
 ];
-assert.deepEqual(filterPaymentRegisterRows(registerRows, { companyId: "company-1", paymentType: "Work Order", party: "A Vendor", fromAccount: "HDFC • ****4821", dateFrom: "2026-09-22", dateTo: "2026-09-22", status: "paid" }), [registerRows[0]], "register filters combine without changing payment data");
-
+assert.deepEqual(filterPaymentRegisterRows(registerRows, { companyId: "company-1", paymentType: "Work Order", party: "A Vendor", fromAccount: "HDFC • ****4821", dateFrom: "2026-09-22", dateTo: "2026-09-22", status: "paid" }), [registerRows[0]], "the legacy helper remains behaviorally stable while the register toolbar uses the server filters");
 const entryPage = fs.readFileSync(path.join(root, "app/payments/new/page.tsx"), "utf8");
 const registerPage = fs.readFileSync(path.join(root, "app/payments/page.tsx"), "utf8");
+const registerApi = fs.readFileSync(path.join(root, "app/api/payments/register/route.ts"), "utf8");
 assert.match(entryPage, /handleWorkOrderSelect/);
-assert.match(entryPage, /updateRow\(index, "company_id"/);
+assert.match(entryPage, /function handleCompanySelect\(index: number, companyId: string\)/, "company changes still use the row-aware company handler");
 assert.match(entryPage, /updateRow\(index, "payment_type"/);
 assert.match(entryPage, /handleInvoiceSelect/);
 assert.match(entryPage, /company_bank_account_id/);
@@ -72,5 +72,20 @@ assert.match(registerPage, /can\(access\?\.permissions \|\| \[\], "payments", "d
 assert.match(registerPage, /\/api\/payments\/register\?/);
 assert.match(registerPage, /page: String\(page \+ 1\)/, "register pagination remains wired");
 assert.match(registerPage, /params\.set\("search", search\)/, "server-side register search remains wired");
+assert.match(registerPage, /params\.set\("company_id"/);
+assert.match(registerPage, /params\.set\("payment_type"/);
+assert.match(registerPage, /params\.set\("party"/);
+assert.match(registerPage, /params\.set\("from_account"/);
+assert.match(registerPage, /params\.set\("date_from"/);
+assert.match(registerPage, /params\.set\("date_to"/);
+assert.match(registerPage, /params\.set\("created_by"/);
+assert.match(registerPage, /Created By[\s\S]*All Users/);
+assert.doesNotMatch(registerPage, /filters\.status|All Statuses|filters the rows on the current page/);
+assert.match(registerPage, /result\.filter_options/);
+assert.match(registerApi, /FILTER_OPTIONS_PAGE_SIZE = 500/);
+assert.match(registerApi, /\.from\("profiles"\)[\s\S]*\.select\("email, full_name"\)/);
+assert.match(registerApi, /created_by_display:[\s\S]*created_by_name[\s\S]*created_by_email/);
+assert.match(registerApi, /function applyPaymentFilters[\s\S]*filters\.dateFrom[\s\S]*filters\.dateTo[\s\S]*filters\.createdBy/);
+assert.match(registerApi, /filter_options: filterOptions/);
 
 console.log("Payments spreadsheet presentation and behavior contracts passed.");
