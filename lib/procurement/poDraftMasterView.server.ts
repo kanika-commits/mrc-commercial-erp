@@ -1,7 +1,8 @@
 import "server-only";
 
-export async function resolveDraftPoMasterView(admin: any, row: any) {
-  if (String(row?.status || "").toLowerCase() !== "draft" || Number(row?.revision_no || 0) !== 0 || row?.previous_revision_id) return row;
+export async function resolvePoMasterProjection(admin: any, row: any, options: { strict?: boolean } = {}) {
+  const strict = options.strict === true;
+  if (Number(row?.revision_no || 0) !== 0 || row?.previous_revision_id) return row;
   const selection = row?.delivery_snapshot?.master_selection || {};
   try {
     const [company, site, billing, delivery, contact, vendor, vendorContact, vendorGstin] = await Promise.all([
@@ -15,10 +16,21 @@ export async function resolveDraftPoMasterView(admin: any, row: any) {
       row.vendor_id ? admin.from("vendor_gstins").select("gstin").eq("vendor_id", row.vendor_id).eq("is_primary", true).maybeSingle() : { data: null, error: null },
     ]);
     for (const result of [company, site, billing, delivery, contact, vendor, vendorContact, vendorGstin]) if (result.error) throw result.error;
+    const required = (value: any, label: string) => { if (strict && !value) throw new Error(`Selected ${label} could not be resolved.`); return value; };
+    required(company.data, "Company"); required(site.data, "Site");
+    if (row.vendor_id) required(vendor.data, "Vendor");
+    if (selection.billing_address_id) required(billing.data, "billing address");
+    if (selection.delivery_location_id) required(delivery.data, "delivery location");
+    if (selection.delivery_contact_id || selection.site_contact_id) required(contact.data, "site contact");
     const next = structuredClone(row); next.company = company.data || row.company; next.site = site.data || row.site;
     if (vendor.data) next.vendor_name_snapshot = vendor.data.vendor_name, next.vendor_snapshot = { ...(row.vendor_snapshot || {}), vendor_name: vendor.data.vendor_name, address: vendor.data.address, gstin: vendorGstin.data?.gstin || vendor.data.gstin, pan: vendor.data.pan, contact_person: vendorContact.data?.contact_name || null, phone: vendorContact.data?.contact_number || null, email: vendorContact.data?.email || null, designation: vendorContact.data?.designation || null };
     const snapshot = row.delivery_snapshot || {};
     next.delivery_snapshot = { ...snapshot, billing_address: billing.data ? { ...(snapshot.billing_address || {}), ...billing.data } : snapshot.billing_address, delivery_location: delivery.data ? { ...(snapshot.delivery_location || {}), ...delivery.data } : snapshot.delivery_location, site_contact: contact.data ? { ...(snapshot.site_contact || {}), ...contact.data } : snapshot.site_contact, delivery_contact: contact.data ? { ...(snapshot.delivery_contact || {}), ...contact.data } : snapshot.delivery_contact };
     return next;
-  } catch (error) { console.warn("Draft PO master refresh failed; using stored snapshot", { purchaseOrderId: row?.id, reason: error instanceof Error ? error.message : String(error) }); return row; }
+  } catch (error) { if (strict) throw error; console.warn("Draft PO master refresh failed; using stored snapshot", { purchaseOrderId: row?.id, reason: error instanceof Error ? error.message : String(error) }); return row; }
+}
+
+export async function resolveDraftPoMasterView(admin: any, row: any) {
+  if (String(row?.status || "").toLowerCase() !== "draft") return row;
+  return resolvePoMasterProjection(admin, row);
 }

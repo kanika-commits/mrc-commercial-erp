@@ -1,0 +1,15 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+const route = fs.readFileSync("app/api/procurement/purchase-orders/[id]/administrative-correction/route.ts", "utf8");
+assert.match(route, /platform_owner/); assert.match(route, /super_admin/); assert.match(route, /Only approved Purchase Orders/);
+assert.match(route, /resolveCurrentOfficialPoArtifact/); assert.match(route, /renderPurchaseOrderBasePdfFromProjection/);
+assert.match(route, /archive_origin: "administrative_correction"/); assert.match(route, /finalize_procurement_po_vendor_contact_correction/);
+assert.match(route, /unsupported fields/); assert.match(route, /Correction reason is required/);
+assert.match(route, /contact_person: body\.contact_person/); assert.match(route, /phone: body\.phone/);
+assert.match(route, /email: body\.email/); assert.match(route, /designation: body\.designation/);
+assert.match(route, /sha256/); assert.match(route, /byteLength/);
+assert.match(route, /artifact_status: "pending"/);
+assert.match(route, /artifact_status: "archived"/);
+assert.match(route, /procurement_purchase_order_artifact_current/);
+assert.match(route, /idempotent: true/);
+console.log("PASS: Stage 3 administrative correction endpoint contract");

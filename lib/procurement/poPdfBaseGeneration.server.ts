@@ -8,6 +8,14 @@ import { buildPurchaseOrderRevisionComparison } from "@/lib/procurement/poRevisi
 import { buildPurchaseOrderRevisionPdfRenderModel } from "@/lib/procurement/poRevisionPdfRenderer";
 import { resolveDraftPoMasterView } from "@/lib/procurement/poDraftMasterView.server";
 
+export type PurchaseOrderPdfProjection = Record<string, unknown> & {
+  id: string;
+  organization_id: string;
+  status: string;
+  vendor_snapshot?: Record<string, unknown> | null;
+  delivery_snapshot?: Record<string, unknown> | null;
+};
+
 async function loadSharp() {
   const module = await import("sharp");
   return module.default;
@@ -84,8 +92,8 @@ async function makeLetterhead(row: any, admin: any) {
   return { header: null, footer: null, fullPage: false };
 }
 
-export async function renderPurchaseOrderBasePdf(admin: any, data: any, previousRevisionData: any = null) {
-  data = await resolveDraftPoMasterView(admin, data);
+export async function renderPurchaseOrderBasePdfFromProjection(admin: any, projection: PurchaseOrderPdfProjection, previousRevisionData: PurchaseOrderPdfProjection | null = null) {
+  let data: any = projection;
   if (Number(data.revision_no || 0) > 0 && previousRevisionData) data.revisionComparison = buildPurchaseOrderRevisionComparison(previousRevisionData, data);
   const creatorResult = data.created_by ? await admin.from("hr_employees").select("employee_name,email,phone,personal_phone,company:companies(company_name),designation:hr_designations(designation_name)").eq("user_id", data.created_by).eq("organization_id", data.organization_id).eq("status", "active").maybeSingle() : { data: null, error: null };
   if (creatorResult.error) throw creatorResult.error;
@@ -112,6 +120,11 @@ export async function renderPurchaseOrderBasePdf(admin: any, data: any, previous
   return poPackage;
 }
 
+export async function renderPurchaseOrderBasePdf(admin: any, data: any, previousRevisionData: any = null) {
+  data = await resolveDraftPoMasterView(admin, data);
+  return renderPurchaseOrderBasePdfFromProjection(admin, data, previousRevisionData);
+}
+
 export async function renderApprovedPurchaseOrderBasePdf(admin: any, organizationId: string, purchaseOrderId: string) {
   const { data, error } = await admin.from("procurement_purchase_orders")
     .select("*, company:companies!procurement_purchase_orders_company_id_fkey(company_name,company_code), site:sites(site_name,site_code), items:procurement_purchase_order_items(*), events:procurement_purchase_order_events(event_type,actor_id,actor_name,actor_email,created_at)")
@@ -126,6 +139,6 @@ export async function renderApprovedPurchaseOrderBasePdf(admin: any, organizatio
     if (!previousResult.data) throw new Error("Previous Purchase Order revision was not found.");
     previousRevisionData = previousResult.data;
   }
-  const pdf = await renderPurchaseOrderBasePdf(admin, data, previousRevisionData);
+  const pdf = await renderPurchaseOrderBasePdfFromProjection(admin, data, previousRevisionData);
   return { bytes: Buffer.from(pdf.pdf), pageCount: pdf.pageCount, footerRenderedHeight: pdf.footerRenderedHeight };
 }

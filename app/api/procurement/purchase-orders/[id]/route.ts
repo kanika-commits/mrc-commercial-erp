@@ -6,6 +6,7 @@ import { loadFrozenSupportingDocuments } from "@/lib/procurement/poSupportingDoc
 import { buildPurchaseOrderStandardTermsSnapshot, parsePurchaseOrderStandardTerms } from "@/lib/procurement/standardTerms";
 import { archiveApprovedPo } from "@/lib/procurement/poOfficialArtifact.server";
 import { renderApprovedPurchaseOrderBasePdf } from "@/lib/procurement/poPdfBaseGeneration.server";
+import { resolvePoMasterProjection } from "@/lib/procurement/poDraftMasterView.server";
 const MODULE = "procurement_purchase_orders";
 function actor(auth: any) { return { user_id: auth.user.id, name: text(auth.user.user_metadata?.full_name || auth.user.user_metadata?.name || auth.user.email), email: auth.user.email || null }; }
 async function load(request: Request, id: string, action: string) {
@@ -61,6 +62,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (action === "send_back" || action === "reject") {
     if (!text(body.note)) return jsonError("A reason is required for this action.", 400);
   }
+  let frozenProjection: any = null;
+  if (action === "submit" && Number(result.row.revision_no || 0) === 0 && !result.row.previous_revision_id && ["draft", "sent_back"].includes(result.row.status)) {
+    try { frozenProjection = await resolvePoMasterProjection(result.admin, result.row, { strict: true }); }
+    catch (error: any) { return jsonError(error?.message || "Selected Purchase Order masters could not be resolved. Refresh the master selections and try again.", 409); }
+  }
   if (action === "submit") {
     const items = Array.isArray(result.row.items) ? result.row.items : [];
     if (!result.row.vendor_id && !result.row.vendor_name_snapshot) return jsonError("A Vendor is required before submitting the Purchase Order.", 400);
@@ -68,6 +74,16 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (items.some((item: any) => !Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0 || !Number.isFinite(Number(item.unit_rate)) || Number(item.unit_rate) < 0)) return jsonError("Each Purchase Order item must have a valid quantity and rate.", 400);
     const total = Number(result.row.total_amount ?? result.row.grand_total ?? 0);
     if (!Number.isFinite(total) || total < 0) return jsonError("Purchase Order totals are invalid.", 400);
+  }
+  if (frozenProjection) {
+    const persisted = await result.admin.from("procurement_purchase_orders").update({
+      vendor_name_snapshot: frozenProjection.vendor_name_snapshot,
+      vendor_snapshot: frozenProjection.vendor_snapshot,
+      delivery_snapshot: frozenProjection.delivery_snapshot,
+      updated_at: new Date().toISOString(),
+    }).eq("id", id).eq("organization_id", result.row.organization_id).in("status", ["draft", "sent_back"]).select("id").maybeSingle();
+    if (persisted.error) throw persisted.error;
+    if (!persisted.data) return jsonError("Purchase Order changed before its master snapshot could be frozen. Reload and try again.", 409);
   }
   if (action === "approve" && result.row.status !== "draft" && Array.isArray(result.row.supporting_documents_manifest)) {
     const packageState = await loadFrozenSupportingDocuments(result.admin, result.row);

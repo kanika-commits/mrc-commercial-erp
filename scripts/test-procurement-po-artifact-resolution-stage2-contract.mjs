@@ -1,0 +1,13 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+const helper = fs.readFileSync("lib/procurement/poOfficialArtifact.server.ts", "utf8");
+const archive = fs.readFileSync("app/api/procurement/purchase-orders/[id]/pdf/archive/route.ts", "utf8");
+assert.match(helper, /export async function resolveCurrentOfficialPoArtifact/);
+assert.match(helper, /if \(pointer\.data\)/);
+assert.match(helper, /Ambiguous legacy official Purchase Order artifacts/);
+assert.match(helper, /eq\("archive_origin", "approval"\)/);
+assert.match(helper, /artifact_status !== "archived"/);
+assert.match(helper, /sha256\(bytes\)/);
+assert.match(archive, /Ambiguous normal official PDF archives/);
+assert.match(archive, /archive_origin.*approval/);
+console.log("PASS: Stage 2 current-artifact and approval-idempotency contract");

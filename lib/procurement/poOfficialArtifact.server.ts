@@ -33,6 +33,30 @@ type ArtifactRow = {
   attempt_token: string | null;
 };
 
+async function verifiedArtifact(admin: SupabaseClient, artifact: any, input: { organizationId: string; purchaseOrderId: string }) {
+  if (!artifact || artifact.organization_id !== input.organizationId || artifact.purchase_order_id !== input.purchaseOrderId || artifact.artifact_type !== "official_po" || artifact.artifact_status !== "archived" || !artifact.sha256 || !artifact.size_bytes) throw new Error("Current official Purchase Order artifact failed ownership or integrity validation.");
+  const downloaded = await admin.storage.from(artifact.storage_bucket).download(artifact.storage_key);
+  if (downloaded.error || !downloaded.data) throw downloaded.error || new Error("Current official Purchase Order PDF is unavailable.");
+  const bytes = Buffer.from(await downloaded.data.arrayBuffer());
+  if (bytes.byteLength !== Number(artifact.size_bytes) || sha256(bytes) !== artifact.sha256) throw new Error("Current official Purchase Order PDF failed its integrity check.");
+  return { bytes, pageCount: Number(artifact.page_count), footerRenderedHeight: Number(artifact.footer_rendered_height || 0), artifactId: artifact.id };
+}
+
+export async function resolveCurrentOfficialPoArtifact(admin: SupabaseClient, input: { organizationId: string; purchaseOrderId: string }) {
+  const pointer = await admin.from("procurement_purchase_order_artifact_current").select("artifact_id").eq("organization_id", input.organizationId).eq("purchase_order_id", input.purchaseOrderId).maybeSingle();
+  if (pointer.error) throw pointer.error;
+  if (pointer.data) {
+    const result = await admin.from("procurement_purchase_order_artifacts").select("*").eq("id", pointer.data.artifact_id).maybeSingle();
+    if (result.error) throw result.error;
+    return verifiedArtifact(admin, result.data, input);
+  }
+  const legacy = await admin.from("procurement_purchase_order_artifacts").select("*").eq("organization_id", input.organizationId).eq("purchase_order_id", input.purchaseOrderId).eq("artifact_type", "official_po").eq("artifact_status", "archived").eq("archive_origin", "approval").limit(2);
+  if (legacy.error) throw legacy.error;
+  if (!legacy.data?.length) return null;
+  if (legacy.data.length !== 1) throw new Error("Ambiguous legacy official Purchase Order artifacts.");
+  return verifiedArtifact(admin, legacy.data[0], input);
+}
+
 function sha256(bytes: Buffer) {
   return createHash("sha256").update(bytes).digest("hex");
 }
@@ -48,10 +72,10 @@ export async function ensureOfficialPoArtifact(admin: SupabaseClient, input: {
     .select("*")
     .eq("organization_id", input.organizationId)
     .eq("purchase_order_id", input.purchaseOrderId)
-    .eq("artifact_type", "official_po")
-    .maybeSingle();
+    .eq("artifact_type", "official_po").eq("archive_origin", input.archiveOrigin || "approval").limit(2);
   if (lookupError) throw lookupError;
-  if (existing) return existing as ArtifactRow;
+  if (existing?.length > 1) throw new Error("Ambiguous normal Purchase Order archive artifacts.");
+  if (existing?.[0]) return existing[0] as ArtifactRow;
 
   const artifactId = randomUUID();
   const key = `${input.organizationId}/purchase-orders/${input.purchaseOrderId}/generated/${artifactId}/official-po.pdf`;
@@ -70,9 +94,9 @@ export async function ensureOfficialPoArtifact(admin: SupabaseClient, input: {
   // The approval transition trigger may have created the row concurrently.
   const concurrent = await admin.from("procurement_purchase_order_artifacts").select("*")
     .eq("organization_id", input.organizationId).eq("purchase_order_id", input.purchaseOrderId)
-    .eq("artifact_type", "official_po").maybeSingle();
+    .eq("artifact_type", "official_po").eq("archive_origin", input.archiveOrigin || "approval").limit(2);
   if (concurrent.error) throw concurrent.error;
-  if (concurrent.data) return concurrent.data as ArtifactRow;
+  if (concurrent.data?.length === 1) return concurrent.data[0] as ArtifactRow;
   throw error;
 }
 
@@ -87,10 +111,11 @@ export async function archiveApprovedPo(admin: SupabaseClient, input: {
     ? await (async () => {
       const { data, error } = await admin.from("procurement_purchase_order_artifacts").select("*")
         .eq("organization_id", input.organizationId).eq("purchase_order_id", input.purchaseOrderId)
-        .eq("artifact_type", "official_po").maybeSingle();
+      .eq("artifact_type", "official_po").eq("archive_origin", "approval").limit(2);
       if (error) throw error;
-      if (!data) throw new Error("No approval archive record exists for this Purchase Order revision; legacy approvals are not auto-backfilled.");
-      return data as ArtifactRow;
+      if (!data?.length) throw new Error("No approval archive record exists for this Purchase Order revision; legacy approvals are not auto-backfilled.");
+      if (data.length > 1) throw new Error("Ambiguous approval archive records exist for this Purchase Order revision.");
+      return data[0] as ArtifactRow;
     })()
     : await ensureOfficialPoArtifact(admin, input);
   if (artifact.artifact_status === "archived") return artifact;
@@ -184,17 +209,5 @@ export async function archiveApprovedPo(admin: SupabaseClient, input: {
 }
 
 export async function readVerifiedOfficialPo(admin: SupabaseClient, input: { organizationId: string; purchaseOrderId: string }) {
-  const { data, error } = await admin.from("procurement_purchase_order_artifacts")
-    .select("id,storage_bucket,storage_key,sha256,size_bytes,page_count,footer_rendered_height,artifact_status")
-    .eq("organization_id", input.organizationId).eq("purchase_order_id", input.purchaseOrderId)
-    .eq("artifact_type", "official_po").maybeSingle();
-  if (error) throw error;
-  if (!data || data.artifact_status !== "archived" || !data.sha256 || !data.size_bytes) return null;
-  const downloaded = await admin.storage.from(data.storage_bucket).download(data.storage_key);
-  if (downloaded.error || !downloaded.data) throw downloaded.error || new Error("Archived official PO PDF is unavailable.");
-  const bytes = Buffer.from(await downloaded.data.arrayBuffer());
-  if (bytes.byteLength !== Number(data.size_bytes) || sha256(bytes) !== data.sha256) {
-    throw new Error("Archived official PO PDF failed its integrity check.");
-  }
-  return { bytes, pageCount: Number(data.page_count), footerRenderedHeight: Number(data.footer_rendered_height || 0) };
+  return resolveCurrentOfficialPoArtifact(admin, input);
 }

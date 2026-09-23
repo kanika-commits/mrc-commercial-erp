@@ -16,11 +16,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (error) throw error;
     if (!po) return jsonError("Purchase Order was not found.", 404);
     if (!["approved", "issued"].includes(po.status)) return jsonError("Only approved or issued Purchase Orders can be archived.", 409);
-    const { data: foundArtifact, error: artifactError } = await admin.from("procurement_purchase_order_artifacts")
+    const { data: foundArtifacts, error: artifactError } = await admin.from("procurement_purchase_order_artifacts")
       .select("id,artifact_status").eq("organization_id", po.organization_id)
-      .eq("purchase_order_id", po.id).eq("artifact_type", "official_po").maybeSingle();
+      .eq("purchase_order_id", po.id).eq("artifact_type", "official_po").eq("archive_origin", "approval").limit(2);
     if (artifactError) throw artifactError;
-    let artifact = foundArtifact;
+    if (foundArtifacts?.length > 1) return jsonError("Ambiguous normal official PDF archives exist for this Purchase Order.", 409);
+    let artifact = foundArtifacts?.[0] || null;
     if (!artifact) {
       const featureEnabledAt = await readOfficialPoArchiveFeatureEnabledAt(admin);
       if (!approvalIsAtOrAfterArchiveFeatureEnable(po.approved_at, featureEnabledAt)) {

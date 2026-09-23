@@ -1,0 +1,12 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+const sql = fs.readFileSync("supabase/migrations/202609240001_procurement_po_administrative_artifact_supersession.sql", "utf8");
+const endpoint = fs.readFileSync("app/api/procurement/purchase-orders/[id]/administrative-correction/route.ts", "utf8");
+assert.match(sql, /v_legacy_count = 0/); assert.match(sql, /v_legacy_count > 1/);
+assert.match(sql, /archive_origin = 'approval'/);
+assert.match(sql, /update public\.procurement_purchase_order_artifact_current set artifact_id=v_new\.id/);
+assert.match(sql, /update public\.procurement_purchase_orders set vendor_snapshot = v_snapshot/);
+assert.doesNotMatch(sql, /vendor_snapshot = v_snapshot, updated_at = now\(\)/);
+assert.match(sql, /size_bytes <= 0/);
+assert.match(endpoint, /idempotency_key/); assert.match(endpoint, /idempotent: true/);
+console.log("PASS: three administrative-correction defect regressions");
