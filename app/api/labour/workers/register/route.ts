@@ -15,6 +15,7 @@ import {
 } from "@/app/api/labour/_shared";
 import { isValidActionValue, LABOUR_STATUSES, normalizeIdentifier, normalizeLabourCode, normalizeText } from "@/lib/labour/constants";
 import { formatAadhaar, normalizeAadhaar, optionalFormattedAadhaar, validateAadhaar } from "@/lib/utils/aadhaar";
+import { validateLabourBusinessDate } from "@/lib/labour/businessDate";
 
 const MODULE = "labour_workers";
 const TECHNICAL_WORKER_TYPE = "contractor_labour";
@@ -533,6 +534,8 @@ export async function POST(request: Request) {
     if (!contractorProfileId && !vendorId) return jsonError("Labour Contractor is required.");
     if (!labourTradeId) return jsonError("Labour Category is required.");
     if (!effectiveFrom) return jsonError("Effective From / Joining Date is required.");
+    const effectiveDate = validateLabourBusinessDate(effectiveFrom);
+    if (!effectiveDate.value) return jsonError(effectiveDate.error || "A valid effective/joining date is required.");
     if (!isValidActionValue(LABOUR_STATUSES, status)) return jsonError("Invalid labour status.");
 
     const scopeCheck = await validateLabourCompanySiteIndependent(access, organizationId, companyId, siteId);
@@ -635,7 +638,7 @@ export async function POST(request: Request) {
         commercialModel,
         wageRate,
         workOrderId,
-        effectiveFrom,
+        effectiveFrom: effectiveDate.value,
         effectiveTo: null,
         reason: text(payload.transfer_reason) || "Transferred through Labour Registration.",
         actor,
@@ -708,7 +711,7 @@ export async function POST(request: Request) {
       trade: tradeCheck.trade?.trade_name || null,
       labour_trade_id: labourTradeId,
       worker_type: TECHNICAL_WORKER_TYPE,
-      date_of_joining: effectiveFrom,
+      date_of_joining: effectiveDate.value,
       date_of_birth: text(payload.date_of_birth),
       status,
       current_contractor_profile_id: contractorProfileId,
@@ -779,7 +782,7 @@ export async function POST(request: Request) {
           commercial_model: commercialModel,
           wage_rate: wageRate,
           work_order_id: workOrderId,
-          effective_from: effectiveFrom,
+          effective_from: effectiveDate.value,
           deployment_id: deploymentId,
         },
       });

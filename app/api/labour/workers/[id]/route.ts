@@ -12,6 +12,7 @@ import {
 } from "@/app/api/labour/_shared";
 import { isValidActionValue, LABOUR_STATUSES, normalizeLabourCode, normalizeText, SKILL_LEVELS } from "@/lib/labour/constants";
 import { formatAadhaar, normalizeAadhaar, optionalFormattedAadhaar, validateAadhaar } from "@/lib/utils/aadhaar";
+import { validateLabourBusinessDate } from "@/lib/labour/businessDate";
 
 const MODULE = "labour_workers";
 const TECHNICAL_WORKER_TYPE = "contractor_labour";
@@ -325,6 +326,8 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
     };
     const duplicateIdentity = await assertUniqueIdentity(access.admin, current.organization_id, identity, id);
     if (duplicateIdentity) return jsonError(duplicateIdentity, 409);
+    const joiningDate = validateLabourBusinessDate(payload.date_of_joining);
+    if (payload.date_of_joining && !joiningDate.value) return jsonError(joiningDate.error || "A valid joining date is required.");
     const updatePayload = {
       worker_name: text(payload.worker_name) || current.worker_name,
       father_or_husband_name: text(payload.father_or_husband_name),
@@ -340,7 +343,7 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
       labour_trade_id: tradeCheck.trade?.id || null,
       skill_level: skillLevel,
       worker_type: TECHNICAL_WORKER_TYPE,
-      date_of_joining: text(payload.date_of_joining),
+      date_of_joining: joiningDate.value,
       date_of_exit: text(payload.date_of_exit),
       status,
       current_contractor_profile_id: contractorCheck.contractor?.id || null,

@@ -47,7 +47,12 @@ function formatDateTime(value: string | null | undefined) {
 
 function formatDate(value?: string | null) {
   if (!value) return "-";
-  return new Date(`${value}T00:00:00`).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return "-";
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return "-";
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${String(day).padStart(2, "0")}-${months[month - 1]}-${String(year).padStart(4, "0")}`;
 }
 
 function paymentModelLabel(value?: string | null) {

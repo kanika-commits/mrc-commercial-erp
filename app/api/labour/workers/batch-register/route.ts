@@ -10,6 +10,7 @@ import {
 } from "@/app/api/labour/_shared";
 import { normalizeText } from "@/lib/labour/constants";
 import { validateAadhaar } from "@/lib/utils/aadhaar";
+import { validateLabourBusinessDate } from "@/lib/labour/businessDate";
 
 const MAX_BATCH_ROWS = 5;
 
@@ -62,6 +63,8 @@ export async function POST(request: Request) {
     if (!assignment.company_id || !assignment.site_id || !assignment.vendor_id || !assignment.effective_from) {
       return jsonError("Company, site, labour contractor and site joining date are required.");
     }
+    const effectiveDate = validateLabourBusinessDate(assignment.effective_from);
+    if (!effectiveDate.value) return jsonError(effectiveDate.error || "A valid site joining date is required.");
     const scopeCheck = await validateLabourCompanySiteIndependent(access, organizationId, assignment.company_id, assignment.site_id);
     if ("error" in scopeCheck) return jsonError(scopeCheck.error || "Selected company/site is not available.", 403);
 
@@ -86,7 +89,7 @@ export async function POST(request: Request) {
         site_id: assignment.site_id,
         vendor_id: assignment.vendor_id,
         work_order_id: assignment.work_order_id,
-        effective_from: assignment.effective_from,
+        effective_from: effectiveDate.value,
         labour_trade_id: normalizeText(row.labour_trade_id),
         worker_name: normalizeText(row.worker_name),
         father_or_husband_name: normalizeText(row.father_or_husband_name),

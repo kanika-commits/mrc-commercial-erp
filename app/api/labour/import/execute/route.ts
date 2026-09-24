@@ -6,6 +6,7 @@ import { normalizeText } from "@/lib/labour/constants";
 import { LABOUR_IMPORT_DOCUMENT_FIELDS, maskAadhaarForImport, validateLabourImportDailyRate } from "@/lib/labour/import";
 import { validateAadhaar } from "@/lib/utils/aadhaar";
 import { createPrivateStorageAdapter, safeObjectKey } from "@/lib/storage/privateStorage";
+import { validateLabourBusinessDate } from "@/lib/labour/businessDate";
 import { downloadDriveFile } from "@/src/lib/googleDrive";
 
 function safeMessage(message: unknown) {
@@ -190,7 +191,8 @@ export async function POST(request: Request) {
           const sameAssignment = currentDeployment.company_id === row.matched_company_id && currentDeployment.site_id === row.matched_site_id && currentDeployment.contractor_profile_id === row.matched_contractor_profile_id && currentDeployment.work_order_id === (targetWorkOrderId || null) && currentModel === targetModel;
           if (!sameAssignment) {
             const effectiveFrom = normalizeText(n.date_of_joining);
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom)) throw new Error("A valid Effective/Joining Date is required for transfer.");
+            const effectiveDate = validateLabourBusinessDate(effectiveFrom);
+            if (!effectiveDate.value) throw new Error(effectiveDate.error || "A valid Effective/Joining Date is required for transfer.");
             const transferReason = normalizeText(n.transfer_reason);
             if (transferReason.length < 10) throw new Error("Transfer Reason must be at least 10 characters for an existing labourer transfer.");
             if (targetModel === "daily_wage") {
@@ -218,7 +220,7 @@ export async function POST(request: Request) {
               p_skill_level: n.skill_level || null,
               p_wage_type: n.commercial_model === "daily_wage" ? "daily" : null,
               p_wage_rate: n.commercial_model === "daily_wage" ? Number(n.wage_rate) : null,
-              p_effective_from: effectiveFrom,
+              p_effective_from: effectiveDate.value,
               p_effective_to: null,
               p_deployment_reason: transferReason,
               p_actor_id: access.auth.user.id,

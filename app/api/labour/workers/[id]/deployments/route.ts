@@ -10,6 +10,7 @@ import {
 import { isValidActionValue, normalizeText, SKILL_LEVELS, WAGE_TYPES } from "@/lib/labour/constants";
 import { COMMERCIAL_MODELS, isAllowed } from "@/lib/labour/v2";
 import { isInOrganizationScope } from "@/lib/serverOrganizationScope";
+import { validateLabourBusinessDate } from "@/lib/labour/businessDate";
 
 function text(value: unknown) {
   const next = normalizeText(value);
@@ -106,6 +107,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const companyId = text(payload.company_id);
     const siteId = text(payload.site_id);
     const effectiveFrom = text(payload.effective_from);
+    const effectiveDate = validateLabourBusinessDate(effectiveFrom);
+    if (!effectiveDate.value) {
+      const validationError = effectiveDate.error;
+      return jsonError(validationError || "A valid effective date is required.");
+    }
+    const effectiveFromValue = effectiveDate.value;
     const skillLevel = text(payload.skill_level);
     const wageType = text(payload.wage_type);
     const commercialModel = text(payload.commercial_model) || "contract_basis";
@@ -133,7 +140,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         siteId,
         contractorProfileId,
         workOrderId: payload.work_order_id,
-        effectiveFrom,
+        effectiveFrom: effectiveFrom,
       })
       : { workOrder: null };
     if ("error" in workOrderCheck) return jsonError(workOrderCheck.error || "Selected Commercial Work Order is not available.", 403);
@@ -165,8 +172,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         .eq("manpower_work_order_id", manpowerWorkOrderId)
         .eq("labour_trade_id", labourTradeId)
         .eq("status", "active")
-        .lte("effective_from", effectiveFrom)
-        .or(`effective_to.is.null,effective_to.gte.${effectiveFrom}`)
+        .lte("effective_from", effectiveFromValue)
+        .or(`effective_to.is.null,effective_to.gte.${effectiveFromValue}`)
         .order("effective_from", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -178,7 +185,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const { data: mwo, error: mwoError } = await access.admin.from("manpower_work_orders").select("id, organization_id, company_id, site_id, contractor_profile_id, status").eq("id", manpowerWorkOrderId).maybeSingle();
       if (mwoError) throw mwoError;
       if (!mwo || mwo.organization_id !== worker.organization_id || mwo.company_id !== companyId || mwo.site_id !== siteId || mwo.status !== "approved" || mwo.contractor_profile_id !== contractorProfileId) return jsonError("Selected Manpower Work Order is not available for this contractor, company and site.", 403);
-      const { data: rate, error: rateError } = await access.admin.from("manpower_work_order_rates").select("daily_rate, effective_from, effective_to, status, labour_trade_id").eq("manpower_work_order_id", manpowerWorkOrderId).eq("labour_trade_id", labourTradeId).eq("status", "active").lte("effective_from", effectiveFrom).or(`effective_to.is.null,effective_to.gte.${effectiveFrom}`).order("effective_from", { ascending: false }).limit(1).maybeSingle();
+      const { data: rate, error: rateError } = await access.admin.from("manpower_work_order_rates").select("daily_rate, effective_from, effective_to, status, labour_trade_id").eq("manpower_work_order_id", manpowerWorkOrderId).eq("labour_trade_id", labourTradeId).eq("status", "active").lte("effective_from", effectiveFromValue).or(`effective_to.is.null,effective_to.gte.${effectiveFromValue}`).order("effective_from", { ascending: false }).limit(1).maybeSingle();
       if (rateError) throw rateError;
       if (!rate) return jsonError("Selected Manpower Work Order does not have an active rate for this Labour Category on the deployment date.", 403);
       resolvedMwoRate = rate;
@@ -192,7 +199,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       .is("effective_to", null)
       .maybeSingle();
     if (openError) throw openError;
-    if (openDeployment && effectiveFrom <= openDeployment.effective_from) {
+    if (openDeployment && effectiveFromValue <= openDeployment.effective_from) {
       return jsonError("New deployment must start after the current deployment start date.");
     }
 
@@ -200,8 +207,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       .from("labour_deployments")
       .select("id, effective_from, effective_to")
       .eq("labour_worker_id", id)
-      .lte("effective_from", effectiveFrom)
-      .or(`effective_to.is.null,effective_to.gte.${effectiveFrom}`)
+      .lte("effective_from", effectiveFromValue)
+      .or(`effective_to.is.null,effective_to.gte.${effectiveFromValue}`)
       .limit(1);
     if (openDeployment?.id) overlapQuery = overlapQuery.neq("id", openDeployment.id);
     const { data: overlapping, error: overlapError } = await overlapQuery.maybeSingle();
