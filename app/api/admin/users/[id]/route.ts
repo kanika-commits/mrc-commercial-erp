@@ -14,6 +14,7 @@ import {
   loadLinkedEmployeeForUser,
   setUserEmployeeLink,
 } from "@/app/api/admin/users/_employeeLinking";
+import { findActiveUserResponsibilities, revokeUserAccess } from "@/lib/serverUserDeactivation";
 
 function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -946,26 +947,32 @@ export async function DELETE(
       );
     }
 
-    const [
-      deletePermissions,
-      deleteAccess,
-      deleteRoles,
-    ] = await Promise.all([
-      supabase.from("user_permissions").delete().eq("user_id", id),
-      supabase.from("user_access_assignments").delete().eq("user_id", id),
-      supabase.from("user_roles").delete().eq("user_id", id),
-    ]);
-
-    for (const result of [deletePermissions, deleteAccess, deleteRoles]) {
-      if (result.error) throw result.error;
+    const responsibilities = await findActiveUserResponsibilities(supabase, id);
+    if (responsibilities.length > 0) {
+      return NextResponse.json(
+        {
+          error: "Remove User is blocked until the active responsibility is reassigned.",
+          code: "ACTIVE_RESPONSIBILITY_REASSIGNMENT_REQUIRED",
+          responsibilities,
+        },
+        { status: 409 },
+      );
     }
 
-    const { error: deleteProfileError } = await supabase
+    const { error: deactivateError } = await supabase
       .from("profiles")
-      .delete()
+      .update({ status: "inactive", updated_at: new Date().toISOString() })
       .eq("id", id);
+    if (deactivateError) throw deactivateError;
 
-    if (deleteProfileError) throw deleteProfileError;
+    try {
+      await revokeUserAccess(supabase, id);
+    } catch (accessError) {
+      return NextResponse.json(
+        { error: "User access was not fully revoked. The profile remains inactive; retry Remove User or contact an administrator.", code: "ACCESS_REVOCATION_INCOMPLETE" },
+        { status: 500 },
+      );
+    }
 
     try {
       await recordAuditEvent(supabase, access.user, {
@@ -974,18 +981,12 @@ export async function DELETE(
         entityType: "user",
         recordId: id,
         recordNumber: profile.email || id,
-        action: "delete",
+        action: "deactivate",
         actionCategory: "security",
-        activityLabel: "Deleted User",
-        description: `Deleted ERP user ${profile.email || id}.`,
+        activityLabel: "User removed from SiteQube",
+        description: `Deactivated ERP user ${profile.email || id}; profile and historical identity retained.`,
         oldValues: profile,
-        deleteSnapshot: {
-          documentType: "User",
-          documentId: id,
-          documentNumber: profile.email || id,
-          deletionReason: "ERP user profile deleted.",
-          recordSnapshot: profile,
-        },
+        newValues: { status: "inactive", access_revoked: true },
       }, request);
     } catch (auditError) {
       console.error("[Admin Audit] User delete audit failed", auditError);
@@ -993,12 +994,12 @@ export async function DELETE(
 
     return NextResponse.json({
       user_id: id,
-      deleted: true,
+      removal_type: "deactivated",
       auth_user_deleted: false,
     });
   } catch (error: any) {
     return NextResponse.json(
-      { error: error.message || "Failed to delete user." },
+      { error: error.message || "Failed to remove user." },
       { status: 500 }
     );
   }

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Search, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { Search, SlidersHorizontal, UserRoundMinus, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { sortCompanies } from "@/lib/companyOrdering";
 import { useAccessContext } from "@/components/AccessContext";
@@ -20,8 +20,9 @@ export default function AdminUsersPage() {
   const [companies, setCompanies] = useState<any[]>([]);
   const [sites, setSites] = useState<any[]>([]);
   const [message, setMessage] = useState("");
-  const [deleteUser, setDeleteUser] = useState<any | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [messageType, setMessageType] = useState<"success" | "error">("error");
+  const [removeUser, setRemoveUser] = useState<any | null>(null);
+  const [removing, setRemoving] = useState(false);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -37,6 +38,7 @@ export default function AdminUsersPage() {
   async function loadData(options: { preserveMessage?: boolean } = {}) {
     if (!options.preserveMessage) {
       setMessage("");
+      setMessageType("error");
     }
 
     const {
@@ -45,6 +47,7 @@ export default function AdminUsersPage() {
 
     if (!session?.access_token) {
       setMessage("Your session expired. Please log in again.");
+      setMessageType("error");
       return;
     }
 
@@ -57,6 +60,7 @@ export default function AdminUsersPage() {
 
     if (!response.ok) {
       setMessage(result.error || "Failed to load admin users.");
+      setMessageType("error");
       return;
     }
 
@@ -150,11 +154,11 @@ export default function AdminUsersPage() {
   const selectedCompany = companies.find((company) => company.id === companyFilter);
   const selectedSite = sites.find((site) => site.id === siteFilter);
 
-  async function confirmDeleteUser() {
-    if (!deleteUser) return;
+  async function confirmRemoveUser() {
+    if (!removeUser) return;
 
     try {
-      setDeleting(true);
+      setRemoving(true);
       setMessage("");
 
       const {
@@ -165,27 +169,30 @@ export default function AdminUsersPage() {
         throw new Error("Your session expired. Please log in again.");
       }
 
-      const response = await fetch(`/api/admin/users/${deleteUser.id}`, {
+      const response = await fetch(`/api/admin/users/${removeUser.id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       const result = await response.json();
 
       if (!response.ok) {
-        throw new Error(result.error || "Failed to delete user.");
+        const details = Array.isArray(result.responsibilities) ? ` ${result.responsibilities.join("; ")}.` : "";
+        throw new Error((result.error || "Failed to remove user.") + details);
       }
 
-      const deletedUserId = deleteUser.id;
-      setProfiles((prev) => prev.filter((profile) => profile.id !== deletedUserId));
-      setUserRoles((prev) => prev.filter((row) => row.user_id !== deletedUserId));
-      setAccessRows((prev) => prev.filter((row) => row.user_id !== deletedUserId));
-      setDeleteUser(null);
-      setMessage("User deleted successfully.");
+      const removedUserId = removeUser.id;
+      setProfiles((prev) => prev.map((profile) => profile.id === removedUserId ? { ...profile, status: "inactive" } : profile));
+      setUserRoles((prev) => prev.filter((row) => row.user_id !== removedUserId));
+      setAccessRows((prev) => prev.filter((row) => row.user_id !== removedUserId));
+      setRemoveUser(null);
+      setMessage("User removed from SiteQube. Their profile and historical records were retained.");
+      setMessageType("success");
       await loadData({ preserveMessage: true });
     } catch (error: any) {
-      setMessage(error.message || "Failed to delete user.");
+      setMessage(error.message || "Failed to remove user.");
+      setMessageType("error");
     } finally {
-      setDeleting(false);
+      setRemoving(false);
     }
   }
 
@@ -202,9 +209,9 @@ export default function AdminUsersPage() {
       </div>
 
       <AlertMessage
-        type={message.toLowerCase().includes("success") ? "success" : "error"}
+        type={messageType}
         message={message}
-        onClose={() => setMessage("")}
+        onClose={() => { setMessage(""); setMessageType("error"); }}
       />
 
       <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -237,7 +244,7 @@ export default function AdminUsersPage() {
               <div><dt className="text-xs font-medium text-slate-500">Company Access</dt><dd className="mt-0.5 truncate text-slate-700"><AccessSummary value={company.label || "-"} all={company.all} values={company.label ? company.label.split(", ") : []} /></dd></div>
               <div><dt className="text-xs font-medium text-slate-500">Site Access</dt><dd className="mt-0.5 truncate text-slate-700"><AccessSummary value={site.label || "-"} all={site.all} values={site.label ? site.label.split(", ") : []} /></dd></div>
             </dl>
-            <div className="mt-4 flex gap-2 border-t border-slate-100 pt-3"><Link href={`/admin/users/${profile.id}`} onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "user", recordId: profile.id, source: "users_register" })} className="inline-flex min-h-10 flex-1 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700">Edit Access</Link>{canDeleteUsers && <button type="button" onClick={() => setDeleteUser(profile)} className="inline-flex min-h-10 items-center justify-center gap-1 rounded-lg border border-red-200 bg-white px-3 text-xs font-semibold text-red-700"><Trash2 className="h-3.5 w-3.5" />Delete</button>}</div>
+            <div className="mt-4 flex gap-2 border-t border-slate-100 pt-3"><Link href={`/admin/users/${profile.id}`} onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "user", recordId: profile.id, source: "users_register" })} className="inline-flex min-h-10 flex-1 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700">Edit Access</Link>{canDeleteUsers && <button type="button" onClick={() => setRemoveUser(profile)} className="inline-flex min-h-10 items-center justify-center gap-1 rounded-lg border border-red-200 bg-white px-3 text-xs font-semibold text-red-700"><UserRoundMinus className="h-3.5 w-3.5" />Remove User</button>}</div>
           </article>
         ))}
         {filteredRows.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-14 text-center text-sm text-slate-500"><p className="font-semibold text-slate-700">{profiles.length === 0 ? "No users found." : "No users match your search or filters."}</p>{profiles.length > 0 && <button type="button" onClick={clearFilters} className="tenant-primary-text mt-2 font-semibold">Clear Filters</button>}</div>}
@@ -260,7 +267,7 @@ export default function AdminUsersPage() {
                 <td className="max-w-[210px] px-4 py-3"><AccessSummary value={company.label || "-"} all={company.all} values={company.label ? company.label.split(", ") : []} /></td>
                 <td className="max-w-[210px] px-4 py-3"><AccessSummary value={site.label || "-"} all={site.all} values={site.label ? site.label.split(", ") : []} /></td>
                 <td className="px-4 py-3"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${status === "active" ? "bg-emerald-50 text-emerald-700" : status === "suspended" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-600"}`}>{status.charAt(0).toUpperCase() + status.slice(1)}</span></td>
-                <td className="px-4 py-3"><div className="flex items-center justify-end gap-2 whitespace-nowrap"><Link href={`/admin/users/${profile.id}`} onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "user", recordId: profile.id, source: "users_register" })} className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--tenant-focus)]">Edit Access</Link>{canDeleteUsers && <button type="button" onClick={() => setDeleteUser(profile)} className="inline-flex h-8 items-center gap-1 rounded-lg border border-red-200 bg-white px-2.5 text-xs font-semibold text-red-700 transition hover:bg-red-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"><Trash2 className="h-3.5 w-3.5" />Delete</button>}</div></td>
+                <td className="px-4 py-3"><div className="flex items-center justify-end gap-2 whitespace-nowrap"><Link href={`/admin/users/${profile.id}`} onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "user", recordId: profile.id, source: "users_register" })} className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--tenant-focus)]">Edit Access</Link>{canDeleteUsers && <button type="button" onClick={() => setRemoveUser(profile)} className="inline-flex h-8 items-center gap-1 rounded-lg border border-red-200 bg-white px-2.5 py-1 text-xs font-semibold text-red-700 transition hover:bg-red-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"><UserRoundMinus className="h-3.5 w-3.5" />Remove User</button>}</div></td>
               </tr>
             ))}
 
@@ -276,35 +283,34 @@ export default function AdminUsersPage() {
         </table>
       </div>
 
-      {deleteUser && (
+      {removeUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-            <h2 className="text-xl font-bold text-slate-950">Delete User</h2>
+            <h2 className="text-xl font-bold text-slate-950">Remove User</h2>
             <p className="mt-3 text-sm leading-6 text-slate-600">
-              Delete app user record for{" "}
+              Remove SiteQube access for{" "}
               <span className="font-semibold text-slate-950">
-                {deleteUser.full_name || deleteUser.email || "-"}
+                {removeUser.full_name || removeUser.email || "-"}
               </span>
-              ? This removes the ERP profile, roles, permissions and access
-              assignments. The Supabase Auth user is not deleted.
+              ? They will no longer be able to access SiteQube or appear in active user lists. Their profile and historical records will be retained.
             </p>
 
             <div className="mt-6 flex justify-end gap-3">
               <button
                 type="button"
-                onClick={() => setDeleteUser(null)}
-                disabled={deleting}
+                onClick={() => setRemoveUser(null)}
+                disabled={removing}
                 className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={confirmDeleteUser}
-                disabled={deleting}
+                onClick={confirmRemoveUser}
+                disabled={removing}
                 className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
               >
-                {deleting ? "Deleting..." : "Delete User"}
+                {removing ? "Removing..." : "Remove User"}
               </button>
             </div>
           </div>
