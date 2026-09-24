@@ -961,7 +961,7 @@ export async function DELETE(
 
     const { error: deactivateError } = await supabase
       .from("profiles")
-      .update({ status: "inactive", updated_at: new Date().toISOString() })
+      .update({ status: "inactive" })
       .eq("id", id);
     if (deactivateError) throw deactivateError;
 

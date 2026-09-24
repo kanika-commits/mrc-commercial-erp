@@ -8,6 +8,8 @@ const access = fs.readFileSync('lib/serverAccountAccess.ts', 'utf8');
 
 assert.match(route, /findActiveUserResponsibilities/);
 assert.match(route, /profiles[\s\S]+status: "inactive"/);
+assert.match(route, /\.update\(\{ status: "inactive" \}\)/);
+assert.doesNotMatch(route, /\.update\(\{ status: "inactive", updated_at:/);
 assert.match(route, /revokeUserAccess/);
 assert.match(route, /removal_type: "deactivated"/);
 assert.doesNotMatch(route, /auth\.admin\.deleteUser/);
