@@ -38,6 +38,18 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
       .select("id, employee_id, attendance_date, status")
       .eq("period_id", id);
     if (attendanceError) throw attendanceError;
+    const { data: protectedSubmissions, error: protectedSubmissionError } = await admin
+      .from("employee_attendance_daily_submissions")
+      .select("id, status")
+      .eq("organization_id", period.organization_id)
+      .eq("company_id", period.company_id)
+      .eq("site_id", period.site_id)
+      .eq("period_id", period.id)
+      .in("status", ["submitted", "approved"]);
+    if (protectedSubmissionError && !isMissingTable(protectedSubmissionError)) throw protectedSubmissionError;
+    if ((protectedSubmissions || []).length) {
+      return jsonError("This attendance period contains submitted or approved attendance and cannot be deleted.", 409);
+    }
     const attendanceIds = (attendanceRows || []).map((row: any) => row.id).filter(Boolean);
     const dependentPayrollRows =
       await countOptionalDependency(admin, "employee_salary_attendance_lines", "attendance_id", attendanceIds) +

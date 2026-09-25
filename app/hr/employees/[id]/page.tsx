@@ -155,7 +155,9 @@ export default function EmployeeDetailPage() {
     const department = lookups.departments.find((item) => item.id === employee?.department_id)?.department_name || "-";
     const designation = lookups.designations.find((item) => item.id === employee?.designation_id)?.designation_name || "-";
     const manager = lookups.employees.find((item) => item.id === employee?.reporting_manager_id);
-    return { company, site, department, designation, manager: manager ? `${manager.employee_name} (${manager.employee_code})` : "-" };
+    const scheduled = (employee as any)?.scheduled_transfer;
+    const scheduledSite = scheduled ? lookups.sites.find((item) => item.id === scheduled.site_id)?.label || scheduled.site_id : null;
+    return { company, site, department, designation, manager: manager ? `${manager.employee_name} (${manager.employee_code})` : "-", scheduled: scheduled && scheduledSite ? `Transfer scheduled for ${scheduled.effective_from} to ${scheduledSite}` : null };
   }, [employee, lookups]);
 
   const linkedUser = useMemo(() => {
@@ -287,6 +289,7 @@ export default function EmployeeDetailPage() {
                 <div className="grid gap-5 md:grid-cols-3">
                   <Info label="Company" value={labels.company} />
                   <Info label="Site" value={labels.site} />
+                  {labels.scheduled && <Info label="Upcoming Transfer" value={labels.scheduled} />}
                   <Info label="Department" value={labels.department} />
                   <Info label="Designation" value={labels.designation} />
                   <Info label="Employee Type" value={labelize(employee.employment_type)} />
@@ -417,6 +420,7 @@ export default function EmployeeDetailPage() {
                 history={employmentHistory}
                 setHistory={setEmploymentHistory}
                 canEdit={canEdit}
+                platformOwner={access?.isGlobalAccess === true || access?.roleCodes.includes("platform_owner") === true}
                 lookups={lookups}
                 onError={setMessage}
               />

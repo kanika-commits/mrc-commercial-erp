@@ -421,8 +421,30 @@ export async function GET(
         { status: 403 }
       );
     }
-
-    return NextResponse.json({ employee: await withPhotoSignedUrl(admin, employee) });
+    const today = new Date().toISOString().slice(0, 10);
+    const [historyResult, scheduleResult] = await Promise.all([admin
+      .from("employee_employment_history")
+      .select("event_type,effective_from,effective_to,company_id,site_id,title")
+      .eq("employee_id", id)
+      .eq("organization_id", employee.organization_id)
+      .eq("is_manual", false)
+      .eq("event_type", "transferred")
+      .order("effective_from", { ascending: false }), admin
+      .from("hr_employee_transfer_schedules")
+      .select("id,effective_date,company_id,site_id,status,failure_reason")
+      .eq("employee_id", id)
+      .eq("organization_id", employee.organization_id)
+      .in("status", ["pending", "failed"])
+      .order("effective_date", { ascending: true })]);
+    if (historyResult.error) throw historyResult.error;
+    if (scheduleResult.error && scheduleResult.error.code !== "42P01") throw scheduleResult.error;
+    const systemTransfers = historyResult.data || [];
+    const currentTransfer = systemTransfers.find((row: any) => row.effective_from && row.effective_from <= today && (!row.effective_to || row.effective_to >= today));
+    const futureTransfer = (scheduleResult.data || [])[0] || systemTransfers.filter((row: any) => row.effective_from && row.effective_from > today).sort((a: any, b: any) => String(a.effective_from).localeCompare(String(b.effective_from)))[0] || null;
+    const effectiveEmployee = currentTransfer
+      ? { ...employee, company_id: currentTransfer.company_id || employee.company_id, site_id: currentTransfer.site_id || employee.site_id }
+      : employee;
+    return NextResponse.json({ employee: await withPhotoSignedUrl(admin, { ...effectiveEmployee, scheduled_transfer: futureTransfer ? { id: futureTransfer.id || null, effective_from: futureTransfer.effective_date, company_id: futureTransfer.company_id, site_id: futureTransfer.site_id, status: futureTransfer.status || "pending", failure_reason: futureTransfer.failure_reason || null } : null } ) });
   } catch (error: any) {
     return NextResponse.json(
       { error: error.message || "Failed to load employee." },

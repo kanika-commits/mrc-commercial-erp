@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { insertErpAuditLog } from "@/lib/serverAudit";
-import { actorName, buildAttendanceUpsertPayload, isAdminRecoveryRole, monthStart } from "@/lib/hr/attendance";
+import { actorName, isAdminRecoveryRole, monthStart } from "@/lib/hr/attendance";
 import {
   adminClient,
   assertDateEditAllowed,
@@ -40,7 +40,7 @@ export async function GET(request: Request) {
       attendanceType: "employee",
     });
     const dateAllowed = assertDateSelectable(auth, params.attendanceDate, Boolean(historicalAccess));
-    if (!dateAllowed.allowed) return jsonError(dateAllowed.error || "Attendance date cannot be loaded.", 403);
+    if (!dateAllowed.allowed) return jsonError(dateAllowed.error ?? "Attendance date cannot be loaded.", 403);
 
     const month = monthStart(params.attendanceDate)!;
     let [employees, rows, period, dayLock, policy, dailySubmission] = await Promise.all([
@@ -167,7 +167,7 @@ export async function PUT(request: Request) {
       attendanceType: "employee",
     });
     const editAllowed = assertDateEditAllowed(auth, attendanceDate, payload.backdated_reason, Boolean(historicalAccess));
-    if (!editAllowed.allowed) return jsonError(editAllowed.error || "Attendance date is not editable.", 403);
+    if (!editAllowed.allowed) return jsonError(editAllowed.error ?? "Attendance date is not editable.", 403);
 
     const month = monthStart(attendanceDate)!;
     const period = await ensurePeriod(admin, auth, {
@@ -204,6 +204,17 @@ export async function PUT(request: Request) {
 
     const submittedRows = payload.attendance as Array<{ employee_id: string; status: string; remarks?: string | null }>;
     const employeeIds = Array.from(new Set(submittedRows.map((row) => row.employee_id)));
+    const indiaBusinessDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+    const dueTransfers = await admin.from("hr_employee_transfer_schedules")
+      .select("employee_id, effective_date, company_id, site_id")
+      .eq("organization_id", scope.organizationId)
+      .eq("status", "pending")
+      .lte("effective_date", indiaBusinessDate)
+      .in("employee_id", employeeIds);
+    if (dueTransfers.error && dueTransfers.error.code !== "42P01") throw dueTransfers.error;
+    if ((dueTransfers.data || []).some((row: any) => row.company_id !== params.companyId || row.site_id !== params.siteId)) {
+      return jsonError("A scheduled employee transfer is due. Apply the transfer before saving attendance for this employee.", 409);
+    }
     const employees = await loadEligibleEmployees(admin, {
       organizationId: scope.organizationId,
       companyId: params.companyId,
@@ -216,6 +227,7 @@ export async function PUT(request: Request) {
       return jsonError("One or more employees are not eligible for the selected site and date.", 403);
     }
 
+    const now = new Date().toISOString();
     const existing = await loadAttendanceRows(admin, {
       organizationId: scope.organizationId,
       companyId: params.companyId,
@@ -223,32 +235,44 @@ export async function PUT(request: Request) {
       startDate: attendanceDate,
       endDate: attendanceDate,
     });
-    const existingByEmployee = new Map(existing.map((row: any) => [row.employee_id, row]));
-    const now = new Date().toISOString();
-    const upserts = submittedRows.map((row) =>
-      buildAttendanceUpsertPayload({
-        existingRow: existingByEmployee.get(row.employee_id),
-        organizationId: scope.organizationId,
-        companyId: params.companyId,
-        siteId: params.siteId,
-        employeeId: row.employee_id,
-        periodId: period.id,
-        attendanceDate,
-        status: row.status as any,
-        remarks: row.remarks,
-        backdatedReason: editAllowed.backdated && !historicalAccess ? String(payload.backdated_reason || "").trim() : null,
-        actorId: auth.user.id,
-        actorName: actorName(auth.user),
-        actorEmail: auth.user.email || null,
-        now,
-      }),
-    );
+    const data = [] as any[];
+    const failures: Array<{ employee_id: string; error: string }> = [];
+    for (const row of submittedRows) {
+      const result = await admin.rpc("save_hr_employee_attendance_atomic", {
+        p_organization_id: scope.organizationId,
+        p_company_id: params.companyId,
+        p_site_id: params.siteId,
+        p_employee_id: row.employee_id,
+        p_period_id: period.id,
+        p_attendance_date: attendanceDate,
+        p_status: row.status,
+        p_remarks: row.remarks || null,
+        p_backdated_reason: editAllowed.backdated && !historicalAccess ? String(payload.backdated_reason || "").trim() : null,
+        p_actor_id: auth.user.id,
+        p_actor_name: actorName(auth.user),
+        p_actor_email: auth.user.email || null,
+      });
+      if (result.error) {
+        failures.push({ employee_id: row.employee_id, error: result.error.message || "Attendance could not be saved for this employee." });
+        continue;
+      }
+      if (result.data) data.push(result.data);
+    }
 
-    const { data, error } = await admin
-      .from("employee_attendance")
-      .upsert(upserts, { onConflict: "employee_id,attendance_date", defaultToNull: false })
-      .select("*");
-    if (error) throw error;
+    if (failures.length) {
+      return NextResponse.json({
+        saved: data.length,
+        attendance: data,
+        failed: failures,
+        partial: data.length > 0,
+        retryable: true,
+        message: data.length
+          ? "Some attendance rows were saved. Review the failed employees and retry them."
+          : "No attendance rows were saved. Review the failed employees and retry.",
+        period,
+        daily_submission: dailySubmission || null,
+      }, { status: data.length > 0 ? 207 : 409 });
+    }
 
     const dailyState = dailySubmission
       ? await admin.from("employee_attendance_daily_submissions").update({

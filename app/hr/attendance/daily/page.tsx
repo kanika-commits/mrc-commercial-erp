@@ -269,6 +269,22 @@ export default function DailyAttendancePage() {
         throw new Error(`Attendance save failed for: ${labels.join(", ")}.${suffix} Other company drafts may have been saved.`);
       }
       const results = outcomes.map((outcome: any) => outcome.result);
+      const partialResults = results.filter((result: any) => result?.partial || (Array.isArray(result?.failed) && result.failed.length > 0));
+      if (partialResults.length) {
+        const failedEmployees = partialResults.flatMap((result: any) => Array.isArray(result.failed) ? result.failed : []);
+        const failedEmployeeIds = new Set(failedEmployees.map((failure: any) => failure.employee_id));
+        const failedDraft = Object.fromEntries(Object.entries(draft).filter(([employeeId]) => failedEmployeeIds.has(employeeId)));
+        const details = failedEmployees
+          .map((failure: any) => {
+            const employee = rows.find((item) => item.employee.id === failure.employee_id)?.employee;
+            return `${employee?.employee_name || failure.employee_id}: ${failure.error || "Attendance could not be saved."}`;
+          });
+        setMessage(`${partialResults.map((result: any) => result.message).filter(Boolean).join(" ") || "Some attendance rows were saved. Review the failed employees and retry them."}${details.length ? ` ${details.join(" ")}` : ""}`);
+        await load({ skipDirtyGuard: true });
+        setDraft(failedDraft);
+        setHasUnsavedChanges(Object.keys(failedDraft).length > 0);
+        return null;
+      }
       if (!options.silent) setSuccess(`Draft saved for ${results.reduce((total, result) => total + Number(result.saved || 0), 0)} attendance rows.`);
       await load({ skipDirtyGuard: true });
       return { periods: results.map((result) => result.period).filter(Boolean) };

@@ -661,11 +661,17 @@ export async function loadEligibleEmployees(
   const employees = data || [];
   const employeeIds = employees.map((employee: any) => employee.id);
   const historyByEmployee = new Map<string, any[]>();
+  const indiaBusinessDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+  const dueScheduleResult = employeeIds.length
+    ? await admin.from("hr_employee_transfer_schedules").select("employee_id").eq("organization_id", values.organizationId).eq("status", "pending").lte("effective_date", indiaBusinessDate).in("employee_id", employeeIds)
+    : { data: [], error: null };
+  if (dueScheduleResult.error && dueScheduleResult.error.code !== "42P01") throw dueScheduleResult.error;
+  const dueScheduledEmployeeIds = new Set((dueScheduleResult.data || []).map((row: any) => row.employee_id));
 
   if (employeeIds.length > 0) {
     const { data: historyRows, error: historyError } = await admin
       .from("employee_employment_history")
-      .select("employee_id, company_id, site_id, effective_from, effective_to, event_date, employment_status")
+      .select("employee_id, company_id, site_id, effective_from, effective_to, event_date, employment_status, event_type, source, is_manual")
       .eq("organization_id", values.organizationId)
       .in("employee_id", employeeIds)
       .or(`effective_from.is.null,effective_from.lte.${values.endDate}`)
@@ -681,11 +687,16 @@ export async function loadEligibleEmployees(
   return employees.filter((employee: any) => {
     const dateForEligibility = values.startDate === values.endDate ? values.startDate : values.endDate;
     if (String(employee.status || "").toLowerCase() === "deleted") return false;
+    // Fail closed during the short interval before the due-transfer worker applies
+    // the assignment. This prevents an employee appearing at the old site.
+    if (dueScheduledEmployeeIds.has(employee.id)) return false;
     if (employee.date_of_joining && compareDates(dateForEligibility, employee.date_of_joining) < 0) return false;
     if (employee.date_of_exit && compareDates(dateForEligibility, employee.date_of_exit) > 0) return false;
 
     const histories = historyByEmployee.get(employee.id) || [];
-    const effectiveHistories = histories.filter((history) => rowAppliesToDateRange(history, values.startDate, values.endDate));
+    const effectiveHistories = histories
+      .filter((history) => rowAppliesToDateRange(history, values.startDate, values.endDate))
+      .filter((history) => !(history.event_type === "transferred" && history.is_manual === true));
     if (values.startDate === values.endDate) {
       const latestHistory = effectiveHistories[0] || null;
       if (latestHistory) {

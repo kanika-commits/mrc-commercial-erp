@@ -44,6 +44,10 @@ function dateValue(value: unknown) {
   return String(value || "").trim() || null;
 }
 
+function indiaToday() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+}
+
 function jsonError(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
@@ -227,7 +231,7 @@ export async function POST(
     const departmentId = textValue(payload.department_id);
     const designationId = textValue(payload.designation_id);
     const reportingManagerId = textValue(payload.reporting_manager_id);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = indiaToday();
     const maxFuture = new Date();
     maxFuture.setFullYear(maxFuture.getFullYear() + 1);
     const maxFutureDate = maxFuture.toISOString().slice(0, 10);
@@ -247,6 +251,59 @@ export async function POST(
       reportingManagerId,
     });
     if (relatedError) return jsonError(relatedError, 403);
+
+    if (eventType === "transferred") {
+      const transferDate = effectiveFrom || eventDate;
+      if (!companyId || !siteId || !transferDate) {
+        return jsonError("Transferred events require destination company, destination site and effective date.");
+      }
+      if (transferDate < today || eventDate < today) {
+        return jsonError("Transfers cannot be backdated.");
+      }
+      if (transferDate > today || eventDate > today) {
+        const { data: scheduled, error: scheduleError } = await admin.rpc("schedule_hr_employee_transfer", {
+          p_employee_id: id,
+          p_organization_id: employeeResult.employee.organization_id,
+          p_company_id: companyId,
+          p_site_id: siteId,
+          p_effective_date: transferDate,
+          p_actor_id: auth.user.id,
+          p_actor_name: userName(auth),
+          p_actor_email: auth.user.email || null,
+        });
+        if (scheduleError) throw scheduleError;
+        await insertErpAuditLog(admin, auth.user, {
+          organizationId: employeeResult.employee.organization_id,
+          companyId,
+          siteId,
+          moduleCode: MODULE_CODE,
+          entityType: "hr_employee_transfer_schedule",
+          recordId: scheduled?.id || null,
+          action: "create",
+          description: `Transfer scheduled for ${transferDate}.`,
+          newValues: scheduled,
+          source: "api",
+        }, request);
+        return NextResponse.json({ scheduled_transfer: scheduled }, { status: 201 });
+      }
+      const { data: transfer, error: transferError } = await admin.rpc("transfer_hr_employee_atomic", {
+        p_employee_id: id,
+        p_organization_id: employeeResult.employee.organization_id,
+        p_company_id: companyId,
+        p_site_id: siteId,
+        p_transfer_effective_date: transferDate,
+        p_actor_id: auth.user.id,
+        p_actor_name: userName(auth),
+        p_actor_email: auth.user.email || null,
+      });
+      if (transferError) throw transferError;
+      const historyId = transfer?.history_id;
+      const history = historyId
+        ? await admin.from("employee_employment_history").select("*").eq("id", historyId).single()
+        : { data: null, error: null };
+      if (history.error) throw history.error;
+      return NextResponse.json({ history: history.data, transfer });
+    }
 
     const { data, error } = await admin
       .from("employee_employment_history")
@@ -312,5 +369,43 @@ export async function POST(
     return NextResponse.json({ history: data, today });
   } catch (error: any) {
     return jsonError(error.message || "Failed to add employment event.", 500);
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  try {
+    const auth = await requirePermission(request, MODULE_CODE, "edit");
+    if ("response" in auth) return auth.response;
+    if (!auth.roleCodes.includes("platform_owner")) {
+      return jsonError("Only a Platform Owner can delete manual employment events.", 403);
+    }
+
+    const { id } = await context.params;
+    const admin = adminClient();
+    const employeeResult = await loadAccessibleEmployee(admin, auth, id);
+    if ("response" in employeeResult) return employeeResult.response;
+
+    const eventId = new URL(request.url).searchParams.get("event_id")?.trim();
+    if (!eventId) return jsonError("Employment event ID is required.");
+
+    const { data, error } = await admin
+      .from("employee_employment_history")
+      .delete()
+      .eq("id", eventId)
+      .eq("employee_id", id)
+      .eq("organization_id", employeeResult.employee.organization_id)
+      .eq("is_manual", true)
+      .select("id, title, event_date")
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return jsonError("Only an existing manual employment event in this organization can be deleted.", 404);
+
+    return NextResponse.json({ deleted: data });
+  } catch (error: any) {
+    return jsonError(error.message || "Failed to delete employment event.", 500);
   }
 }

@@ -1,0 +1,36 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const migration = fs.readFileSync("supabase/migrations/202609250001_hr_employee_transfer_reconciliation.sql", "utf8");
+const route = fs.readFileSync("app/api/hr/employees/[id]/route.ts", "utf8");
+const historyRoute = fs.readFileSync("app/api/hr/employees/[id]/employment-history/route.ts", "utf8");
+const timeline = fs.readFileSync("components/hr/EmployeeEmploymentTimeline.tsx", "utf8");
+const detail = fs.readFileSync("app/hr/employees/[id]/page.tsx", "utf8");
+
+assert.match(migration, /transfer_hr_employee_atomic/);
+assert.match(migration, /where id = p_site_id and organization_id = p_organization_id and status <> 'deleted'/);
+assert.doesNotMatch(migration, /and \(company_id = p_company_id or company_id is null\)/);
+assert.match(migration, /event_type = 'transferred'/);
+assert.match(migration, /event_date = p_transfer_effective_date/);
+assert.match(migration, /if v_history_id is null then/);
+assert.match(migration, /coalesce\(is_manual, false\) = false/);
+assert.match(migration, /employee_attendance/);
+assert.match(route, /transfer_hr_employee_atomic/);
+assert.match(route, /Transfer effective date is required when Company or Site changes/);
+assert.match(timeline, /Transferred uses the authorized assignment transfer flow/);
+assert.match(timeline, /Transferred events require destination company, destination site and effective date/);
+assert.match(timeline, /const isTransfer = form\.event_type === "transferred"/);
+assert.match(timeline, /Future Effective Date \*/);
+assert.match(timeline, /Destination Company \*/);
+assert.match(timeline, /Destination Site \*/);
+assert.match(timeline, /event_date: form\.effective_from/);
+assert.match(timeline, /Schedule Transfer/);
+assert.match(historyRoute, /eventType === "transferred"/);
+assert.match(historyRoute, /transfer_hr_employee_atomic/);
+assert.match(historyRoute, /Transferred events require destination company, destination site and effective date/);
+assert.match(historyRoute, /schedule_hr_employee_transfer/);
+assert.match(historyRoute, /Transfers cannot be backdated/);
+assert.match(historyRoute, /timeZone: "Asia\/Kolkata"/);
+assert.match(migration, /coalesce\(is_manual, false\) = false/);
+assert.match(detail, /lookups\.sites\.find\(\(item\) => item\.id === employee\?\.site_id\)/);
+console.log("HR employee transfer reconciliation contract tests passed.");
