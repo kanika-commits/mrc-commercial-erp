@@ -488,8 +488,8 @@ export default function LabourWorkerDetailPage() {
                     <Info label="Site" value={currentDeployment.sites?.site_name} />
                     <Info label="Contractor" value={currentDeployment.labour_contractor_profiles?.vendors?.vendor_name || contractorName || "Not Assigned"} />
                     <Info label="Payment Model" value={paymentModelLabel(currentDeployment.commercial_model)} />
-                    <Info label="Work Order" value={workOrderLabel(currentDeployment.work_orders || worker.current_work_orders)} />
-                    <Info label="Daily Rate" value={currentDeployment.commercial_model === "daily_wage" ? formatCurrency(currentDeployment.daily_rate) : "Not Applicable"} />
+                    <Info className="min-w-0" label="Work Order" value={workOrderLabel(currentDeployment.work_orders || worker.current_work_orders)} />
+                    <Info className="min-w-0" label="Daily Rate" value={currentDeployment.commercial_model === "daily_wage" ? formatCurrency(currentDeployment.daily_rate) : "Not Applicable"} />
                     <Info label="Category" value={currentDeployment.labour_trades?.trade_name || currentDeployment.trade} />
                     <Info label="Effective From" value={formatDate(currentDeployment.effective_from)} />
                     {canCorrectDeploymentDate && <button type="button" onClick={() => { setDateCorrectionError(""); setShowDateCorrection(true); }} className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">Correct Deployment Date</button>}
@@ -630,8 +630,8 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
   return <section className="rounded-lg border bg-white p-5"><h2 className="mb-4 text-lg font-semibold">{title}</h2><div className="grid gap-3 md:grid-cols-2">{children}</div></section>;
 }
 
-function Info({ label, value }: { label: string; value?: string | null }) {
-  return <div><p className="text-xs font-bold uppercase text-slate-500">{label}</p><p className="font-semibold">{value || "-"}</p></div>;
+function Info({ label, value, className }: { label: string; value?: string | null; className?: string }) {
+  return <div className={className}><p className="text-xs font-bold uppercase text-slate-500">{label}</p><p className={`font-semibold ${label === "Work Order" ? "break-words [overflow-wrap:anywhere]" : label === "Daily Rate" ? "whitespace-nowrap" : ""}`}>{value || "-"}</p></div>;
 }
 
 function activityDetails(log: any) {

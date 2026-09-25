@@ -12,6 +12,7 @@ import {
 } from "@/app/api/labour/_shared";
 import { isValidActionValue, LABOUR_STATUSES, normalizeLabourCode, normalizeText, SKILL_LEVELS } from "@/lib/labour/constants";
 import { formatAadhaar, normalizeAadhaar, optionalFormattedAadhaar, validateAadhaar } from "@/lib/utils/aadhaar";
+import { applyInactiveWorkerStatusUpdate, normalizeInactiveStatusPayload, validateInactiveWorkerStatusUpdate } from "@/app/api/labour/workers/_status";
 
 const MODULE = "labour_workers";
 const TECHNICAL_WORKER_TYPE = "contractor_labour";
@@ -256,6 +257,22 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
       if (status === current.status) return NextResponse.json({ labour_worker_id: id, unchanged: true });
       if (current.status === "inactive" && status === "active") {
         return jsonError("Reactivating a labourer requires a new deployment. Open the labourer's record and create the deployment first.", 409);
+      }
+      if (status === "inactive") {
+        const normalizedStatus = normalizeInactiveStatusPayload({
+          status,
+          effective_date: payload.effective_date,
+          reason: payload.reason || "Marked inactive through the Labour Master status action.",
+        });
+        const validation = await validateInactiveWorkerStatusUpdate(access, { workerId: id, status: normalizedStatus.nextStatus, reason: normalizedStatus.reason, requestedDate: normalizedStatus.requestedDate });
+        if ("error" in validation) return jsonError(validation.error || "Could not mark labourer inactive.", validation.status || 409);
+        return NextResponse.json(await applyInactiveWorkerStatusUpdate(access, request, {
+          workerId: id,
+          reason: normalizedStatus.reason || "Marked inactive through the Labour Master status action.",
+          source: "labour_worker_detail",
+          requestedDate: normalizedStatus.requestedDate,
+          validation,
+        }));
       }
       const updatePayload = {
         status,

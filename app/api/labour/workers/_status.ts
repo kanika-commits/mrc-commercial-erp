@@ -20,16 +20,6 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function previousDay(value: string) {
-  const date = new Date(`${value}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() - 1);
-  return date.toISOString().slice(0, 10);
-}
-
-function maxDate(left: string, right: string) {
-  return left > right ? left : right;
-}
-
 export function statusPermissionModule(source: string | null) {
   return source === "labour_attendance" ? "labour_attendance" : source === "labour_worker_detail" ? MODULE : null;
 }
@@ -83,18 +73,7 @@ export async function validateInactiveWorkerStatusUpdate(access: any, input: {
     return { error: "Attendance is already submitted or approved for this date. Mark the labourer inactive from the next permitted date.", status: 409 };
   }
 
-  const { data: activeDeployment, error: deploymentError } = await access.admin
-    .from("labour_deployments")
-    .select("*")
-    .eq("labour_worker_id", input.workerId)
-    .eq("status", "active")
-    .is("effective_to", null)
-    .order("effective_from", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (deploymentError) throw deploymentError;
-
-  return { worker, unchanged: false, effectiveDate, activeDeployment: activeDeployment || null };
+  return { worker, unchanged: false, effectiveDate };
 }
 
 export async function applyInactiveWorkerStatusUpdate(access: any, request: Request, input: {
@@ -116,42 +95,17 @@ export async function applyInactiveWorkerStatusUpdate(access: any, request: Requ
 
   const now = new Date().toISOString();
   const worker = input.validation.worker;
-  const activeDeployment = input.validation.activeDeployment;
   const effectiveDate = input.validation.effectiveDate;
-  let deploymentUpdate: any = null;
-  let closedDeployment: any = null;
-  if (activeDeployment) {
-    const preferredEffectiveTo = previousDay(effectiveDate);
-    const effectiveTo = maxDate(preferredEffectiveTo, activeDeployment.effective_from || effectiveDate);
-    deploymentUpdate = {
-      status: "ended",
-      effective_to: effectiveTo,
-      deployment_reason: input.reason,
-      updated_at: now,
-      ...actorFields(access.auth, "updated"),
-    };
-    const { data: updatedDeployment, error: closeError } = await access.admin
-      .from("labour_deployments")
-      .update(deploymentUpdate)
-      .eq("id", activeDeployment.id)
-      .eq("status", "active")
-      .is("effective_to", null)
-      .select("*")
-      .maybeSingle();
-    if (closeError) throw closeError;
-    closedDeployment = updatedDeployment || null;
-  }
-
-  const workerUpdate = {
-    status: INACTIVE_STATUS,
-    updated_at: now,
-    ...actorFields(access.auth, "updated"),
-  };
-  const { error: workerError } = await access.admin
-    .from("labour_workers")
-    .update(workerUpdate)
-    .eq("id", input.workerId)
-    .eq("status", "active");
+  const actorName = access.auth.user.user_metadata?.full_name || access.auth.user.user_metadata?.name || access.auth.user.email || "Unknown User";
+  const { data: result, error: workerError } = await access.admin.rpc("inactivate_labour_worker_atomic", {
+    p_worker_id: input.workerId,
+    p_organization_id: worker.organization_id,
+    p_effective_date: effectiveDate,
+    p_reason: input.reason,
+    p_actor_id: access.auth.user.id,
+    p_actor_name: actorName,
+    p_actor_email: access.auth.user.email || null,
+  });
   if (workerError) throw workerError;
 
   await audit(access, request, {
@@ -165,7 +119,7 @@ export async function applyInactiveWorkerStatusUpdate(access: any, request: Requ
     description: `Marked labourer ${worker.labour_code} inactive.`,
     oldValues: {
       status: worker.status,
-      active_deployment: activeDeployment || null,
+      active_deployment: "closed atomically by inactivation RPC",
     },
     newValues: {
       status: INACTIVE_STATUS,
@@ -173,9 +127,7 @@ export async function applyInactiveWorkerStatusUpdate(access: any, request: Requ
       requested_effective_date: input.requestedDate || null,
       reason: input.reason,
       source: input.source,
-      affected_deployment_id: activeDeployment?.id || null,
-      deployment_update: deploymentUpdate,
-      closed_deployment: closedDeployment,
+      closed_deployments: result?.closed_deployments ?? null,
     },
   });
 
@@ -183,7 +135,8 @@ export async function applyInactiveWorkerStatusUpdate(access: any, request: Requ
     labour_worker_id: input.workerId,
     status: INACTIVE_STATUS,
     effective_date: effectiveDate,
-    affected_deployment_id: activeDeployment?.id || null,
+    affected_deployment_id: null,
+    closed_deployments: result?.closed_deployments ?? 0,
   };
 }
 
