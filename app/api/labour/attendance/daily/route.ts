@@ -554,7 +554,7 @@ export async function GET(request: Request) {
       workerIds,
     });
     const historicalAccess = dateAuthority.historicalAccess;
-    const explicitlyOpen = selectedStatus === "reopened";
+    const explicitlyOpen = selectedStatus === "reopened" || (Boolean(historicalAccess) && !dateAuthority.submittedSnapshotLocked);
     const attendanceByWorker = new Map((attendanceRows || []).map((row: any) => [row.labour_worker_id, row]));
     const workerIdSet = new Set(workerIds);
     const { data: scopedWorkerRates, error: workerRatesError } = workerIds.length
@@ -695,7 +695,7 @@ export async function POST(request: Request) {
 
     const existingPeriod = await loadExistingAttendancePeriod(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate });
     const reopenedDate = existingPeriod?.summary?.date_statuses?.[attendanceDate]?.status === "reopened" || existingPeriod?.status === "reopened";
-    const historicalAccess = await getActiveHistoricalAttendanceAccess(access, { organizationId, siteId, attendanceDate, attendanceType: "labour" });
+    const historicalAccess = await getActiveHistoricalAttendanceAccess(access, { organizationId, companyId, siteId, attendanceDate, attendanceType: "labour" });
     const dateAccess = actorCanEditAttendanceDate(access, attendanceDate, backdatedReason, { reopened: reopenedDate, historicallyOpened: Boolean(historicalAccess) && !reopenedDate });
     if ("error" in dateAccess) return jsonError(dateAccess.error || "You cannot edit attendance for this date.", 403);
     const originResult = await resolveAttendanceSystemForPeriod(access, { period: existingPeriod, organizationId, companyId, siteId, contractorProfileId, attendanceDate });
