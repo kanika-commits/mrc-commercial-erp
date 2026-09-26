@@ -33,6 +33,7 @@ export default function PurchaseOrdersPage() {
   const [rows, setRows] = useState<any[]>([]);
   const [message, setMessage] = useState("");
   const [messageKind, setMessageKind] = useState<"success" | "error">("error");
+  const [loadError, setLoadError] = useState("");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState({ company: "", site: "", vendor: "", status: "", source: "", from: "", to: "" });
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
@@ -56,8 +57,8 @@ export default function PurchaseOrdersPage() {
   function setFilter(name: keyof typeof filters, value: string) { setFilters((current) => ({ ...current, [name]: value })); }
   function controlClass(active: boolean) { return "h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100 " + (active ? "border-amber-300 bg-amber-50/70 text-slate-950" : "border-slate-200 bg-white text-slate-700"); }
 
-  async function refreshRows() { const result = await apiFetch("/api/procurement/purchase-orders"); setRows(result.purchase_orders || []); }
-  useEffect(() => { refreshRows().catch((error) => setMessage(error.message || "Failed to load Purchase Orders.")); }, []);
+  async function refreshRows() { const result = await apiFetch("/api/procurement/purchase-orders"); setRows(result.purchase_orders || []); setLoadError(""); }
+  useEffect(() => { refreshRows().catch((error) => { const detail = error.message || "Failed to load Purchase Orders."; setLoadError(detail); setMessage(detail); }); }, []);
   async function uploadSignedPo(row: any, event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]; event.target.value = ""; if (!file) return;
     setMessage("");
@@ -97,7 +98,7 @@ export default function PurchaseOrdersPage() {
       <table className="w-full min-w-[1350px] text-left text-sm">
         <thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="p-4">S.No.</th><th className="p-4">PO Number</th><th className="p-4">PO Date</th><th className="p-4">Company</th><th className="p-4">Site</th><th className="p-4">Vendor</th><th className="p-4">Source</th><th className="p-4">Amount</th><th className="p-4">Status</th><th className="p-4">Action</th><th className="p-4">SIGNED PO</th></tr></thead>
         <tbody className="divide-y">
-          {filtered.length === 0 ? <tr><td colSpan={11} className="p-8 text-center text-slate-500">No Purchase Orders found.</td></tr> : filtered.map((row, index) => (
+          {loadError ? <tr><td colSpan={11} className="p-8 text-center text-red-700">Purchase Orders could not be loaded. Use the error above and retry.</td></tr> : filtered.length === 0 ? <tr><td colSpan={11} className="p-8 text-center text-slate-500">No Purchase Orders found.</td></tr> : filtered.map((row, index) => (
             <tr key={row.id}>
               <td className="p-4">{index + 1}</td>
               <td className="p-4 font-semibold"><div>{row.po_number}</div>{row.revision_indicator && <span className="mt-1 inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-800">{row.revision_indicator}</span>}</td>
