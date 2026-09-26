@@ -21,6 +21,7 @@ assert.match(api, /company_id: companyId, gstin: shippingGstin/);
 assert.match(api, /persisted: persisted\.data/);
 assert.match(api, /status: persisted\.data\.status/);
 assert.match(page, /body: JSON\.stringify\(form\)/);
+assert.match(page, /set\("status", active \? "active" : "inactive"\)/);
 assert.match(page, /Delivery address was not persisted as Active/);
 assert.match(page, /refreshed\.delivery_locations/);
 assert.match(page, /refreshed master list is still Inactive/);
