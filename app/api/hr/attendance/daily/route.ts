@@ -94,8 +94,6 @@ export async function GET(request: Request) {
           .from("hr_employees")
           .select("id, employee_code, employee_name, department_id, designation_id, date_of_joining, date_of_exit, status, company_id, site_id")
           .eq("organization_id", scope.organizationId)
-          .eq("company_id", params.companyId)
-          .eq("site_id", params.siteId)
           .in("id", missingEmployeeIds);
         if (historicalEmployees.error) throw historicalEmployees.error;
         employees = [...employees, ...(historicalEmployees.data || [])];

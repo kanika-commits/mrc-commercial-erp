@@ -436,12 +436,13 @@ export default function DailyAttendancePage() {
               <th className="px-3 py-3">Company</th>
               <th className="px-3 py-3">Department</th>
               <th className="px-3 py-3">Designation</th>
-              <th className="px-3 py-3">Status</th>
+              <th className="px-3 py-3">Employee Status</th>
+              <th className="px-3 py-3">Attendance</th>
             </tr>
           </thead>
           <tbody className="divide-y">
             {filteredRows.length === 0 ? (
-              <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-500">No employees loaded.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-500">No employees loaded.</td></tr>
             ) : filteredRows.map((item, index) => {
               const current = draft[item.employee.id] || { employee_id: item.employee.id, status: item.attendance?.status || null, company_id: item.employee.company_id };
               const incomplete = !current.status;
@@ -452,6 +453,7 @@ export default function DailyAttendancePage() {
                   <td className="px-3 py-3 text-slate-600">{item.employee.company_name || "-"}</td>
                   <td className="px-3 py-3 text-slate-600">{item.employee.department_name || "-"}</td>
                   <td className="px-3 py-3 text-slate-600">{item.employee.designation_name || "-"}</td>
+                  <td className="px-3 py-3"><span className={`rounded-full border px-2 py-1 text-xs font-semibold ${String(item.employee.status || "").toLowerCase() === "active" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-800"}`}>{String(item.employee.status || "unknown").replace(/_/g, " ")}</span></td>
                   <td className="px-3 py-3">
                     <select disabled={!rowEditable(item)} value={current.status || ""} onChange={(event) => updateRow(item.employee.id, { status: event.target.value || null })} className={`h-9 rounded-xl border px-3 text-sm disabled:bg-slate-50 ${incomplete ? "border-amber-300" : ""}`}>
                       <option value="">Unmarked</option>
@@ -471,7 +473,7 @@ export default function DailyAttendancePage() {
             const editableRow = rowEditable(item);
             return <article key={item.employee.id} className={`rounded-xl border p-4 ${incomplete ? "border-amber-300 bg-amber-50/60" : "bg-white"}`}>
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0"><p className="font-semibold text-slate-950">{item.employee.employee_name}</p><p className="mt-1 text-xs text-slate-500">{item.employee.employee_code || "Employee"} · {item.employee.designation_name || "-"}</p></div>
+                <div className="min-w-0"><p className="font-semibold text-slate-950">{item.employee.employee_name}</p><p className="mt-1 text-xs text-slate-500">{item.employee.employee_code || "Employee"} · {item.employee.designation_name || "-"}</p><p className="mt-1 text-xs font-semibold text-slate-600">Employee status: {String(item.employee.status || "unknown").replace(/_/g, " ")}</p></div>
                 <span className="shrink-0 text-xs font-semibold text-slate-400">#{index + 1}</span>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600"><span>Company: <b>{item.employee.company_name || "-"}</b></span><span>Department: <b>{item.employee.department_name || "-"}</b></span></div>

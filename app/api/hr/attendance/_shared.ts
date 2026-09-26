@@ -668,8 +668,6 @@ export async function loadEligibleEmployees(
       .select("employee_id, company_id, site_id, effective_from, effective_to, event_date, employment_status")
       .eq("organization_id", values.organizationId)
       .in("employee_id", employeeIds)
-      .or(`effective_from.is.null,effective_from.lte.${values.endDate}`)
-      .or(`effective_to.is.null,effective_to.gte.${values.startDate}`)
       .order("effective_from", { ascending: false, nullsFirst: false })
       .order("event_date", { ascending: false, nullsFirst: false });
     if (historyError) throw historyError;
@@ -685,6 +683,17 @@ export async function loadEligibleEmployees(
     if (employee.date_of_exit && compareDates(dateForEligibility, employee.date_of_exit) > 0) return false;
 
     const histories = historyByEmployee.get(employee.id) || [];
+    const employeeStatus = String(employee.status || "").toLowerCase();
+    if (employeeStatus === "inactive") {
+      const inactivation = histories
+        .filter((history: any) => String(history.employment_status || "").toLowerCase() === "inactive")
+        .map((history: any) => history.effective_from || history.event_date)
+        .filter(Boolean)
+        .sort()[0];
+      if (!inactivation || dateForEligibility >= inactivation) return false;
+    } else if (employeeStatus !== "active") {
+      return false;
+    }
     const effectiveHistories = histories.filter((history) => rowAppliesToDateRange(history, values.startDate, values.endDate));
     if (values.startDate === values.endDate) {
       const latestHistory = effectiveHistories[0] || null;
