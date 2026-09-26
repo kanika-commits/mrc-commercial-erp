@@ -18,6 +18,12 @@ assert.match(api, /const shippingGstin = text\(body\.gstin\)\.toUpperCase\(\) \|
 assert.match(api, /if \(shippingGstin && !GSTIN_REGEX\.test\(shippingGstin\)\)/);
 assert.match(api, /if \(companyId\) \{/);
 assert.match(api, /company_id: companyId, gstin: shippingGstin/);
+assert.match(api, /persisted: persisted\.data/);
+assert.match(api, /status: persisted\.data\.status/);
+assert.match(page, /body: JSON\.stringify\(form\)/);
+assert.match(page, /Delivery address was not persisted as Active/);
+assert.match(page, /refreshed\.delivery_locations/);
+assert.match(page, /refreshed master list is still Inactive/);
 assert.doesNotMatch(api, /if \(!text\(body\.company_id\) \|\| !shippingGstin/);
 
 assert.match(migration, /SECURITY DEFINER/);
@@ -31,10 +37,10 @@ assert.match(migration, /company_id = p_company_id[\s\S]{0,180}status = 'active'
 assert.match(migration, /Selected Delivery Location has an inactive, outside-organization, or incompatible Billing Address/);
 assert.match(migration, /coalesce\(v_gst\.gstin, v_billing\.gstin\)/);
 
-assert.match(poPage, /selectedDeliveryBilling/);
-assert.match(poPage, /selectedDeliveryGst/);
-assert.match(poPage, /mappedGstBilling/);
-assert.match(poPage, /const selectedGstBilling = mappedGstBilling \|\|/);
+assert.match(poPage, /const selectedGstBilling = gstBillingMasters\.find/);
+assert.match(poPage, /const selectedBilling = selectedGstBilling\?\.billing_address/);
+assert.match(poPage, /row\.status === "active"/);
+assert.match(poPage, /deliveryLocations = .*row\.status === "active"/);
 assert.match(poPage, /setDeliveryLocationId\(""\)/);
 
 console.log("Delivery Location master contract rules: PASS");

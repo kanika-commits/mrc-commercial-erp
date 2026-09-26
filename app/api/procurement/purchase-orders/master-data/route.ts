@@ -315,7 +315,10 @@ async function mutate(request: Request, action: "add" | "edit") {
       const atomic = await admin.rpc("save_procurement_address_with_contacts_atomic", { p_kind: kind, p_organization_id: scope.organizationId, p_parent_id: id || null, p_parent: { ...body, company_id: companyId, gstin: shippingGstin, address: legacyDeliveryAddress(body), billing_address_id: billingAddressId }, p_contacts: Array.isArray(body.contacts) ? body.contacts : [] });
       if (atomic.error) throw atomic.error;
       await auditMasterMutation(admin, auth, request, { organizationId: scope.organizationId, moduleCode: masterModule(kind), entityType: kind, recordId: atomic.data?.id || id, action: id ? "update" : "create", description: `${id ? "Updated" : "Created"} delivery location.`, newValues: body });
-      return NextResponse.json(atomic.data);
+      const persisted = await admin.from("site_delivery_locations").select("id,organization_id,company_id,site_id,billing_address_id,status,is_default").eq("id", atomic.data?.id || id).eq("organization_id", scope.organizationId).maybeSingle();
+      if (persisted.error) throw persisted.error;
+      if (!persisted.data) return jsonError("Delivery address was saved but could not be reloaded for confirmation.", 502);
+      return NextResponse.json({ ...atomic.data, persisted: persisted.data, status: persisted.data.status, is_default: persisted.data.is_default });
     }
     if (kind === "terms_template") {
       const scope = await companyScope(admin, auth, text(body.company_id));

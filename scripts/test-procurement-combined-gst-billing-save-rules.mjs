@@ -16,6 +16,6 @@ assert.match(migration, /grant execute .*service_role/si);
 assert.doesNotMatch(migration, /insert into public\.company_billing_addresses/);
 assert.doesNotMatch(migration, /delete from public\.(company_gst_registrations|company_billing_addresses)/i);
 assert.match(resolver, /from public\.company_gst_registrations/);
-assert.match(resolver, /billing_address_id = v_billing\.id/);
+assert.match(resolver, /'billing_address_id', v_delivery\.billing_address_id/);
 assert.doesNotMatch(migration, /202609100006|MRC|GLC|Pushpa/i);
 console.log("Combined GST / Billing save rules passed.");
