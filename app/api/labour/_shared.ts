@@ -437,11 +437,39 @@ export async function loadEligibleDeployments(access: LabourAccess, input: {
   if (!scoped) return [];
   const { data, error } = await scoped;
   if (error) throw error;
+  const inactiveWorkerIds = Array.from(new Set((data || []).filter((deployment: any) => {
+    const worker = Array.isArray(deployment.labour_workers) ? deployment.labour_workers[0] : deployment.labour_workers;
+    return worker?.status === "inactive";
+  }).map((deployment: any) => deployment.labour_worker_id).filter(Boolean)));
+  const inactivationDateByWorker = new Map<string, string>();
+  if (inactiveWorkerIds.length) {
+    const { data: auditRows, error: auditError } = await access.admin
+      .from("erp_audit_logs")
+      .select("record_id,new_values,created_at")
+      .eq("organization_id", input.organizationId)
+      .eq("module_code", "labour_workers")
+      .eq("entity_type", "labour_worker")
+      .eq("action", "update")
+      .in("record_id", inactiveWorkerIds)
+      .order("created_at", { ascending: false });
+    if (auditError) throw auditError;
+    for (const auditRow of auditRows || []) {
+      const workerId = String(auditRow.record_id || "");
+      if (inactivationDateByWorker.has(workerId)) continue;
+      const newValues = auditRow.new_values && typeof auditRow.new_values === "object" ? auditRow.new_values : {};
+      if (String(newValues.status || "").toLowerCase() !== "inactive") continue;
+      const effectiveDate = String(newValues.effective_date || "").slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)) inactivationDateByWorker.set(workerId, effectiveDate);
+    }
+  }
   return (data || []).filter((deployment: any) => {
     const worker = Array.isArray(deployment.labour_workers) ? deployment.labour_workers[0] : deployment.labour_workers;
     if (!worker) return false;
     const historicalDate = input.allowHistoricallyInactiveWorker && input.attendanceDate < todayInIst();
-    if (!historicalDate && worker.status !== "active") return false;
+    if (worker.status !== "active") {
+      const inactivationDate = inactivationDateByWorker.get(String(deployment.labour_worker_id));
+      if (!historicalDate || !inactivationDate || input.attendanceDate >= inactivationDate) return false;
+    }
     if (!historicalDate && !input.ignoreWorkerCreatedAt && worker.created_at) {
       const registrationDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date(worker.created_at));
       if (registrationDate > input.attendanceDate) return false;
