@@ -394,7 +394,7 @@ export async function GET(request: Request) {
           ))).filter((date): date is string => /^\d{4}-\d{2}-\d{2}$/.test(date)).sort();
         }
         const now = new Date().toISOString();
-        const { data: accessRows, error: accessError } = await access.admin
+        let accessRowsQuery = access.admin
           .from("attendance_historical_access")
           .select("from_date, to_date")
           .eq("organization_id", scopeCheck.organizationId)
@@ -404,6 +404,10 @@ export async function GET(request: Request) {
           .is("closed_at", null)
           .lte("opens_at", now)
           .or(`expires_at.is.null,expires_at.gt.${now}`);
+        accessRowsQuery = selectedCompanyId
+          ? accessRowsQuery.or(`company_id.is.null,company_id.eq.${selectedCompanyId}`)
+          : accessRowsQuery.is("company_id", null);
+        const { data: accessRows, error: accessError } = await accessRowsQuery;
         if (accessError && accessError.code !== "42P01") throw accessError;
         for (const row of accessRows || []) {
           const cursor = new Date(`${row.from_date}T00:00:00Z`);
