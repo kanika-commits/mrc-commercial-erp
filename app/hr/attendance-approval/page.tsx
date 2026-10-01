@@ -6,7 +6,7 @@ import AlertMessage from "@/components/AlertMessage";
 import { useAccessContext } from "@/components/AccessContext";
 import HrSectionNav from "@/components/hr/HrSectionNav";
 import { useNotificationCounts } from "@/components/NotificationCountsContext";
-import { apiFetch, formatDate } from "@/components/hr/hrClient";
+import { apiFetch, formatDate, getAccessToken } from "@/components/hr/hrClient";
 import { ATTENDANCE_STATUS_CODES, ATTENDANCE_STATUS_LABELS, ATTENDANCE_STATUSES } from "@/lib/hr/attendance";
 
 const attendancePeriodStatusOptions = [
@@ -196,6 +196,38 @@ export default function EmployeeAttendanceApprovalPage() {
     }
   }
 
+  async function downloadApprovedAttendance() {
+    if (!appliedSiteId) { setMessage("Select a site and apply filters before downloading approved attendance."); return; }
+    const query = new URLSearchParams({ site_id: appliedSiteId });
+    if (appliedFromDate) query.set("from_date", appliedFromDate);
+    if (appliedToDate) query.set("to_date", appliedToDate);
+    if (statusFilter) query.set("attendance_status", statusFilter);
+    setMessage("");
+    try {
+      const token = await getAccessToken();
+      const response = await fetch(`/api/hr/attendance/approval-groups/export?${query.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const raw = await response.text();
+        let error = raw;
+        try { error = JSON.parse(raw).error || raw; } catch {}
+        throw new Error(error || `Download failed (${response.status}).`);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "approved-attendance.xlsx";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error: any) {
+      setMessage(safeError(error.message, "Failed to download approved attendance."));
+    }
+  }
+
   useEffect(() => {
     apiFetch("/api/hr/attendance/approval-groups?metadata_only=true")
       .then((payload) => setSites(payload.sites || []))
@@ -287,7 +319,7 @@ export default function EmployeeAttendanceApprovalPage() {
       <AlertMessage type="success" message={success} onClose={() => setSuccess("")} />
 
       <section className="rounded-2xl border bg-white p-4 shadow-sm">
-        <div className="grid gap-3 md:grid-cols-5 md:items-end">
+        <div className="grid gap-3 md:grid-cols-6 md:items-end">
           <Select label="Site *" value={siteId} onChange={setSiteId} options={sites} emptyLabel="Select Site" />
           <Select label="Daily Attendance Status" value={periodStatusFilter} onChange={setPeriodStatusFilter} options={attendancePeriodStatusOptions.map(([id, label]) => ({ id, label }))} emptyLabel="Select Status" />
           <DateInput label="From Date" value={fromDate} onChange={setFromDate} />
@@ -304,6 +336,7 @@ export default function EmployeeAttendanceApprovalPage() {
             setReviewMode(false);
             setSelectedId("");
           }} className="h-10 rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white">Apply Filters</button>
+          <button type="button" onClick={downloadApprovedAttendance} disabled={!appliedSiteId} className="h-10 rounded-xl border border-emerald-700 bg-emerald-50 px-4 text-sm font-semibold text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50">Download Approved Attendance</button>
         </div>
       </section>
 
