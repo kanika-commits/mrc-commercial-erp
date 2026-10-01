@@ -141,7 +141,7 @@ export async function GET(request: Request) {
   try {
     const auth = await requireAttendanceApprovalActor(request);
     if ("response" in auth) return auth.response;
-    const admin = adminClient("attendance/approval-groups");
+    const admin = adminClient();
     const params = new URL(request.url).searchParams;
     const selectedSiteId = params.get("site_id");
     const filterFromDate = params.get("from_date");

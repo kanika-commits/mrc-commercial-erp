@@ -43,7 +43,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Invalid attendance status filter." }, { status: 400 });
     }
 
-    const admin = adminClient("attendance/approval-groups");
+    const admin = adminClient();
     const approvedSubmissions = await scopedApprovedRows(admin, auth, siteId, fromDate, toDate);
     const companyIds = Array.from(new Set(approvedSubmissions.map((row: any) => row.company_id).filter(Boolean)));
     const siteIds = Array.from(new Set(approvedSubmissions.map((row: any) => row.site_id).filter(Boolean)));
