@@ -12,7 +12,7 @@ export async function GET(request: Request) {
     if ("response" in auth) return auth.response;
     const admin = adminClient();
     let query: any = applyOrganizationAccess(
-      admin.from("procurement_purchase_orders").select("id,organization_id,company_id,site_id,po_number,po_date,status,total_amount,created_by_name,created_by_email,submitted_at,vendor_name_snapshot,company:companies(id,company_name),site:sites(id,site_name)").eq("status", "pending_approval").order("submitted_at", { ascending: false }),
+      admin.from("procurement_purchase_orders").select("id,organization_id,company_id,site_id,po_number,po_date,status,total_amount,created_by_name,created_by_email,submitted_at,vendor_name_snapshot,company:companies!procurement_purchase_orders_company_id_fkey(id,company_name),site:sites(id,site_name)").eq("status", "pending_approval").order("submitted_at", { ascending: false }),
       auth,
     );
     query = query && applyCompanySiteAccess(query, auth);
