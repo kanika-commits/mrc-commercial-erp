@@ -10,6 +10,7 @@ import {
   loadAttendanceRows,
   requireAttendanceApprovalActor,
 } from "../_shared";
+import { accessibleDailyRows } from "./shared";
 
 function statusFilter(value: string) {
   if (value === "approved") return ["approved"];
@@ -24,33 +25,6 @@ function groupLabel(statuses: string[]) {
   if (statuses.some((status) => status === "submitted")) return "Pending Approval";
   if (statuses.some((status) => status === "cancelled")) return "Cancelled";
   return "Draft";
-}
-
-async function accessibleDailyRows(admin: any, auth: any, statuses: string[]) {
-  const organizationScope = await loadActorOrganizationScope(admin, auth);
-  let query = admin
-    .from("employee_attendance_daily_submissions")
-    .select("*, companies(company_name, company_code), sites(site_name, site_code)")
-    .in("status", statuses)
-    .order("attendance_date", { ascending: false })
-    .order("submitted_at", { ascending: true, nullsFirst: false });
-  query = applyOrganizationScope(query, organizationScope);
-  if (!query) return [];
-  const { data, error } = await query;
-  if (error) throw error;
-  let rows = data || [];
-  if (!isGlobalScope(organizationScope)) {
-    const assignments = await loadActorAssignments(admin, auth.user.id);
-    const explicitSiteIds = new Set(assignments.rows.map((assignment: any) => assignment.site_id).filter(Boolean));
-    rows = rows.filter((row: any) => explicitSiteIds.size
-      ? explicitSiteIds.has(row.site_id)
-      : assignments.rows.some((assignment: any) =>
-        (!assignment.organization_id || assignment.organization_id === row.organization_id) &&
-        (!assignment.company_id || assignment.company_id === row.company_id) &&
-        (!assignment.site_id || assignment.site_id === row.site_id),
-      ));
-  }
-  return rows;
 }
 
 function groupRows(rows: any[], auth: any) {
@@ -167,7 +141,7 @@ export async function GET(request: Request) {
   try {
     const auth = await requireAttendanceApprovalActor(request);
     if ("response" in auth) return auth.response;
-    const admin = adminClient();
+    const admin = adminClient("attendance/approval-groups");
     const params = new URL(request.url).searchParams;
     const selectedSiteId = params.get("site_id");
     const filterFromDate = params.get("from_date");

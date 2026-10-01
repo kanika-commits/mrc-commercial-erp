@@ -8,7 +8,7 @@ import {
   loadEligibleEmployees,
   requireAttendanceApprovalActor,
 } from "../../_shared";
-import { accessibleDailyRows } from "../route";
+import { accessibleDailyRows } from "../shared";
 
 const XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
