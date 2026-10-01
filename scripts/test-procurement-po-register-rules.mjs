@@ -13,6 +13,8 @@ assert(page.includes("Clear Filters"), "Clear Filters action missing");
 assert(page.includes("row.po_date") && page.includes("filters"), "Combined date/filter behavior missing");
 assert(route.includes('params.get("vendor_id")') && route.includes('params.get("from_date")') && route.includes('params.get("to_date")'), "Server filter parameters missing");
 assert(route.includes("applyOrganizationAccess") && route.includes("applyCompanySiteAccess"), "Register authorization scope missing");
+assert.match(route, /company:companies!procurement_purchase_orders_company_id_fkey\(id,company_name,company_code\)/, "Register company lookup must use the verified company_id foreign-key relationship");
+assert.doesNotMatch(route, /select\([^\n]*companies\(company_name,company_code\)/, "Register must not use the ambiguous companies embed");
 assert.match(page, /form\.set\("document_type", "signed_po"\)/, "Vendor Acceptance upload must send the explicit signed_po document type");
 assert.match(page, /Vendor Acceptance Pending/, "Register must show the pending Vendor Acceptance sub-state");
 assert.match(page, /Vendor Acceptance Received/, "Register must show the received Vendor Acceptance sub-state after upload");

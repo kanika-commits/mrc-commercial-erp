@@ -19,7 +19,7 @@ export async function GET(request: Request) {
   try {
     const auth = await requireProcurementPermission(request, MODULE, "view"); if ("response" in auth) return auth.response;
     const params = new URL(request.url).searchParams;
-    const admin = adminClient(); let query: any = applyOrganizationAccess(admin.from("procurement_purchase_orders").select("*, company:companies(id,company_name,company_code), site:sites(id,site_name,site_code), items:procurement_purchase_order_items(*)").order("created_at", { ascending: false }), auth);
+    const admin = adminClient(); let query: any = applyOrganizationAccess(admin.from("procurement_purchase_orders").select("*, company:companies!procurement_purchase_orders_company_id_fkey(id,company_name,company_code), site:sites(id,site_name,site_code), items:procurement_purchase_order_items(*)").order("created_at", { ascending: false }), auth);
     query = query && applyCompanySiteAccess(query, auth); if (!query) return NextResponse.json({ purchase_orders: [] });
     if (text(params.get("source_type"))) query = query.eq("source_type", text(params.get("source_type")));
     if (text(params.get("status"))) query = query.eq("status", text(params.get("status")));
