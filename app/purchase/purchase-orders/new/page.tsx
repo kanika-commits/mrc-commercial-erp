@@ -418,8 +418,8 @@ export default function NewPurchaseOrderPage() {
       const body = { source_type: source, company_id: companyId, site_id: siteId, vendor_id: vendorId, po_date: poDate, source_requisition_id: selectedIndent?.requisition_id || params.get("requisition_id") || null, expected_original_item_ids: editId ? [...originalPersistedItemIdsRef.current] : undefined, items: items.map((item) => ({ ...item, item_id: item.item_id || undefined, unit_rate: Number(item.unit_rate), quantity: Number(item.quantity), gst_rate: Number(item.gst_rate), make_snapshot: item.make })), master_selection: { gst_registration_id: selectedGstBilling.id, billing_contact_id: selectedBillingContact.id, delivery_location_id: selectedDeliveryLocation.id, delivery_contact_id: selectedDeliveryContact.id }, delivery: deliveryPayload, commercial: { ...commercial, additional_charges: additionalCharges.map((charge) => ({ name: charge.name.trim(), amount: Number(charge.amount) })) }, standard_terms: standardTerms, standard_terms_template_id: selectedTerms?.id || null, standard_terms_sections: selectedTerms?.sections?.filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order) || [], key_terms: keyTerms };
       (body as any).creation_request_id = creationRequestId;
       if (editId) {
-        const saveExistingDraft = async (requestBody: any) => {
-          await apiFetch(`/api/procurement/purchase-orders/${editId}`, { method: "PUT", body: JSON.stringify(requestBody) });
+        const saveExistingDraft = async (requestBody: any, attempt: "initial" | "retry" = "initial") => {
+          await apiFetch(`/api/procurement/purchase-orders/${editId}`, { method: "PUT", headers: { "x-po-save-attempt": attempt }, body: JSON.stringify(requestBody) });
           try {
             await uploadAttachments(editId);
           } catch (error: any) {
@@ -430,7 +430,7 @@ export default function NewPurchaseOrderPage() {
           router.push(`/purchase/purchase-orders/${editId}`);
         };
         try {
-          await saveExistingDraft(body);
+          await saveExistingDraft(body, "initial");
         } catch (error: any) {
           if (!String(error.message || "").includes("The editable item set changed")) throw error;
           try {
@@ -440,9 +440,16 @@ export default function NewPurchaseOrderPage() {
               setMessage("The saved item set changed. Your current form values remain unchanged; review the latest Purchase Order before saving again.");
               return;
             }
-            originalPersistedItemIdsRef.current = latestItems.map((item: any) => persistedItemId(item.id));
+            const latestPersistedItemIds = latestItems.map((item: any) => persistedItemId(item.id));
             const rebasedItems = rebasePersistedItemIds(body.items, originalPersistedItemsRef.current, latestItems);
-            await saveExistingDraft({ ...body, items: rebasedItems, expected_original_item_ids: [...originalPersistedItemIdsRef.current] });
+            const rebasedPersistedItemIds = rebasedItems.map((item: any) => persistedItemId(item.po_item_id)).filter(Boolean).sort();
+            const latestPersistedItemIdSet = [...latestPersistedItemIds].sort();
+            if (rebasedPersistedItemIds.join("\u001e") !== latestPersistedItemIdSet.join("\u001e")) {
+              setMessage("The saved item set changed. Your current form values remain unchanged; review the latest Purchase Order before saving again.");
+              return;
+            }
+            originalPersistedItemIdsRef.current = latestPersistedItemIds;
+            await saveExistingDraft({ ...body, items: rebasedItems, expected_original_item_ids: latestPersistedItemIds }, "retry");
           } catch (retryError: any) {
             setMessage(retryError.message || "The saved item set changed. Your current form values remain unchanged; review the latest Purchase Order before saving again.");
           }

@@ -20,14 +20,21 @@ assert.doesNotMatch(page, /Confirm reviewed item list and keep my edits/);
 assert.match(page, /Your current form values remain unchanged/);
 assert.match(page, /latest = await apiFetch\(`\/api\/procurement\/purchase-orders\/\$\{editId\}`\)/);
 assert.match(page, /persistedItemSetKey\(latestItems\) !== originalPersistedItemContentRef\.current/);
-assert.match(page, /expected_original_item_ids: \[\.\.\.originalPersistedItemIdsRef\.current\]/);
+assert.match(page, /expected_original_item_ids: latestPersistedItemIds/);
 assert.match(page, /rebasePersistedItemIds\(body\.items, originalPersistedItemsRef\.current, latestItems\)/);
 assert.match(page, /items: rebasedItems/);
 assert.match(page, /saveExistingDraft\(\{ \.\.\.body, items: rebasedItems, expected_original_item_ids/);
+assert.match(page, /latestPersistedItemIds/);
+assert.match(page, /rebasedPersistedItemIds/);
+assert.match(page, /rebasedPersistedItemIds\.join\("\\u001e"\) !== latestPersistedItemIdSet\.join\("\\u001e"\)/);
+assert.match(page, /headers: \{ "x-po-save-attempt": attempt \}/);
 assert.match(route, /Array\.isArray\(body\.expected_original_item_ids\)/);
 assert.match(route, /normalizedIds = .*\.map\(\(value\) => value\.toLowerCase\(\)\)/);
 assert.match(route, /new Set\(normalizedIds\)/);
 assert.match(route, /expected_original_item_ids: expectedOriginalItemIds/);
+assert.match(route, /PO_ITEM_SET_CONFLICT/);
+assert.match(route, /status: 409/);
+assert.match(route, /x-po-save-attempt/);
 
 assert.match(fn, /status in \('draft', 'sent_back'\)[\s\S]*for update/i);
 assert.match(fn, /v_expected_count <> v_expected_distinct_count/);
@@ -82,6 +89,10 @@ const latestRowsWithNewIds = [{ ...loadedRows[1], id: "B2" }, { ...loadedRows[0]
 const idByContent = new Map(latestRowsWithNewIds.map((row) => [contentKey(row), row.id]));
 const rebasedPayload = loadedRows.map((row) => ({ ...row, id: idByContent.get(contentKey(row)) }));
 assert.deepEqual(rebasedPayload.map((row) => row.id).sort(), ["A2", "B2"]); // Retry must send the latest persisted IDs, not only a new expected baseline.
+const retryExpectedIds = latestRowsWithNewIds.map((row) => row.id).sort();
+const retrySubmittedIds = rebasedPayload.map((row) => row.id).sort();
+assert.deepEqual(retrySubmittedIds, retryExpectedIds); // Both RPC guards receive the same latest persisted ID set.
+assert.equal(contentSetKey(latestRowsWithNewIds), contentSetKey(loadedRows)); // ID-only changes remain retryable.
 assert.notEqual(contentSetKey([{ ...loadedRows[0], id: "A2", quantity: 11 }, loadedRows[1]]), contentSetKey(loadedRows)); // Actual row edits do not retry.
 assert.notEqual(contentSetKey([...loadedRows, { id: "C", item_name_snapshot: "Thinner", quantity: 1 }]), contentSetKey(loadedRows)); // Added rows do not retry.
 assert.notEqual(contentSetKey([loadedRows[0]]), contentSetKey(loadedRows)); // Removed rows do not retry.
