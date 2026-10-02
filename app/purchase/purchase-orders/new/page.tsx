@@ -37,6 +37,26 @@ function persistedItemSetKey(items: any[]) {
   return items.map(persistedItemContentKey).sort().join("\u001e");
 }
 
+function rebasePersistedItemIds(items: any[], originalRows: any[], latestRows: any[]) {
+  const latestIdsByContent = new Map<string, string[]>();
+  latestRows.forEach((row) => {
+    const content = persistedItemContentKey(row);
+    const ids = latestIdsByContent.get(content) || [];
+    ids.push(persistedItemId(row.id));
+    latestIdsByContent.set(content, ids);
+  });
+  const idMap = new Map<string, string>();
+  originalRows.forEach((row) => {
+    const ids = latestIdsByContent.get(persistedItemContentKey(row));
+    const nextId = ids?.shift();
+    if (nextId) idMap.set(persistedItemId(row.id), nextId);
+  });
+  return items.map((item) => {
+    const nextId = idMap.get(persistedItemId(item.po_item_id));
+    return nextId ? { ...item, po_item_id: nextId } : item;
+  });
+}
+
 function itemFromPersistedRow(item: any): Item {
   return { po_item_id: item.id, item_id: item.item_id, item_name: item.item_name_snapshot || "", item_code: item.item_code_snapshot, description: item.description_snapshot || item.specification_snapshot || "", specification: item.specification_snapshot, make: item.make_snapshot || "", quantity: String(item.quantity ?? ""), uom: item.uom_snapshot || "", unit_rate: String(item.unit_rate ?? ""), gst_rate: String(item.gst_rate ?? "0"), source_requisition_line_key: item.source_requisition_line_key, isMaterialMasterLinked: false };
 }
@@ -62,6 +82,7 @@ export default function NewPurchaseOrderPage() {
   const [selectedIndentId, setSelectedIndentId] = useState(params.get("requisition_id") || "");
   const [items, setItems] = useState<Item[]>([{ item_name: "", quantity: "", unit_rate: "", gst_rate: "0" }]);
   const originalPersistedItemIdsRef = useRef<string[]>([]);
+  const originalPersistedItemsRef = useRef<any[]>([]);
   const originalPersistedItemContentRef = useRef<string>("");
   const [delivery, setDelivery] = useState({ location: "", address: "", expected_date: "" });
   const [commercial, setCommercial] = useState({ payment_terms: "", delivery_terms: "" });
@@ -129,6 +150,7 @@ export default function NewPurchaseOrderPage() {
       const parsedTerms = parsePurchaseOrderStandardTerms(po.standard_terms_snapshot);
       setStandardTerms(parsedTerms?.kind === "structured" ? parsedTerms.clauses.map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n") : parsedTerms?.text || "");
       originalPersistedItemIdsRef.current = (po.items || []).map((item: any) => persistedItemId(item.id));
+      originalPersistedItemsRef.current = po.items || [];
       originalPersistedItemContentRef.current = persistedItemSetKey(po.items || []);
       setItems((po.items || []).map(itemFromPersistedRow));
       setExistingDocuments(documentResult.documents || []);
@@ -419,7 +441,8 @@ export default function NewPurchaseOrderPage() {
               return;
             }
             originalPersistedItemIdsRef.current = latestItems.map((item: any) => persistedItemId(item.id));
-            await saveExistingDraft({ ...body, expected_original_item_ids: [...originalPersistedItemIdsRef.current] });
+            const rebasedItems = rebasePersistedItemIds(body.items, originalPersistedItemsRef.current, latestItems);
+            await saveExistingDraft({ ...body, items: rebasedItems, expected_original_item_ids: [...originalPersistedItemIdsRef.current] });
           } catch (retryError: any) {
             setMessage(retryError.message || "The saved item set changed. Your current form values remain unchanged; review the latest Purchase Order before saving again.");
           }

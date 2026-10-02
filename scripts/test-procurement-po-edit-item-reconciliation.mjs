@@ -7,7 +7,9 @@ const route = fs.readFileSync("app/api/procurement/purchase-orders/[id]/route.ts
 const fn = migration.slice(migration.indexOf("create or replace function"), migration.indexOf("revoke all on function"));
 
 assert.match(page, /originalPersistedItemIdsRef = useRef<string\[]>\(\[\]\)/);
+assert.match(page, /originalPersistedItemsRef = useRef<any\[]>\(\[\]\)/);
 assert.match(page, /originalPersistedItemIdsRef\.current = \(po\.items \|\| \[\]\)\.map/);
+assert.match(page, /originalPersistedItemsRef\.current = po\.items \|\| \[\]/);
 assert.match(page, /originalPersistedItemContentRef = useRef<string>\(\"\"\)/);
 assert.match(page, /persistedItemContentKey/);
 assert.match(page, /persistedItemSetKey\(po\.items \|\| \[\]\)/);
@@ -19,7 +21,9 @@ assert.match(page, /Your current form values remain unchanged/);
 assert.match(page, /latest = await apiFetch\(`\/api\/procurement\/purchase-orders\/\$\{editId\}`\)/);
 assert.match(page, /persistedItemSetKey\(latestItems\) !== originalPersistedItemContentRef\.current/);
 assert.match(page, /expected_original_item_ids: \[\.\.\.originalPersistedItemIdsRef\.current\]/);
-assert.match(page, /saveExistingDraft\(\{ \.\.\.body, expected_original_item_ids/);
+assert.match(page, /rebasePersistedItemIds\(body\.items, originalPersistedItemsRef\.current, latestItems\)/);
+assert.match(page, /items: rebasedItems/);
+assert.match(page, /saveExistingDraft\(\{ \.\.\.body, items: rebasedItems, expected_original_item_ids/);
 assert.match(route, /Array\.isArray\(body\.expected_original_item_ids\)/);
 assert.match(route, /normalizedIds = .*\.map\(\(value\) => value\.toLowerCase\(\)\)/);
 assert.match(route, /new Set\(normalizedIds\)/);
@@ -74,6 +78,10 @@ function contentSetKey(rows) {
 }
 const loadedRows = [{ id: "A", item_name_snapshot: "Primer", quantity: 10 }, { id: "B", item_name_snapshot: "Paint", quantity: 5 }];
 assert.equal(contentSetKey([{ ...loadedRows[1], id: "B2" }, { ...loadedRows[0], id: "A2" }]), contentSetKey(loadedRows)); // ID-only changes and reordering are safe to rebase.
+const latestRowsWithNewIds = [{ ...loadedRows[1], id: "B2" }, { ...loadedRows[0], id: "A2" }];
+const idByContent = new Map(latestRowsWithNewIds.map((row) => [contentKey(row), row.id]));
+const rebasedPayload = loadedRows.map((row) => ({ ...row, id: idByContent.get(contentKey(row)) }));
+assert.deepEqual(rebasedPayload.map((row) => row.id).sort(), ["A2", "B2"]); // Retry must send the latest persisted IDs, not only a new expected baseline.
 assert.notEqual(contentSetKey([{ ...loadedRows[0], id: "A2", quantity: 11 }, loadedRows[1]]), contentSetKey(loadedRows)); // Actual row edits do not retry.
 assert.notEqual(contentSetKey([...loadedRows, { id: "C", item_name_snapshot: "Thinner", quantity: 1 }]), contentSetKey(loadedRows)); // Added rows do not retry.
 assert.notEqual(contentSetKey([loadedRows[0]]), contentSetKey(loadedRows)); // Removed rows do not retry.
