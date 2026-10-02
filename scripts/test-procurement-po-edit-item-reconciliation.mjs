@@ -9,12 +9,10 @@ const fn = migration.slice(migration.indexOf("create or replace function"), migr
 assert.match(page, /originalPersistedItemIdsRef = useRef<string\[]>\(\[\]\)/);
 assert.match(page, /originalPersistedItemIdsRef\.current = \(po\.items \|\| \[\]\)\.map/);
 assert.match(page, /expected_original_item_ids: editId \? \[\.\.\.originalPersistedItemIdsRef\.current\]/);
-assert.match(page, /conflictRecovery/);
-assert.match(page, /Your unsaved edits are preserved/);
-assert.match(page, /latest Purchase Order is fetched/);
-assert.match(page, /Confirm reviewed item list and keep my edits/);
-assert.match(page, /originalPersistedItemIdsRef\.current = \[\.\.\.conflictRecovery\.latestIds\]/);
-assert.match(page, /staleRows = items\.filter/);
+assert.doesNotMatch(page, /conflictRecovery/);
+assert.doesNotMatch(page, /Review saved item changes before continuing/);
+assert.doesNotMatch(page, /Confirm reviewed item list and keep my edits/);
+assert.match(page, /Your current form values remain unchanged/);
 assert.match(route, /Array\.isArray\(body\.expected_original_item_ids\)/);
 assert.match(route, /normalizedIds = .*\.map\(\(value\) => value\.toLowerCase\(\)\)/);
 assert.match(route, /new Set\(normalizedIds\)/);
