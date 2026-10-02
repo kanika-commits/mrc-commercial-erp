@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const renderer = fs.readFileSync("lib/procurement/poPdfRenderer.server.ts", "utf8");
+const route = fs.readFileSync("app/api/procurement/purchase-orders/[id]/pdf/route.ts", "utf8");
 
 // This mirrors the legacy/plain-text snapshot shape from PO
 // 8f32e184-7414-46c1-9660-55c1088ea044 without reading or changing saved data.
@@ -30,6 +31,10 @@ assert.match(renderer, /draw\(lineData\.label, .* size, true\)/);
 assert.match(renderer, /const PO_HEADER_FILL = "0\.93 0\.95 0\.97"/);
 assert.match(renderer, /const WORK_ORDER_HEADER_FILL = "0\.98 0\.91 0\.91"/);
 assert.match(renderer, /row\.work_order_render \? WORK_ORDER_HEADER_FILL : PO_HEADER_FILL/);
+assert.match(route, /poPdfRenderer\.server/);
+assert.match(route, /(?:makePdf|renderPdf)\(data, (?:creatorResult\.data|preparedBy)/);
+assert.doesNotMatch(route, /async function makePdf\(/);
+assert.match(route, /Cache-Control.*private, no-store/);
 
 const basicAmount = 12 * 1250;
 const gstAmount = basicAmount * 0.18;

@@ -1,3 +1,4 @@
+import { makePdf as renderPdf } from "@/lib/procurement/poPdfRenderer.server";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PDFDocument, degrees, rgb } from "pdf-lib";
@@ -306,7 +307,7 @@ async function makeLetterhead(row: any, admin: any) {
   return { header: null, footer: null, fullPage: false };
 }
 
-async function makePdf(row: any, creator: any, approver: any, admin: any) {
+async function legacyMakePdf(row: any, creator: any, approver: any, admin: any) {
   const letterhead = await makeLetterhead(row, admin);
   const footerRenderedHeight = letterhead.footer ? PAGE_W * letterhead.footer.height / letterhead.footer.width : 0;
   const headerRenderedHeight = letterhead.header ? PAGE_W * letterhead.header.height / letterhead.header.width : 0;
@@ -695,7 +696,16 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const approverResult = approverId ? await admin.from("hr_employees").select("employee_name,email,phone,personal_phone,company:companies(company_name),designation:hr_designations(designation_name)").eq("user_id", approverId).eq("organization_id", data.organization_id).eq("status", "active").maybeSingle() : { data: null, error: null };
     if (approverResult.error) throw approverResult.error;
     const approverSignature = await employeeSignatureImageAsset(admin, approverId, data.id);
-    const poPackage = await makePdf(data, creatorResult.data, { ...approverResult.data, signatureBlock: approverSignature.block, signatureAsset: approverSignature.asset, employee_name: approverResult.data?.employee_name || approvalEvent?.actor_name || data.approved_by_name, approval_at: approvalEvent?.created_at || data.approved_at }, admin);
+    const letterhead = await makeLetterhead(data, admin);
+    const delivery = data.delivery_snapshot || {};
+    const shipping = delivery.delivery_location || delivery.shipping_address || delivery;
+    let deliveryCompany = firstDisplayValue(shipping.company_name);
+    if (!deliveryCompany && cleanDisplay(shipping.company_id)) {
+      const legacyCompany = await admin.from("companies").select("company_name").eq("id", shipping.company_id).eq("organization_id", data.organization_id).maybeSingle();
+      if (legacyCompany.error) throw legacyCompany.error;
+      deliveryCompany = firstDisplayValue(legacyCompany.data?.company_name);
+    }
+    const poPackage = await renderPdf(data, creatorResult.data, { ...approverResult.data, signatureBlock: approverSignature.block, signatureAsset: approverSignature.asset, employee_name: approverResult.data?.employee_name || approvalEvent?.actor_name || data.approved_by_name, approval_at: approvalEvent?.created_at || data.approved_at }, { letterhead, deliveryCompany });
     const combinedPdf = await appendPackage(poPackage.pdf, data, admin);
     const protectedPdf = ["approved", "issued"].includes(data.status) ? combinedPdf : await watermarkDraftPackage(combinedPdf);
     const finalPdf = await numberPackage(protectedPdf, poPackage.pageCount, poPackage.footerRenderedHeight);
