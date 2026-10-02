@@ -13,6 +13,7 @@ type Source = "direct" | "indent";
 type Item = { po_item_id?: string; item_id?: string; item_name: string; item_code?: string; description?: string; specification?: string; make?: string; quantity: string; uom?: string; unit_rate: string; gst_rate: string; source_requisition_line_key?: string; isMaterialMasterLinked?: boolean };
 type AttachmentDraft = { file: File; documentType: string };
 type AdditionalCharge = { name: string; amount: string };
+type ConflictRecovery = { latestItems: Item[]; unsavedItems: Item[]; latestIds: string[]; loading: boolean; error?: string };
 
 const today = () => new Date().toISOString().slice(0, 10);
 const money = (value: number) => `₹ ${value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -23,6 +24,19 @@ function getCreatedId(value: any): string | null {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) return getCreatedId(value[0]);
   return value.id || value.purchase_order_id || value.purchase_order?.id || value.purchase_orders?.[0]?.id || value.result?.id || value.result?.purchase_order_id || null;
+}
+
+function persistedItemId(value: unknown) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function itemFromPersistedRow(item: any): Item {
+  return { po_item_id: item.id, item_id: item.item_id, item_name: item.item_name_snapshot || "", item_code: item.item_code_snapshot, description: item.description_snapshot || item.specification_snapshot || "", specification: item.specification_snapshot, make: item.make_snapshot || "", quantity: String(item.quantity ?? ""), uom: item.uom_snapshot || "", unit_rate: String(item.unit_rate ?? ""), gst_rate: String(item.gst_rate ?? "0"), source_requisition_line_key: item.source_requisition_line_key, isMaterialMasterLinked: false };
+}
+
+function itemValue(item: Item | undefined) {
+  if (!item) return "";
+  return [item.item_name, item.item_code, item.description || item.specification, item.make, item.quantity, item.uom, item.unit_rate, item.gst_rate, item.source_requisition_line_key].map((value) => String(value || "")).join("\u001f");
 }
 
 function fileSize(value: number) {
@@ -45,6 +59,8 @@ export default function NewPurchaseOrderPage() {
   const [indentLineKey, setIndentLineKey] = useState(params.get("line_key") || "");
   const [selectedIndentId, setSelectedIndentId] = useState(params.get("requisition_id") || "");
   const [items, setItems] = useState<Item[]>([{ item_name: "", quantity: "", unit_rate: "", gst_rate: "0" }]);
+  const originalPersistedItemIdsRef = useRef<string[]>([]);
+  const [conflictRecovery, setConflictRecovery] = useState<ConflictRecovery | null>(null);
   const [delivery, setDelivery] = useState({ location: "", address: "", expected_date: "" });
   const [commercial, setCommercial] = useState({ payment_terms: "", delivery_terms: "" });
   const [standardTerms, setStandardTerms] = useState("");
@@ -110,7 +126,8 @@ export default function NewPurchaseOrderPage() {
       setKeyTerms(Array.isArray(po.commercial_snapshot?.key_terms) && po.commercial_snapshot.key_terms.length ? po.commercial_snapshot.key_terms : [{ description: "Price Validity", terms: "" }, { description: "Freight", terms: "" }, { description: "Delivery Timeline", terms: "" }, { description: "Payment Terms", terms: "" }]);
       const parsedTerms = parsePurchaseOrderStandardTerms(po.standard_terms_snapshot);
       setStandardTerms(parsedTerms?.kind === "structured" ? parsedTerms.clauses.map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n") : parsedTerms?.text || "");
-      setItems((po.items || []).map((item: any) => ({ po_item_id: item.id, item_id: item.item_id, item_name: item.item_name_snapshot || "", item_code: item.item_code_snapshot, description: item.description_snapshot || item.specification_snapshot || "", specification: item.specification_snapshot, make: item.make_snapshot || "", quantity: String(item.quantity ?? ""), uom: item.uom_snapshot || "", unit_rate: String(item.unit_rate ?? ""), gst_rate: String(item.gst_rate ?? "0"), source_requisition_line_key: item.source_requisition_line_key, isMaterialMasterLinked: false })));
+      originalPersistedItemIdsRef.current = (po.items || []).map((item: any) => persistedItemId(item.id));
+      setItems((po.items || []).map(itemFromPersistedRow));
       setExistingDocuments(documentResult.documents || []);
       setLoading(false);
     }).catch((error) => { setMessage(error.message || "Failed to load the Draft Purchase Order."); setLoading(false); });
@@ -373,7 +390,7 @@ export default function NewPurchaseOrderPage() {
     setSaving(true);
     try {
       const deliveryPayload = { expected_date: delivery.expected_date, location: selectedDeliveryLocation.location_name, address: deliveryAddressFor(selectedDeliveryLocation), delivery_location_id: selectedDeliveryLocation.id, site_contact_id: selectedDeliveryContact.id };
-      const body = { source_type: source, company_id: companyId, site_id: siteId, vendor_id: vendorId, po_date: poDate, source_requisition_id: selectedIndent?.requisition_id || params.get("requisition_id") || null, items: items.map((item) => ({ ...item, item_id: item.item_id || undefined, unit_rate: Number(item.unit_rate), quantity: Number(item.quantity), gst_rate: Number(item.gst_rate), make_snapshot: item.make })), master_selection: { gst_registration_id: selectedGstBilling.id, billing_contact_id: selectedBillingContact.id, delivery_location_id: selectedDeliveryLocation.id, delivery_contact_id: selectedDeliveryContact.id }, delivery: deliveryPayload, commercial: { ...commercial, additional_charges: additionalCharges.map((charge) => ({ name: charge.name.trim(), amount: Number(charge.amount) })) }, standard_terms: standardTerms, standard_terms_template_id: selectedTerms?.id || null, standard_terms_sections: selectedTerms?.sections?.filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order) || [], key_terms: keyTerms };
+      const body = { source_type: source, company_id: companyId, site_id: siteId, vendor_id: vendorId, po_date: poDate, source_requisition_id: selectedIndent?.requisition_id || params.get("requisition_id") || null, expected_original_item_ids: editId ? [...originalPersistedItemIdsRef.current] : undefined, items: items.map((item) => ({ ...item, item_id: item.item_id || undefined, unit_rate: Number(item.unit_rate), quantity: Number(item.quantity), gst_rate: Number(item.gst_rate), make_snapshot: item.make })), master_selection: { gst_registration_id: selectedGstBilling.id, billing_contact_id: selectedBillingContact.id, delivery_location_id: selectedDeliveryLocation.id, delivery_contact_id: selectedDeliveryContact.id }, delivery: deliveryPayload, commercial: { ...commercial, additional_charges: additionalCharges.map((charge) => ({ name: charge.name.trim(), amount: Number(charge.amount) })) }, standard_terms: standardTerms, standard_terms_template_id: selectedTerms?.id || null, standard_terms_sections: selectedTerms?.sections?.filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order) || [], key_terms: keyTerms };
       (body as any).creation_request_id = creationRequestId;
       if (editId) {
         await apiFetch(`/api/procurement/purchase-orders/${editId}`, { method: "PUT", body: JSON.stringify(body) });
@@ -389,14 +406,43 @@ export default function NewPurchaseOrderPage() {
       }
       const result = await apiFetch("/api/procurement/purchase-orders", { method: "POST", body: JSON.stringify(body) });
       const id = getCreatedId(result.result || result); if (id) { try { await uploadAttachments(id); router.push(`/purchase/purchase-orders/${id}`); } catch (error: any) { setCreatedPoId(id); setMessage(`Purchase Order draft was created, but an attachment failed: ${error.message}`); } } else router.push("/purchase/purchase-orders");
-    } catch (error: any) { setMessage(error.message || "Failed to create Purchase Order draft."); }
+    } catch (error: any) {
+      if (editId && String(error.message || "").includes("The editable item set changed")) {
+        const unsavedItems = items.map((item) => ({ ...item }));
+        setConflictRecovery({ latestItems: [], unsavedItems, latestIds: [], loading: true });
+        setMessage("The saved item set changed. Your unsaved edits are preserved below while the latest Purchase Order is fetched.");
+        try {
+          const latest = await apiFetch(`/api/procurement/purchase-orders/${editId}`);
+          const latestItems: Item[] = (latest.purchase_order?.items || []).map(itemFromPersistedRow);
+          setConflictRecovery({ latestItems, unsavedItems, latestIds: latestItems.map((item) => persistedItemId(item.po_item_id)), loading: false });
+          setMessage("The saved item set changed. Review the comparison, reconcile the item rows in this form, then confirm the new baseline before saving again.");
+        } catch (recoveryError: any) {
+          setConflictRecovery({ latestItems: [], unsavedItems, latestIds: [], loading: false, error: recoveryError.message || "Could not fetch the latest saved Purchase Order." });
+          setMessage("The saved item set changed, and the latest Purchase Order could not be fetched. Your unsaved edits remain in this form.");
+        }
+      } else setMessage(error.message || "Failed to create Purchase Order draft.");
+    }
     finally { setSaving(false); }
+  }
+
+  function confirmConflictRebase() {
+    if (!conflictRecovery || conflictRecovery.loading || conflictRecovery.error) return;
+    const latestIds = new Set(conflictRecovery.latestIds);
+    const staleRows = items.filter((item) => item.po_item_id && !latestIds.has(persistedItemId(item.po_item_id)));
+    if (staleRows.length) {
+      setMessage("One or more unsaved rows no longer exist in the latest Purchase Order. Review the comparison and remove or replace those rows before confirming.");
+      return;
+    }
+    originalPersistedItemIdsRef.current = [...conflictRecovery.latestIds];
+    setConflictRecovery(null);
+    setMessage("Conflict resolved for this edit session. Your current form values were kept; save again to submit them against the latest item baseline.");
   }
 
   if (loading) return <p className="text-sm text-slate-500">Loading Purchase Order options...</p>;
   return <section className="mx-auto max-w-[1500px] space-y-5 pb-12">
     <header className="flex flex-wrap items-start justify-between gap-4"><div><Link href={editId ? `/purchase/purchase-orders/${editId}` : "/purchase/purchase-orders"} className="text-sm text-slate-500">← {editId ? "Purchase Order" : "Purchase Orders"}</Link><p className="mt-3 text-xs font-semibold uppercase tracking-widest text-amber-700">Purchase</p><h1 className="text-3xl font-bold text-slate-950">{editId ? "Edit Draft Purchase Order" : "Create Purchase Order"}</h1><p className="text-sm text-slate-500">{editId ? "Update the existing Draft Purchase Order." : "Create a simple draft from a direct purchase or approved Material Indent."}</p></div></header>
     {message && <div ref={errorRef} className="scroll-mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert"><div className="flex items-start justify-between gap-3"><div>{message}{createdPoId && <p className="mt-2"><Link className="font-semibold underline" href={`/purchase/purchase-orders/${createdPoId}`}>Open the draft to retry attachments.</Link></p>}</div><button type="button" aria-label="Dismiss error" onClick={() => setMessage("")} className="shrink-0 text-lg font-semibold leading-none text-red-700" title="Dismiss error">×</button></div></div>}
+    {conflictRecovery && <section className="rounded-xl border border-amber-300 bg-amber-50 p-5" role="region" aria-label="Purchase Order item conflict recovery"><h2 className="font-semibold text-amber-950">Review saved item changes before continuing</h2><p className="mt-2 text-sm text-amber-900">Your current form values are still in memory. The latest saved rows are shown beside them. Nothing has been selected or saved automatically.</p>{conflictRecovery.loading ? <p className="mt-4 text-sm text-amber-900">Fetching the latest saved item set…</p> : conflictRecovery.error ? <p className="mt-4 text-sm text-red-700">{conflictRecovery.error}</p> : <><div className="mt-4 overflow-x-auto rounded-lg border border-amber-200 bg-white"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-amber-100 text-xs uppercase text-amber-950"><tr><th className="p-3">Status</th><th className="p-3">Item</th><th className="p-3">Latest saved</th><th className="p-3">Your unsaved form</th></tr></thead><tbody>{(() => { const latestById = new Map(conflictRecovery.latestItems.filter((item) => item.po_item_id).map((item) => [persistedItemId(item.po_item_id), item])); const currentById = new Map(items.filter((item) => item.po_item_id).map((item) => [persistedItemId(item.po_item_id), item])); const ids = [...new Set([...conflictRecovery.latestIds, ...[...currentById.keys()]])]; const rows = ids.map((id) => ({ id, latest: latestById.get(id), current: currentById.get(id) })); const additions = items.filter((item) => !item.po_item_id).map((item, index) => ({ id: `new-${index}`, latest: undefined, current: item })); return [...rows, ...additions].map((row) => { const status = !row.latest ? "Added in unsaved form" : !row.current ? "Deleted in unsaved form" : itemValue(row.latest) === itemValue(row.current) ? "Unchanged" : "Changed"; return <tr key={row.id} className="border-t border-amber-100 align-top"><td className="p-3 font-semibold">{status}</td><td className="p-3">{row.current?.item_name || row.latest?.item_name || "Unnamed item"}</td><td className="whitespace-pre-wrap p-3">{row.latest ? `${row.latest.item_name || "—"}\nQty ${row.latest.quantity || "—"} · Rate ${row.latest.unit_rate || "—"} · GST ${row.latest.gst_rate || "—"}` : "—"}</td><td className="whitespace-pre-wrap p-3">{row.current ? `${row.current.item_name || "—"}\nQty ${row.current.quantity || "—"} · Rate ${row.current.unit_rate || "—"} · GST ${row.current.gst_rate || "—"}` : "—"}</td></tr>; }); })()}</tbody></table></div><p className="mt-3 text-xs text-amber-900">Reconcile the rows using the main form above. Confirm only after you have reviewed additions, deletions, and changed values. A later concurrent change will still be rejected by the server.</p><button type="button" onClick={confirmConflictRebase} className="mt-4 rounded-lg bg-amber-950 px-4 py-2 text-sm font-semibold text-white">Confirm reviewed item list and keep my edits</button></> }</section>}
     <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">PO Source</h2><div className="mt-4 grid gap-3 md:grid-cols-3">{(Object.keys(sourceLabels) as Source[]).map((value) => <button type="button" key={value} onClick={() => changeSource(value)} className={`rounded-xl border p-4 text-left ${source === value ? "border-slate-950 bg-slate-50" : "border-slate-200"}`}><p className="font-semibold">{sourceLabels[value]}</p><p className="mt-1 text-xs text-slate-500">{value === "direct" ? "Create manually without an upstream document." : "Use an approved requirement with remaining quantity."}</p></button>)}</div></section>
     <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">Basic Details</h2><div className="mt-4 grid gap-4 md:grid-cols-3"><label className="text-sm font-semibold">Company *<select value={companyId} onChange={(event) => { setCompanyId(event.target.value); setSiteId(""); setIndentLineKey(""); setSelectedIndentId(""); setDeliveryLocationId(""); setDeliveryContactId(""); setCustomDelivery(false); setTermsTemplateId(""); setStandardTerms(""); }} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">Select company</option>{lookups.companies.map((row: any) => <option key={row.id} value={row.id}>{row.company_name}</option>)}</select></label><label className="text-sm font-semibold">Site / Project *<select value={siteId} onChange={(event) => { const value = event.target.value; const next = sites.find((row: any) => row.id === value); setSiteId(value); setIndentLineKey(""); setSelectedIndentId(""); setDeliveryLocationId(""); setDeliveryContactId(""); setCustomDelivery(false); setDelivery((current) => ({ ...current, location: next?.site_name || "", address: next?.location || "" })); }} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">Select site</option>{sites.map((row: any) => <option key={row.id} value={row.id}>{row.site_name}</option>)}</select></label>{source === "indent" && <label className="text-sm font-semibold">Approved Material Indent *<select value={selectedIndentId} onChange={(event) => { setSelectedIndentId(event.target.value); setIndentLineKey(""); setItems([{ item_name: "", quantity: "", unit_rate: "", gst_rate: "0" }]); }} disabled={loading || !companyId || !siteId || indentGroups.length === 0} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">{!companyId || !siteId ? "Select Company and Site first" : loading ? "Loading approved Material Indents..." : indentGroups.length === 0 ? "No approved Material Indents with remaining quantity" : "Select approved Material Indent"}</option>{indentGroups.map((group: any) => <option key={group.requisition_id} value={group.requisition_id}>{group.requisition_number} — {group.lines.length} materials remaining</option>)}</select></label>}<label className="text-sm font-semibold">Vendor *<div className="flex gap-2"><select value={vendorId} onChange={(event) => setVendorId(event.target.value)} className="mt-1 h-10 min-w-0 flex-1 rounded-lg border px-3 font-normal"><option value="">Select Vendor</option>{lookups.vendors.map((row: any) => <option key={row.id} value={row.id}>{row.vendor_name}</option>)}</select><button type="button" onClick={() => canAddVendors && setVendorModalOpen(true)} disabled={!canAddVendors} className="mt-1 whitespace-nowrap rounded-lg border px-3 text-xs font-semibold">+ Add New Vendor</button></div></label><label className="text-sm font-semibold">PO Date<input type="date" value={poDate} onChange={(event) => setPoDate(event.target.value)} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal" /></label></div></section>
     {(
