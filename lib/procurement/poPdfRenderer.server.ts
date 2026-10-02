@@ -45,6 +45,10 @@ const FIRST_PAGE_TITLE_SAFE_GAP = 8;
 
 const REDLINE = { r: 0.72, g: 0.08, b: 0.08 };
 
+const PO_HEADER_FILL = "0.93 0.95 0.97";
+
+const WORK_ORDER_HEADER_FILL = "0.98 0.91 0.91";
+
 export type RevisionValueDiff<T> =
   | { state: "unchanged"; value: T }
   | { state: "added"; after: T }
@@ -135,7 +139,7 @@ function frozenBillingContactMobile(address: any) {
 
 function wrap(value: unknown, width: number) { return String(value ?? "").split(/\r?\n/).flatMap((line) => { const words = line.split(/\s+/).filter(Boolean); if (!words.length) return [""]; const lines: string[] = []; let current = ""; for (const word of words) { if ((current + " " + word).trim().length > width && current) { lines.push(current); current = word; } else current = (current + " " + word).trim(); } if (current) lines.push(current); return lines; }); }
 
-function isClauseHeading(value: string) { return /^(variation in quantity|quality of material|testing|taxes & duties|registration under|warranty|escalation|settlement of disputes|final say)\b.*:?$/i.test(value.trim()) || /^[^\s].{2,80}:$/.test(value.trim()); }
+function isClauseHeading(value: string) { return /^(order of precedence|acceptance & authority|price, quantity & escalation|delivery & time|inspection, testing & rejection|weights, measures & quality|packing, marking & documentation|payment & statutory compliance|warranty & defect liability|documentation & intellectual property|insurance|indemnity|set-off & recovery|confidentiality|assignment & sub-contracting|termination|msme registration & credit period|no waiver|notices & amendment|severability, governing law & jurisdiction|force majeure|buyer['’]s (discretion|discharge)|variation in quantity|quality of material|testing|taxes & duties|registration under|warranty|escalation|settlement of disputes|final say)\b.*:?$/i.test(value.trim()) || /^[^\s].{2,80}:$/.test(value.trim()); }
 
 function termIndent(value: string) {
   if (/^[a-z]\./i.test(value.trim())) return LEFT + 10;
@@ -165,7 +169,7 @@ function parseTermsLine(raw: string): TermsLine {
   const trimmed = raw.trim();
   const mainMatch = trimmed.match(/^(\d+\.)\s*(.+)$/);
   if (mainMatch) {
-    return { raw: trimmed, level: "main", marker: mainMatch[1], content: mainMatch[2], indent: LEFT, markerOffset: 0, spacingBefore: 2, spacingAfter: 0, bold: true };
+    return { raw: trimmed, level: "main", marker: mainMatch[1], content: mainMatch[2], indent: LEFT, markerOffset: 0, spacingBefore: 1, spacingAfter: 0, bold: true };
   }
   const romanMatch = trimmed.match(/^([ivxlcdm]+\.)\s*(.+)$/i);
   if (romanMatch) {
@@ -176,9 +180,9 @@ function parseTermsLine(raw: string): TermsLine {
     return { raw: trimmed, level: "alpha", marker: alphaMatch[1], content: alphaMatch[2], indent: LEFT + 14, markerOffset: 0, spacingBefore: 0, spacingAfter: 0, bold: false };
   }
   if (isClauseHeading(trimmed)) {
-    return { raw: trimmed, level: "main", marker: "", content: trimmed, indent: LEFT, markerOffset: 0, spacingBefore: 4, spacingAfter: 1, bold: true };
+    return { raw: trimmed, level: "main", marker: "", content: trimmed, indent: LEFT, markerOffset: 0, spacingBefore: 1, spacingAfter: 0, bold: true };
   }
-  return { raw: trimmed, level: "body", marker: "", content: trimmed, indent: termIndent(trimmed), markerOffset: 0, spacingBefore: 0, spacingAfter: 1, bold: false };
+  return { raw: trimmed, level: "body", marker: "", content: trimmed, indent: termIndent(trimmed), markerOffset: 0, spacingBefore: 0, spacingAfter: 0, bold: false };
 }
 
 function withoutClauseNumber(value: string) { return value.replace(/^\s*\d+[.)]\s*/, "").trim(); }
@@ -241,7 +245,7 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
   const ensure = (height: number) => { if (y - height < bodyBottomY) newPage(); };
   const line = (x: number, yy: number, x2: number, yy2: number) => page.ops.push(`${x} ${yy} m ${x2} ${yy2} l S`);
   const tableLine = (x: number, yy: number, x2: number, yy2: number, strong = false) => page.ops.push(`q ${strong ? "0.45" : "0.78"} G ${strong ? "0.8" : "0.45"} w ${x} ${yy} m ${x2} ${yy2} l S Q`);
-  const tableFill = (x: number, yy: number, width: number, height: number, color = "0.96 0.97 0.98") => page.ops.push(`q ${color} rg ${x} ${yy} ${width} ${height} re f Q`);
+  const tableFill = (x: number, yy: number, width: number, height: number, color = row.work_order_render ? WORK_ORDER_HEADER_FILL : PO_HEADER_FILL) => page.ops.push(`q ${color} rg ${x} ${yy} ${width} ${height} re f Q`);
   const rect = (x: number, yy: number, w: number, h: number) => page.ops.push(`${x} ${yy} ${w} ${h} re S`);
   const rowGrid = (x: number, top: number, widths: number[], height: number, mergedStart?: number) => {
     const bottom = top - height;
@@ -616,7 +620,7 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
     });
   } else {
     terms.forEach((raw, index) => {
-      const trimmed = raw.trim(); if (!trimmed) { y -= TERMS_LEADING; return; }
+      const trimmed = raw.trim(); if (!trimmed) return;
       const parsed = parseTermsLine(trimmed); const markerWidth = parsed.marker ? termsTextWidth(`${parsed.marker} `, TERMS_SIZE) : 0; const textX = parsed.indent + markerWidth + parsed.markerOffset;
       const lines = wrapToPointWidth(parsed.content || parsed.raw, Math.max(42, RIGHT - textX), TERMS_SIZE, termsTextWidth); ensure(parsed.spacingBefore + lines.length * TERMS_LEADING + parsed.spacingAfter); y -= parsed.spacingBefore; if (parsed.marker) draw(parsed.marker, parsed.indent, y, TERMS_SIZE, parsed.bold); lines.forEach((lineText) => { draw(lineText, textX, y, TERMS_SIZE, parsed.bold); y -= TERMS_LEADING; }); y -= parsed.spacingAfter;
     });
