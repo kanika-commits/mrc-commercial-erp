@@ -29,6 +29,14 @@ function persistedItemId(value: unknown) {
   return String(value || "").trim().toLowerCase();
 }
 
+function persistedItemContentKey(item: any) {
+  return JSON.stringify(Object.keys(item || {}).filter((key) => key !== "id" && key !== "po_item_id").sort().reduce((result, key) => ({ ...result, [key]: item[key] }), {}));
+}
+
+function persistedItemSetKey(items: any[]) {
+  return items.map(persistedItemContentKey).sort().join("\u001e");
+}
+
 function itemFromPersistedRow(item: any): Item {
   return { po_item_id: item.id, item_id: item.item_id, item_name: item.item_name_snapshot || "", item_code: item.item_code_snapshot, description: item.description_snapshot || item.specification_snapshot || "", specification: item.specification_snapshot, make: item.make_snapshot || "", quantity: String(item.quantity ?? ""), uom: item.uom_snapshot || "", unit_rate: String(item.unit_rate ?? ""), gst_rate: String(item.gst_rate ?? "0"), source_requisition_line_key: item.source_requisition_line_key, isMaterialMasterLinked: false };
 }
@@ -54,6 +62,7 @@ export default function NewPurchaseOrderPage() {
   const [selectedIndentId, setSelectedIndentId] = useState(params.get("requisition_id") || "");
   const [items, setItems] = useState<Item[]>([{ item_name: "", quantity: "", unit_rate: "", gst_rate: "0" }]);
   const originalPersistedItemIdsRef = useRef<string[]>([]);
+  const originalPersistedItemContentRef = useRef<string>("");
   const [delivery, setDelivery] = useState({ location: "", address: "", expected_date: "" });
   const [commercial, setCommercial] = useState({ payment_terms: "", delivery_terms: "" });
   const [standardTerms, setStandardTerms] = useState("");
@@ -120,6 +129,7 @@ export default function NewPurchaseOrderPage() {
       const parsedTerms = parsePurchaseOrderStandardTerms(po.standard_terms_snapshot);
       setStandardTerms(parsedTerms?.kind === "structured" ? parsedTerms.clauses.map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n") : parsedTerms?.text || "");
       originalPersistedItemIdsRef.current = (po.items || []).map((item: any) => persistedItemId(item.id));
+      originalPersistedItemContentRef.current = persistedItemSetKey(po.items || []);
       setItems((po.items || []).map(itemFromPersistedRow));
       setExistingDocuments(documentResult.documents || []);
       setLoading(false);
@@ -386,15 +396,34 @@ export default function NewPurchaseOrderPage() {
       const body = { source_type: source, company_id: companyId, site_id: siteId, vendor_id: vendorId, po_date: poDate, source_requisition_id: selectedIndent?.requisition_id || params.get("requisition_id") || null, expected_original_item_ids: editId ? [...originalPersistedItemIdsRef.current] : undefined, items: items.map((item) => ({ ...item, item_id: item.item_id || undefined, unit_rate: Number(item.unit_rate), quantity: Number(item.quantity), gst_rate: Number(item.gst_rate), make_snapshot: item.make })), master_selection: { gst_registration_id: selectedGstBilling.id, billing_contact_id: selectedBillingContact.id, delivery_location_id: selectedDeliveryLocation.id, delivery_contact_id: selectedDeliveryContact.id }, delivery: deliveryPayload, commercial: { ...commercial, additional_charges: additionalCharges.map((charge) => ({ name: charge.name.trim(), amount: Number(charge.amount) })) }, standard_terms: standardTerms, standard_terms_template_id: selectedTerms?.id || null, standard_terms_sections: selectedTerms?.sections?.filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order) || [], key_terms: keyTerms };
       (body as any).creation_request_id = creationRequestId;
       if (editId) {
-        await apiFetch(`/api/procurement/purchase-orders/${editId}`, { method: "PUT", body: JSON.stringify(body) });
+        const saveExistingDraft = async (requestBody: any) => {
+          await apiFetch(`/api/procurement/purchase-orders/${editId}`, { method: "PUT", body: JSON.stringify(requestBody) });
+          try {
+            await uploadAttachments(editId);
+          } catch (error: any) {
+            setCreatedPoId(editId);
+            setMessage(`Purchase Order details were saved, but a supporting document upload failed. Please retry the document upload. ${error.message}`);
+            return;
+          }
+          router.push(`/purchase/purchase-orders/${editId}`);
+        };
         try {
-          await uploadAttachments(editId);
+          await saveExistingDraft(body);
         } catch (error: any) {
-          setCreatedPoId(editId);
-          setMessage(`Purchase Order details were saved, but a supporting document upload failed. Please retry the document upload. ${error.message}`);
-          return;
+          if (!String(error.message || "").includes("The editable item set changed")) throw error;
+          try {
+            const latest = await apiFetch(`/api/procurement/purchase-orders/${editId}`);
+            const latestItems = latest.purchase_order?.items || [];
+            if (persistedItemSetKey(latestItems) !== originalPersistedItemContentRef.current) {
+              setMessage("The saved item set changed. Your current form values remain unchanged; review the latest Purchase Order before saving again.");
+              return;
+            }
+            originalPersistedItemIdsRef.current = latestItems.map((item: any) => persistedItemId(item.id));
+            await saveExistingDraft({ ...body, expected_original_item_ids: [...originalPersistedItemIdsRef.current] });
+          } catch (retryError: any) {
+            setMessage(retryError.message || "The saved item set changed. Your current form values remain unchanged; review the latest Purchase Order before saving again.");
+          }
         }
-        router.push(`/purchase/purchase-orders/${editId}`);
         return;
       }
       const result = await apiFetch("/api/procurement/purchase-orders", { method: "POST", body: JSON.stringify(body) });

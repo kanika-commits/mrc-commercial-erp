@@ -8,11 +8,18 @@ const fn = migration.slice(migration.indexOf("create or replace function"), migr
 
 assert.match(page, /originalPersistedItemIdsRef = useRef<string\[]>\(\[\]\)/);
 assert.match(page, /originalPersistedItemIdsRef\.current = \(po\.items \|\| \[\]\)\.map/);
+assert.match(page, /originalPersistedItemContentRef = useRef<string>\(\"\"\)/);
+assert.match(page, /persistedItemContentKey/);
+assert.match(page, /persistedItemSetKey\(po\.items \|\| \[\]\)/);
 assert.match(page, /expected_original_item_ids: editId \? \[\.\.\.originalPersistedItemIdsRef\.current\]/);
 assert.doesNotMatch(page, /conflictRecovery/);
 assert.doesNotMatch(page, /Review saved item changes before continuing/);
 assert.doesNotMatch(page, /Confirm reviewed item list and keep my edits/);
 assert.match(page, /Your current form values remain unchanged/);
+assert.match(page, /latest = await apiFetch\(`\/api\/procurement\/purchase-orders\/\$\{editId\}`\)/);
+assert.match(page, /persistedItemSetKey\(latestItems\) !== originalPersistedItemContentRef\.current/);
+assert.match(page, /expected_original_item_ids: \[\.\.\.originalPersistedItemIdsRef\.current\]/);
+assert.match(page, /saveExistingDraft\(\{ \.\.\.body, expected_original_item_ids/);
 assert.match(route, /Array\.isArray\(body\.expected_original_item_ids\)/);
 assert.match(route, /normalizedIds = .*\.map\(\(value\) => value\.toLowerCase\(\)\)/);
 assert.match(route, /new Set\(normalizedIds\)/);
@@ -58,6 +65,27 @@ assert.throws(() => {
   const secondConcurrentSet = ["A", "B", "D", "E"];
   if (secondConcurrentSet.sort().join(",") !== latestIds.sort().join(",")) throw new Error("stale");
 }, /stale/);
+
+function contentKey(row) {
+  return JSON.stringify(Object.keys(row).filter((key) => key !== "id" && key !== "po_item_id").sort().reduce((result, key) => ({ ...result, [key]: row[key] }), {}));
+}
+function contentSetKey(rows) {
+  return rows.map(contentKey).sort().join("\u001e");
+}
+const loadedRows = [{ id: "A", item_name_snapshot: "Primer", quantity: 10 }, { id: "B", item_name_snapshot: "Paint", quantity: 5 }];
+assert.equal(contentSetKey([{ ...loadedRows[1], id: "B2" }, { ...loadedRows[0], id: "A2" }]), contentSetKey(loadedRows)); // ID-only changes and reordering are safe to rebase.
+assert.notEqual(contentSetKey([{ ...loadedRows[0], id: "A2", quantity: 11 }, loadedRows[1]]), contentSetKey(loadedRows)); // Actual row edits do not retry.
+assert.notEqual(contentSetKey([...loadedRows, { id: "C", item_name_snapshot: "Thinner", quantity: 1 }]), contentSetKey(loadedRows)); // Added rows do not retry.
+assert.notEqual(contentSetKey([loadedRows[0]]), contentSetKey(loadedRows)); // Removed rows do not retry.
+const retryBaselines = [];
+const retryOnce = (latestRows, secondError = null) => {
+  if (contentSetKey(latestRows) !== contentSetKey(loadedRows)) return { attempts: 1, retried: false, error: "conflict" };
+  retryBaselines.push(latestRows.map((row) => row.id));
+  return secondError ? { attempts: 2, retried: true, error: secondError } : { attempts: 2, retried: true, error: null };
+};
+assert.deepEqual(retryOnce([{ ...loadedRows[1], id: "B2" }, { ...loadedRows[0], id: "A2" }]), { attempts: 2, retried: true, error: null });
+assert.deepEqual(retryOnce([{ ...loadedRows[1], id: "B2" }, { ...loadedRows[0], id: "A2" }], "The editable item set changed"), { attempts: 2, retried: true, error: "The editable item set changed" }); // A second concurrent change remains rejected.
+assert.deepEqual(retryBaselines, [["B2", "A2"], ["B2", "A2"]]);
 
 // Small behavioral contract model for the SQL's exact-set reconciliation and
 // persisted-row calculations. Database-level execution requires the managed
