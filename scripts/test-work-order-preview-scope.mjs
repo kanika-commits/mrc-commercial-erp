@@ -5,7 +5,7 @@ const preview = fs.readFileSync("app/api/work-orders/preview/route.ts", "utf8");
 
 assert.match(preview, /requirePermission\(request, "work_orders", "add"\)/);
 assert.match(preview, /loadActorOrganizationScope/);
-assert.match(preview, /resolveWriteOrganizationIdForRequest/);
+assert.match(preview, /resolveWriteOrganizationId\(/);
 assert.match(preview, /isInOrganizationScope\(scope, company\.organization_id\)/);
 assert.match(preview, /company\.organization_id !== site\.organization_id/);
 assert.match(preview, /company\.organization_id !== vendor\.organization_id/);
