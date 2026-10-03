@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requirePermission } from "@/lib/serverPermissions";
 import { adminClient } from "@/lib/serverProcurementAccess";
-import { isInOrganizationScope, loadActorOrganizationScope, resolveWriteOrganizationIdForRequest } from "@/lib/serverOrganizationScope";
+import { isInOrganizationScope, loadActorOrganizationScope, resolveWriteOrganizationId } from "@/lib/serverOrganizationScope";
 import { loadWorkOrderLetterheadAssets, renderWorkOrderPdf } from "@/lib/workOrderPdfRenderer.server";
 import { addWorkOrderDraftWatermark, addWorkOrderPackagePageNumbers } from "@/lib/workOrderPdfPackage.server";
 import { appendWorkOrderSupportingPdfs, validateWorkOrderSupportingFiles } from "@/lib/workOrderSupportingDocuments.server";
@@ -14,7 +14,6 @@ async function loadAuthorizedPreviewData(admin: any, auth: any, request: Request
   const siteId = text(body.site_id, "");
   const vendorId = text(body.vendor_id, "");
   const scope = await loadActorOrganizationScope(admin, auth);
-  const activeOrganizationId = await resolveWriteOrganizationIdForRequest(admin, scope, request);
   if (!companyId || !siteId || !vendorId) throw new Error("Company, site, and vendor are required for preview.");
 
   const [companyResult, siteResult, vendorResult] = await Promise.all([
@@ -27,7 +26,8 @@ async function loadAuthorizedPreviewData(admin: any, auth: any, request: Request
   const site = siteResult.data;
   const vendor = vendorResult.data;
   if (!company || !site || !vendor || company.status !== "active" || site.status !== "active" || vendor.status !== "active") throw new Error("Selected company, site, or vendor is missing or inactive.");
-  if (!activeOrganizationId || !isInOrganizationScope(scope, company.organization_id) || company.organization_id !== activeOrganizationId || company.organization_id !== site.organization_id || company.organization_id !== vendor.organization_id || (site.company_id && site.company_id !== company.id)) {
+  const activeOrganizationId = resolveWriteOrganizationId(scope, company.organization_id);
+  if (!activeOrganizationId || !isInOrganizationScope(scope, company.organization_id) || company.organization_id !== site.organization_id || company.organization_id !== vendor.organization_id || (site.company_id && site.company_id !== company.id)) {
     throw new Error("Selected company, site, or vendor is outside the authorized organization scope.");
   }
 
