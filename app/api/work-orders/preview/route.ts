@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requirePermission } from "@/lib/serverPermissions";
-import { adminClient } from "@/lib/serverProcurementAccess";
+import { adminClient, hasGlobalProcurementAccess } from "@/lib/serverProcurementAccess";
 import { isInOrganizationScope, loadActorOrganizationScope, resolveWriteOrganizationId } from "@/lib/serverOrganizationScope";
 import { loadWorkOrderLetterheadAssets, renderWorkOrderPdf } from "@/lib/workOrderPdfRenderer.server";
 import { addWorkOrderDraftWatermark, addWorkOrderPackagePageNumbers } from "@/lib/workOrderPdfPackage.server";
@@ -27,7 +27,11 @@ async function loadAuthorizedPreviewData(admin: any, auth: any, request: Request
   const vendor = vendorResult.data;
   if (!company || !site || !vendor || company.status !== "active" || site.status !== "active" || vendor.status !== "active") throw new Error("Selected company, site, or vendor is missing or inactive.");
   const activeOrganizationId = resolveWriteOrganizationId(scope, company.organization_id);
-  if (!activeOrganizationId || !isInOrganizationScope(scope, company.organization_id) || company.organization_id !== site.organization_id || company.organization_id !== vendor.organization_id || (site.company_id && site.company_id !== company.id)) {
+  const access: any = auth;
+  const globalAccess = hasGlobalProcurementAccess(auth);
+  const companyAllowed = globalAccess || (access.companies || []).length === 0 || access.companies.includes(company.id);
+  const siteAllowed = globalAccess || (access.sites || []).length === 0 || access.sites.includes(site.id);
+  if (!activeOrganizationId || !isInOrganizationScope(scope, company.organization_id) || company.organization_id !== site.organization_id || company.organization_id !== vendor.organization_id || !companyAllowed || !siteAllowed) {
     throw new Error("Selected company, site, or vendor is outside the authorized organization scope.");
   }
 

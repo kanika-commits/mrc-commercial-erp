@@ -75,7 +75,7 @@ export default function NewWorkOrderPage() {
     return () => { cancelled = true; };
   }, [form.company_id, form.site_id, numberEdited]);
 
-  const sites = useMemo(() => lookups.sites.filter((s: any) => !form.company_id || !s.company_id || s.company_id === form.company_id), [lookups.sites, form.company_id]);
+  const sites = lookups.sites;
   const terms = useMemo(() => lookups.terms_templates.filter((t: any) => t.company_id === form.company_id && t.status === "active"), [lookups.terms_templates, form.company_id]);
   const letterhead = lookups.letterheads.find((l: any) => l.company_id === form.company_id && l.is_default);
   const selectedLetterhead = lookups.letterheads.find((l: any) => l.id === form.letterhead_id) || letterhead;

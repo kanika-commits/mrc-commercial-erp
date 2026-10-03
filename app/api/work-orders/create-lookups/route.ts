@@ -48,10 +48,7 @@ export async function GET(request: Request) {
     const site_contacts: any = scoped(admin.from("site_contacts").select("id,organization_id,site_id,contact_name,designation,mobile,email,contact_type,is_default,status").eq("status", "active").order("contact_name"));
     if (!hasGlobalProcurementAccess(auth)) {
       if ((auth.companies || []).length > 0 && companies) companies = companies.in("id", auth.companies);
-      if (sites) {
-        if ((auth.sites || []).length > 0) sites = sites.in("id", auth.sites);
-        else if ((auth.companies || []).length > 0) sites = sites.in("company_id", auth.companies);
-      }
+      if ((auth.sites || []).length > 0 && sites) sites = sites.in("id", auth.sites);
     }
     const [companyResult, siteResult, vendorResult] = await Promise.all([companies, sites, vendors]);
     for (const [name, result] of [["Company", companyResult], ["Site", siteResult], ["Vendor", vendorResult]] as const) {
