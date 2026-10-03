@@ -311,7 +311,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           navLeaf("Purchase Orders", "procurement_purchase_orders", "/purchase/purchase-orders"),
           navActionLeaf("Purchase Order Approval", "procurement_purchase_orders", "approve", "/purchase/purchase-order-approvals"),
           navLeaf("Work Orders", "work_orders", "/work-orders"),
-          navLeaf("Work Order PDF Pilot", "work_orders", "/work-orders/new/structured"),
+          navActionLeaf("Work Order PDF Pilot", "work_orders", "add", "/work-orders/new/structured"),
           navLeaf("Work Order Approval", "wo_approval", "/approvals/work-orders"),
         ],
         "/modules/purchase",

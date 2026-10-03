@@ -255,7 +255,7 @@ export default function ModulePage({
       });
       moduleRows.sort((first, second) => first.sort_order - second.sort_order);
     }
-    if (groupCode === "purchase" && (globalAccess || can(permissions, "work_orders", "view")) && !moduleRows.some((page) => page.route === "/work-orders/new/structured")) {
+    if (groupCode === "purchase" && (globalAccess || can(permissions, "work_orders", "add")) && !moduleRows.some((page) => page.route === "/work-orders/new/structured")) {
       moduleRows.push({
         id: "purchase-work-order-pdf-pilot",
         module_group: "purchase",
