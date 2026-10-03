@@ -26,14 +26,7 @@ export async function GET(request: Request) {
     const scope = await validateCompanySiteScope(admin, auth, params.companyId, params.siteId);
     if ("response" in scope) return scope.response;
     const monthDates = datesForMonth(params.month);
-    const [employees, attendanceRows, companyResult, siteResult, departmentResult, designationResult, periodResult] = await Promise.all([
-      loadEligibleEmployees(admin, {
-        organizationId: scope.organizationId,
-        companyId: params.companyId,
-        siteId: params.siteId,
-        startDate: monthDates[0],
-        endDate: monthDates[monthDates.length - 1],
-      }),
+    const [attendanceRows, companyResult, siteResult, departmentResult, designationResult, periodResult] = await Promise.all([
       loadAttendanceRows(admin, {
         organizationId: scope.organizationId,
         companyId: params.companyId,
@@ -50,6 +43,13 @@ export async function GET(request: Request) {
     for (const result of [companyResult, siteResult, departmentResult, designationResult, periodResult]) {
       if (result.error) throw result.error;
     }
+    const employees = await loadEligibleEmployees(admin, {
+      organizationId: scope.organizationId,
+      companyId: params.companyId,
+      siteId: params.siteId,
+      startDate: monthDates[0],
+      endDate: monthDates[monthDates.length - 1],
+    }, { historicalEmployeeIds: attendanceRows.map((row: any) => row.employee_id) });
     const attendanceMap = new Map(attendanceRows.map((row: any) => [`${row.employee_id}:${row.attendance_date}`, row]));
     const departments = new Map((departmentResult.data || []).map((row: any) => [row.id, row.department_name]));
     const designations = new Map((designationResult.data || []).map((row: any) => [row.id, row.designation_name]));

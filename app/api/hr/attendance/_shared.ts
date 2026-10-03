@@ -13,6 +13,7 @@ import {
   canEditAttendanceDate,
   canSelectAttendanceDate,
   canLockAttendanceDate,
+  compareDates,
   currentIndiaDate,
   datesForMonth,
   EMPLOYEE_STANDARD_WORKING_HOURS,
@@ -647,29 +648,28 @@ export async function ensurePeriod(
 export async function loadEligibleEmployees(
   admin: ReturnType<typeof adminClient>,
   values: { organizationId: string; companyId: string; siteId: string; startDate: string; endDate: string },
+  options: { historicalEmployeeIds?: Iterable<string> } = {},
 ) {
   const { data, error } = await admin
     .from("hr_employees")
     .select("id, employee_code, employee_name, department_id, designation_id, date_of_joining, date_of_exit, status, company_id, site_id")
     .eq("organization_id", values.organizationId)
-    .neq("status", "deleted")
     .or(`date_of_joining.is.null,date_of_joining.lte.${values.endDate}`)
     .or(`date_of_exit.is.null,date_of_exit.gte.${values.startDate}`)
     .order("employee_name", { ascending: true });
   if (error) throw error;
 
   const employees = data || [];
+  const historicalEmployeeIds = new Set(options.historicalEmployeeIds || []);
   const employeeIds = employees.map((employee: any) => employee.id);
   const historyByEmployee = new Map<string, any[]>();
 
   if (employeeIds.length > 0) {
     const { data: historyRows, error: historyError } = await admin
       .from("employee_employment_history")
-      .select("employee_id, company_id, site_id, effective_from, effective_to, event_date, employment_status")
+      .select("employee_id, company_id, site_id, effective_from, effective_to, event_date, employment_status, event_type, source, is_manual")
       .eq("organization_id", values.organizationId)
       .in("employee_id", employeeIds)
-      .or(`effective_from.is.null,effective_from.lte.${values.endDate}`)
-      .or(`effective_to.is.null,effective_to.gte.${values.startDate}`)
       .order("effective_from", { ascending: false, nullsFirst: false })
       .order("event_date", { ascending: false, nullsFirst: false });
     if (historyError) throw historyError;
@@ -680,24 +680,40 @@ export async function loadEligibleEmployees(
 
   return employees.filter((employee: any) => {
     const dateForEligibility = values.startDate === values.endDate ? values.startDate : values.endDate;
-    if (!isEmployeeEligibleForDate(employee, dateForEligibility)) return false;
+    if (String(employee.status || "").toLowerCase() === "deleted") return false;
+    if (historicalEmployeeIds.has(employee.id)) return true;
+    if (employee.date_of_joining && compareDates(dateForEligibility, employee.date_of_joining) < 0) return false;
+    if (employee.date_of_exit && compareDates(dateForEligibility, employee.date_of_exit) > 0) return false;
 
     const histories = historyByEmployee.get(employee.id) || [];
-    const effectiveHistories = histories.filter((history) => rowAppliesToDateRange(history, values.startDate, values.endDate));
+    const employeeStatus = String(employee.status || "").toLowerCase();
+    if (employeeStatus === "inactive") {
+      const inactivation = histories
+        .filter((history: any) => String(history.employment_status || "").toLowerCase() === "inactive")
+        .map((history: any) => history.effective_from || history.event_date)
+        .filter(Boolean)
+        .sort()[0];
+      if (!inactivation || dateForEligibility >= inactivation) return false;
+    } else if (employeeStatus !== "active") {
+      return false;
+    }
+    const effectiveHistories = histories
+      .filter((history) => rowAppliesToDateRange(history, values.startDate, values.endDate))
+      .filter((history) => !(history.event_type === "transferred" && history.is_manual === true));
     if (values.startDate === values.endDate) {
       const latestHistory = effectiveHistories[0] || null;
       if (latestHistory) {
         return (
           latestHistory.company_id === values.companyId &&
           latestHistory.site_id === values.siteId &&
-          String(latestHistory.employment_status || employee.status || "").toLowerCase() !== "deleted"
+          ["active"].includes(String(latestHistory.employment_status || employee.status || "").toLowerCase())
         );
       }
     } else {
       const matchingHistory = effectiveHistories.find((history) =>
         history.company_id === values.companyId &&
         history.site_id === values.siteId &&
-        String(history.employment_status || employee.status || "").toLowerCase() !== "deleted"
+        ["active"].includes(String(history.employment_status || employee.status || "").toLowerCase())
       );
       if (matchingHistory) return true;
     }
@@ -706,7 +722,7 @@ export async function loadEligibleEmployees(
       return false;
     }
 
-    return employee.company_id === values.companyId && employee.site_id === values.siteId;
+    return String(employee.status || "").toLowerCase() === "active" && employee.company_id === values.companyId && employee.site_id === values.siteId;
   });
 }
 

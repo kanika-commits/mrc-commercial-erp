@@ -104,15 +104,18 @@ async function loadDailyDetail(admin: any, auth: any, group: any, states: any[],
       endDate: state.attendance_date,
     };
     const cacheKey = `${eligibility.organizationId}:${eligibility.companyId}:${eligibility.siteId}:${eligibility.startDate}:${eligibility.endDate}`;
-    const employeesPromise = eligibilityCache.get(cacheKey) || loadEligibleEmployees(admin, eligibility);
-    eligibilityCache.set(cacheKey, employeesPromise);
-    const [employees, attendance] = await Promise.all([employeesPromise, loadAttendanceRows(admin, {
+    const attendance = await loadAttendanceRows(admin, {
       organizationId: state.organization_id,
       companyId: state.company_id,
       siteId: state.site_id,
       startDate: state.attendance_date,
       endDate: state.attendance_date,
-    })]);
+    });
+    const employeesPromise = eligibilityCache.get(cacheKey) || loadEligibleEmployees(admin, eligibility, {
+      historicalEmployeeIds: attendance.map((row: any) => row.employee_id),
+    });
+    eligibilityCache.set(cacheKey, employeesPromise);
+    const employees = await employeesPromise;
     const attendanceByEmployee = new Map(attendance.map((row: any) => [row.employee_id, row]));
     const companyName = state.companies?.company_name || state.companies?.company_code || "Company";
     periods.push({ ...state, daily_submission_id: state.id, company_name: companyName, employee_count: employees.length, status_label: state.status, can_approve: state.status === "submitted", can_send_back: state.status === "submitted" });
@@ -162,10 +165,13 @@ export async function GET(request: Request) {
     const eligibilityCache = new Map<string, Promise<any[]>>();
     for (const group of groups) {
       const groupStates = states.filter((row: any) => row.organization_id === group.organization_id && row.site_id === group.site_id && row.attendance_date === group.attendance_date);
-      const counts = await Promise.all(groupStates.map((state: any) => {
+      const counts = await Promise.all(groupStates.map(async (state: any) => {
         const eligibility = { organizationId: state.organization_id, companyId: state.company_id, siteId: state.site_id, startDate: state.attendance_date, endDate: state.attendance_date };
         const cacheKey = `${eligibility.organizationId}:${eligibility.companyId}:${eligibility.siteId}:${eligibility.startDate}:${eligibility.endDate}`;
-        const employeesPromise = eligibilityCache.get(cacheKey) || loadEligibleEmployees(admin, eligibility);
+        const attendance = await loadAttendanceRows(admin, eligibility);
+        const employeesPromise = eligibilityCache.get(cacheKey) || loadEligibleEmployees(admin, eligibility, {
+          historicalEmployeeIds: attendance.map((row: any) => row.employee_id),
+        });
         eligibilityCache.set(cacheKey, employeesPromise);
         return employeesPromise.then((rows) => rows.length);
       }));

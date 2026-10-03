@@ -7,7 +7,7 @@ const approvalRoute = fs.readFileSync(new URL("../app/api/hr/attendance/approval
 
 assert.match(route, /accessibleDailyRows\(admin, auth, \["approved"\]\)/, "export is restricted to approved daily submissions");
 assert.match(route, /loadAttendanceRows\(admin, scope\)/, "export uses canonical employee attendance rows");
-assert.match(route, /loadEligibleEmployees\(admin, scope\)/, "export resolves employee-level rows through approval eligibility");
+assert.match(route, /loadEligibleEmployees\(admin, scope(?:, \{ historicalEmployeeIds: [^}]+ \})?\)/, "export resolves employee-level rows through approval eligibility");
 assert.match(route, /attendance_status/, "export accepts the employee attendance status filter");
 assert.match(route, /hasAttendanceApprovalPermission\(auth, "view"\)/, "export checks approval-page view authorization");
 assert.match(route, /writeBuffer\(\)/, "export produces an XLSX workbook");

@@ -147,14 +147,7 @@ export async function loadDetail(admin: any, auth: any, periodId: string) {
   if (!period) return { response: jsonError("Attendance approval package was not found or is not waiting for your approval.", 404) } as const;
 
   const dates = datesForMonth(period.period_month);
-  const [employees, attendanceRows, auditResult, enrichedList] = await Promise.all([
-    loadEligibleEmployees(admin, {
-      organizationId: period.organization_id,
-      companyId: period.company_id,
-      siteId: period.site_id,
-      startDate: dates[0],
-      endDate: dates[dates.length - 1],
-    }),
+  const [attendanceRows, auditResult, enrichedList] = await Promise.all([
     loadAttendanceRows(admin, {
       organizationId: period.organization_id,
       companyId: period.company_id,
@@ -170,6 +163,13 @@ export async function loadDetail(admin: any, auth: any, periodId: string) {
       .order("created_at", { ascending: true }),
     enrichPeriodRows(admin, [period]),
   ]);
+  const employees = await loadEligibleEmployees(admin, {
+    organizationId: period.organization_id,
+    companyId: period.company_id,
+    siteId: period.site_id,
+    startDate: dates[0],
+    endDate: dates[dates.length - 1],
+  }, { historicalEmployeeIds: attendanceRows.map((row: any) => row.employee_id) });
   if (auditResult.error) throw auditResult.error;
   const departmentIds = Array.from(new Set(employees.map((employee: any) => employee.department_id).filter(Boolean)));
   const designationIds = Array.from(new Set(employees.map((employee: any) => employee.designation_id).filter(Boolean)));

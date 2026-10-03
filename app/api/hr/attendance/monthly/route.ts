@@ -31,14 +31,16 @@ export async function GET(request: Request) {
     if (rejectedScope && "response" in rejectedScope) return rejectedScope.response;
     const organizationId = (scopes[0] as any).organizationId;
     const companyResults = await Promise.all(companyIds.map(async (companyId) => {
-      const [employees, attendanceRows, period, dayLocks, policy] = await Promise.all([
-        loadEligibleEmployees(admin, { organizationId, companyId, siteId: params.siteId, startDate: monthDates[0], endDate: monthDates[monthDates.length - 1] }),
+      const [attendanceRows, period, dayLocks, policy] = await Promise.all([
         loadAttendanceRows(admin, { organizationId, companyId, siteId: params.siteId, startDate: monthDates[0], endDate: monthDates[monthDates.length - 1] }),
         ensurePeriod(admin, auth, { organizationId, companyId, siteId: params.siteId, month: params.month }),
         admin.from("employee_attendance_day_locks").select("*").eq("organization_id", organizationId).eq("company_id", companyId).eq("site_id", params.siteId).gte("attendance_date", monthDates[0]).lte("attendance_date", monthDates[monthDates.length - 1]).eq("is_locked", true),
         loadEmployeeAttendancePolicyForScope(admin, { organizationId, siteId: params.siteId }),
       ]);
       if (dayLocks.error) throw dayLocks.error;
+      const employees = await loadEligibleEmployees(admin, { organizationId, companyId, siteId: params.siteId, startDate: monthDates[0], endDate: monthDates[monthDates.length - 1] }, {
+        historicalEmployeeIds: attendanceRows.map((row: any) => row.employee_id),
+      });
       return { employees, attendanceRows, period, dayLocks: dayLocks.data || [], policy };
     }));
     const employees = companyResults.flatMap((item) => item.employees);

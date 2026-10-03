@@ -25,10 +25,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const finalizeError = assertCanFinalizeMonth(period.period_month);
     if (finalizeError) return jsonError(finalizeError, 403);
     const dates = datesForMonth(period.period_month);
-    const [employees, rows] = await Promise.all([
-      loadEligibleEmployees(admin, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, startDate: dates[0], endDate: dates[dates.length - 1] }),
-      loadAttendanceRows(admin, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, startDate: dates[0], endDate: dates[dates.length - 1] }),
-    ]);
+    const rows = await loadAttendanceRows(admin, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, startDate: dates[0], endDate: dates[dates.length - 1] });
+    const employees = await loadEligibleEmployees(admin, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, startDate: dates[0], endDate: dates[dates.length - 1] }, {
+      historicalEmployeeIds: rows.map((row: any) => row.employee_id),
+    });
     const summary = { total_recorded: rows.length, missing: Math.max(0, employees.length * dates.length - rows.length) };
     const nextStatus = nextApprovedStatusForLevel(currentLevel, totalLevels);
     const { data, error } = await admin

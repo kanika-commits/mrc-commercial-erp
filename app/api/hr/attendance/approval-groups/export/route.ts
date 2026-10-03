@@ -59,11 +59,14 @@ export async function GET(request: Request) {
 
     for (const submission of approvedSubmissions) {
       const scope = { organizationId: submission.organization_id, companyId: submission.company_id, siteId: submission.site_id, startDate: submission.attendance_date, endDate: submission.attendance_date };
-      const [employees, attendance] = await Promise.all([loadEligibleEmployees(admin, scope), loadAttendanceRows(admin, scope)]);
+      const attendance = await loadAttendanceRows(admin, scope);
+      const employees = await loadEligibleEmployees(admin, scope, {
+        historicalEmployeeIds: attendance.map((row: any) => row.employee_id),
+      });
       const employeeById = new Map(employees.map((employee: any) => [employee.id, employee]));
       for (const day of attendance) {
         if (attendanceStatus && day.status !== attendanceStatus) continue;
-        const employee = employeeById.get(day.employee_id) || (await loadEligibleEmployees(admin, scope)).find((item: any) => item.id === day.employee_id);
+        const employee = employeeById.get(day.employee_id) || (await loadEligibleEmployees(admin, scope, { historicalEmployeeIds: [day.employee_id] })).find((item: any) => item.id === day.employee_id);
         if (!employee) continue;
         outputRows.push({
           Employee: employee.employee_name || employee.employee_code || "Employee",
