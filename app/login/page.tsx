@@ -20,9 +20,25 @@ function readableTextColor(background: string | null | undefined) {
   return luminance > 0.55 ? "#0f172a" : "#ffffff";
 }
 
+const MRC_LOGIN_HOSTNAME = "mrc.siteqube.com";
+const MRC_LOGIN_BRANDING: Partial<TenantBranding> = {
+  organizationName: "MRC Group",
+  logoUrl: "/branding/mrc-group-logo.png",
+  primaryColor: "#9b2428",
+  secondaryColor: "#741f24",
+};
+
+function isMrcLoginHost(hostname: string) {
+  return hostname.toLowerCase() === MRC_LOGIN_HOSTNAME;
+}
+
+function brandingForHost(hostname: string, branding: TenantBranding) {
+  return isMrcLoginHost(hostname) ? resolveTenantBranding({ ...branding, ...MRC_LOGIN_BRANDING }) : branding;
+}
+
 function fallbackBrandingForHost(hostname: string) {
-  return hostname.toLowerCase() === "mrc.siteqube.com"
-    ? resolveTenantBranding({ organizationName: "MRC Group" })
+  return isMrcLoginHost(hostname)
+    ? resolveTenantBranding({ ...defaultTenantBranding, ...MRC_LOGIN_BRANDING })
     : resolveTenantBranding(defaultTenantBranding);
 }
 
@@ -46,7 +62,7 @@ export default function LoginPage() {
       try {
         const response = await fetch("/api/branding", { credentials: "same-origin" });
         if (!response.ok) throw new Error("Branding unavailable");
-        const value = resolveTenantBranding(await response.json());
+        const value = brandingForHost(window.location.hostname, resolveTenantBranding(await response.json()));
         if (value.logoUrl) {
           await new Promise<void>((resolve, reject) => {
             const image = new Image();
@@ -101,25 +117,26 @@ export default function LoginPage() {
   }
 
   const resolvedPrimaryColor = branding.primaryColor || defaultTenantBranding.primaryColor!;
+  const isMrcLogin = isMrcLoginHost(window.location.hostname);
 
   return (
-    <main className="min-h-screen bg-slate-100 text-slate-950" style={{ "--tenant-primary": branding.primaryColor, "--tenant-secondary": branding.secondaryColor } as React.CSSProperties}>
+    <main className={`min-h-screen text-slate-950 ${isMrcLogin ? "bg-[#f7f3f1]" : "bg-slate-100"}`} style={{ "--tenant-primary": branding.primaryColor, "--tenant-secondary": branding.secondaryColor } as React.CSSProperties}>
       <div className="mx-auto flex min-h-screen max-w-[1480px] flex-col bg-white shadow-2xl lg:flex-row">
-        <section className="relative flex min-h-[360px] w-full flex-col justify-between overflow-hidden bg-[var(--tenant-secondary)] p-8 text-white sm:p-12 lg:min-h-screen lg:w-[46%] lg:p-16">
-          <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full border-[40px] border-white/5" aria-hidden="true" />
+        <section className={`relative flex min-h-[360px] w-full flex-col justify-between overflow-hidden bg-[var(--tenant-secondary)] p-8 text-white sm:p-12 lg:min-h-screen lg:p-16 ${isMrcLogin ? "lg:w-[44%]" : "lg:w-[46%]"}`}>
+          <div className={`absolute -right-24 -top-24 h-72 w-72 rounded-full border-[40px] ${isMrcLogin ? "border-white/10" : "border-white/5"}`} aria-hidden="true" />
           <div className="relative z-10">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-white/80">{branding.organizationName} workspace</p>
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-white/80">{isMrcLogin ? "MRC Group workspace" : `${branding.organizationName} workspace`}</p>
           </div>
           <div className="relative z-10 mt-12 max-w-lg">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-sky-200">Powered by SiteQube</p>
+            <p className={`text-sm font-semibold uppercase tracking-[0.2em] ${isMrcLogin ? "text-red-100" : "text-sky-200"}`}>Powered by SiteQube</p>
             <h1 className="mt-5 text-3xl font-semibold leading-tight sm:text-5xl">{branding.loginTagline}</h1>
             <p className="mt-6 max-w-md text-sm leading-6 text-slate-200">A focused workspace for the teams that keep every site moving.</p>
           </div>
-          <div className="relative z-10 mt-12 flex items-center gap-3 text-xs text-slate-300"><ShieldCheck className="h-4 w-4 text-sky-300" /> Secure workspace access</div>
+          <div className="relative z-10 mt-12 flex items-center gap-3 text-xs text-slate-300"><ShieldCheck className={`h-4 w-4 ${isMrcLogin ? "text-red-200" : "text-sky-300"}`} /> Secure workspace access</div>
         </section>
-        <section className="flex w-full items-center justify-center px-6 py-12 sm:px-12 lg:w-[54%] lg:px-20">
+        <section className={`flex w-full items-center justify-center px-6 py-12 sm:px-12 lg:px-20 ${isMrcLogin ? "lg:w-[56%]" : "lg:w-[54%]"}`}>
           <form onSubmit={handleLogin} className="w-full max-w-md space-y-6">
-            <div>{branding.logoUrl ? <img src={branding.logoUrl} alt={`${branding.organizationName} logo`} className="mb-5 max-h-20 max-w-[220px] object-contain object-left sm:max-h-24" /> : <span className="mb-5 flex h-14 w-14 items-center justify-center rounded-lg bg-[var(--tenant-primary)] text-lg font-bold tracking-wider">{initials(branding.organizationName)}</span>}<p className="text-sm font-bold uppercase tracking-[0.22em] text-[var(--tenant-primary)]">{branding.organizationName}</p><p className="mt-2 text-sm font-semibold text-slate-600">Powered by SiteQube</p><h2 className="mt-4 text-3xl font-semibold tracking-tight">Welcome back</h2><p className="mt-2 text-sm text-slate-500">Sign in to continue to your workspace.</p></div>
+            <div>{branding.logoUrl ? <div className={`mb-5 flex items-center ${isMrcLogin ? "h-24 w-44 sm:h-28 sm:w-52" : "h-auto w-auto"}`}><img src={branding.logoUrl} alt={`${branding.organizationName} logo`} className={`${isMrcLogin ? "max-h-full max-w-full" : "max-h-20 max-w-[220px] sm:max-h-24"} object-contain object-left`} /></div> : <span className="mb-5 flex h-14 w-14 items-center justify-center rounded-lg bg-[var(--tenant-primary)] text-lg font-bold tracking-wider">{initials(branding.organizationName)}</span>}<p className="text-sm font-bold uppercase tracking-[0.22em] text-[var(--tenant-primary)]">{branding.organizationName}</p><p className="mt-2 text-sm font-semibold text-slate-600">Powered by SiteQube</p><h2 className="mt-4 text-3xl font-semibold tracking-tight">Welcome back</h2><p className="mt-2 text-sm text-slate-500">Sign in to continue to your workspace.</p></div>
             {message && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{message}</div>}
             <div className="space-y-2"><label htmlFor="login-email" className="text-sm font-semibold text-slate-700">Email</label><input id="login-email" ref={emailInputRef} type="email" name="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} className="h-12 w-full rounded-lg border border-slate-300 px-4 text-sm outline-none transition placeholder:text-slate-400 focus:border-[var(--tenant-primary)] focus:ring-4 focus:ring-[var(--tenant-primary)]/10" placeholder="you@company.com" /></div>
             <div className="space-y-2"><label htmlFor="login-password" className="text-sm font-semibold text-slate-700">Password</label><div className="relative"><input id="login-password" ref={passwordInputRef} type={showPassword ? "text" : "password"} name="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className="h-12 w-full rounded-lg border border-slate-300 px-4 pr-12 text-sm outline-none transition focus:border-[var(--tenant-primary)] focus:ring-4 focus:ring-[var(--tenant-primary)]/10" /><button type="button" onClick={() => setShowPassword((current) => !current)} className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-2 text-slate-500 hover:bg-slate-100" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div></div>
