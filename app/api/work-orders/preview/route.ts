@@ -115,11 +115,11 @@ export async function POST(request: Request) {
       created_by: auth.user.id,
       created_by_name: auth.user.user_metadata?.full_name || auth.user.email,
       created_by_email: auth.user.email || null,
-      created_at_display: new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short" }).format(new Date()),
+      created_at_display: new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }).format(new Date()),
       work_order_key_terms: body.work_order_key_terms, standard_terms_snapshot: terms,
     }, await loadWorkOrderLetterheadAssets(authorized.letterheadSnapshot, authorized.letterheadSnapshot.id, authorized.company.id));
     const merged = supportingFiles.length ? await appendWorkOrderSupportingPdfs(rendered, supportingFiles) : rendered;
-    const combined = await addWorkOrderPackagePageNumbers(await addWorkOrderDraftWatermark(merged));
+    const combined = await addWorkOrderPackagePageNumbers(await addWorkOrderDraftWatermark(merged), { plain: true });
     return NextResponse.json({ pdf_base64: combined.toString("base64"), wo_number: text(body.wo_number), persisted: false, supporting_documents: supportingFiles.map((file) => file.name) });
   } catch (error: any) { return NextResponse.json({ error: error.message || "Could not generate Work Order preview." }, { status: 500 }); }
 }
