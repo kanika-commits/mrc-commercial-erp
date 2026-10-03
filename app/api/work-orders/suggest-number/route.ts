@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requirePermission } from "@/lib/serverPermissions";
 import { adminClient } from "@/lib/serverProcurementAccess";
-import { isInOrganizationScope, loadActorOrganizationScope, resolveWriteOrganizationIdForRequest } from "@/lib/serverOrganizationScope";
+import { isInOrganizationScope, loadActorOrganizationScope, resolveWriteOrganizationId } from "@/lib/serverOrganizationScope";
 
 const text = (value: unknown) => String(value ?? "").trim();
 
@@ -15,7 +15,7 @@ export async function GET(request: Request) {
 
   const admin = adminClient();
   const scope = await loadActorOrganizationScope(admin, auth);
-  const activeOrganizationId = await resolveWriteOrganizationIdForRequest(admin, scope, request);
+  const activeOrganizationId = resolveWriteOrganizationId(scope);
   const [{ data: company, error: companyError }, { data: site, error: siteError }] = await Promise.all([
     admin.from("companies").select("id,organization_id,company_code,status").eq("id", companyId).maybeSingle(),
     admin.from("sites").select("id,organization_id,company_id,site_code,status").eq("id", siteId).maybeSingle(),
