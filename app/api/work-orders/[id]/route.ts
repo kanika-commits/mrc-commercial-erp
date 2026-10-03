@@ -11,6 +11,7 @@ import {
   createWorkOrderDriveFolder,
   uploadDriveFile,
 } from "@/src/lib/googleDrive";
+import { syncPilotWorkOrderToDrive } from "@/lib/workOrderPilotDriveSync.server";
 
 const MODULE_CODE = "work_orders";
 const DOCUMENT_BUCKET = "work-order-documents";
@@ -1156,7 +1157,8 @@ export async function PATCH(
         console.error("[Commercial Audit] Work Order approval audit failed", auditError);
       }
 
-      return NextResponse.json({ work_order_id: id, approved: true });
+      const driveSync = await syncPilotWorkOrderToDrive(admin, id);
+      return NextResponse.json({ work_order_id: id, approved: true, drive_sync: driveSync });
     }
 
     if (["suspended", "suspend", "cancelled", "cancel", "rejected", "reject"].includes(action)) {
