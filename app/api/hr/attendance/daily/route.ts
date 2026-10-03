@@ -43,7 +43,7 @@ export async function GET(request: Request) {
     if (!dateAllowed.allowed) return jsonError(dateAllowed.error || "Attendance date cannot be loaded.", 403);
 
     const month = monthStart(params.attendanceDate)!;
-    const [employees, rows, period, dayLock, policy, dailySubmission] = await Promise.all([
+    let [employees, rows, period, dayLock, policy, dailySubmission] = await Promise.all([
       loadEligibleEmployees(admin, {
         organizationId: scope.organizationId,
         companyId: params.companyId,
