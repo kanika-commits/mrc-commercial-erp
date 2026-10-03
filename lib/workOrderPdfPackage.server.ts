@@ -16,12 +16,12 @@ export async function addWorkOrderDraftWatermark(pdfBytes: Buffer) {
   return Buffer.from(await pdf.save());
 }
 
-export async function addWorkOrderPackagePageNumbers(pdfBytes: Buffer) {
+export async function addWorkOrderPackagePageNumbers(pdfBytes: Buffer, options: { plain?: boolean } = {}) {
   const pdf = await PDFDocument.load(pdfBytes);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const total = pdf.getPageCount();
   pdf.getPages().forEach((page, index) => {
-    const label = `Package Page ${index + 1} of ${total}`;
+    const label = options.plain ? `${index + 1} of ${total}` : `Package Page ${index + 1} of ${total}`;
     const size = 7;
     const x = page.getWidth() - font.widthOfTextAtSize(label, size) - 24;
     // Keep the package marker above the letterhead footer/contact band and out of the document footer area.

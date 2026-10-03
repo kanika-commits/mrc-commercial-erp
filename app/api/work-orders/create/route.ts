@@ -10,7 +10,7 @@ const WORK_ORDER_TYPES = new Set(["Consultant", "Contractor (Labour)", "Contract
 const SUPPORTING_DOCUMENT_BUCKET = "work-order-documents";
 
 function supportingDocumentPath(workOrderId: string, index: number, fileName: string) {
-  const safeName = fileName.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "supporting-document.pdf";
+  const safeName = fileName.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "supporting-document";
   return `structured-pilot/${workOrderId}/${String(index + 1).padStart(4, "0")}-${safeName}`;
 }
 
@@ -117,7 +117,7 @@ export async function POST(request: Request) {
     for (const [index, file] of supportingFiles.entries()) {
       const filePath = supportingDocumentPath(workOrder.id, index, file.name);
       const bytes = Buffer.from(await file.arrayBuffer());
-      const { error: uploadError } = await admin.storage.from(SUPPORTING_DOCUMENT_BUCKET).upload(filePath, bytes, { contentType: "application/pdf", upsert: false });
+      const { error: uploadError } = await admin.storage.from(SUPPORTING_DOCUMENT_BUCKET).upload(filePath, bytes, { contentType: file.type || "application/octet-stream", upsert: false });
       if (uploadError) throw uploadError;
       uploadedSupportingPaths.push(filePath);
       const fileUrl = admin.storage.from(SUPPORTING_DOCUMENT_BUCKET).getPublicUrl(filePath).data.publicUrl;

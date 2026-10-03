@@ -10,7 +10,8 @@ const packageHelper = fs.readFileSync("lib/workOrderPdfPackage.server.ts", "utf8
 const renderer = fs.readFileSync("lib/workOrderPdfRenderer.server.ts", "utf8");
 
 assert.match(page, /Supporting Documents/);
-assert.match(page, /multiple accept="application\/pdf,\.pdf"/);
+assert.match(page, /<input type="file" multiple onChange/);
+assert.match(page, /Any file type is accepted/);
 assert.match(page, /supportingDocuments\.map/);
 assert.match(page, /setSupportingDocuments\(\(current\) => current\.filter/);
 assert.match(page, /previewForm\.append\("supporting_documents"/);
@@ -38,8 +39,10 @@ assert.doesNotMatch(preview, /\.from\("work_order_documents"\)/);
 assert.match(helper, /for \(const file of files\)/);
 assert.match(helper, /output\.copyPages\(source, source\.getPageIndices\(\)\)/);
 assert.match(helper, /output\.addPage\(page\)/);
-assert.match(helper, /Only PDF files can be added/);
-assert.match(packageHelper, /Package Page \$\{index \+ 1\} of \$\{total\}/);
+assert.match(helper, /imageFormat/);
+assert.match(helper, /Supporting attachment/);
+assert.match(helper, /original file is attached/);
+assert.match(packageHelper, /options\.plain \? `\$\{index \+ 1\} of \$\{total\}`/);
 assert.match(packageHelper, /pdf\.getPageCount\(\)/);
 assert.match(packageHelper, /const y = Math\.min\(page\.getHeight\(\) - 24, 110\)/);
 assert.match(packageHelper, /page\.drawText\("DRAFT"/);
