@@ -129,6 +129,11 @@ const pageMeta: Record<
     className: "from-amber-50 to-white border-amber-100 text-amber-700",
     description: "Create and manage work orders.",
   },
+  work_order_pdf_pilot: {
+    icon: FileText,
+    className: "from-sky-50 to-white border-sky-100 text-sky-700",
+    description: "Create a Work Order using the structured form and preview its PDF.",
+  },
   wo_approval: {
     icon: CheckCircle2,
     className: "from-green-50 to-white border-green-100 text-green-700",
@@ -247,6 +252,17 @@ export default function ModulePage({
         module_name: "Purchase Orders",
         route: "/purchase/purchase-orders",
         sort_order: 40,
+      });
+      moduleRows.sort((first, second) => first.sort_order - second.sort_order);
+    }
+    if (groupCode === "purchase" && (globalAccess || can(permissions, "work_orders", "view")) && !moduleRows.some((page) => page.route === "/work-orders/new/structured")) {
+      moduleRows.push({
+        id: "purchase-work-order-pdf-pilot",
+        module_group: "purchase",
+        module_code: "work_orders",
+        module_name: "Work Order PDF Pilot",
+        route: "/work-orders/new/structured",
+        sort_order: 30.5,
       });
       moduleRows.sort((first, second) => first.sort_order - second.sort_order);
     }
