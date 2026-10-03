@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requirePermission } from "@/lib/serverPermissions";
-import { adminClient } from "@/lib/serverProcurementAccess";
+import { adminClient, hasGlobalProcurementAccess } from "@/lib/serverProcurementAccess";
 import { isInOrganizationScope, loadActorOrganizationScope, resolveWriteOrganizationId } from "@/lib/serverOrganizationScope";
 import { validateWorkOrderSupportingFiles } from "@/lib/workOrderSupportingDocuments.server";
 
@@ -52,7 +52,11 @@ export async function POST(request: Request) {
     const company = companyResult.data, site = siteResult.data, vendor = vendorResult.data;
     if (!company || !site || !vendor) return NextResponse.json({ error: "Selected company, site, or vendor was not found." }, { status: 404 });
     const activeOrganizationId = resolveWriteOrganizationId(scope);
-    if (!activeOrganizationId || !isInOrganizationScope(scope, company.organization_id) || company.organization_id !== activeOrganizationId || company.organization_id !== site.organization_id || company.organization_id !== vendor.organization_id || (site.company_id && site.company_id !== company.id)) return NextResponse.json({ error: "Selected records are outside the active authorized organization scope." }, { status: 403 });
+    const access: any = auth;
+    const globalAccess = hasGlobalProcurementAccess(auth);
+    const companyAllowed = globalAccess || (access.companies || []).length === 0 || access.companies.includes(company.id);
+    const siteAllowed = globalAccess || (access.sites || []).length === 0 || access.sites.includes(site.id);
+    if (!activeOrganizationId || !isInOrganizationScope(scope, company.organization_id) || company.organization_id !== activeOrganizationId || company.organization_id !== site.organization_id || company.organization_id !== vendor.organization_id || !companyAllowed || !siteAllowed) return NextResponse.json({ error: "Selected records are outside the active authorized organization scope." }, { status: 403 });
     const { data: vendorContacts, error: vendorContactsError } = await admin.from("vendor_contacts").select("id,contact_name,contact_number,email,designation,is_primary").eq("organization_id", company.organization_id).eq("vendor_id", vendor.id).order("is_primary", { ascending: false }).order("created_at");
     if (vendorContactsError) throw vendorContactsError;
     const masterSelection = body.master_selection || {};
