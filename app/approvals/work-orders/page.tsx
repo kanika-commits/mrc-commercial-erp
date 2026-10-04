@@ -243,6 +243,25 @@ export default function WorkOrderApprovalPage() {
     window.open(document.signed_url, "_blank", "noopener,noreferrer");
   }
 
+  async function openReviewPdf(workOrder: any) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Your session expired. Please log in again.");
+      const response = await fetch(`/api/work-orders/${workOrder.id}/generated-pdf`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || "Unable to generate the Work Order review PDF.");
+      }
+      const url = URL.createObjectURL(await response.blob());
+      window.open(url, "_blank", "noopener,noreferrer");
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error: any) {
+      setMessage(error.message || "Unable to open the Work Order review PDF.");
+    }
+  }
+
   function updateEditRow(workOrderId: string, field: string, value: string) {
     setEditRows((prev) => ({
       ...prev,
@@ -538,6 +557,17 @@ export default function WorkOrderApprovalPage() {
                       </td>
 
                       <td className="px-4 py-5">
+                        <div className="space-y-2">
+                        {wo.creation_request_id && (
+                          <button
+                            type="button"
+                            onClick={() => openReviewPdf(wo)}
+                            className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 hover:underline"
+                          >
+                            Review Work Order PDF
+                            <ExternalLink className="h-3 w-3" />
+                          </button>
+                        )}
                         {currentDocuments.length === 0 ? (
                           <div className="flex justify-center">
                             <span className="inline-flex items-center gap-1 text-xs text-slate-400">
@@ -567,6 +597,7 @@ export default function WorkOrderApprovalPage() {
                             ))}
                           </div>
                         )}
+                        </div>
                       </td>
 
                       <td className="px-4 py-5 text-center">
