@@ -53,7 +53,8 @@ export async function GET(request: Request) {
             created_by_name,
             created_by_email,
             created_at,
-            approved_at
+            approved_at,
+            creation_request_id
           `,
         )
         .or("approval_status.is.null,approval_status.ilike.pending,approval_status.ilike.draft")
