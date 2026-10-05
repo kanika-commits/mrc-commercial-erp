@@ -31,6 +31,7 @@ export async function GET(request: Request) {
     const params = parseDailyParams(request.url);
     if ("error" in params) return jsonError(String(params.error), 400);
     const attendanceDate = params.attendanceDate;
+    if (!attendanceDate) return jsonError("Valid attendance date is required.", 400);
     const admin = adminClient();
     const scope = await validateCompanySiteScope(admin, auth, params.companyId, params.siteId);
     if ("response" in scope) return scope.response;
