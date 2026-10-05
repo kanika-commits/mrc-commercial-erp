@@ -3,6 +3,7 @@ import fs from "node:fs";
 
 const migration = fs.readFileSync("supabase/migrations/202609190001_procurement_po_draft_item_set_reconciliation.sql", "utf8");
 const page = fs.readFileSync("app/purchase/purchase-orders/new/page.tsx", "utf8");
+const updateRoute = fs.readFileSync("app/api/procurement/purchase-orders/[id]/route.ts", "utf8");
 const route = fs.readFileSync("app/api/procurement/purchase-orders/[id]/route.ts", "utf8");
 const fn = migration.slice(migration.indexOf("create or replace function"), migration.indexOf("revoke all on function"));
 
@@ -180,4 +181,18 @@ typed = "";
 assert.equal(editorValue({ description: typed, specification: "Keep this text" }), "");
 typed = "Replacement specification";
 assert.equal(editorValue({ description: typed, specification: "Keep this text" }), "Replacement specification");
+
+// Round-trip regression: the editor may carry a stale legacy specification
+// beside its current description. The API must canonicalize the current value
+// before the RPC/database mapping and reload it from specification_snapshot.
+assert.match(updateRoute, /function normalizePurchaseOrderItems/);
+assert.match(updateRoute, /specification: description \?\? specification \?\? ""/);
+const normalizeForRpc = ({ description, specification, ...rest }) => ({ ...rest, specification: description ?? specification ?? "" });
+const persistAndReload = (row) => ({ description: row.specification || null, specification: row.specification || null });
+const firstSaved = persistAndReload(normalizeForRpc({ description: "Initial spec", specification: "stale legacy spec" }));
+assert.equal(firstSaved.description, "Initial spec");
+const editedSaved = persistAndReload(normalizeForRpc({ ...firstSaved, description: "Edited once", specification: firstSaved.specification }));
+assert.equal(editedSaved.description, "Edited once");
+assert.equal(editedSaved.specification, "Edited once");
+assert.equal(persistAndReload(normalizeForRpc({ description: undefined, specification: "Legacy-only spec" })).description, "Legacy-only spec");
 console.log("Purchase Order draft item reconciliation contract passed.");

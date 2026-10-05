@@ -1,8 +1,15 @@
 import { NextResponse } from "next/server";
 import { adminClient, applyCompanySiteAccess, applyOrganizationAccess, jsonError, requireProcurementPermission, text, validateOrganizationSiteAccess } from "@/lib/serverProcurementAccess";
 import { createPrivateStorageAdapter } from "@/lib/storage/privateStorage";
+import { attachCurrentSendBackComments } from "@/lib/procurement/poSendBackPresentation";
 
 const MODULE = "procurement_purchase_orders";
+function normalizePurchaseOrderItems(items: any[]) {
+  return items.map((item) => {
+    const { description, specification, ...rest } = item || {};
+    return { ...rest, specification: description ?? specification ?? "" };
+  });
+}
 function actor(auth: any) { return { user_id: auth.user.id, name: text(auth.user.user_metadata?.full_name || auth.user.user_metadata?.name || auth.user.email), email: auth.user.email || null }; }
 function normalizeAdditionalCharges(value: unknown) {
   if (!Array.isArray(value)) return { charges: [], error: null };
@@ -29,7 +36,21 @@ export async function GET(request: Request) {
     if (text(params.get("from_date"))) query = query.gte("po_date", text(params.get("from_date")));
     if (text(params.get("to_date"))) query = query.lte("po_date", text(params.get("to_date")));
     const { data, error } = await query; if (error) throw error;
-    const purchaseOrders = data || [];
+    const allPurchaseOrders = data || [];
+    const families = new Map<string, any[]>();
+    for (const row of allPurchaseOrders) { const key = row.revision_family_id || row.id; families.set(key, [...(families.get(key) || []), row]); }
+    let purchaseOrders = [...families.values()].map((family) => { const open = family.filter((row) => ["draft", "pending_approval", "sent_back"].includes(row.status)).sort((a, b) => Number(b.revision_no || 0) - Number(a.revision_no || 0))[0]; const effective = family.filter((row) => ["approved", "issued"].includes(row.status) && !row.superseded_by_revision_id).sort((a, b) => Number(b.revision_no || 0) - Number(a.revision_no || 0))[0]; const selected = open || effective || [...family].sort((a, b) => Number(b.revision_no || 0) - Number(a.revision_no || 0))[0]; return selected ? { ...selected, revision_indicator: open ? "Revision in Progress" : effective ? "Current" : "Historical", revision_family_rows: family } : null; }).filter(Boolean);
+    const currentSentBackIds = purchaseOrders.filter((row: any) => row.status === "sent_back").map((row: any) => row.id);
+    if (currentSentBackIds.length) {
+      const sendBackEvents = await admin.from("procurement_purchase_order_events")
+        .select("id,purchase_order_id,event_type,event_note,created_at")
+        .in("purchase_order_id", currentSentBackIds)
+        .eq("event_type", "send_back")
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false });
+      if (sendBackEvents.error) throw sendBackEvents.error;
+      purchaseOrders = attachCurrentSendBackComments(purchaseOrders, sendBackEvents.data || []);
+    }
     const approvedIds = purchaseOrders.filter((row: any) => ["approved", "issued"].includes(row.status)).map((row: any) => row.id);
     if (approvedIds.length) {
       const signedDocumentOrganizationIds = [...new Set(purchaseOrders.filter((row: any) => approvedIds.includes(row.id)).map((row: any) => row.organization_id).filter(Boolean))];
@@ -77,7 +98,7 @@ export async function POST(request: Request) {
     const vendor = await admin.from("vendors").select("id,organization_id,vendor_name,address,pan,gstin,status,is_deleted").eq("id", selectedVendorId).eq("organization_id", organizationId).maybeSingle();
     if (vendor.error) throw vendor.error; if (!vendor.data || vendor.data.status === "deleted" || vendor.data.is_deleted) return jsonError("Vendor is invalid for the selected organization.", 400);
     if (!text(vendor.data.address)) return jsonError("Vendor Address is required before creating the Purchase Order.", 400);
-    const items = Array.isArray(body.items) ? body.items : [];
+    const items = normalizePurchaseOrderItems(Array.isArray(body.items) ? body.items : []);
     if (!items.length) return jsonError("At least one Purchase Order item is required.", 400);
     if (items.some((item: any) => !text(item.item_name) || Number(item.quantity) <= 0 || !Number.isFinite(Number(item.quantity)) || Number(item.unit_rate || 0) < 0 || Number(item.gst_rate || 0) < 0)) return jsonError("Each item needs a name, positive quantity, non-negative rate and valid GST.", 400);
     const additional = normalizeAdditionalCharges(body.commercial?.additional_charges);
