@@ -169,4 +169,15 @@ assert.equal(gst, 180);
 assert.equal(subtotal + gst, 1280);
 assert.match(fn, /if not found then\s+raise exception 'Only a Draft or Sent Back Purchase Order can be edited.'/i);
 assert.match(fn, /gri\.purchase_order_item_id = v_deleted\.id/); // DB FK remains unchanged and restrictive.
+// The controlled editor must preserve an intentionally empty current value;
+// `||` would resurrect the stale legacy specification after Backspace.
+assert.match(page, /value=\{item\.description \?\? item\.specification \?\? ""\}/);
+const editorValue = ({ description, specification }) => description ?? specification ?? "";
+let typed = "Keep this text";
+for (let index = 0; index < " text".length; index += 1) typed = typed.slice(0, -1);
+assert.equal(editorValue({ description: typed, specification: "Keep this text" }), "Keep this");
+typed = "";
+assert.equal(editorValue({ description: typed, specification: "Keep this text" }), "");
+typed = "Replacement specification";
+assert.equal(editorValue({ description: typed, specification: "Keep this text" }), "Replacement specification");
 console.log("Purchase Order draft item reconciliation contract passed.");

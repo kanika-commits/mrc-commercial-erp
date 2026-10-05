@@ -66,6 +66,11 @@ function fileSize(value: number) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function retainSelectedLookupOption(options: any[], id: string, labelKey: string, label: string) {
+  if (!id || options.some((option) => option.id === id)) return options;
+  return [{ id, [labelKey]: label || id }, ...options];
+}
+
 export default function NewPurchaseOrderPage() {
   const { access } = useAccessContext();
   const router = useRouter();
@@ -96,7 +101,9 @@ export default function NewPurchaseOrderPage() {
   const [keyTerms, setKeyTerms] = useState([{ description: "Price Validity", terms: "" }, { description: "Freight", terms: "" }, { description: "Delivery Timeline", terms: "" }, { description: "Payment Terms", terms: "" }]);
   const [message, setMessage] = useState("");
   const errorRef = useRef<HTMLDivElement>(null);
-  const [loading, setLoading] = useState(true);
+  const [lookupLoading, setLookupLoading] = useState(true);
+  const [draftLoading, setDraftLoading] = useState(Boolean(editId));
+  const loading = lookupLoading || draftLoading;
   const [saving, setSaving] = useState(false);
   const [customDelivery, setCustomDelivery] = useState(false);
   const [materialOpenIndex, setMaterialOpenIndex] = useState<number | null>(null);
@@ -110,6 +117,10 @@ export default function NewPurchaseOrderPage() {
   const [existingDocuments, setExistingDocuments] = useState<any[]>([]);
   const [removingDocumentId, setRemovingDocumentId] = useState<string | null>(null);
   const [editablePoStatus, setEditablePoStatus] = useState<string | null>(null);
+  const [revisionNo, setRevisionNo] = useState<number | null>(null);
+  const [previousRevisionNumber, setPreviousRevisionNumber] = useState("");
+  const revisionIdentityRef = useRef<{ source: Source; companyId: string; siteId: string; vendorId: string; requisitionId: string } | null>(null);
+  const draftLookupSelectionRef = useRef<{ companyId: string; siteId: string; vendorId: string }>({ companyId: "", siteId: "", vendorId: "" });
   const [createdPoId, setCreatedPoId] = useState<string | null>(null);
   const [creationRequestId] = useState(() => crypto.randomUUID());
   const previousCompanyIdRef = useRef(companyId);
@@ -124,11 +135,23 @@ export default function NewPurchaseOrderPage() {
     }).catch((error) => setMessage(error.message || "Vendor was created, but the Vendor list could not be refreshed."));
   };
 
+  const mergeDraftLookupOptions = (nextLookups: any, draft: any) => ({
+    ...nextLookups,
+    companies: retainSelectedLookupOption(nextLookups.companies || [], draft.company_id, "company_name", draft.company?.company_name),
+    sites: retainSelectedLookupOption(nextLookups.sites || [], draft.site_id, "site_name", draft.site?.site_name),
+    vendors: retainSelectedLookupOption(nextLookups.vendors || [], draft.vendor_id, "vendor_name", draft.vendor_name_snapshot),
+  });
+
   useEffect(() => {
     apiFetch("/api/procurement/purchase-orders/lookups")
-      .then(setLookups)
+      .then((nextLookups) => setLookups((current) => ({
+        ...nextLookups,
+        companies: retainSelectedLookupOption(nextLookups.companies || [], draftLookupSelectionRef.current.companyId, "company_name", ""),
+        sites: retainSelectedLookupOption(nextLookups.sites || [], draftLookupSelectionRef.current.siteId, "site_name", ""),
+        vendors: retainSelectedLookupOption(nextLookups.vendors || [], draftLookupSelectionRef.current.vendorId, "vendor_name", ""),
+      })))
       .catch((error) => setMessage(error.message || "Failed to load Purchase Order options."))
-      .finally(() => setLoading(false));
+      .finally(() => setLookupLoading(false));
   }, []);
 
   useEffect(() => {
@@ -137,7 +160,13 @@ export default function NewPurchaseOrderPage() {
       const po = result.purchase_order;
       if (po.status !== "draft" && po.status !== "sent_back") throw new Error("Only editable Draft Purchase Orders can be opened here.");
       setEditablePoStatus(po.status);
+      setRevisionNo(Number(po.revision_no || 0) > 0 ? Number(po.revision_no) : null);
+      setPreviousRevisionNumber(po.previous_revision_id ? String((result.revision_history || []).find((candidate: any) => candidate.id === po.previous_revision_id)?.po_number || "Previous revision") : "");
       const nextSource = ["direct", "indent"].includes(po.source_type) ? po.source_type as Source : "direct";
+      revisionIdentityRef.current = { source: nextSource, companyId: po.company_id || "", siteId: po.site_id || "", vendorId: po.vendor_id || "", requisitionId: po.source_requisition_id || "" };
+      previousCompanyIdRef.current = po.company_id || "";
+      draftLookupSelectionRef.current = { companyId: po.company_id || "", siteId: po.site_id || "", vendorId: po.vendor_id || "" };
+      setLookups((current) => mergeDraftLookupOptions(current, po));
       setSource(nextSource);
       setCompanyId(po.company_id || ""); setSiteId(po.site_id || ""); setVendorId(po.vendor_id || ""); setPoDate(po.po_date || today());
       setDelivery(po.delivery_snapshot || {}); setCommercial(po.commercial_snapshot || {});
@@ -154,9 +183,19 @@ export default function NewPurchaseOrderPage() {
       originalPersistedItemContentRef.current = persistedItemSetKey(po.items || []);
       setItems((po.items || []).map(itemFromPersistedRow));
       setExistingDocuments(documentResult.documents || []);
-      setLoading(false);
-    }).catch((error) => { setMessage(error.message || "Failed to load the Draft Purchase Order."); setLoading(false); });
+      setDraftLoading(false);
+    }).catch((error) => { setMessage(error.message || "Failed to load the Draft Purchase Order."); setDraftLoading(false); });
   }, [editId]);
+
+  useEffect(() => {
+    if (!revisionNo || draftLoading) return;
+    const section = [...document.querySelectorAll("section")].find((candidate) => candidate.querySelector("h2")?.textContent?.trim() === "Basic Details");
+    const controls = section ? [...section.querySelectorAll("select")] as HTMLSelectElement[] : [];
+    const vendorIndex = controls.length > 3 ? 3 : 2;
+    const locked = [controls[0], controls[1], controls[vendorIndex]].filter(Boolean);
+    locked.forEach((control) => { control.disabled = true; control.setAttribute("aria-readonly", "true"); });
+    return () => locked.forEach((control) => { control.disabled = false; control.removeAttribute("aria-readonly"); });
+  }, [revisionNo, draftLoading]);
 
   useEffect(() => {
     if (!editId || !lookups.items?.length) return;
@@ -205,33 +244,37 @@ export default function NewPurchaseOrderPage() {
   const selectedLetterhead = (lookups.letterheads || []).find((row: any) => row.company_id === companyId);
   const deliveryAddressFor = (row: any) => [row?.address_line1, row?.address_line2, row?.city, row?.state, row?.pincode].filter(Boolean).join(", ") || row?.address || "";
   const deliveryCompanyName = (row: any) => row?.company?.company_name || lookups.companies.find((company: any) => company.id === row?.company_id)?.company_name || "";
-  const selectedGstBilling = gstBillingMasters.find((row: any) => row.id === gstRegistrationId) || (gstBillingMasters.length === 1 ? gstBillingMasters[0] : null);
+  const selectedGstBilling = gstBillingMasters.find((row: any) => row.id === gstRegistrationId) || (!gstRegistrationId && gstBillingMasters.length === 1 ? gstBillingMasters[0] : null);
   const selectedBilling = selectedGstBilling?.billing_address || null;
-  const deliveryLocations = (lookups.delivery_locations || []).filter((row: any) => row.billing_address_id === selectedBilling?.id && row.site_id === siteId && row.status === "active").sort((a: any, b: any) => Number(b.is_default) - Number(a.is_default) || String(a.location_name || "").localeCompare(String(b.location_name || "")));
-  const defaultDeliveryLocation = deliveryLocations.find((row: any) => row.is_default) || (deliveryLocations.length === 1 ? deliveryLocations[0] : null);
+  const deliveryLocations = (lookups.delivery_locations || []).filter((row: any) => row.billing_address_id === selectedBilling?.id && row.site_id === siteId && row.status === "active").sort((a: any, b: any) => String(a.location_name || "").localeCompare(String(b.location_name || "")));
+  const defaultDeliveryLocation = deliveryLocations.length === 1 ? deliveryLocations[0] : null;
   const selectedDeliveryLocation = deliveryLocations.find((row: any) => row.id === deliveryLocationId) || defaultDeliveryLocation;
   const siteContacts = (lookups.site_contacts || []).filter((row: any) => row.site_id === siteId && row.status === "active").sort((a: any, b: any) => Number(b.is_default) - Number(a.is_default) || String(a.contact_name || "").localeCompare(String(b.contact_name || "")));
   const defaultSiteContact = siteContacts.find((row: any) => row.is_default) || (siteContacts.length === 1 ? siteContacts[0] : null);
   const selectedDeliveryContact = siteContacts.find((row: any) => row.id === deliveryContactId) || defaultSiteContact;
   const selectedBillingContact = siteContacts.find((row: any) => row.id === billingContactId) || defaultSiteContact;
+  const revisionIdentityLocked = Boolean(revisionNo);
   useEffect(() => {
-    setGstRegistrationId((current) => gstBillingMasters.some((row: any) => row.id === current) ? current : gstBillingMasters.length === 1 ? gstBillingMasters[0].id : "");
-  }, [companyId, gstBillingMasters.length]);
+    if (lookupLoading) return;
+    setGstRegistrationId((current) => current || (gstBillingMasters.length === 1 ? gstBillingMasters[0].id : ""));
+  }, [companyId, gstBillingMasters.length, lookupLoading]);
   useEffect(() => {
-    if (!siteId) {
+    if (lookupLoading || !siteId) {
+      if (lookupLoading) return;
       setDeliveryContactId("");
       return;
     }
-    setDeliveryContactId((current) => siteContacts.some((row: any) => row.id === current) ? current : defaultSiteContact?.id || "");
-    setBillingContactId((current) => siteContacts.some((row: any) => row.id === current) ? current : defaultSiteContact?.id || "");
-  }, [siteId, defaultSiteContact?.id, siteContacts.length]);
+    setDeliveryContactId((current) => current || defaultSiteContact?.id || "");
+    setBillingContactId((current) => current || defaultSiteContact?.id || "");
+  }, [siteId, defaultSiteContact?.id, siteContacts.length, lookupLoading]);
   useEffect(() => {
-    if (!siteId) {
+    if (lookupLoading || !siteId) {
+      if (lookupLoading) return;
       setDeliveryLocationId("");
       return;
     }
-    setDeliveryLocationId((current) => deliveryLocations.some((row: any) => row.id === current) ? current : defaultDeliveryLocation?.id || "");
-  }, [siteId, defaultDeliveryLocation?.id, deliveryLocations.length]);
+    setDeliveryLocationId((current) => current || defaultDeliveryLocation?.id || "");
+  }, [siteId, defaultDeliveryLocation?.id, deliveryLocations.length, lookupLoading]);
   useEffect(() => {
     setDelivery((current) => ({ ...current, location: selectedDeliveryLocation?.location_name || "", address: selectedDeliveryLocation ? deliveryAddressFor(selectedDeliveryLocation) : "" }));
   }, [selectedDeliveryLocation?.id]);
@@ -239,8 +282,8 @@ export default function NewPurchaseOrderPage() {
     setVendorCompletion({ address: "", gstin: "", phone: "", email: "", contact_name: "" });
     setVendorFeedback(null);
   }, [vendorId]);
-  const companyTerms = (lookups.terms_templates || []).filter((row: any) => row.company_id === companyId && row.status === "active");
-  const selectedTerms = companyTerms.find((row: any) => row.id === termsTemplateId) || companyTerms.sort((a: any, b: any) => Number(b.is_default) - Number(a.is_default))[0];
+  const companyTerms = useMemo(() => (lookups.terms_templates || []).filter((row: any) => row.company_id === companyId && row.status === "active"), [lookups.terms_templates, companyId]);
+  const selectedTerms = companyTerms.find((row: any) => row.id === termsTemplateId) || null;
   useEffect(() => {
     if (previousCompanyIdRef.current !== companyId) {
       setTermsTemplateId("");
@@ -249,11 +292,14 @@ export default function NewPurchaseOrderPage() {
     previousCompanyIdRef.current = companyId;
   }, [companyId]);
   useEffect(() => {
-    setTermsTemplateId(companyTerms.find((row: any) => row.is_default)?.id || companyTerms[0]?.id || "");
+    if (lookupLoading) return;
+    setTermsTemplateId((current) => current || companyTerms.find((row: any) => row.is_default)?.id || companyTerms[0]?.id || "");
+  }, [companyTerms, lookupLoading]);
+  useEffect(() => {
     if (!selectedTerms || standardTerms.trim()) return;
     const clauses = (selectedTerms.sections || []).filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order).map((section: any) => `${section.heading}\n${section.clause_body}`).join("\n\n");
     if (clauses) setStandardTerms(clauses);
-  }, [selectedTerms, standardTerms]);
+  }, [selectedTerms]);
   const indents = useMemo(() => {
     if (!companyId || !siteId) return [];
     return lookups.indents.filter((row: any) => row.company_id === companyId && row.site_id === siteId);
@@ -272,7 +318,8 @@ export default function NewPurchaseOrderPage() {
     }
     indentContextRef.current = { companyId, siteId };
   }, [companyId, siteId, source]);
-  const totals = useMemo(() => { const itemTotals = items.reduce((result, item) => { const taxable = Number(item.quantity || 0) * Number(item.unit_rate || 0); const gst = taxable * Number(item.gst_rate || 0) / 100; return { taxable: result.taxable + taxable, gst: result.gst + gst }; }, { taxable: 0, gst: 0 }); const additional = additionalCharges.reduce((sum, charge) => sum + Math.max(0, Number(charge.amount || 0)), 0); return { ...itemTotals, additional, total: itemTotals.taxable + additional + itemTotals.gst }; }, [items, additionalCharges]);
+  const explicitCharges = additionalCharges.filter((charge) => Number(charge.amount) > 0);
+  const totals = useMemo(() => { const itemTotals = items.reduce((result, item) => { const taxable = Number(item.quantity || 0) * Number(item.unit_rate || 0); const gst = taxable * Number(item.gst_rate || 0) / 100; return { taxable: result.taxable + taxable, gst: result.gst + gst }; }, { taxable: 0, gst: 0 }); const charges = explicitCharges.reduce((sum, charge) => sum + Number(charge.amount), 0); return { ...itemTotals, charges, total: itemTotals.taxable + itemTotals.gst + charges }; }, [items, explicitCharges]);
 
   function chooseIndent(line: any) {
     setSelectedIndentId(line.requisition_id);
@@ -464,11 +511,11 @@ export default function NewPurchaseOrderPage() {
     finally { setSaving(false); }
   }
 
-  if (loading) return <p className="text-sm text-slate-500">Loading Purchase Order options...</p>;
+  if (draftLoading) return <p className="text-sm text-slate-500">Loading Draft Purchase Order...</p>;
   return <section className="mx-auto max-w-[1500px] space-y-5 pb-12">
-    <header className="flex flex-wrap items-start justify-between gap-4"><div><Link href={editId ? `/purchase/purchase-orders/${editId}` : "/purchase/purchase-orders"} className="text-sm text-slate-500">← {editId ? "Purchase Order" : "Purchase Orders"}</Link><p className="mt-3 text-xs font-semibold uppercase tracking-widest text-amber-700">Purchase</p><h1 className="text-3xl font-bold text-slate-950">{editId ? "Edit Draft Purchase Order" : "Create Purchase Order"}</h1><p className="text-sm text-slate-500">{editId ? "Update the existing Draft Purchase Order." : "Create a simple draft from a direct purchase or approved Material Indent."}</p></div></header>
+    <header className="flex flex-wrap items-start justify-between gap-4"><div><Link href={editId ? `/purchase/purchase-orders/${editId}` : "/purchase/purchase-orders"} className="text-sm text-slate-500">← {editId ? "Purchase Order" : "Purchase Orders"}</Link><p className="mt-3 text-xs font-semibold uppercase tracking-widest text-amber-700">Purchase</p><h1 className="text-3xl font-bold text-slate-950">{revisionNo ? `Revision R-${revisionNo}` : editId ? "Edit Draft Purchase Order" : "Create Purchase Order"}</h1><p className="text-sm text-slate-500">{revisionNo ? `Previous Revision: ${previousRevisionNumber}` : editId ? "Update the existing Draft Purchase Order." : "Create a simple draft from a direct purchase or approved Material Indent."}</p></div></header>
     {message && <div ref={errorRef} className="scroll-mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert"><div className="flex items-start justify-between gap-3"><div>{message}{createdPoId && <p className="mt-2"><Link className="font-semibold underline" href={`/purchase/purchase-orders/${createdPoId}`}>Open the draft to retry attachments.</Link></p>}</div><button type="button" aria-label="Dismiss error" onClick={() => setMessage("")} className="shrink-0 text-lg font-semibold leading-none text-red-700" title="Dismiss error">×</button></div></div>}
-    <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">PO Source</h2><div className="mt-4 grid gap-3 md:grid-cols-3">{(Object.keys(sourceLabels) as Source[]).map((value) => <button type="button" key={value} onClick={() => changeSource(value)} className={`rounded-xl border p-4 text-left ${source === value ? "border-slate-950 bg-slate-50" : "border-slate-200"}`}><p className="font-semibold">{sourceLabels[value]}</p><p className="mt-1 text-xs text-slate-500">{value === "direct" ? "Create manually without an upstream document." : "Use an approved requirement with remaining quantity."}</p></button>)}</div></section>
+    {revisionNo ? <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h2 className="font-semibold">Revision identity</h2><div className="mt-4 grid gap-4 md:grid-cols-4 text-sm"><div><b>Source Type</b><p>{sourceLabels[source]}</p></div><div><b>Company</b><p>{lookups.companies.find((row: any) => row.id === companyId)?.company_name || companyId}</p></div><div><b>Site</b><p>{sites.find((row: any) => row.id === siteId)?.site_name || siteId}</p></div><div><b>Vendor</b><p>{selectedVendor?.vendor_name || vendorId}</p></div></div><p className="mt-3 text-xs text-amber-900">Company, site, vendor and source identity are locked for this revision.</p></section> : <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">PO Source</h2><div className="mt-4 grid gap-3 md:grid-cols-3">{(Object.keys(sourceLabels) as Source[]).map((value) => <button type="button" key={value} onClick={() => changeSource(value)} className={`rounded-xl border p-4 text-left ${source === value ? "border-slate-950 bg-slate-50" : "border-slate-200"}`}><p className="font-semibold">{sourceLabels[value]}</p><p className="mt-1 text-xs text-slate-500">{value === "direct" ? "Create manually without an upstream document." : "Use an approved requirement with remaining quantity."}</p></button>)}</div></section>}
     <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">Basic Details</h2><div className="mt-4 grid gap-4 md:grid-cols-3"><label className="text-sm font-semibold">Company *<select value={companyId} onChange={(event) => { setCompanyId(event.target.value); setSiteId(""); setIndentLineKey(""); setSelectedIndentId(""); setDeliveryLocationId(""); setDeliveryContactId(""); setCustomDelivery(false); setTermsTemplateId(""); setStandardTerms(""); }} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">Select company</option>{lookups.companies.map((row: any) => <option key={row.id} value={row.id}>{row.company_name}</option>)}</select></label><label className="text-sm font-semibold">Site / Project *<select value={siteId} onChange={(event) => { const value = event.target.value; const next = sites.find((row: any) => row.id === value); setSiteId(value); setIndentLineKey(""); setSelectedIndentId(""); setDeliveryLocationId(""); setDeliveryContactId(""); setCustomDelivery(false); setDelivery((current) => ({ ...current, location: next?.site_name || "", address: next?.location || "" })); }} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">Select site</option>{sites.map((row: any) => <option key={row.id} value={row.id}>{row.site_name}</option>)}</select></label>{source === "indent" && <label className="text-sm font-semibold">Approved Material Indent *<select value={selectedIndentId} onChange={(event) => { setSelectedIndentId(event.target.value); setIndentLineKey(""); setItems([{ item_name: "", quantity: "", unit_rate: "", gst_rate: "0" }]); }} disabled={loading || !companyId || !siteId || indentGroups.length === 0} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">{!companyId || !siteId ? "Select Company and Site first" : loading ? "Loading approved Material Indents..." : indentGroups.length === 0 ? "No approved Material Indents with remaining quantity" : "Select approved Material Indent"}</option>{indentGroups.map((group: any) => <option key={group.requisition_id} value={group.requisition_id}>{group.requisition_number} — {group.lines.length} materials remaining</option>)}</select></label>}<label className="text-sm font-semibold">Vendor *<div className="flex gap-2"><select value={vendorId} onChange={(event) => setVendorId(event.target.value)} className="mt-1 h-10 min-w-0 flex-1 rounded-lg border px-3 font-normal"><option value="">Select Vendor</option>{lookups.vendors.map((row: any) => <option key={row.id} value={row.id}>{row.vendor_name}</option>)}</select><button type="button" onClick={() => canAddVendors && setVendorModalOpen(true)} disabled={!canAddVendors} className="mt-1 whitespace-nowrap rounded-lg border px-3 text-xs font-semibold">+ Add New Vendor</button></div></label><label className="text-sm font-semibold">PO Date<input type="date" value={poDate} onChange={(event) => setPoDate(event.target.value)} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal" /></label></div></section>
     {(
       <section className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -502,13 +549,8 @@ export default function NewPurchaseOrderPage() {
     <section className="rounded-2xl border bg-white shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b p-5"><div><h2 className="font-semibold">Items</h2><p className="text-xs text-slate-500">Taxable = quantity × rate. GST is calculated per line.</p></div>{source === "direct" && <button type="button" onClick={() => setItems((current) => [...current, { item_name: "", quantity: "", unit_rate: "", gst_rate: "0" }])} className="rounded-lg border px-3 py-2 text-sm font-semibold">Add Item</button>}</div>
       <div className="overflow-x-auto">
-                <table className="w-full min-w-[1800px] table-fixed text-left text-sm"><colgroup><col className="w-[280px]" /><col className="w-[240px]" /><col className="w-[180px]" /><col className="w-[120px]" /><col className="w-[120px]" /><col className="w-[130px]" /><col className="w-[110px]" /><col className="w-[130px]" /><col className="w-[130px]" /><col className="w-[140px]" /><col className="w-[100px]" /></colgroup><thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="p-3">Material / Item</th><th className="p-3">Description / Specification</th><th className="p-3">Make / Brand</th><th className="p-3">Quantity</th><th className="p-3">Unit</th><th className="p-3">Rate</th><th className="p-3">GST %</th><th className="p-3">Taxable</th><th className="p-3">GST Amount</th><th className="p-3">Total</th><th className="p-3">Action</th></tr></thead><tbody className="divide-y">{items.map((item, index) => { const taxable = Number(item.quantity || 0) * Number(item.unit_rate || 0); const gst = taxable * Number(item.gst_rate || 0) / 100; const search = item.item_name.trim().toLowerCase(); const matches = search ? (lookups.items || []).filter((material: any) => `${material.item_code || ""} ${material.item_name || ""}`.toLowerCase().includes(search)).slice(0, 8) : []; const linkedMaterial = item.isMaterialMasterLinked || Boolean(item.item_id) || Boolean(item.item_code && (lookups.items || []).some((material: any) => material.item_code === item.item_code)); const linkedUom = item.item_id ? (lookups.items || []).find((material: any) => material.id === item.item_id)?.default_uom?.uom_code : (lookups.items || []).find((material: any) => material.item_code === item.item_code)?.default_uom?.uom_code; return <tr key={`${item.source_requisition_line_key || "item"}-${index}`}><td className="relative z-10 p-3"><input ref={(element) => { materialInputRefs.current[index] = element; }} value={item.item_name} readOnly={source !== "direct"} onFocus={(event) => source === "direct" && (event.currentTarget.value.trim() ? openMaterialMenu(index, event.currentTarget) : (setMaterialOpenIndex(null), setMaterialMenuPosition(null)))} onBlur={() => window.setTimeout(() => { setMaterialOpenIndex(null); setMaterialMenuPosition(null); }, 150)} onChange={(event) => { updateItem(index, "item_name", event.target.value); setItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, item_id: undefined, item_code: undefined, isMaterialMasterLinked: false } : row)); if (event.target.value.trim()) openMaterialMenu(index, event.currentTarget); else { setMaterialOpenIndex(null); setMaterialMenuPosition(null); } }} placeholder={source === "direct" ? "Search material name or code..." : "Source-controlled material"} className="h-9 w-64 rounded border px-2 disabled:bg-slate-50" />{item.item_code && <small className="block text-xs text-slate-500">{item.item_code}</small>}{source === "direct" && materialMenuPosition?.index === index && <div data-material-menu="true" style={{ position: "fixed", left: materialMenuPosition.left, top: materialMenuPosition.top, width: materialMenuPosition.width }} className="z-[100] rounded-lg border bg-white p-1 shadow-xl"><div className="max-h-64 overflow-y-auto">{matches.map((material: any) => <button type="button" key={material.id} onMouseDown={(event) => event.preventDefault()} onClick={() => selectMaterial(index, material)} className="block w-full rounded px-3 py-2 text-left hover:bg-slate-50"><span className="block text-xs font-semibold text-slate-500">{material.item_code || "No code"}</span><span className="block text-sm font-semibold">{material.item_name}</span></button>)}{matches.length === 0 && search && <p className="px-3 py-2 text-xs text-slate-500">No matching Material Master item.</p>}</div>{search && <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => useCustomItem(index)} className="w-full border-t px-3 py-2 text-left text-sm font-semibold text-slate-700">+ Use "{item.item_name}" as Custom / New Item</button>}</div>}</td><td className="p-3"><input value={item.description || item.specification || ""} readOnly={source !== "direct"} onChange={(event) => updateItem(index, "description", event.target.value)} className="h-9 w-52 rounded border px-2" /></td><td className="p-3"><input value={item.make || ""} readOnly={false} onChange={(event) => updateItem(index, "make", event.target.value)} className="h-9 w-40 rounded border px-2" placeholder="Select or enter Make / Brand" /></td><td className="p-3"><input type="number" min="0" step="0.001" max={source === "indent" ? indentRemainingQuantity(item) : undefined} value={item.quantity} onChange={(event) => updateItem(index, "quantity", event.target.value)} className="h-9 w-28 rounded border px-2" /></td><td className="p-3">{linkedMaterial ? <span className="inline-flex h-9 min-w-24 items-center rounded border bg-slate-50 px-3" title="Derived from Material Master">{linkedUom || item.uom || "—"}</span> : source === "direct" && !item.item_id ? <input value={item.uom || ""} onChange={(event) => updateItem(index, "uom", event.target.value)} placeholder="Unit" className="h-9 w-24 rounded border px-2" /> : item.uom || "—"}</td><td className="p-3"><input type="number" min="0" step="0.01" value={item.unit_rate} readOnly={false} onChange={(event) => updateItem(index, "unit_rate", event.target.value)} className="h-9 w-28 rounded border px-2" /></td><td className="p-3"><input type="number" min="0" step="0.01" value={item.gst_rate} readOnly={false} onChange={(event) => updateItem(index, "gst_rate", event.target.value)} className="h-9 w-24 rounded border px-2" /></td><td className="p-3">{money(taxable)}</td><td className="p-3">{money(gst)}</td><td className="p-3 font-semibold">{money(taxable + gst)}</td><td className="p-3">{((source === "direct" && items.length > 1) || source === "indent") && <button type="button" onClick={() => { setItems((current) => current.filter((_, itemIndex) => itemIndex !== index)); if (materialOpenIndex === index) { setMaterialOpenIndex(null); setMaterialMenuPosition(null); } }} className="text-xs font-semibold text-red-700">Remove</button>}</td></tr>; })}</tbody></table>
+                <table className="w-full min-w-[1800px] table-fixed text-left text-sm"><colgroup><col className="w-[280px]" /><col className="w-[240px]" /><col className="w-[180px]" /><col className="w-[120px]" /><col className="w-[120px]" /><col className="w-[130px]" /><col className="w-[110px]" /><col className="w-[130px]" /><col className="w-[130px]" /><col className="w-[140px]" /><col className="w-[100px]" /></colgroup><thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="p-3">Material / Item</th><th className="p-3">Description / Specification</th><th className="p-3">Make / Brand</th><th className="p-3">Quantity</th><th className="p-3">Unit</th><th className="p-3">Rate</th><th className="p-3">GST %</th><th className="p-3">Taxable</th><th className="p-3">GST Amount</th><th className="p-3">Total</th><th className="p-3">Action</th></tr></thead><tbody className="divide-y">{items.map((item, index) => { const taxable = Number(item.quantity || 0) * Number(item.unit_rate || 0); const gst = taxable * Number(item.gst_rate || 0) / 100; const search = item.item_name.trim().toLowerCase(); const matches = search ? (lookups.items || []).filter((material: any) => `${material.item_code || ""} ${material.item_name || ""}`.toLowerCase().includes(search)).slice(0, 8) : []; const linkedMaterial = item.isMaterialMasterLinked || Boolean(item.item_id) || Boolean(item.item_code && (lookups.items || []).some((material: any) => material.item_code === item.item_code)); const linkedUom = item.item_id ? (lookups.items || []).find((material: any) => material.id === item.item_id)?.default_uom?.uom_code : (lookups.items || []).find((material: any) => material.item_code === item.item_code)?.default_uom?.uom_code; return <tr key={`${item.source_requisition_line_key || "item"}-${index}`}><td className="relative z-10 p-3"><input ref={(element) => { materialInputRefs.current[index] = element; }} value={item.item_name} readOnly={source !== "direct"} onFocus={(event) => source === "direct" && (event.currentTarget.value.trim() ? openMaterialMenu(index, event.currentTarget) : (setMaterialOpenIndex(null), setMaterialMenuPosition(null)))} onBlur={() => window.setTimeout(() => { setMaterialOpenIndex(null); setMaterialMenuPosition(null); }, 150)} onChange={(event) => { updateItem(index, "item_name", event.target.value); setItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, item_id: undefined, item_code: undefined, isMaterialMasterLinked: false } : row)); if (event.target.value.trim()) openMaterialMenu(index, event.currentTarget); else { setMaterialOpenIndex(null); setMaterialMenuPosition(null); } }} placeholder={source === "direct" ? "Search material name or code..." : "Source-controlled material"} className="h-9 w-64 rounded border px-2 disabled:bg-slate-50" />{item.item_code && <small className="block text-xs text-slate-500">{item.item_code}</small>}{source === "direct" && materialMenuPosition?.index === index && <div data-material-menu="true" style={{ position: "fixed", left: materialMenuPosition.left, top: materialMenuPosition.top, width: materialMenuPosition.width }} className="z-[100] rounded-lg border bg-white p-1 shadow-xl"><div className="max-h-64 overflow-y-auto">{matches.map((material: any) => <button type="button" key={material.id} onMouseDown={(event) => event.preventDefault()} onClick={() => selectMaterial(index, material)} className="block w-full rounded px-3 py-2 text-left hover:bg-slate-50"><span className="block text-xs font-semibold text-slate-500">{material.item_code || "No code"}</span><span className="block text-sm font-semibold">{material.item_name}</span></button>)}{matches.length === 0 && search && <p className="px-3 py-2 text-xs text-slate-500">No matching Material Master item.</p>}</div>{search && <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => useCustomItem(index)} className="w-full border-t px-3 py-2 text-left text-sm font-semibold text-slate-700">+ Use "{item.item_name}" as Custom / New Item</button>}</div>}</td><td className="p-3"><input value={item.description ?? item.specification ?? ""} readOnly={source !== "direct"} onChange={(event) => updateItem(index, "description", event.target.value)} className="h-9 w-52 rounded border px-2" /></td><td className="p-3"><input value={item.make || ""} readOnly={false} onChange={(event) => updateItem(index, "make", event.target.value)} className="h-9 w-40 rounded border px-2" placeholder="Select or enter Make / Brand" /></td><td className="p-3"><input type="number" min="0" step="0.001" max={source === "indent" ? indentRemainingQuantity(item) : undefined} value={item.quantity} onChange={(event) => updateItem(index, "quantity", event.target.value)} className="h-9 w-28 rounded border px-2" /></td><td className="p-3">{linkedMaterial ? <span className="inline-flex h-9 min-w-24 items-center rounded border bg-slate-50 px-3" title="Derived from Material Master">{linkedUom || item.uom || "—"}</span> : source === "direct" && !item.item_id ? <input value={item.uom || ""} onChange={(event) => updateItem(index, "uom", event.target.value)} placeholder="Unit" className="h-9 w-24 rounded border px-2" /> : item.uom || "—"}</td><td className="p-3"><input type="number" min="0" step="0.01" value={item.unit_rate} readOnly={false} onChange={(event) => updateItem(index, "unit_rate", event.target.value)} className="h-9 w-28 rounded border px-2" /></td><td className="p-3"><input type="number" min="0" step="0.01" value={item.gst_rate} readOnly={false} onChange={(event) => updateItem(index, "gst_rate", event.target.value)} className="h-9 w-24 rounded border px-2" /></td><td className="p-3">{money(taxable)}</td><td className="p-3">{money(gst)}</td><td className="p-3 font-semibold">{money(taxable + gst)}</td><td className="p-3">{((source === "direct" && items.length > 1) || source === "indent") && <button type="button" onClick={() => { setItems((current) => current.filter((_, itemIndex) => itemIndex !== index)); if (materialOpenIndex === index) { setMaterialOpenIndex(null); setMaterialMenuPosition(null); } }} className="text-xs font-semibold text-red-700">Remove</button>}</td></tr>; })}</tbody></table>
       </div>
-    </section>
-    <section className="rounded-2xl border bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between gap-3"><h2 className="font-semibold">Additional Charges</h2><button type="button" onClick={() => setAdditionalCharges((current) => [...current, { name: "", amount: "" }])} className="rounded-lg border px-3 py-2 text-xs font-semibold">+ Add Charge</button></div>
-      {!additionalCharges.length && <p className="mt-4 text-sm text-slate-500">No additional charges.</p>}
-      {additionalCharges.map((charge, index) => <div key={index} className="mt-3 grid gap-2 md:grid-cols-[1fr_180px_auto]"><input value={charge.name} onChange={(event) => setAdditionalCharges((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, name: event.target.value } : row))} placeholder="Charge name" className="h-10 rounded-lg border px-3" /><input type="number" min="0" step="0.01" value={charge.amount} onChange={(event) => setAdditionalCharges((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, amount: event.target.value } : row))} placeholder="Amount" className="h-10 rounded-lg border px-3" /><button type="button" onClick={() => setAdditionalCharges((current) => current.filter((_, rowIndex) => rowIndex !== index))} className="text-xs font-semibold text-red-700">Remove</button></div>)}
     </section>
     <section className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -520,6 +562,10 @@ export default function NewPurchaseOrderPage() {
     </section>
     <section className="grid gap-5 lg:grid-cols-[1fr_340px]">
       <div className="space-y-5">
+        <section className="rounded-2xl border bg-white p-5 shadow-sm">
+          <div className="flex justify-between gap-3"><h2 className="font-semibold">Additional Charges</h2><button type="button" onClick={() => setAdditionalCharges((current) => [...current, { name: "", amount: "" }])} className="rounded-lg border px-3 py-2 text-xs font-semibold">Add Charge</button></div>
+          {additionalCharges.map((charge, index) => <div className="mt-3 grid gap-2 md:grid-cols-[1fr_1fr_auto]" key={index}><input value={charge.name} onChange={(event) => setAdditionalCharges((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, name: event.target.value } : row))} className="h-10 rounded-lg border px-3" placeholder="Charge name" /><input type="number" min="0" step="0.01" value={charge.amount} onChange={(event) => setAdditionalCharges((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, amount: event.target.value } : row))} className="h-10 rounded-lg border px-3" placeholder="Amount" /><button type="button" onClick={() => setAdditionalCharges((current) => current.filter((_, rowIndex) => rowIndex !== index))} className="text-xs font-semibold text-red-700">Remove</button></div>)}
+        </section>
         <section className="rounded-2xl border bg-white p-5 shadow-sm">
           <h2 className="font-semibold">GST, Billing and Delivery</h2>
           <div className="mt-4 space-y-5">
@@ -556,7 +602,7 @@ export default function NewPurchaseOrderPage() {
           <h2 className="font-semibold">Standard Terms and Conditions</h2><label className="mt-3 block text-sm font-semibold">Standard Terms Set *<select value={termsTemplateId} onChange={(event) => { setTermsTemplateId(event.target.value); setStandardTerms(""); }} disabled={!companyId || companyTerms.length === 0} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">{companyId ? "Select company terms set" : "Select a company first"}</option>{companyTerms.map((row: any) => <option key={row.id} value={row.id}>{row.template_name}{row.is_default ? " — Default" : ""}</option>)}</select></label><p className="mt-2 text-xs text-slate-500">{selectedTerms ? `${selectedTerms.template_name} is the selected company template. Approved sections are snapshotted with the Purchase Order.` : companyId ? "No company-specific standard terms configured for this company." : "Select a company to view standard terms."}</p>{selectedTerms ? <details className="mt-3 rounded-lg border p-3"><summary className="cursor-pointer text-sm font-semibold">View Terms</summary><div className="mt-3 space-y-3 text-sm">{(selectedTerms.sections || []).filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order).map((section: any) => <div key={section.id}><b>{section.heading}</b><p className="mt-1 whitespace-pre-wrap text-slate-600">{section.clause_body}</p></div>)}</div></details> : <p className="mt-3 text-xs text-slate-500">Approved wording must be configured by an administrator; no legal wording is invented here.</p>}<textarea value={standardTerms} onChange={(event) => setStandardTerms(event.target.value)} className="mt-3 min-h-24 w-full rounded-lg border p-3" placeholder="Additional authorized terms, if required." /></section>
       </div>
       <aside className="h-fit rounded-2xl border bg-slate-950 p-5 text-white shadow-sm"><h2 className="font-semibold">Order Summary</h2>
-        <div className="mt-5 space-y-3 text-sm"><div className="flex justify-between"><span className="text-slate-300">Items Basic / Taxable</span><b>{money(totals.taxable)}</b></div><div className="flex justify-between"><span className="text-slate-300">GST</span><b>{money(totals.gst)}</b></div>{additionalCharges.map((charge, index) => <div className="flex justify-between" key={`${charge.name}-${index}`}><span className="text-slate-300">{charge.name.trim()}</span><b>{money(Number(charge.amount || 0))}</b></div>)}<div className="flex justify-between border-t border-slate-700 pt-3 text-base"><span>Grand Total</span><b>{money(totals.total)}</b></div></div>
+        <div className="mt-5 space-y-3 text-sm"><div className="flex justify-between"><span className="text-slate-300">Items Basic / Taxable</span><b>{money(totals.taxable)}</b></div><div className="flex justify-between"><span className="text-slate-300">GST</span><b>{money(totals.gst)}</b></div>{explicitCharges.map((charge, index) => <div className="flex justify-between" key={`${charge.name}-${index}`}><span className="text-slate-300">{charge.name}</span><b>{money(Number(charge.amount))}</b></div>)}<div className="flex justify-between border-t border-slate-700 pt-3 text-base"><span>Total Amount</span><b>{money(totals.total)}</b></div></div>
         </aside>
     </section>
 {vendorModalOpen && canAddVendors && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"><div className="flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"><div className="flex items-center justify-between border-b p-4"><div><h2 className="text-lg font-bold">Add Vendor from Vendor Master</h2><p className="text-sm text-slate-500">Use the standard Vendor Master creation and validation flow.</p></div><button type="button" onClick={() => setVendorModalOpen(false)} className="text-sm font-semibold">Close</button></div><div className="min-h-0 flex-1 overflow-y-auto p-6"><VendorCreateForm returnTo="/purchase/purchase-orders/new" onSuccess={handleVendorCreated} onCancel={() => setVendorModalOpen(false)} /></div></div></div>}
