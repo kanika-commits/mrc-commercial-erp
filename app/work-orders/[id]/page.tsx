@@ -144,6 +144,7 @@ const [documents, setDocuments] = useState<any[]>([]);
   const [loadingRelated, setLoadingRelated] = useState(false);
   const [loadingDocuments, setLoadingDocuments] = useState(false);
   const [documentsLoaded, setDocumentsLoaded] = useState(false);
+  const [loadingReviewPdf, setLoadingReviewPdf] = useState(false);
   const [message, setMessage] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const permissions = access?.permissions || [];
@@ -223,6 +224,7 @@ const [documents, setDocuments] = useState<any[]>([]);
           cost_code,
           created_by_name,
           created_by_email,
+          creation_request_id,
           created_at_user,
           approved_by_name,
           approved_by_email,
@@ -466,6 +468,34 @@ const [documents, setDocuments] = useState<any[]>([]);
     }
 
     window.open(document.signed_url, "_blank", "noopener,noreferrer");
+  }
+
+  async function openReviewPdf() {
+    try {
+      setLoadingReviewPdf(true);
+      setMessage("");
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error("Unable to review Work Order PDF: missing auth session.");
+
+      const response = await fetch(`/api/work-orders/${workOrderId}/generated-pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || "Unable to generate Work Order PDF.");
+      }
+
+      const objectUrl = URL.createObjectURL(await response.blob());
+      window.open(objectUrl, "_blank", "noopener,noreferrer");
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (error: any) {
+      setMessage(error.message || "Unable to generate Work Order PDF.");
+    } finally {
+      setLoadingReviewPdf(false);
+    }
   }
 
   async function removeLinkedVendor(row: any) {
@@ -1275,6 +1305,17 @@ function downloadWOLedger(workOrderId: string) {
     Work Order Files
   </h3>
 
+  {workOrder.creation_request_id && (
+    <button
+      type="button"
+      onClick={openReviewPdf}
+      disabled={loadingReviewPdf}
+      className="mb-3 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      {loadingReviewPdf ? "Opening review PDF..." : "Review Work Order PDF"}
+    </button>
+  )}
+
   {!documentsLoaded ? (
     <button
       type="button"
@@ -1285,7 +1326,9 @@ function downloadWOLedger(workOrderId: string) {
       {loadingDocuments ? "Loading files..." : "Load Work Order files"}
     </button>
   ) : documents.length === 0 ? (
-    <p className="text-gray-500">No files attached.</p>
+    <p className="text-gray-500">
+      {workOrder.creation_request_id ? "No supporting documents attached." : "No files attached."}
+    </p>
   ) : (
     <div className="space-y-2">
       {documents.map((doc) => (
