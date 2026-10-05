@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { adminClient, applyCompanySiteAccess, applyOrganizationAccess, jsonError, requireProcurementPermission, text, validateOrganizationSiteAccess } from "@/lib/serverProcurementAccess";
 import { createPrivateStorageAdapter } from "@/lib/storage/privateStorage";
-import { attachCurrentSendBackComments } from "@/lib/procurement/poSendBackPresentation";
 
 const MODULE = "procurement_purchase_orders";
 function normalizePurchaseOrderItems(items: any[]) {
@@ -36,21 +35,7 @@ export async function GET(request: Request) {
     if (text(params.get("from_date"))) query = query.gte("po_date", text(params.get("from_date")));
     if (text(params.get("to_date"))) query = query.lte("po_date", text(params.get("to_date")));
     const { data, error } = await query; if (error) throw error;
-    const allPurchaseOrders = data || [];
-    const families = new Map<string, any[]>();
-    for (const row of allPurchaseOrders) { const key = row.revision_family_id || row.id; families.set(key, [...(families.get(key) || []), row]); }
-    let purchaseOrders = [...families.values()].map((family) => { const open = family.filter((row) => ["draft", "pending_approval", "sent_back"].includes(row.status)).sort((a, b) => Number(b.revision_no || 0) - Number(a.revision_no || 0))[0]; const effective = family.filter((row) => ["approved", "issued"].includes(row.status) && !row.superseded_by_revision_id).sort((a, b) => Number(b.revision_no || 0) - Number(a.revision_no || 0))[0]; const selected = open || effective || [...family].sort((a, b) => Number(b.revision_no || 0) - Number(a.revision_no || 0))[0]; return selected ? { ...selected, revision_indicator: open ? "Revision in Progress" : effective ? "Current" : "Historical", revision_family_rows: family } : null; }).filter(Boolean);
-    const currentSentBackIds = purchaseOrders.filter((row: any) => row.status === "sent_back").map((row: any) => row.id);
-    if (currentSentBackIds.length) {
-      const sendBackEvents = await admin.from("procurement_purchase_order_events")
-        .select("id,purchase_order_id,event_type,event_note,created_at")
-        .in("purchase_order_id", currentSentBackIds)
-        .eq("event_type", "send_back")
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: false });
-      if (sendBackEvents.error) throw sendBackEvents.error;
-      purchaseOrders = attachCurrentSendBackComments(purchaseOrders, sendBackEvents.data || []);
-    }
+    const purchaseOrders = data || [];
     const approvedIds = purchaseOrders.filter((row: any) => ["approved", "issued"].includes(row.status)).map((row: any) => row.id);
     if (approvedIds.length) {
       const signedDocumentOrganizationIds = [...new Set(purchaseOrders.filter((row: any) => approvedIds.includes(row.id)).map((row: any) => row.organization_id).filter(Boolean))];
