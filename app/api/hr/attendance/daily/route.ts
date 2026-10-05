@@ -40,7 +40,7 @@ export async function GET(request: Request) {
       attendanceType: "employee",
     });
     const dateAllowed = assertDateSelectable(auth, params.attendanceDate, Boolean(historicalAccess));
-    if (!dateAllowed.allowed) return jsonError(dateAllowed.error || "Attendance date cannot be loaded.", 403);
+    if (!dateAllowed.allowed) return jsonError("error" in dateAllowed ? dateAllowed.error : "Attendance date cannot be loaded.", 403);
 
     const month = monthStart(params.attendanceDate)!;
     let [employees, rows, period, dayLock, policy, dailySubmission] = await Promise.all([
@@ -165,7 +165,7 @@ export async function PUT(request: Request) {
       attendanceType: "employee",
     });
     const editAllowed = assertDateEditAllowed(auth, attendanceDate, payload.backdated_reason, Boolean(historicalAccess));
-    if (!editAllowed.allowed) return jsonError(editAllowed.error || "Attendance date is not editable.", 403);
+    if (!editAllowed.allowed) return jsonError("error" in editAllowed ? editAllowed.error : "Attendance date is not editable.", 403);
 
     const month = monthStart(attendanceDate)!;
     const period = await ensurePeriod(admin, auth, {
