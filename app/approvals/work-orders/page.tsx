@@ -89,6 +89,7 @@ export default function WorkOrderApprovalPage() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState("");
   const [deletingId, setDeletingId] = useState("");
+  const [workOrderDeletionEnabled, setWorkOrderDeletionEnabled] = useState(false);
   const [message, setMessage] = useState("");
   // Approval module permissions govern approval queues/actions; base work_orders permissions govern normal WO CRUD.
   const canViewWorkOrderApprovals =
@@ -124,6 +125,7 @@ export default function WorkOrderApprovalPage() {
         setCompanies(new Map());
         setSites(new Map());
         setDocuments(new Map());
+        setWorkOrderDeletionEnabled(false);
         setLoading(false);
         return;
       }
@@ -150,6 +152,7 @@ export default function WorkOrderApprovalPage() {
       }
 
       const woData = approvalResult.workOrders || [];
+      setWorkOrderDeletionEnabled(approvalResult.workOrderDeletionEnabled === true);
       setEditRows(
         Object.fromEntries(
           (woData || []).map((wo: any) => [
@@ -696,7 +699,7 @@ export default function WorkOrderApprovalPage() {
                               </button>
                           )}
 
-                          {isPlatformOwner && (
+                          {isPlatformOwner && workOrderDeletionEnabled && (
                             <button
                               type="button"
                               disabled={isSaving || isDeleting}

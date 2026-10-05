@@ -32,6 +32,13 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    if (process.env.VERCEL_ENV !== "production") {
+      return NextResponse.json(
+        { error: "Work Order deletion is available only in the Production deployment." },
+        { status: 403 },
+      );
+    }
+
     const auth = await loadPermissionContext(request);
     if ("response" in auth) return auth.response;
     if (!auth.roleCodes.includes("platform_owner")) {

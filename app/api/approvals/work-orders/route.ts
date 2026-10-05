@@ -93,7 +93,14 @@ export async function GET(request: Request) {
       ),
     ]);
 
-    return NextResponse.json({ workOrders, companies, sites });
+    return NextResponse.json({
+      workOrders,
+      companies,
+      sites,
+      workOrderDeletionEnabled:
+        process.env.VERCEL_ENV === "production" &&
+        auth.roleCodes.includes("platform_owner"),
+    });
   } catch (error: any) {
     return NextResponse.json(
       { error: error.message || "Failed to load Work Order approvals." },

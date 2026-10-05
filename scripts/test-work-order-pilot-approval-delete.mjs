@@ -13,6 +13,8 @@ assert.match(page, /Drive and Supabase Storage files will be preserved/);
 assert.match(page, /method: "DELETE"/);
 assert.match(page, /approvals\/work-orders\/\$\{wo\.id\}/);
 assert.match(route, /loadPermissionContext/);
+assert.match(route, /process\.env\.VERCEL_ENV !== "production"/);
+assert.match(route, /Work Order deletion is available only in the Production deployment/);
 assert.match(route, /roleCodes\.includes\("platform_owner"\)/);
 assert.match(route, /Only a Platform Owner can permanently delete/);
 assert.match(route, /delete_work_order_atomic/);
@@ -33,5 +35,11 @@ assert.match(migration, /delete from public\.work_order_files/);
 assert.match(migration, /delete from public\.work_order_changes/);
 assert.match(migration, /delete from public\.work_order_drive_folders/);
 assert.match(migration, /revoke all on function public\.delete_work_order_atomic\(uuid\)[\s\S]+grant execute[\s\S]+to service_role/);
+assert.match(page, /workOrderDeletionEnabled/);
+assert.match(page, /workOrderDeletionEnabled === true/);
+
+const approvalsRoute = read("../app/api/approvals/work-orders/route.ts");
+assert.match(approvalsRoute, /workOrderDeletionEnabled/);
+assert.match(approvalsRoute, /process\.env\.VERCEL_ENV === "production"/);
 
 console.log("Work Order approval Platform Owner delete contract passed.");
