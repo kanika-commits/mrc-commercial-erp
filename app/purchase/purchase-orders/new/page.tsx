@@ -166,7 +166,7 @@ export default function NewPurchaseOrderPage() {
       revisionIdentityRef.current = { source: nextSource, companyId: po.company_id || "", siteId: po.site_id || "", vendorId: po.vendor_id || "", requisitionId: po.source_requisition_id || "" };
       previousCompanyIdRef.current = po.company_id || "";
       draftLookupSelectionRef.current = { companyId: po.company_id || "", siteId: po.site_id || "", vendorId: po.vendor_id || "" };
-      setLookups((current) => mergeDraftLookupOptions(current, po));
+      setLookups((current: any) => mergeDraftLookupOptions(current, po));
       setSource(nextSource);
       setCompanyId(po.company_id || ""); setSiteId(po.site_id || ""); setVendorId(po.vendor_id || ""); setPoDate(po.po_date || today());
       setDelivery(po.delivery_snapshot || {}); setCommercial(po.commercial_snapshot || {});

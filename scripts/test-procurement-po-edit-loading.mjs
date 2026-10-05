@@ -7,7 +7,7 @@ assert.match(page, /const \[lookupLoading, setLookupLoading\]/);
 assert.match(page, /const \[draftLoading, setDraftLoading\] = useState\(Boolean\(editId\)\)/);
 assert.match(page, /if \(draftLoading\) return <p[^>]*>Loading Draft Purchase Order/);
 assert.match(page, /function retainSelectedLookupOption/);
-assert.match(page, /setLookups\(\(current\) => mergeDraftLookupOptions\(current, po\)\)/);
+assert.match(page, /setLookups\(\(current(?:: any)?\) => mergeDraftLookupOptions\(current, po\)\)/);
 assert.match(page, /draftLookupSelectionRef/);
 assert.match(page, /if \(lookupLoading\) return;/);
 assert.match(page, /setGstRegistrationId\(\(current\) => current \|\|/);
