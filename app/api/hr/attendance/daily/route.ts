@@ -30,33 +30,34 @@ export async function GET(request: Request) {
 
     const params = parseDailyParams(request.url);
     if ("error" in params) return jsonError(String(params.error), 400);
+    const attendanceDate = params.attendanceDate;
     const admin = adminClient();
     const scope = await validateCompanySiteScope(admin, auth, params.companyId, params.siteId);
     if ("response" in scope) return scope.response;
     const historicalAccess = await loadActiveHistoricalAttendanceAccess(admin, {
       organizationId: scope.organizationId,
       siteId: params.siteId,
-      attendanceDate: params.attendanceDate,
+      attendanceDate,
       attendanceType: "employee",
     });
-    const dateAllowed = assertDateSelectable(auth, params.attendanceDate, Boolean(historicalAccess));
+    const dateAllowed = assertDateSelectable(auth, attendanceDate, Boolean(historicalAccess));
     if (!dateAllowed.allowed) return jsonError("error" in dateAllowed ? dateAllowed.error : "Attendance date cannot be loaded.", 403);
 
-    const month = monthStart(params.attendanceDate)!;
+    const month = monthStart(attendanceDate)!;
     let [employees, rows, period, dayLock, policy, dailySubmission] = await Promise.all([
       loadEligibleEmployees(admin, {
         organizationId: scope.organizationId,
         companyId: params.companyId,
         siteId: params.siteId,
-        startDate: params.attendanceDate,
-        endDate: params.attendanceDate,
+        startDate: attendanceDate,
+        endDate: attendanceDate,
       }),
       loadAttendanceRows(admin, {
         organizationId: scope.organizationId,
         companyId: params.companyId,
         siteId: params.siteId,
-        startDate: params.attendanceDate,
-        endDate: params.attendanceDate,
+        startDate: attendanceDate,
+        endDate: attendanceDate,
       }),
       ensurePeriod(admin, auth, {
         organizationId: scope.organizationId,
