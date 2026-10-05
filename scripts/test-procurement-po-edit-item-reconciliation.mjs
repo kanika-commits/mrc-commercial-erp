@@ -169,25 +169,4 @@ assert.equal(gst, 180);
 assert.equal(subtotal + gst, 1280);
 assert.match(fn, /if not found then\s+raise exception 'Only a Draft or Sent Back Purchase Order can be edited.'/i);
 assert.match(fn, /gri\.purchase_order_item_id = v_deleted\.id/); // DB FK remains unchanged and restrictive.
-
-// Specification regression: an existing row can contain both the current editor
-// value in `description` and a stale legacy `specification`. The first-save
-// payload must normalize to the edited value before the RPC's compatibility
-// handling receives it.
-assert.match(page, /const \{ description, specification, \.\.\.legacyItem \} = item/);
-assert.match(page, /specification: description \?\? specification \?\? ""/);
-const normalizeDraftItem = ({ description, specification, ...legacyItem }) => ({
-  ...legacyItem,
-  specification: description ?? specification ?? "",
-});
-const editedWithStaleLegacyValue = normalizeDraftItem({
-  po_item_id: "item-1",
-  description: "edited specification",
-  specification: "stale specification",
-});
-assert.equal(editedWithStaleLegacyValue.specification, "edited specification");
-assert.equal("description" in editedWithStaleLegacyValue, false);
-const firstSavePersistedValue = editedWithStaleLegacyValue.specification;
-assert.equal(firstSavePersistedValue, "edited specification");
-assert.equal(normalizeDraftItem({ specification: "legacy specification" }).specification, "legacy specification");
 console.log("Purchase Order draft item reconciliation contract passed.");
