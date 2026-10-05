@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, ExternalLink, FileText, PauseCircle, RefreshCw } from "lucide-react";
+import { CheckCircle2, ExternalLink, FileText, PauseCircle, RefreshCw, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
@@ -88,6 +88,7 @@ export default function WorkOrderApprovalPage() {
   const [editingWorkOrderId, setEditingWorkOrderId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState("");
+  const [deletingId, setDeletingId] = useState("");
   const [message, setMessage] = useState("");
   // Approval module permissions govern approval queues/actions; base work_orders permissions govern normal WO CRUD.
   const canViewWorkOrderApprovals =
@@ -105,6 +106,7 @@ export default function WorkOrderApprovalPage() {
     hasGlobalAccess(access) || can(access?.permissions || [], "wo_approval", "reject");
   const canUploadWorkOrderApprovalFiles =
     hasGlobalAccess(access) || can(access?.permissions || [], "wo_approval", "upload");
+  const isPlatformOwner = access?.roleCodes?.includes("platform_owner") === true;
 
   useEffect(() => {
     if (access) {
@@ -411,7 +413,38 @@ export default function WorkOrderApprovalPage() {
   } finally {
     setSavingId("");
   }
-}
+  }
+
+  async function deleteWorkOrder(wo: any) {
+    const confirmed = window.confirm(
+      `Permanently delete Work Order ${wo.wo_number || "-"}? This cannot be undone. Database records and links will be deleted; Drive and Supabase Storage files will be preserved.`,
+    );
+    if (!confirmed) return;
+
+    try {
+      setDeletingId(wo.id);
+      setMessage("");
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Your session expired. Please log in again.");
+      const response = await fetch(`/api/approvals/work-orders/${wo.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Failed to delete Work Order.");
+      setWorkOrders((current) => current.filter((item) => item.id !== wo.id));
+      setDocuments((current) => {
+        const next = new Map(current);
+        next.delete(wo.id);
+        return next;
+      });
+      setMessage(`Work Order ${wo.wo_number || "-"} was permanently deleted.`);
+    } catch (error: any) {
+      setMessage(error.message || "Failed to delete Work Order.");
+    } finally {
+      setDeletingId("");
+    }
+  }
 
   const pendingWorkOrders = workOrders.filter((wo) => {
     const approvalStatus = String(wo.approval_status || "")
@@ -493,6 +526,7 @@ export default function WorkOrderApprovalPage() {
                 pendingWorkOrders.map((wo) => {
                   const currentDocuments = documents.get(wo.id) || [];
                   const isSaving = savingId === wo.id;
+                  const isDeleting = deletingId === wo.id;
                   const commercials = workOrderCommercials(wo);
 
                   return (
@@ -660,6 +694,18 @@ export default function WorkOrderApprovalPage() {
                                 <PauseCircle className="h-3.5 w-3.5" />
                                 Suspend
                               </button>
+                          )}
+
+                          {isPlatformOwner && (
+                            <button
+                              type="button"
+                              disabled={isSaving || isDeleting}
+                              onClick={() => deleteWorkOrder(wo)}
+                              className="inline-flex items-center gap-1 rounded bg-rose-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-800 disabled:opacity-60"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              {isDeleting ? "Deleting..." : "Delete"}
+                            </button>
                           )}
                         </div>
                       </td>
