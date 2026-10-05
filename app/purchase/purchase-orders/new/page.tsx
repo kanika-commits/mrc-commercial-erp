@@ -144,7 +144,7 @@ export default function NewPurchaseOrderPage() {
 
   useEffect(() => {
     apiFetch("/api/procurement/purchase-orders/lookups")
-      .then((nextLookups) => setLookups((current) => ({
+      .then((nextLookups) => setLookups((current: any) => ({
         ...nextLookups,
         companies: retainSelectedLookupOption(nextLookups.companies || [], draftLookupSelectionRef.current.companyId, "company_name", ""),
         sites: retainSelectedLookupOption(nextLookups.sites || [], draftLookupSelectionRef.current.siteId, "site_name", ""),
