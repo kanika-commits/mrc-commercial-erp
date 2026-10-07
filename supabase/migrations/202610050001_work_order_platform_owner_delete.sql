@@ -26,7 +26,6 @@ begin
   delete from public.work_order_items where work_order_id = p_work_order_id;
   delete from public.work_order_documents where work_order_id = p_work_order_id;
   delete from public.work_order_vendors where work_order_id = p_work_order_id;
-  delete from public.work_order_files where work_order_id = p_work_order_id;
   delete from public.work_order_changes where work_order_id = p_work_order_id;
   delete from public.work_order_drive_folders where work_order_id = p_work_order_id;
   delete from public.work_orders where id = p_work_order_id;
