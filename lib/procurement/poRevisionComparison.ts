@@ -13,7 +13,7 @@ export type RevisionItemComparison = {
   fields: Record<string, RevisionField<unknown>>;
 };
 
-const ITEM_FIELDS = ["item_name_snapshot", "specification_snapshot", "make_snapshot", "quantity", "uom_snapshot", "unit_rate", "discount_percent", "discount_amount", "taxable_amount", "gst_rate", "gst_amount", "total_amount", "remarks_snapshot"];
+const ITEM_FIELDS = ["item_name_snapshot", "item_code_snapshot", "specification_snapshot", "make_snapshot", "quantity", "uom_snapshot", "unit_rate", "discount_percent", "discount_amount", "taxable_amount", "gst_rate", "gst_amount", "total_amount", "remarks_snapshot"];
 
 export function normalizeRevisionText(value: unknown): string {
   return String(value ?? "").replace(/\r\n/g, "\n").split("\n").map((line) => line.trim()).filter(Boolean).join("\n").trim();
@@ -42,19 +42,67 @@ export function visibleRevisionClause(clause: any) {
 export function buildPurchaseOrderRevisionComparison(previous: any, current: any) {
   const previousItems = Array.isArray(previous?.items) ? previous.items : [];
   const currentItems = Array.isArray(current?.items) ? current.items : [];
-  const legacySingleLineKey = previousItems.length === 1 && currentItems.length === 1 && !previousItems[0]?.revision_line_key && !currentItems[0]?.revision_line_key ? "__legacy_single_line__" : null;
-  const itemIdentity = (item: any) => item?.revision_line_key || item?.source_requisition_line_key || item?.item_code_snapshot || item?.item_id_snapshot || null;
-  const keyedEntries = (items: any[]) => items.map((item: any, index: number) => [itemIdentity(item) ? String(itemIdentity(item)) : legacySingleLineKey || `__position_${index}`, item] as [string, any]);
-  const beforeItems: Map<string, any> = new Map(keyedEntries(previousItems));
-  const afterItems: Map<string, any> = new Map(keyedEntries(currentItems));
+  const legacySingleLineKey = previousItems.length === 1 && currentItems.length === 1 && !previousItems[0]?.revision_line_key && !currentItems[0]?.revision_line_key
+    ? "__legacy_single_line__"
+    : null;
+  const stableItemIdentity = (item: any) => item?.revision_line_key || item?.source_requisition_line_key || item?.item_id_snapshot || null;
+  const beforeMatched = new Set<number>();
+  const currentMatched = new Set<number>();
+  const pairs: Array<{ before: any | null; after: any | null; key: string }> = [];
+  const beforeByIdentity = new Map<string, number[]>();
+  const currentIdentityOccurrences = new Map<string, number>();
+  previousItems.forEach((item: any, index: number) => {
+    const key = stableItemIdentity(item);
+    if (!key) return;
+    const normalizedKey = String(key);
+    const entries = beforeByIdentity.get(normalizedKey) || [];
+    entries.push(index);
+    beforeByIdentity.set(normalizedKey, entries);
+  });
+  currentItems.forEach((item: any, currentIndex: number) => {
+    const key = stableItemIdentity(item);
+    const normalizedKey = key ? String(key) : null;
+    const queue = normalizedKey ? beforeByIdentity.get(normalizedKey) : undefined;
+    const beforeIndex = queue?.find((index) => !beforeMatched.has(index));
+    if (beforeIndex === undefined) return;
+    const occurrence = currentIdentityOccurrences.get(normalizedKey!) || 0;
+    currentIdentityOccurrences.set(normalizedKey!, occurrence + 1);
+    beforeMatched.add(beforeIndex); currentMatched.add(currentIndex);
+    pairs.push({ before: previousItems[beforeIndex], after: item, key: occurrence === 0 ? normalizedKey! : `${normalizedKey}#${occurrence}` });
+  });
+  const unmatchedBefore = previousItems.map((item: any, index: number) => ({ item, index })).filter(({ index }) => !beforeMatched.has(index));
+  const unmatchedCurrent = currentItems.map((item: any, index: number) => ({ item, index })).filter(({ index }) => !currentMatched.has(index));
+  const hasAnyStableIdentity = previousItems.some((item: any) => stableItemIdentity(item)) || currentItems.some((item: any) => stableItemIdentity(item));
+  const fallbackCount = hasAnyStableIdentity ? 0 : Math.min(unmatchedBefore.length, unmatchedCurrent.length);
+  for (let index = 0; index < fallbackCount; index += 1) {
+    const before = unmatchedBefore[index]; const after = unmatchedCurrent[index];
+    pairs.push({ before: before.item, after: after.item, key: legacySingleLineKey || `__position_${after.index}` });
+  }
+  unmatchedBefore.slice(fallbackCount).forEach(({ item, index }) => {
+    const rawKey = stableItemIdentity(item);
+    if (!rawKey) { pairs.push({ before: item, after: null, key: `__position_${index}` }); return; }
+    const normalizedKey = String(rawKey);
+    const occurrence = previousItems.slice(0, index).filter((candidate: any) => String(stableItemIdentity(candidate) || "") === normalizedKey).length;
+    pairs.push({ before: item, after: null, key: occurrence === 0 ? normalizedKey : `${normalizedKey}#${occurrence}` });
+  });
+  unmatchedCurrent.slice(fallbackCount).forEach(({ item, index }) => {
+    const rawKey = stableItemIdentity(item);
+    if (!rawKey) { pairs.push({ before: null, after: item, key: `__position_${index}` }); return; }
+    const normalizedKey = String(rawKey);
+    const occurrence = currentIdentityOccurrences.get(normalizedKey) || 0;
+    currentIdentityOccurrences.set(normalizedKey, occurrence + 1);
+    pairs.push({ before: null, after: item, key: occurrence === 0 ? normalizedKey : `${normalizedKey}#${occurrence}` });
+  });
   const items: RevisionItemComparison[] = [];
-  const keys = new Set([...beforeItems.keys(), ...afterItems.keys()]);
-  for (const key of keys) {
-    const before = beforeItems.get(key) || null;
-    const after = afterItems.get(key) || null;
+  for (const { before: beforeValue, after: afterValue, key } of pairs) {
+    const before = beforeValue || null;
+    const after = afterValue || null;
     const fields = Object.fromEntries([
       ...ITEM_FIELDS.map((field) => [field, diffRevisionValue(before?.[field], after?.[field])]),
-      ["basic_amount", diffRevisionValue(before ? Number(before.quantity || 0) * Number(before.unit_rate || 0) : undefined, after ? Number(after.quantity || 0) * Number(after.unit_rate || 0) : undefined)],
+      ["basic_amount", diffRevisionValue(
+        before ? Number(before.quantity || 0) * Number(before.unit_rate || 0) : undefined,
+        after ? Number(after.quantity || 0) * Number(after.unit_rate || 0) : undefined,
+      )],
     ]);
     const state = before && after ? (Object.values(fields).some((field: any) => field.state !== "unchanged") ? "changed" : "unchanged") : before ? "removed" : "added";
     items.push({ revision_line_key: key, state: state as RevisionState, before: before as Record<string, unknown> | null, after: after as Record<string, unknown> | null, fields });
