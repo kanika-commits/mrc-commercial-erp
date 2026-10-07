@@ -99,7 +99,7 @@ assert.equal(testChargeComparison.after.amount, 1234);
 assert.equal(comparison.standardTerms.length, 9);
 assert.equal(comparison.standardTerms.filter((term) => term.state === "unchanged").length, 9);
 const presentation = buildPurchaseOrderRevisionPdfRenderModel(current, comparison);
-assert.deepEqual(presentation.items.find((item) => item.revision_line_key === brownKey).fields.unit_rate.runs, [{ text: "2850", color: "normal", strike: true }, { text: "1234", color: "red", strike: false }]);
+assert.deepEqual(presentation.items.find((item) => item.revision_line_key === brownKey).fields.unit_rate.runs, [{ text: "Rs. 2,850.00", color: "normal", strike: true }, { text: "Rs. 1,234.00", color: "red", strike: false }]);
 assert.equal(presentation.items.find((item) => item.revision_line_key === brownKey).fields.quantity.runs[0].color, "normal");
 assert.equal(presentation.keyTerms.find((term) => term.identity === "freight").value.runs[0].strike, true);
 assert.equal(presentation.additionalCharges.find((charge) => charge.identity === "test-charge").amount.runs.length, 1);
@@ -115,7 +115,7 @@ for (const match of revisionResult.pdf.toString("latin1").matchAll(/stream\r?\n(
   try { revisionStreams.push(inflateSync(bytes).toString("latin1")); } catch { revisionStreams.push(match[1]); }
 }
 const revisionText = revisionStreams.join("\n");
-for (const value of ["MRC/SEP/2026/0006/R-1", "Epoxy Dark Brown", "Epoxy Dark Grey", "2850", "1234", "18%", "FOR at site.", "This is test change too.", "Test Charge", ...Array.from({ length: 9 }, (_, i) => `Clause ${i + 1}`)]) assert.ok(revisionText.includes(value), `generated R-1 PDF missing ${value}`);
+for (const value of ["MRC/SEP/2026/0006/R-1", "Epoxy Dark Brown", "Epoxy Dark Grey", "Rs. 2,850.00", "Rs. 1,234.00", "18%", "FOR at site.", "This is test change too.", "Test Charge", ...Array.from({ length: 9 }, (_, i) => `Clause ${i + 1}`)]) assert.ok(revisionText.includes(value), `generated R-1 PDF missing ${value}`);
 assert.ok(revisionText.includes("0 0 0 RG"), "generated R-1 PDF is missing a black strike operator");
 assert.ok(revisionText.indexOf("0 0 0 RG") > revisionText.indexOf("2850"), "black strike operator was not emitted after the old rate text");
 const testChargeText = revisionText.slice(Math.max(0, revisionText.indexOf("Test Charge") - 120), revisionText.indexOf("Test Charge") + 180);

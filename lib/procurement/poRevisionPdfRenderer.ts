@@ -30,6 +30,16 @@ function chargeAmountField(state: RevisionState, before: unknown, after: unknown
   return fieldRuns({ state, ...(state === "unchanged" ? { value: after } : state === "added" ? { after } : state === "removed" ? { before } : { before, after }) } as RevisionField<unknown>, format);
 }
 
+function formatRevisionItemField(key: string, value: unknown) {
+  if (key === "gst_rate") return `${value ?? 0}%`;
+  if (["unit_rate", "basic_amount", "gst_amount", "total_amount"].includes(key)) {
+    return value == null || value === ""
+      ? ""
+      : `Rs. ${new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value))}`;
+  }
+  return String(value ?? "");
+}
+
 export function buildPurchaseOrderRevisionPdfRenderModel(current: any, comparison?: any): any {
   if (!comparison) return current;
   const parsedCurrentTerms = parsePurchaseOrderStandardTerms(current?.standard_terms_snapshot);
@@ -47,7 +57,7 @@ export function buildPurchaseOrderRevisionPdfRenderModel(current: any, compariso
       state: item.state,
       before: item.before,
       after: item.after,
-      fields: Object.fromEntries(Object.entries(item.fields).map(([key, field]) => [key, fieldRuns(field as RevisionField<unknown>, (value) => key === "gst_rate" ? `${value ?? 0}%` : String(value ?? ""))])),
+      fields: Object.fromEntries(Object.entries(item.fields).map(([key, field]) => [key, fieldRuns(field as RevisionField<unknown>, (value) => formatRevisionItemField(key, value))])),
     })),
     keyTerms: comparison.keyTerms.map((term: any) => {
       const source = (current?.commercial_snapshot?.key_terms || []).find((value: any) => String(value?.id ?? value?.key ?? value?.code ?? value?.description ?? value?.label ?? "") === term.identity);
