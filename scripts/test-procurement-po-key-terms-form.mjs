@@ -10,7 +10,7 @@ assert.match(page, /index === headingIndex && !term\.description\.trim\(\)/);
 assert.match(page, /return \[\.\.\.fixed, \.\.\.saved\.filter\(\(_, index\) => !used\.has\(index\)\)\]/);
 assert.match(page, /setKeyTerms\(normalizeSavedKeyTerms\(po\.commercial_snapshot\?\.key_terms \|\| \[\]\)\)/);
 assert.match(page, /keyTerms\.map\(normalizeKeyTerm\)/);
-assert.match(page, /useState\(FIXED_KEY_TERM_HEADINGS\.map/);
+assert.match(page, /useState<KeyTerm\[\]>\(FIXED_KEY_TERM_HEADINGS\.map/);
 
 for (const heading of ["Price Validity", "Freight", "Delivery Timeline", "Payment Terms"]) {
   assert.match(page, new RegExp(`\\\"${heading}\\\"`));
