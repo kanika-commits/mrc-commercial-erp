@@ -159,6 +159,7 @@ export default function NewWorkOrderPage() {
       const vendorSnapshot = selectedVendor ? { ...selectedVendor, contact_person: selectedVendor.contact_person || primaryVendorContact.contact_name || "", phone: selectedVendor.phone || selectedVendor.mobile || primaryVendorContact.contact_number || primaryVendorContact.mobile || "", email: selectedVendor.email || primaryVendorContact.email || "" } : null;
       const payload = {
         ...form,
+        creation_request_id: crypto.randomUUID(),
         company_name: lookups.companies.find((row: any) => row.id === form.company_id)?.company_name || "",
         site_name: sites.find((row: any) => row.id === form.site_id)?.site_name || "",
         vendor_snapshot: vendorSnapshot,
