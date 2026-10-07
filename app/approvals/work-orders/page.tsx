@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, ExternalLink, FileText, PauseCircle, RefreshCw, Trash2 } from "lucide-react";
+import { CheckCircle2, ExternalLink, PauseCircle, RefreshCw, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
@@ -82,7 +82,6 @@ export default function WorkOrderApprovalPage() {
   const [workOrders, setWorkOrders] = useState<any[]>([]);
   const [companies, setCompanies] = useState<Map<string, string>>(new Map());
   const [sites, setSites] = useState<Map<string, string>>(new Map());
-  const [documents, setDocuments] = useState<Map<string, any[]>>(new Map());
   const [editRows, setEditRows] = useState<Record<string, any>>({});
   const [replacementFiles, setReplacementFiles] = useState<Record<string, File | null>>({});
   const [editingWorkOrderId, setEditingWorkOrderId] = useState<string | null>(null);
@@ -124,7 +123,6 @@ export default function WorkOrderApprovalPage() {
         setWorkOrders([]);
         setCompanies(new Map());
         setSites(new Map());
-        setDocuments(new Map());
         setWorkOrderDeletionEnabled(false);
         setLoading(false);
         return;
@@ -170,10 +168,6 @@ export default function WorkOrderApprovalPage() {
       setReplacementFiles({});
       setEditingWorkOrderId(null);
 
-      const workOrderIds = Array.from(
-        new Set((woData || []).map((wo: any) => wo.id).filter(Boolean))
-      );
-
       setCompanies(
         new Map(
           (approvalResult.companies || []).map((item: any) => [
@@ -191,61 +185,12 @@ export default function WorkOrderApprovalPage() {
         ),
       );
 
-      if (workOrderIds.length > 0) {
-        const token = session?.access_token;
-
-        if (!token) {
-          throw new Error("Unable to load Work Order files: missing auth session.");
-        }
-
-        const documentResponse = await fetch(
-          `/api/work-orders/documents?work_order_ids=${encodeURIComponent(
-            workOrderIds.join(",")
-          )}`,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          }
-        );
-        const documentResult = await documentResponse.json();
-
-        if (!documentResponse.ok) {
-          throw new Error(
-            documentResult.error || "Failed to load Work Order files."
-          );
-        }
-
-        const docMap = new Map<string, any[]>();
-
-        (documentResult.documents || []).forEach((doc: any) => {
-          const current = docMap.get(doc.work_order_id) || [];
-          docMap.set(doc.work_order_id, [...current, doc]);
-        });
-
-        setDocuments(docMap);
-      } else {
-        setDocuments(new Map());
-      }
-
       setWorkOrders(woData || []);
     } catch (error: any) {
       setMessage(error.message || "Failed to load work orders.");
     } finally {
       setLoading(false);
     }
-  }
-
-  function openDocument(document: any) {
-    if (!document.signed_url) {
-      setMessage(
-        document.signed_url_error ||
-          "Unable to open Work Order file. Signed URL was not available."
-      );
-      return;
-    }
-
-    window.open(document.signed_url, "_blank", "noopener,noreferrer");
   }
 
   async function openReviewPdf(workOrder: any) {
@@ -436,11 +381,6 @@ export default function WorkOrderApprovalPage() {
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || "Failed to delete Work Order.");
       setWorkOrders((current) => current.filter((item) => item.id !== wo.id));
-      setDocuments((current) => {
-        const next = new Map(current);
-        next.delete(wo.id);
-        return next;
-      });
       setMessage(`Work Order ${wo.wo_number || "-"} was permanently deleted.`);
     } catch (error: any) {
       setMessage(error.message || "Failed to delete Work Order.");
@@ -527,7 +467,6 @@ export default function WorkOrderApprovalPage() {
                 </tr>
               ) : (
                 pendingWorkOrders.map((wo) => {
-                  const currentDocuments = documents.get(wo.id) || [];
                   const isSaving = savingId === wo.id;
                   const isDeleting = deletingId === wo.id;
                   const commercials = workOrderCommercials(wo);
@@ -601,38 +540,9 @@ export default function WorkOrderApprovalPage() {
                             onClick={() => openReviewPdf(wo)}
                             className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 hover:underline"
                           >
-                            Review Work Order PDF
+                            Review Complete Work Order PDF
                             <ExternalLink className="h-3 w-3" />
                           </button>
-                        )}
-                        {currentDocuments.length === 0 ? (
-                          <div className="flex justify-center">
-                            <span className="inline-flex items-center gap-1 text-xs text-slate-400">
-                              <FileText className="h-3.5 w-3.5" />
-                              No file
-                            </span>
-                          </div>
-                        ) : (
-                          <div className="space-y-1">
-                            {currentDocuments.map((document) => (
-                              <div
-                                key={document.id}
-                                className="flex items-center justify-center gap-2"
-                              >
-                                <span className="max-w-[180px] truncate text-xs text-slate-600">
-                                  {document.file_name || "Work Order file"}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => openDocument(document)}
-                                  className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 hover:underline"
-                                >
-                                  Open
-                                  <ExternalLink className="h-3 w-3" />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
                         )}
                         </div>
                       </td>
