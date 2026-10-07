@@ -122,6 +122,35 @@ const testChargeText = revisionText.slice(Math.max(0, revisionText.indexOf("Test
 assert.ok(!testChargeText.includes("Rs. 0.00"), "Test Charge must not render a synthetic old zero amount");
 console.log(`PO executable R-1 PDF: PASS (bytes=${revisionResult.pdf.length}, pages=${revisionResult.pageCount}, footer=${revisionResult.footerRenderedHeight})`);
 
+const redlineCurrent = { ...current, po_number: "MRC/SEP/2026/0006/R-1-redline", items: [
+  { ...previous.items[0], item_name_snapshot: "Epoxy Dark Brown Revised", specification_snapshot: "Changed specification", unit_rate: 1234 },
+  { item_name_snapshot: "New Epoxy Item", specification_snapshot: "New specification", make_snapshot: "Ardex", quantity: 3, uom_snapshot: "Kg", unit_rate: 100, gst_rate: 18, gst_amount: 54, total_amount: 354 },
+] };
+const redlineComparison = buildPurchaseOrderRevisionComparison(previous, redlineCurrent);
+const redlinePresentation = buildPurchaseOrderRevisionPdfRenderModel(redlineCurrent, redlineComparison);
+const changedPresentationItem = redlinePresentation.items.find((item) => item.revision_line_key === brownKey);
+const addedPresentationItem = redlinePresentation.items.find((item) => item.state === "added");
+const removedPresentationItem = redlinePresentation.items.find((item) => item.state === "removed");
+assert.equal(changedPresentationItem.fields.item_name_snapshot.runs.at(-1).color, "red");
+assert.equal(changedPresentationItem.fields.specification_snapshot.runs.at(-1).color, "red");
+for (const field of ["basic_amount", "gst_rate", "gst_amount", "total_amount"]) assert.equal(addedPresentationItem.fields[field].runs[0].color, "red", `new ${field} is not red`);
+assert.equal(removedPresentationItem.fields.item_name_snapshot.runs[0].strike, true);
+assert.equal(removedPresentationItem.fields.item_name_snapshot.runs[0].color, "red");
+const redlineResult = await makePdf(redlineCurrent, { employee_name: "Test Creator", email: "creator@example.test", designation: "Procurement Manager" }, { employee_name: "Test Approver", company: "MRC Infracon Limited", designation: "Director", signatureBlock: "Approved By", signatureAsset: null }, { letterhead: { header: image, footer: image, fullPage: false }, deliveryCompany: "MRC Infracon Limited" }, redlinePresentation);
+const redlineStreams = [];
+for (const match of redlineResult.pdf.toString("latin1").matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
+  const bytes = Buffer.from(match[1], "latin1");
+  try { redlineStreams.push(inflateSync(bytes).toString("latin1")); } catch { redlineStreams.push(match[1]); }
+}
+const redlineText = redlineStreams.join("\n");
+for (const value of ["Epoxy Dark Brown Revised", "Changed specification", "New Epoxy Item", "New specification", "Epoxy Dark Grey"]) assert.ok(redlineText.includes(value), `redline PDF missing ${value}`);
+assert.ok(/0\.72 0\.08 0\.08 rg/.test(redlineText), "normal revised PDF has no redline color operator");
+const removedTextOffset = redlineText.indexOf("Epoxy Dark Grey");
+assert.ok(removedTextOffset >= 0 && /0\.72 0\.08 0\.08 RG/.test(redlineText.slice(Math.max(0, removedTextOffset - 240), removedTextOffset + 180)), "removed item is not rendered as a redline");
+assert.ok(redlineText.includes("New Epoxy Item"), "new item row was not rendered");
+assert.ok(redlineText.includes("100") && redlineText.includes("3"), "new item derived values were not rendered");
+console.log(`PO executable normal revised redlines: PASS (bytes=${redlineResult.pdf.length}, pages=${redlineResult.pageCount})`);
+
 const longTerms = JSON.stringify({ template_id: "fixture-long", clauses: Array.from({ length: 40 }, (_, i) => ({ id: `long-${i + 1}`, heading: `Long clause heading ${i + 1}`, clause_body: `This is a deliberately long standard term body for clause ${i + 1} that must wrap across measured lines without colliding with the next clause or overflowing the page boundary.`, sort_order: i })) });
 const longRow = { ...row, standard_terms_snapshot: longTerms };
 const longResult = await makePdf(longRow, { employee_name: "Test Creator", email: "creator@example.test", designation: "Procurement Manager" }, { employee_name: "Test Approver", company: "MRC Infracon Limited", designation: "Director", signatureBlock: "Approved By", signatureAsset: null }, { letterhead: { header: image, footer: image, fullPage: false }, deliveryCompany: "MRC Infracon Limited" });

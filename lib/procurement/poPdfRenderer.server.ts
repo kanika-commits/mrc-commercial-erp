@@ -382,9 +382,9 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
     y -= 3;
   };
   const itemTable = (rows: Array<Array<string | Array<{ value: string; red?: boolean; strike?: boolean }>>>, widths: number[]) => {
-    const headers = ["S.No.", "Material / Description", "Make", "Qty", "Unit", "Rate", "GST", "Amount"];
-    const aligns: Array<"left" | "center" | "right"> = ["center", "left", "left", "center", "center", "right", "right", "right"];
-    const headerAligns: Array<"left" | "center" | "right"> = ["center", "left", "left", "center", "center", "center", "center", "center"];
+    const headers = ["S.No.", "Material / Description", "Make", "Qty", "Unit", "Rate", "Basic Amount", "GST", "Amount"];
+    const aligns: Array<"left" | "center" | "right"> = ["center", "left", "left", "center", "center", "right", "right", "right", "right"];
+    const headerAligns: Array<"left" | "center" | "right"> = ["center", "left", "left", "center", "center", "center", "center", "center", "center"];
     const tableRight = LEFT + widths.reduce((sum, width) => sum + width, 0);
     const drawOuterRowBorders = (top: number, height: number) => {
       tableLine(LEFT, top, tableRight, top, true);
@@ -426,8 +426,8 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
         }
       } else {
         drawOuterRowBorders(y, h);
-        const totalsLabelX = LEFT + widths.slice(0, 6).reduce((sum, width) => sum + width, 0);
-        const amountX = totalsLabelX + widths[6];
+        const totalsLabelX = LEFT + widths.slice(0, 7).reduce((sum, width) => sum + width, 0);
+        const amountX = totalsLabelX + widths[7];
         tableLine(totalsLabelX, y - h, totalsLabelX, y);
         tableLine(amountX, y - h, amountX, y);
       }
@@ -453,18 +453,18 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
       const summaryCells = [labelRuns ? labelRuns.map((run: any) => run.text).join("") : String(label), amountRuns ? amountRuns.map((run: any) => run.text).join("") : String(amount)];
       const summaryLines = summaryCells.map((cell, index) => {
         const runs = (index === 1 ? amountRuns : labelRuns) as any[] | null;
-        if (runs) return runs.flatMap((run: any) => wrap(run.text, Math.max(8, Math.floor((widths[index === 0 ? 6 : 7] - CELL_PAD_X * 2) / (7 * 0.52)))));
-        return wrap(cell, Math.max(8, Math.floor((widths[index === 0 ? 6 : 7] - CELL_PAD_X * 2) / (7 * 0.52))));
+        if (runs) return runs.flatMap((run: any) => wrap(run.text, Math.max(8, Math.floor((widths[index === 0 ? 7 : 8] - CELL_PAD_X * 2) / (7 * 0.52)))));
+        return wrap(cell, Math.max(8, Math.floor((widths[index === 0 ? 7 : 8] - CELL_PAD_X * 2) / (7 * 0.52))));
       });
       const summaryHeight = Math.max(17, Math.max(...summaryLines.map((items) => items.length)) * 9 + ITEM_PAD_TOP + ITEM_PAD_BOTTOM);
       if (y - summaryHeight < bodyBottomY) { newPage(); render(headers, true); }
-      const totalsLabelX = LEFT + widths.slice(0, 6).reduce((sum, value) => sum + value, 0);
-      const amountX = totalsLabelX + widths[6];
+      const totalsLabelX = LEFT + widths.slice(0, 7).reduce((sum, value) => sum + value, 0);
+      const amountX = totalsLabelX + widths[7];
       const labelText = summaryCells[0];
       const emphasized = labelText === "Items Basic" || labelText === "GST" || labelText === "Total Amount";
       if (label === "Total Amount") tableFill(LEFT, y - summaryHeight, tableRight - LEFT, summaryHeight, "0.93 0.95 0.97");
       if (labelRuns) labelRuns.forEach((run: any) => run.color === "red" ? drawRedline(run.text, totalsLabelX + CELL_PAD_X, y - summaryHeight + 9 * 0.78, 7, run.strike, emphasized) : draw(run.text, totalsLabelX + CELL_PAD_X, y - summaryHeight + 9 * 0.78, 7, emphasized, Boolean(run.strike)));
-      else for (const [lineIndex, lineText] of summaryLines[0].entries()) addedOrRemoved ? drawRedline(lineText, totalsLabelX + CELL_PAD_X, y - summaryHeight + (summaryHeight - summaryLines[0].length * 9) / 2 + 9 * 0.78 - lineIndex * 9, 7, addedOrRemoved === "removed", emphasized) : drawAligned(lineText, totalsLabelX, widths[6], y - summaryHeight + (summaryHeight - summaryLines[0].length * 9) / 2 + 9 * 0.78 - lineIndex * 9, 7, "left", emphasized);
+      else for (const [lineIndex, lineText] of summaryLines[0].entries()) addedOrRemoved ? drawRedline(lineText, totalsLabelX + CELL_PAD_X, y - summaryHeight + (summaryHeight - summaryLines[0].length * 9) / 2 + 9 * 0.78 - lineIndex * 9, 7, addedOrRemoved === "removed", emphasized) : drawAligned(lineText, totalsLabelX, widths[7], y - summaryHeight + (summaryHeight - summaryLines[0].length * 9) / 2 + 9 * 0.78 - lineIndex * 9, 7, "left", emphasized);
       const chargeKey = labelText === "Freight" ? "" : String(labelText);
       const chargeDiff = beforeCharges.get(chargeKey) || afterCharges.get(chargeKey);
       const changedCharge = chargeDiff?.state === "changed";
@@ -477,9 +477,9 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
         const yy = y - summaryHeight + 9 * 0.78;
         drawRedline(money(chargeDiff.before.amount), amountX, yy, 7, true);
         drawRedline(money(chargeDiff.after.amount), amountX, yy - 9, 7, false);
-      } else if (amountRuns) amountRuns.forEach((run: any, runIndex: number) => { const width = textWidth(String(run.text), 7); const xx = amountX + widths[7] - CELL_PAD_X - width; const yy = y - summaryHeight + (summaryHeight - summaryLines[1].length * 9) / 2 + 9 * 0.78 - runIndex * 9; run.color === "red" ? drawRedline(run.text, xx, yy, 7, run.strike, false) : draw(run.text, xx, yy, 7, false, Boolean(run.strike)); });
+      } else if (amountRuns) amountRuns.forEach((run: any, runIndex: number) => { const width = textWidth(String(run.text), 7); const xx = amountX + widths[8] - CELL_PAD_X - width; const yy = y - summaryHeight + (summaryHeight - summaryLines[1].length * 9) / 2 + 9 * 0.78 - runIndex * 9; run.color === "red" ? drawRedline(run.text, xx, yy, 7, run.strike, false) : draw(run.text, xx, yy, 7, false, Boolean(run.strike)); });
       else if (addedOrRemoved) for (const [lineIndex, lineText] of summaryLines[1].entries()) drawRedline(lineText, amountX, y - summaryHeight + (summaryHeight - summaryLines[1].length * 9) / 2 + 9 * 0.78 - lineIndex * 9, 7, addedOrRemoved === "removed", false);
-      else for (const [lineIndex, lineText] of summaryLines[1].entries()) drawAligned(lineText, amountX, widths[7], y - summaryHeight + (summaryHeight - summaryLines[1].length * 9) / 2 + 9 * 0.78 - lineIndex * 9, 7, "right", label === "Total Amount");
+      else for (const [lineIndex, lineText] of summaryLines[1].entries()) drawAligned(lineText, amountX, widths[8], y - summaryHeight + (summaryHeight - summaryLines[1].length * 9) / 2 + 9 * 0.78 - lineIndex * 9, 7, "right", label === "Total Amount");
       drawOuterRowBorders(y, summaryHeight);
       tableLine(totalsLabelX, y - summaryHeight, totalsLabelX, y);
       tableLine(amountX, y - summaryHeight, amountX, y);
@@ -521,10 +521,17 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
 
   heading("ITEMS", 19);
   const diffs = Number(row.revision_no || 0) > 0 && revisionRenderModel ? new Map(revisionRenderModel.items.map((item: any) => [String(item.revision_line_key), item])) : new Map();
+  const legacySingleLineKey = (row.items || []).length === 1 && revisionRenderModel?.items?.length === 1 ? "__legacy_single_line__" : null;
+  const itemDiffKey = (item: any, index: number) => String(item?.revision_line_key || item?.source_requisition_line_key || item?.item_code_snapshot || item?.item_id_snapshot || legacySingleLineKey || `__position_${index}`);
   const renderedItems: Array<Array<string | Array<{ value: string; red?: boolean; strike?: boolean }>>> = [];
-  const itemFields = ["item_name_snapshot", "item_code_snapshot", "make_snapshot", "quantity", "uom_snapshot", "unit_rate", "gst_rate", "gst_amount", "total_amount"];
+  const itemFields = ["item_name_snapshot", "item_code_snapshot", "make_snapshot", "quantity", "uom_snapshot", "unit_rate", "basic_amount", "gst_rate", "gst_amount", "total_amount"];
   const formatItemValue = (field: string, item: any) => {
-    if (field === "unit_rate" || field === "total_amount" || field === "gst_amount") return item?.[field] == null ? text(item?.[field]) : money(item[field]);
+    if (field === "unit_rate" || field === "total_amount" || field === "gst_amount" || field === "basic_amount") {
+      const value = field === "basic_amount"
+        ? (typeof item === "number" ? item : Number(item?.quantity || 0) * Number(item?.unit_rate || 0))
+        : item?.[field];
+      return value == null ? text(value) : money(value);
+    }
     if (field === "gst_rate") return `${item?.gst_rate || 0}%`;
     return text(item?.[field]);
   };
@@ -538,20 +545,20 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
     return revisionRuns(fieldDiff, (value) => formatItemValue(field, value));
   };
   for (const [index, item] of (row.items || []).entries()) {
-    const diff = item?.revision_line_key ? diffs.get(String(item.revision_line_key)) : null;
+    const diff = diffs.get(itemDiffKey(item, index)) || null;
     const itemCell = (field: string) => redlineCell(field, item, diff);
     renderedItems.push([
       String(index + 1),
       diff ? [itemCell("item_name_snapshot"), itemCell("item_code_snapshot"), itemCell("specification_snapshot")].flatMap((value: any) => Array.isArray(value) ? value : [{ value }]) : `${text(item.item_name_snapshot)}\n${text(item.item_code_snapshot)}${item.specification_snapshot ? `\n${item.specification_snapshot}` : ""}`,
-      itemCell("make_snapshot"), itemCell("quantity"), itemCell("uom_snapshot"), itemCell("unit_rate"), diff ? [itemCell("gst_rate"), itemCell("gst_amount")].flatMap((value: any) => Array.isArray(value) ? value : [{ value }]) : `${item.gst_rate || 0}%\n${money(item.gst_amount)}`, itemCell("total_amount"),
+      itemCell("make_snapshot"), itemCell("quantity"), itemCell("uom_snapshot"), itemCell("unit_rate"), itemCell("basic_amount"), diff ? [itemCell("gst_rate"), itemCell("gst_amount")].flatMap((value: any) => Array.isArray(value) ? value : [{ value }]) : `${item.gst_rate || 0}%\n${money(item.gst_amount)}`, itemCell("total_amount"),
     ]);
   }
   for (const diff of diffs.values()) {
     if (itemSnapshotDiff(diff).state !== "removed") continue;
     const old = diff.before || {};
-    renderedItems.push([String((row.items || []).length + 1), ["item_name_snapshot", "item_code_snapshot", "specification_snapshot"].map((field) => ({ value: formatItemValue(field, old), red: true, strike: true })), redlineCell("make_snapshot", null, diff, true), redlineCell("quantity", null, diff, true), redlineCell("uom_snapshot", null, diff, true), redlineCell("unit_rate", null, diff, true), [{ value: `${old.gst_rate || 0}%`, red: true, strike: true }, { value: money(old.gst_amount), red: true, strike: true }], redlineCell("total_amount", null, diff, true)]);
+    renderedItems.push([String((row.items || []).length + 1), ["item_name_snapshot", "item_code_snapshot", "specification_snapshot"].map((field) => ({ value: formatItemValue(field, old), red: true, strike: true })), redlineCell("make_snapshot", null, diff, true), redlineCell("quantity", null, diff, true), redlineCell("uom_snapshot", null, diff, true), redlineCell("unit_rate", null, diff, true), redlineCell("basic_amount", null, diff, true), [{ value: `${old.gst_rate || 0}%`, red: true, strike: true }, { value: money(old.gst_amount), red: true, strike: true }], redlineCell("total_amount", null, diff, true)]);
   }
-  itemTable(renderedItems, [24, 155, 48, 28, 34, 64, 78, 80]);
+  itemTable(renderedItems, [24, 125, 42, 28, 34, 52, 64, 82, 60]);
 
   const keyTerms = Array.isArray(row.commercial_snapshot?.key_terms) ? row.commercial_snapshot.key_terms : [];
   const keyTermsDiff = revisionCommercial(row);
