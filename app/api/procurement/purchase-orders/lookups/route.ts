@@ -57,7 +57,7 @@ export async function GET(request: Request) {
       gstQuery ? gstQuery : Promise.resolve({ data: [], error: null }),
       billingQuery ? billingQuery : Promise.resolve({ data: [], error: null }),
       termsQuery ? termsQuery : Promise.resolve({ data: [], error: null }),
-      siteContactQuery ? siteContactQuery : Promise.resolve({ data: [], error: null }),
+      siteContactQuery,
       addressContactsQuery ? addressContactsQuery : Promise.resolve({ data: [], error: null }),
       letterheadQuery ? letterheadQuery : Promise.resolve({ data: [], error: null }),
     ]);
