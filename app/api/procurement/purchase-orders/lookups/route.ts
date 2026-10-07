@@ -47,7 +47,10 @@ export async function GET(request: Request) {
     const gstQuery = applyOrganizationAccess(admin.from("company_gst_registrations").select("id,organization_id,company_id,gstin,legal_name,trade_name,state,state_code,registration_type,is_default,status").eq("status", "active"), auth);
     const billingQuery = applyOrganizationAccess(admin.from("company_billing_addresses").select("id,organization_id,company_id,gst_registration_id,label,address_line1,address_line2,city,state,pincode,gstin,contact_name,mobile,email,is_default,status").eq("status", "active"), auth);
     const termsQuery = applyOrganizationAccess(admin.from("company_po_terms_templates").select("id,organization_id,company_id,template_name,is_default,status,sections:company_po_terms_sections(id,heading,clause_body,sort_order,status)").eq("status", "active"), auth);
-    const siteContactQuery = applyOrganizationAccess(admin.from("site_contacts").select("id,organization_id,site_id,contact_name,designation,mobile,email,contact_type,is_default,status").eq("status", "active").order("contact_name"), auth);
+    // Site contacts are authorized through their canonical site's organization and site scope.
+    // Do not apply the denormalized contact organization_id separately: legacy rows may carry
+    // a stale organization value even though their site is authorized and unchanged.
+    const siteContactQuery = admin.from("site_contacts").select("id,organization_id,site_id,contact_name,designation,mobile,email,contact_type,is_default,status").eq("status", "active").order("contact_name");
     const addressContactsQuery = applyOrganizationAccess(admin.from("procurement_address_contacts").select("*").eq("status", "active").order("sort_order"), auth);
     const letterheadQuery = applyOrganizationAccess(admin.from("procurement_company_letterheads").select("id,organization_id,company_id,letterhead_name,is_default,status,versions:procurement_company_letterhead_versions(id,version_number,version_status,header_content_hash,footer_content_hash)").eq("status", "active").eq("is_default", true), auth);
     const [gstResult, billingResult, termsResult, siteContactResult, addressContactsResult, letterheadResult] = await Promise.all([
