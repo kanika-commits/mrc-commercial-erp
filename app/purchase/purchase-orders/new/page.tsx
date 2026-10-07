@@ -14,6 +14,8 @@ type Item = { po_item_id?: string; item_id?: string; item_name: string; item_cod
 type AttachmentDraft = { file: File; documentType: string };
 type AdditionalCharge = { name: string; amount: string };
 
+const FIXED_KEY_TERM_HEADINGS = ["Price Validity", "Freight", "Delivery Timeline", "Payment Terms"] as const;
+
 const today = () => new Date().toISOString().slice(0, 10);
 const money = (value: number) => `₹ ${value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const sourceLabels: Record<Source, string> = { direct: "Direct Purchase", indent: "From Material Indent" };
@@ -27,6 +29,19 @@ function getCreatedId(value: any): string | null {
 
 function normalizeKeyTerm(term: any) {
   return { description: String(term?.description ?? term?.label ?? ""), terms: String(term?.terms ?? term?.value ?? "") };
+}
+
+function normalizeSavedKeyTerms(savedTerms: any[]) {
+  const saved = Array.isArray(savedTerms) ? savedTerms.map(normalizeKeyTerm) : [];
+  const used = new Set<number>();
+  const fixed = FIXED_KEY_TERM_HEADINGS.map((heading, headingIndex) => {
+    const exactIndex = saved.findIndex((term, index) => !used.has(index) && term.description.trim().toLowerCase() === heading.toLowerCase());
+    const positionalIndex = exactIndex >= 0 ? exactIndex : saved.findIndex((term, index) => !used.has(index) && index === headingIndex && !term.description.trim());
+    const index = positionalIndex >= 0 ? positionalIndex : -1;
+    if (index >= 0) used.add(index);
+    return { description: heading, terms: index >= 0 ? saved[index].terms : "" };
+  });
+  return [...fixed, ...saved.filter((_, index) => !used.has(index))];
 }
 
 function fileSize(value: number) {
@@ -58,7 +73,7 @@ export default function NewPurchaseOrderPage() {
   const [deliveryLocationId, setDeliveryLocationId] = useState("");
   const [gstRegistrationId, setGstRegistrationId] = useState("");
   const [additionalCharges, setAdditionalCharges] = useState<AdditionalCharge[]>([]);
-  const [keyTerms, setKeyTerms] = useState([{ description: "Price Validity", terms: "" }, { description: "Delivery Timeline", terms: "" }, { description: "Payment Terms", terms: "" }]);
+  const [keyTerms, setKeyTerms] = useState(FIXED_KEY_TERM_HEADINGS.map((description) => ({ description, terms: "" })));
   const [message, setMessage] = useState("");
   const errorRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
@@ -118,7 +133,7 @@ export default function NewPurchaseOrderPage() {
       setBillingContactId(po.delivery_snapshot?.master_selection?.billing_contact_id || po.delivery_snapshot?.billing_contact?.site_contact_id || po.delivery_snapshot?.master_selection?.site_contact_id || "");
       setDeliveryContactId(po.delivery_snapshot?.master_selection?.delivery_contact_id || po.delivery_snapshot?.delivery_contact?.site_contact_id || po.delivery_snapshot?.master_selection?.site_contact_id || po.delivery_snapshot?.site_contact_id || "");
       setAdditionalCharges(Array.isArray(po.commercial_snapshot?.additional_charges) ? po.commercial_snapshot.additional_charges.map((charge: any) => ({ name: String(charge.name || ""), amount: String(charge.amount ?? "") })) : []);
-      setKeyTerms(Array.isArray(po.commercial_snapshot?.key_terms) && po.commercial_snapshot.key_terms.length ? po.commercial_snapshot.key_terms.map(normalizeKeyTerm) : [{ description: "Price Validity", terms: "" }, { description: "Delivery Timeline", terms: "" }, { description: "Payment Terms", terms: "" }]);
+      setKeyTerms(normalizeSavedKeyTerms(po.commercial_snapshot?.key_terms || []));
       const parsedTerms = parsePurchaseOrderStandardTerms(po.standard_terms_snapshot);
       setStandardTerms(parsedTerms?.kind === "structured" ? parsedTerms.clauses.map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n") : parsedTerms?.text || "");
       setItems((po.items || []).map((item: any) => ({ po_item_id: item.id, item_id: item.item_id, item_name: item.item_name_snapshot || "", item_code: item.item_code_snapshot, description: item.description_snapshot || item.specification_snapshot || "", specification: item.specification_snapshot, make: item.make_snapshot || "", quantity: String(item.quantity ?? ""), uom: item.uom_snapshot || "", unit_rate: String(item.unit_rate ?? ""), gst_rate: String(item.gst_rate ?? "0"), source_requisition_line_key: item.source_requisition_line_key, isMaterialMasterLinked: false })));
