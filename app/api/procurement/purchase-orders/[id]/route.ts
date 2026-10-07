@@ -18,9 +18,18 @@ async function load(request: Request, id: string, action: string) {
   if (companyResult.error) throw companyResult.error;
   if (!companyResult.data) return { response: jsonError("Purchase Order company was not found.", 404) } as const;
   data.company = companyResult.data;
-  return { auth, admin, row: data } as const;
+  let revisionHistory: any[] = [data];
+  if (data.revision_family_id) {
+    const familyQuery = applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id,po_number,revision_no,status,revision_family_id,previous_revision_id,superseded_by_revision_id,created_at,submitted_at,approved_at,company_id,site_id,vendor_id").eq("revision_family_id", data.revision_family_id).order("revision_no", { ascending: false }), auth);
+    if (familyQuery) {
+      const familyResult = await familyQuery;
+      if (familyResult.error) throw familyResult.error;
+      revisionHistory = familyResult.data || revisionHistory;
+    }
+  }
+  return { auth, admin, row: data, revisionHistory } as const;
 }
-export async function GET(request: Request, context: { params: Promise<{ id: string }> }) { try { const { id } = await context.params; const result = await load(request, id, "view"); if ("response" in result) return result.response; return NextResponse.json({ purchase_order: result.row }); } catch (error: any) { return jsonError(error.message || "Failed to load Purchase Order.", 500); } }
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) { try { const { id } = await context.params; const result = await load(request, id, "view"); if ("response" in result) return result.response; return NextResponse.json({ purchase_order: result.row, revision_history: result.revisionHistory }); } catch (error: any) { return jsonError(error.message || "Failed to load Purchase Order.", 500); } }
 export async function PUT(request: Request, context: { params: Promise<{ id: string }> }) { try { const { id } = await context.params; const result = await load(request, id, "edit"); if ("response" in result) return result.response; const body = await request.json().catch(() => ({})); const commercial = body.commercial || {}; if (Array.isArray(body.key_terms)) commercial.key_terms = body.key_terms; if (Object.prototype.hasOwnProperty.call(commercial, "additional_charges")) { if (!Array.isArray(commercial.additional_charges) || commercial.additional_charges.some((charge: any) => !text(charge?.name) || !Number.isFinite(Number(charge?.amount)) || Number(charge.amount) < 0)) return jsonError("Each additional charge needs a name and a valid non-negative amount.", 400); commercial.additional_charges = commercial.additional_charges.map((charge: any) => ({ name: text(charge.name), amount: Number(charge.amount) })); } const items = normalizePurchaseOrderItems(Array.isArray(body.items) ? body.items : []);
     let expectedOriginalItemIds: string[] | undefined;
     if (items.length) {

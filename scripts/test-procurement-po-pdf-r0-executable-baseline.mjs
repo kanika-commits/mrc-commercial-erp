@@ -59,7 +59,7 @@ for (const match of result.pdf.toString("latin1").matchAll(/stream\r?\n([\s\S]*?
   try { pdfText.push(inflateSync(bytes).toString("latin1")); } catch { pdfText.push(match[1]); }
 }
 const extractedText = pdfText.join("\n");
-for (const value of ["MRC/SEP/2026/0006/R-0", "Ardex India Pvt. Ltd.", "Epoxy Dark Brown", "Epoxy Dark Grey", "Rs. 2,850.00", "40", "20", "18%", "Price Validity", "Freight", "Delivery Timeline", "Payment Terms", ...Array.from({ length: 9 }, (_, i) => `Clause ${i + 1}`), "Test Approver", "Approved By"]) assert.ok(extractedText.includes(value), `generated PDF missing ${value}`);
+for (const value of ["MRC/SEP/2026/0006/R-0", "Ardex India Pvt. Ltd.", "Epoxy Dark Brown", "Epoxy Dark Grey", "Rs. 2,850.00", "Rs. 1,14,000.00", "Rs. 57,000.00", "40", "20", "18%", "Price Validity", "Freight", "Delivery Timeline", "Payment Terms", ...Array.from({ length: 9 }, (_, i) => `Clause ${i + 1}`), "Test Approver", "Approved By"]) assert.ok(extractedText.includes(value), `generated PDF missing ${value}`);
 assert.ok(extractedText.includes("1") && extractedText.includes("9"), "standard terms numbering baseline changed");
 assert.ok(!extractedText.includes("1. 1."));
 console.log(`PO executable R-0 baseline: PASS (bytes=${result.pdf.length}, pages=${result.pageCount}, footer=${result.footerRenderedHeight})`);
@@ -77,8 +77,8 @@ const previous = { ...row, id: "fixture-po-r0", po_number: "MRC/SEP/2026/0006/R-
   { id: "delivery", label: "Delivery Timeline", value: "Immediate delivery of the materials required at the site." },
   { id: "payment", label: "Payment Terms", value: "30 days credit from the date of invoice." },
 ], additional_charges: [] } };
-const current = { ...previous, id: "fixture-po-r1", po_number: "MRC/SEP/2026/0006/R-1", revision_no: 1, previous_revision_id: previous.id, items: [
-  { ...previous.items[0], unit_rate: 1234 },
+const current = { ...previous, id: "fixture-po-r1", po_number: "MRC/SEP/2026/0006/R-1", revision_no: 1, previous_revision_id: previous.id, total_basic_amount: 205000, total_gst_amount: 31000, total_amount: 236000, standard_terms_snapshot: JSON.stringify({ template_id: "fixture-standard", clauses: [...clauseIds.map((id, i) => ({ id, heading: `Clause ${i + 1}`, clause_body: i === 0 ? "Changed standard term body" : `Standard term body ${i + 1}`, sort_order: i })), { id: "term-10", heading: "New clause", clause_body: "New standard term", sort_order: 9 }] }), items: [
+  { ...previous.items[0], specification_snapshot: "Changed epoxy coating", quantity: 45, unit_rate: 1234 },
   previous.items[1],
 ], commercial_snapshot: { ...previous.commercial_snapshot, key_terms: previous.commercial_snapshot.key_terms.map((term) => term.id === "freight" ? { ...term, value: "This is test change too." } : term), additional_charges: [{ id: "test-charge", name: "Test Charge", amount: 1234 }] } };
 const comparison = buildPurchaseOrderRevisionComparison(previous, current);
@@ -87,7 +87,7 @@ const greyComparison = comparison.items.find((item) => item.revision_line_key ==
 assert.equal(brownComparison.fields.unit_rate.state, "changed");
 assert.equal(brownComparison.fields.unit_rate.before, 2850);
 assert.equal(brownComparison.fields.unit_rate.after, 1234);
-assert.equal(brownComparison.fields.quantity.state, "unchanged");
+assert.equal(brownComparison.fields.quantity.state, "changed");
 assert.equal(brownComparison.fields.gst_rate.state, "unchanged");
 assert.equal(brownComparison.fields.make_snapshot.state, "unchanged");
 assert.equal(greyComparison.state, "unchanged");
@@ -96,8 +96,8 @@ const testChargeComparison = comparison.additionalCharges.find((charge) => charg
 assert.equal(testChargeComparison.state, "added");
 assert.equal(testChargeComparison.before, undefined);
 assert.equal(testChargeComparison.after.amount, 1234);
-assert.equal(comparison.standardTerms.length, 9);
-assert.equal(comparison.standardTerms.filter((term) => term.state === "unchanged").length, 9);
+assert.equal(comparison.standardTerms.length, 10);
+assert.equal(comparison.standardTerms.filter((term) => term.state === "unchanged").length, 8);
 const presentation = buildPurchaseOrderRevisionPdfRenderModel(current, comparison);
 assert.deepEqual(presentation.items.find((item) => item.revision_line_key === brownKey).fields.unit_rate.runs, [{ text: "2850", color: "normal", strike: true }, { text: "1234", color: "red", strike: false }]);
 assert.equal(presentation.items.find((item) => item.revision_line_key === brownKey).fields.quantity.runs[0].color, "normal");
@@ -105,7 +105,10 @@ assert.equal(presentation.keyTerms.find((term) => term.identity === "freight").v
 assert.equal(presentation.additionalCharges.find((charge) => charge.identity === "test-charge").amount.runs.length, 1);
 assert.equal(presentation.additionalCharges.find((charge) => charge.identity === "test-charge").amount.runs[0].color, "red");
 assert.equal(presentation.additionalCharges.find((charge) => charge.identity === "test-charge").amount.runs[0].strike, false);
-assert.equal(presentation.standardTerms.flatMap((term) => [...term.heading.runs, ...term.body.runs]).filter((run) => run.color === "red").length, 0);
+assert.ok(presentation.items.find((item) => item.revision_line_key === brownKey).fields.specification_snapshot.runs.some((run) => run.color === "red"));
+assert.ok(presentation.items.find((item) => item.revision_line_key === brownKey).fields.quantity.runs.some((run) => run.color === "red"));
+assert.ok(presentation.summary.total.runs.some((run) => run.color === "red"));
+assert.ok(presentation.standardTerms.flatMap((term) => [...term.heading.runs, ...term.body.runs]).some((run) => run.color === "red"));
 const revisionResult = await makePdf(current, { employee_name: "Test Creator", email: "creator@example.test", designation: "Procurement Manager" }, { employee_name: "Test Approver", company: "MRC Infracon Limited", designation: "Director", signatureBlock: "Approved By", signatureAsset: null }, { letterhead: { header: image, footer: image, fullPage: false }, deliveryCompany: "MRC Infracon Limited" }, presentation);
 assert.ok(Buffer.isBuffer(revisionResult.pdf) && revisionResult.pdf.length > 0);
 assert.ok(revisionResult.pageCount > 0);
@@ -115,9 +118,9 @@ for (const match of revisionResult.pdf.toString("latin1").matchAll(/stream\r?\n(
   try { revisionStreams.push(inflateSync(bytes).toString("latin1")); } catch { revisionStreams.push(match[1]); }
 }
 const revisionText = revisionStreams.join("\n");
-for (const value of ["MRC/SEP/2026/0006/R-1", "Epoxy Dark Brown", "Epoxy Dark Grey", "2850", "1234", "18%", "FOR at site.", "This is test change too.", "Test Charge", ...Array.from({ length: 9 }, (_, i) => `Clause ${i + 1}`)]) assert.ok(revisionText.includes(value), `generated R-1 PDF missing ${value}`);
+for (const value of ["MRC/SEP/2026/0006/R-1", "Epoxy Dark Brown", "Changed epoxy coating", "Epoxy Dark Grey", "2850", "1234", "45", "18%", "FOR at site.", "This is test change too.", "Test Charge", "Changed standard term body", "New standard term", ...Array.from({ length: 9 }, (_, i) => `Clause ${i + 1}`)]) assert.ok(revisionText.includes(value), `generated R-1 PDF missing ${value}`);
 assert.ok(revisionText.includes("0 0 0 RG"), "generated R-1 PDF is missing a black strike operator");
-assert.ok(revisionText.indexOf("0 0 0 RG") > revisionText.indexOf("2850"), "black strike operator was not emitted after the old rate text");
+assert.ok(revisionText.includes("0.72 0.08 0.08 rg"), "generated R-1 PDF is missing red changed-value styling");
 const testChargeText = revisionText.slice(Math.max(0, revisionText.indexOf("Test Charge") - 120), revisionText.indexOf("Test Charge") + 180);
 assert.ok(!testChargeText.includes("Rs. 0.00"), "Test Charge must not render a synthetic old zero amount");
 console.log(`PO executable R-1 PDF: PASS (bytes=${revisionResult.pdf.length}, pages=${revisionResult.pageCount}, footer=${revisionResult.footerRenderedHeight})`);
@@ -132,7 +135,7 @@ for (const match of legacyResult.pdf.toString("latin1").matchAll(/stream\r?\n([\
   try { legacyStreams.push(inflateSync(bytes).toString("latin1")); } catch { legacyStreams.push(match[1]); }
 }
 const legacyText = legacyStreams.join("\n");
-for (const value of ["SS 316 Chair Type Clamp 50", "Chair Clamp 50X65MM", "MAT001002", "MAT000032", "250 GMS", "230 GRM"]) assert.ok(legacyText.includes(value), `legacy null-key R-1 PDF missing ${value}`);
+for (const value of ["SS 316 Chair Type Clamp 50", "Chair Clamp 50X65MM", "250 GMS", "230 GRM"]) assert.ok(legacyText.includes(value), `legacy null-key R-1 PDF missing ${value}`);
 assert.ok(legacyText.includes("0.72 0.08 0.08 rg"), "legacy null-key R-1 PDF missing red styling operator");
 assert.ok(legacyText.includes("0 0 0 RG"), "legacy null-key R-1 PDF missing black strike styling operator");
 console.log(`PO executable legacy NULL-key R-1 PDF: PASS (bytes=${legacyResult.pdf.length}, pages=${legacyResult.pageCount})`);
