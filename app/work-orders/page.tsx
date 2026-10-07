@@ -577,7 +577,7 @@ export default function WorkOrdersPage() {
       }
 
       const response = await fetch(
-        `/api/work-orders?work_order_id=${encodeURIComponent(deleteWorkOrder.id)}`,
+        `/api/approvals/work-orders/${encodeURIComponent(deleteWorkOrder.id)}`,
         {
           method: "DELETE",
           headers: {
@@ -607,7 +607,11 @@ export default function WorkOrdersPage() {
 
   useEffect(() => {
     if (!access) return;
-    setCanDelete(can(access.permissions, "work_orders", "delete"));
+    setCanDelete(
+      can(access.permissions, "work_orders", "delete") &&
+      access.roleCodes?.includes("platform_owner") === true &&
+      process.env.NEXT_PUBLIC_VERCEL_ENV === "production",
+    );
   }, [access]);
 
   useEffect(() => {
