@@ -236,14 +236,19 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const auth = await requireProcurementAny(request, [{ moduleCode: "procurement_purchase_orders", actionCode: "view" }, { moduleCode: "procurement_purchase_orders", actionCode: "edit" }, { moduleCode: "procurement_purchase_orders", actionCode: "approve" }]);
     if ("response" in auth) return auth.response;
     const admin = adminClient();
-    let query: any = applyOrganizationAccess(admin.from("procurement_purchase_orders").select("*, company:companies!procurement_purchase_orders_company_id_fkey(company_name,company_code), site:sites(site_name,site_code), items:procurement_purchase_order_items(*), events:procurement_purchase_order_events(event_type,actor_id,actor_name,actor_email,created_at)").eq("id", id).maybeSingle(), auth);
+    let query: any = applyOrganizationAccess(admin.from("procurement_purchase_orders").select("*, site:sites(site_name,site_code), items:procurement_purchase_order_items(*), events:procurement_purchase_order_events(event_type,actor_id,actor_name,actor_email,created_at)").eq("id", id).maybeSingle(), auth);
     query = query && applyCompanySiteAccess(query, auth);
     if (!query) return jsonError("Purchase Order was not found.", 404);
     const { data, error } = await query;
     if (error) throw error;
     if (!data) return jsonError("Purchase Order was not found.", 404);
+    const companyResult = await admin.from("companies").select("id,company_name,company_code,organization_id").eq("id", data.company_id).eq("organization_id", data.organization_id).maybeSingle();
+    if (companyResult.error) throw companyResult.error;
+    if (!companyResult.data) return jsonError("Purchase Order company was not found.", 404);
+    data.company = companyResult.data;
     let previousRevisionData: any = null;
-    if (Number(data.revision_no || 0) > 0 && data.previous_revision_id) {
+    const revisionPdfRequested = Number(data.revision_no || 0) > 0 && Boolean(data.previous_revision_id);
+    if ((comparisonRequested || revisionPdfRequested) && revisionPdfRequested) {
       const previousResult = await admin.from("procurement_purchase_orders").select("*, items:procurement_purchase_order_items(*)").eq("id", data.previous_revision_id).eq("organization_id", data.organization_id).maybeSingle();
       if (previousResult.error) throw previousResult.error;
       if (!previousResult.data) throw new Error("Previous Purchase Order revision was not found.");

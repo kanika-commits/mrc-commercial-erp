@@ -43,11 +43,17 @@ function formatRevisionItemField(key: string, value: unknown) {
 export function buildPurchaseOrderRevisionPdfRenderModel(current: any, comparison?: any): any {
   if (!comparison) return current;
   const parsedCurrentTerms = parsePurchaseOrderStandardTerms(current?.standard_terms_snapshot);
-  const currentTerms = comparison.standardTerms?.length ? comparison.standardTerms.map((clause: any) => ({ ...clause, heading: valueField(clause.state, clause.before?.heading, clause.after?.heading), body: valueField(clause.state, clause.before?.clause_body, clause.after?.clause_body) })) : parsedCurrentTerms?.kind === "structured"
-    ? parsedCurrentTerms.clauses.map((clause: any, index: number) => ({ identity: String(clause.id ?? `clause-${index + 1}`), state: "unchanged", heading: { runs: [{ text: clause.heading, color: "normal", strike: false }] }, body: { runs: [{ text: clause.clause_body, color: "normal", strike: false }] } }))
-    : parsedCurrentTerms?.kind === "text"
-      ? [{ identity: "legacy-terms", state: "unchanged", heading: { runs: [{ text: "", color: "normal", strike: false }] }, body: { runs: [{ text: parsedCurrentTerms.text, color: "normal", strike: false }] } }]
-      : [];
+  const currentTerms = comparison.standardTerms?.length
+    ? comparison.standardTerms.map((clause: any) => ({
+      ...clause,
+      heading: valueField(clause.state, clause.before?.heading, clause.after?.heading),
+      body: valueField(clause.state, clause.before?.clause_body, clause.after?.clause_body),
+    }))
+    : parsedCurrentTerms?.kind === "structured"
+      ? parsedCurrentTerms.clauses.map((clause: any, index: number) => ({ identity: String(clause.id ?? `clause-${index + 1}`), state: "unchanged", heading: { runs: [{ text: clause.heading, color: "normal", strike: false }] }, body: { runs: [{ text: clause.clause_body, color: "normal", strike: false }] } }))
+      : parsedCurrentTerms?.kind === "text"
+        ? [{ identity: "legacy-terms", state: "unchanged", heading: { runs: [{ text: "", color: "normal", strike: false }] }, body: { runs: [{ text: parsedCurrentTerms.text, color: "normal", strike: false }] } }]
+        : [];
   const totalsBefore = comparison.rendererSnapshot?.header?.totals?.before || {};
   const totalsAfter = comparison.rendererSnapshot?.header?.totals?.after || {};
   const summary = Object.fromEntries(Object.entries({ itemsBasic: "items_basic", gst: "gst", freight: "freight", total: "total" }).map(([key, source]) => [key, fieldRuns(diffRevisionValue(totalsBefore[source], totalsAfter[source]) as any, (value) => `Rs. ${Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)]));

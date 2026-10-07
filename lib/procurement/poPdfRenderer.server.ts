@@ -1,4 +1,4 @@
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, rgb } from "pdf-lib";
 import { parsePurchaseOrderStandardTerms } from "@/lib/procurement/standardTerms";
 import { visibleRevisionClause } from "@/lib/procurement/poRevisionComparison";
 import { buildPurchaseOrderRevisionPdfRenderModel } from "@/lib/procurement/poRevisionPdfRenderer";
@@ -44,6 +44,10 @@ const PAGE_NUMBER_BODY_GAP = 2;
 const FIRST_PAGE_TITLE_SAFE_GAP = 8;
 
 const REDLINE = { r: 0.72, g: 0.08, b: 0.08 };
+
+const PO_HEADER_FILL = "0.93 0.95 0.97";
+
+const WORK_ORDER_HEADER_FILL = "0.98 0.91 0.91";
 
 export type RevisionValueDiff<T> =
   | { state: "unchanged"; value: T }
@@ -135,7 +139,7 @@ function frozenBillingContactMobile(address: any) {
 
 function wrap(value: unknown, width: number) { return String(value ?? "").split(/\r?\n/).flatMap((line) => { const words = line.split(/\s+/).filter(Boolean); if (!words.length) return [""]; const lines: string[] = []; let current = ""; for (const word of words) { if ((current + " " + word).trim().length > width && current) { lines.push(current); current = word; } else current = (current + " " + word).trim(); } if (current) lines.push(current); return lines; }); }
 
-function isClauseHeading(value: string) { return /^(variation in quantity|quality of material|testing|taxes & duties|registration under|warranty|escalation|settlement of disputes|final say)\b.*:?$/i.test(value.trim()) || /^[^\s].{2,80}:$/.test(value.trim()); }
+function isClauseHeading(value: string) { return /^(order of precedence|acceptance & authority|price, quantity & escalation|delivery & time|inspection, testing & rejection|weights, measures & quality|packing, marking & documentation|payment & statutory compliance|warranty & defect liability|documentation & intellectual property|insurance|indemnity|set-off & recovery|confidentiality|assignment & sub-contracting|termination|msme registration & credit period|no waiver|notices & amendment|severability, governing law & jurisdiction|force majeure|buyer['’]s (discretion|discharge)|variation in quantity|quality of material|testing|taxes & duties|registration under|warranty|escalation|settlement of disputes|final say)\s*:?\s*$/i.test(value.trim()) || /^[^\s].{2,80}:$/.test(value.trim()); }
 
 function termIndent(value: string) {
   if (/^[a-z]\./i.test(value.trim())) return LEFT + 10;
@@ -165,7 +169,7 @@ function parseTermsLine(raw: string): TermsLine {
   const trimmed = raw.trim();
   const mainMatch = trimmed.match(/^(\d+\.)\s*(.+)$/);
   if (mainMatch) {
-    return { raw: trimmed, level: "main", marker: mainMatch[1], content: mainMatch[2], indent: LEFT, markerOffset: 0, spacingBefore: 2, spacingAfter: 0, bold: true };
+    return { raw: trimmed, level: "main", marker: mainMatch[1], content: mainMatch[2], indent: LEFT, markerOffset: 0, spacingBefore: 1, spacingAfter: 0, bold: true };
   }
   const romanMatch = trimmed.match(/^([ivxlcdm]+\.)\s*(.+)$/i);
   if (romanMatch) {
@@ -176,23 +180,35 @@ function parseTermsLine(raw: string): TermsLine {
     return { raw: trimmed, level: "alpha", marker: alphaMatch[1], content: alphaMatch[2], indent: LEFT + 14, markerOffset: 0, spacingBefore: 0, spacingAfter: 0, bold: false };
   }
   if (isClauseHeading(trimmed)) {
-    return { raw: trimmed, level: "main", marker: "", content: trimmed, indent: LEFT, markerOffset: 0, spacingBefore: 4, spacingAfter: 1, bold: true };
+    return { raw: trimmed, level: "main", marker: "", content: trimmed, indent: LEFT, markerOffset: 0, spacingBefore: 1, spacingAfter: 0, bold: true };
   }
-  return { raw: trimmed, level: "body", marker: "", content: trimmed, indent: termIndent(trimmed), markerOffset: 0, spacingBefore: 0, spacingAfter: 1, bold: false };
+  return { raw: trimmed, level: "body", marker: "", content: trimmed, indent: termIndent(trimmed), markerOffset: 0, spacingBefore: 0, spacingAfter: 0, bold: false };
 }
 
 function withoutClauseNumber(value: string) { return value.replace(/^\s*\d+[.)]\s*/, "").trim(); }
+
+function isLegacyTopLevelHeading(lines: string[], index: number) {
+  const value = lines[index]?.trim() || "";
+  if (!value || /^(?:\d+\.|[a-z]\.|[ivxlcdm]+\.)/i.test(value)) return false;
+  if (index > 0 && lines[index - 1].trim()) return false;
+  if (value.length > 80 || /[.!?;:]$/.test(value)) return false;
+  if (!/^[A-ZÀ-ÖØ-Þ]/.test(value)) return false;
+  const next = lines.slice(index + 1).find((line) => line.trim());
+  return Boolean(next);
+}
 
 function numberedTerms(snapshot: unknown) {
   const parsed = parsePurchaseOrderStandardTerms(snapshot);
   if (!parsed) return ["No standard terms added."];
   if (parsed.kind === "structured") return parsed.clauses.flatMap((clause, index) => [`${index + 1}. ${withoutClauseNumber(clause.heading)}`, ...clause.clause_body.split(/\r?\n/)]);
   let clauseNumber = 0;
-  return parsed.text.split(/\r?\n/).map((raw) => {
+  const lines = parsed.text.split(/\r?\n/);
+  return lines.map((raw, index) => {
     const line = raw.trim();
     if (!line) return raw;
     const normalized = parseTermsLine(line);
-    return normalized.level === "main" ? `${++clauseNumber}. ${withoutClauseNumber(normalized.content)}` : raw;
+    const legacyHeading = isLegacyTopLevelHeading(lines, index);
+    return normalized.level === "main" || legacyHeading ? `${++clauseNumber}. ${withoutClauseNumber(normalized.content)}` : raw;
   });
 }
 
@@ -241,7 +257,7 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
   const ensure = (height: number) => { if (y - height < bodyBottomY) newPage(); };
   const line = (x: number, yy: number, x2: number, yy2: number) => page.ops.push(`${x} ${yy} m ${x2} ${yy2} l S`);
   const tableLine = (x: number, yy: number, x2: number, yy2: number, strong = false) => page.ops.push(`q ${strong ? "0.45" : "0.78"} G ${strong ? "0.8" : "0.45"} w ${x} ${yy} m ${x2} ${yy2} l S Q`);
-  const tableFill = (x: number, yy: number, width: number, height: number, color = "0.96 0.97 0.98") => page.ops.push(`q ${color} rg ${x} ${yy} ${width} ${height} re f Q`);
+  const tableFill = (x: number, yy: number, width: number, height: number, color = row.work_order_render ? WORK_ORDER_HEADER_FILL : PO_HEADER_FILL) => page.ops.push(`q ${color} rg ${x} ${yy} ${width} ${height} re f Q`);
   const rect = (x: number, yy: number, w: number, h: number) => page.ops.push(`${x} ${yy} ${w} ${h} re S`);
   const rowGrid = (x: number, top: number, widths: number[], height: number, mergedStart?: number) => {
     const bottom = top - height;
@@ -382,9 +398,9 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
     y -= 3;
   };
   const itemTable = (rows: Array<Array<string | Array<{ value: string; red?: boolean; strike?: boolean }>>>, widths: number[]) => {
-    const headers = ["S.No.", "Material / Description", "Make", "Qty", "Unit", "Rate", "Basic Amount", "GST", "Amount"];
-    const aligns: Array<"left" | "center" | "right"> = ["center", "left", "left", "center", "center", "right", "right", "right", "right"];
-    const headerAligns: Array<"left" | "center" | "right"> = ["center", "left", "left", "center", "center", "center", "center", "center", "center"];
+    const headers = row.work_order_render ? ["S.No.", "Item / Description", "Qty", "Unit", "Basic Rate", "GST", "Amount"] : ["S.No.", "Material / Description", "Make", "Qty", "Unit", "Rate", "Basic Amount", "GST", "Amount"];
+    const aligns: Array<"left" | "center" | "right"> = row.work_order_render ? ["center", "left", "center", "center", "right", "right", "right"] : ["center", "left", "left", "center", "center", "right", "right", "right", "right"];
+    const headerAligns: Array<"left" | "center" | "right"> = row.work_order_render ? ["center", "left", "center", "center", "center", "center", "center"] : ["center", "left", "left", "center", "center", "center", "center", "center", "center"];
     const tableRight = LEFT + widths.reduce((sum, width) => sum + width, 0);
     const drawOuterRowBorders = (top: number, height: number) => {
       tableLine(LEFT, top, tableRight, top, true);
@@ -426,8 +442,9 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
         }
       } else {
         drawOuterRowBorders(y, h);
-        const totalsLabelX = LEFT + widths.slice(0, 7).reduce((sum, width) => sum + width, 0);
-        const amountX = totalsLabelX + widths[7];
+        const totalsLabelIndex = widths.length - 2;
+        const amountX = LEFT + widths.slice(0, totalsLabelIndex + 1).reduce((sum, width) => sum + width, 0);
+        const totalsLabelX = amountX - widths[totalsLabelIndex];
         tableLine(totalsLabelX, y - h, totalsLabelX, y);
         tableLine(amountX, y - h, amountX, y);
       }
@@ -442,29 +459,33 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
     const beforeCharges = revisionRenderModel ? new Map(revisionRenderModel.additionalCharges.map((entry: any) => [entry.identity, entry])) : revisionChargeMap(commercialDiff.before);
     const afterCharges = revisionRenderModel ? new Map(revisionRenderModel.additionalCharges.map((entry: any) => [entry.identity, entry])) : revisionChargeMap(commercialDiff.after);
     const additionalTotal = revisionRenderModel ? 0 : explicitCharges.reduce((sum: number, charge: any) => sum + Number(charge.amount), 0);
+    const calculatedItemsBasic = (row.items || []).reduce((sum: number, item: any) => sum + Number(item?.quantity || 0) * Number(item?.unit_rate || 0), 0);
     const displayedTotal = revisionRenderModel ? Number(row.total_amount ?? Number(row.total_basic_amount || 0) + Number(row.total_gst_amount || 0) + Number(row.total_freight_amount || 0)) : Number(row.total_basic_amount || 0) + Number(row.total_gst_amount || 0) + additionalTotal;
     const removedCharges = [...beforeCharges.values()].filter((entry: any) => entry.state === "removed").map((entry: any) => [String(entry.before.name).trim(), money(entry.before.amount), "removed"]);
     const freightAmount = Number(row.total_freight_amount || commercialDiff.after.freight_amount || 0);
     const preparedSummary = revisionRenderModel?.summary || null;
-    const summaryRows = preparedSummary ? [["Items Basic", preparedSummary.itemsBasic], ["GST", preparedSummary.gst], ...(freightAmount > 0 ? [["Freight", preparedSummary.freight]] : []), ...(preparedCharges ? preparedCharges.map((charge: any) => [charge.name, charge.amount, charge.state]) : []), ["Total Amount", preparedSummary.total]] : [["Items Basic", money(row.total_basic_amount)], ["GST", money(row.total_gst_amount)], ...(freightAmount > 0 ? [["Freight", money(freightAmount)]] : []), ...explicitCharges.map((charge: any) => [String(charge.name).trim(), money(Number(charge.amount)), !beforeCharges.has(String(charge.id ?? charge.code ?? charge.key ?? charge.name ?? ""))]), ...removedCharges, ["Total Amount", money(displayedTotal)]];
+    const summaryRows = preparedSummary ? [["Total Basic Amount", preparedSummary.itemsBasic], ["GST", preparedSummary.gst], ...(freightAmount > 0 ? [["Freight", preparedSummary.freight]] : []), ...(preparedCharges ? preparedCharges.map((charge: any) => [charge.name, charge.amount, charge.state]) : []), ["Total Amount", preparedSummary.total]] : [["Total Basic Amount", money(calculatedItemsBasic)], ["GST", money(row.total_gst_amount)], ...(freightAmount > 0 ? [["Freight", money(freightAmount)]] : []), ...explicitCharges.map((charge: any) => [String(charge.name).trim(), money(Number(charge.amount)), !beforeCharges.has(String(charge.id ?? charge.code ?? charge.key ?? charge.name ?? ""))]), ...removedCharges, ["Total Amount", money(displayedTotal)]];
     for (const [label, amount, addedOrRemoved] of summaryRows) {
       const labelRuns = label && typeof label === "object" ? label.runs : null;
       const amountRuns = amount && typeof amount === "object" ? amount.runs : null;
       const summaryCells = [labelRuns ? labelRuns.map((run: any) => run.text).join("") : String(label), amountRuns ? amountRuns.map((run: any) => run.text).join("") : String(amount)];
       const summaryLines = summaryCells.map((cell, index) => {
         const runs = (index === 1 ? amountRuns : labelRuns) as any[] | null;
-        if (runs) return runs.flatMap((run: any) => wrap(run.text, Math.max(8, Math.floor((widths[index === 0 ? 7 : 8] - CELL_PAD_X * 2) / (7 * 0.52)))));
-        return wrap(cell, Math.max(8, Math.floor((widths[index === 0 ? 7 : 8] - CELL_PAD_X * 2) / (7 * 0.52))));
+        const columnIndex = index === 0 ? widths.length - 2 : widths.length - 1;
+        if (runs) return runs.flatMap((run: any) => wrap(run.text, Math.max(8, Math.floor((widths[columnIndex] - CELL_PAD_X * 2) / (7 * 0.52)))));
+        return wrap(cell, Math.max(8, Math.floor((widths[columnIndex] - CELL_PAD_X * 2) / (7 * 0.52))));
       });
       const summaryHeight = Math.max(17, Math.max(...summaryLines.map((items) => items.length)) * 9 + ITEM_PAD_TOP + ITEM_PAD_BOTTOM);
       if (y - summaryHeight < bodyBottomY) { newPage(); render(headers, true); }
-      const totalsLabelX = LEFT + widths.slice(0, 7).reduce((sum, value) => sum + value, 0);
-      const amountX = totalsLabelX + widths[7];
+        const totalsLabelIndex = widths.length - 2;
+        const amountIndex = widths.length - 1;
+        const totalsLabelX = LEFT + widths.slice(0, totalsLabelIndex).reduce((sum, value) => sum + value, 0);
+        const amountX = totalsLabelX + widths[totalsLabelIndex];
       const labelText = summaryCells[0];
-      const emphasized = labelText === "Items Basic" || labelText === "GST" || labelText === "Total Amount";
+      const emphasized = labelText === "Total Basic Amount" || labelText === "GST" || labelText === "Total Amount";
       if (label === "Total Amount") tableFill(LEFT, y - summaryHeight, tableRight - LEFT, summaryHeight, "0.93 0.95 0.97");
       if (labelRuns) labelRuns.forEach((run: any) => run.color === "red" ? drawRedline(run.text, totalsLabelX + CELL_PAD_X, y - summaryHeight + 9 * 0.78, 7, run.strike, emphasized) : draw(run.text, totalsLabelX + CELL_PAD_X, y - summaryHeight + 9 * 0.78, 7, emphasized, Boolean(run.strike)));
-      else for (const [lineIndex, lineText] of summaryLines[0].entries()) addedOrRemoved ? drawRedline(lineText, totalsLabelX + CELL_PAD_X, y - summaryHeight + (summaryHeight - summaryLines[0].length * 9) / 2 + 9 * 0.78 - lineIndex * 9, 7, addedOrRemoved === "removed", emphasized) : drawAligned(lineText, totalsLabelX, widths[7], y - summaryHeight + (summaryHeight - summaryLines[0].length * 9) / 2 + 9 * 0.78 - lineIndex * 9, 7, "left", emphasized);
+      else for (const [lineIndex, lineText] of summaryLines[0].entries()) addedOrRemoved ? drawRedline(lineText, totalsLabelX + CELL_PAD_X, y - summaryHeight + (summaryHeight - summaryLines[0].length * 9) / 2 + 9 * 0.78 - lineIndex * 9, 7, addedOrRemoved === "removed", emphasized) : drawAligned(lineText, totalsLabelX, widths[totalsLabelIndex], y - summaryHeight + (summaryHeight - summaryLines[0].length * 9) / 2 + 9 * 0.78 - lineIndex * 9, 7, "left", emphasized);
       const chargeKey = labelText === "Freight" ? "" : String(labelText);
       const chargeDiff = beforeCharges.get(chargeKey) || afterCharges.get(chargeKey);
       const changedCharge = chargeDiff?.state === "changed";
@@ -477,9 +498,9 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
         const yy = y - summaryHeight + 9 * 0.78;
         drawRedline(money(chargeDiff.before.amount), amountX, yy, 7, true);
         drawRedline(money(chargeDiff.after.amount), amountX, yy - 9, 7, false);
-      } else if (amountRuns) amountRuns.forEach((run: any, runIndex: number) => { const width = textWidth(String(run.text), 7); const xx = amountX + widths[8] - CELL_PAD_X - width; const yy = y - summaryHeight + (summaryHeight - summaryLines[1].length * 9) / 2 + 9 * 0.78 - runIndex * 9; run.color === "red" ? drawRedline(run.text, xx, yy, 7, run.strike, false) : draw(run.text, xx, yy, 7, false, Boolean(run.strike)); });
+      } else if (amountRuns) amountRuns.forEach((run: any, runIndex: number) => { const width = textWidth(String(run.text), 7); const xx = amountX + widths[widths.length - 1] - CELL_PAD_X - width; const yy = y - summaryHeight + (summaryHeight - summaryLines[1].length * 9) / 2 + 9 * 0.78 - runIndex * 9; run.color === "red" ? drawRedline(run.text, xx, yy, 7, run.strike, false) : draw(run.text, xx, yy, 7, false, Boolean(run.strike)); });
       else if (addedOrRemoved) for (const [lineIndex, lineText] of summaryLines[1].entries()) drawRedline(lineText, amountX, y - summaryHeight + (summaryHeight - summaryLines[1].length * 9) / 2 + 9 * 0.78 - lineIndex * 9, 7, addedOrRemoved === "removed", false);
-      else for (const [lineIndex, lineText] of summaryLines[1].entries()) drawAligned(lineText, amountX, widths[8], y - summaryHeight + (summaryHeight - summaryLines[1].length * 9) / 2 + 9 * 0.78 - lineIndex * 9, 7, "right", label === "Total Amount");
+      else for (const [lineIndex, lineText] of summaryLines[1].entries()) drawAligned(lineText, amountX, widths[widths.length - 1], y - summaryHeight + (summaryHeight - summaryLines[1].length * 9) / 2 + 9 * 0.78 - lineIndex * 9, 7, "right", label === "Total Amount");
       drawOuterRowBorders(y, summaryHeight);
       tableLine(totalsLabelX, y - summaryHeight, totalsLabelX, y);
       tableLine(amountX, y - summaryHeight, amountX, y);
@@ -491,7 +512,7 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
   newPage();
   if (letterhead.header) y -= FIRST_PAGE_TITLE_SAFE_GAP;
   if (!letterhead.header) { draw(row.company?.company_name || "Purchase Order", LEFT, y, 16, true); y -= 28; }
-  ensure(28); centered("Purchase Order", 13); y -= 22;
+  ensure(28); centered(row.work_order_render ? "Work Order" : "Purchase Order", 18); y -= 28;
   if (Number(row.revision_no || 0) > 0 && row.previous_revision_id) {
     ensure(22);
     draw(`Revision: R-${row.revision_no}`, LEFT, y, 8, true);
@@ -499,6 +520,10 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
   }
 
   const vendor = row.vendor_snapshot || {};
+  const primaryVendorContact = (vendor.contacts || []).find((contact: any) => contact?.is_primary) || (vendor.contacts || [])[0] || {};
+  const vendorContactName = firstDisplayValue(vendor.contact_person, vendor.contact_name, primaryVendorContact.contact_name);
+  const vendorPhone = firstDisplayValue(vendor.phone, vendor.mobile, primaryVendorContact.contact_number, primaryVendorContact.mobile);
+  const vendorEmail = firstDisplayValue(vendor.email, primaryVendorContact.email);
   const delivery = row.delivery_snapshot || {};
   const billing = delivery.gst_billing || delivery.billing_address || {};
   const shipping = delivery.delivery_location || delivery.shipping_address || delivery;
@@ -507,10 +532,10 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
   const billingCompany = firstDisplayValue(billing.legal_name, billing.company_name, billing.company, billing.trade_name, billing.label);
   const deliveryCompany = resolved.deliveryCompany;
   const shippingAddress = shipping.address || [shipping.address_line1, shipping.address_line2, shipping.city, shipping.state, shipping.pincode].filter(Boolean).join(", ");
-  table(["Vendor Details", "Purchase Order Details"], [], [270, 241], 9);
+  table(["Vendor Details", row.work_order_render ? "Work Order Details" : "Purchase Order Details"], [], [270, 241], 9);
   labeledTable([
-    `Vendor Name: ${text(row.vendor_name_snapshot)}\nContact Person: ${text(vendor.contact_person || vendor.contact_name)}\nAddress: ${text(vendor.address)}\nMobile: ${text(vendor.phone || vendor.mobile)}\nEmail: ${text(vendor.email)}\nGSTIN: ${text(vendor.gstin)}`,
-    `Purchase Order No: ${text(row.po_number)}\nDate: ${date(row.po_date)}\nCompany: ${text(row.company?.company_name)}\nSite: ${text(row.site?.site_name)}`,
+    `Vendor Name: ${text(row.vendor_name_snapshot || vendor.vendor_name)}\nContact Person: ${text(vendorContactName)}\nAddress: ${text(vendor.address)}\nMobile: ${text(vendorPhone)}\nEmail: ${text(vendorEmail)}\nGSTIN: ${text(vendor.gstin)}`,
+    `${row.work_order_render ? "Work Order No" : "Purchase Order No"}: ${text(row.po_number)}\nDate: ${date(row.po_date)}\nCompany: ${text(row.company?.company_name)}\nSite: ${text(row.site?.site_name)}${row.work_order_render ? `\nType: ${text(row.wo_type)}` : ""}`,
   ], [270, 241], 9);
 
   y -= SECTION_GAP;
@@ -521,15 +546,21 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
 
   heading("ITEMS", 19);
   const diffs = Number(row.revision_no || 0) > 0 && revisionRenderModel ? new Map(revisionRenderModel.items.map((item: any) => [String(item.revision_line_key), item])) : new Map();
-  const legacySingleLineKey = (row.items || []).length === 1 && revisionRenderModel?.items?.length === 1 ? "__legacy_single_line__" : null;
-  const itemDiffKey = (item: any, index: number) => String(item?.revision_line_key || item?.source_requisition_line_key || item?.item_code_snapshot || item?.item_id_snapshot || legacySingleLineKey || `__position_${index}`);
+  const legacySingleLineKey = (row.items || []).length === 1 && !row.items[0]?.revision_line_key ? "__legacy_single_line__" : null;
+  const itemDiffOccurrences = new Map<string, number>();
+  const itemDiffKey = (item: any, index: number) => {
+    const stableKey = item?.revision_line_key || item?.source_requisition_line_key || item?.item_id_snapshot;
+    if (!stableKey) return String(legacySingleLineKey || `__position_${index}`);
+    const normalizedKey = String(stableKey);
+    const occurrence = itemDiffOccurrences.get(normalizedKey) || 0;
+    itemDiffOccurrences.set(normalizedKey, occurrence + 1);
+    return occurrence === 0 ? normalizedKey : `${normalizedKey}#${occurrence}`;
+  };
   const renderedItems: Array<Array<string | Array<{ value: string; red?: boolean; strike?: boolean }>>> = [];
   const itemFields = ["item_name_snapshot", "item_code_snapshot", "make_snapshot", "quantity", "uom_snapshot", "unit_rate", "basic_amount", "gst_rate", "gst_amount", "total_amount"];
   const formatItemValue = (field: string, item: any) => {
-    if (field === "unit_rate" || field === "total_amount" || field === "gst_amount" || field === "basic_amount") {
-      const value = field === "basic_amount"
-        ? (typeof item === "number" ? item : Number(item?.quantity || 0) * Number(item?.unit_rate || 0))
-        : item?.[field];
+    if (field === "unit_rate" || field === "basic_amount" || field === "total_amount" || field === "gst_amount") {
+      const value = field === "basic_amount" ? Number(item?.quantity || 0) * Number(item?.unit_rate || 0) : item?.[field];
       return value == null ? text(value) : money(value);
     }
     if (field === "gst_rate") return `${item?.gst_rate || 0}%`;
@@ -545,27 +576,38 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
     return revisionRuns(fieldDiff, (value) => formatItemValue(field, value));
   };
   for (const [index, item] of (row.items || []).entries()) {
-    const diff = diffs.get(itemDiffKey(item, index)) || null;
+    const diffKey = String(itemDiffKey(item, index));
+    const diff = diffKey ? diffs.get(diffKey) : null;
     const itemCell = (field: string) => redlineCell(field, item, diff);
-    renderedItems.push([
-      String(index + 1),
-      diff ? [itemCell("item_name_snapshot"), itemCell("item_code_snapshot"), itemCell("specification_snapshot")].flatMap((value: any) => Array.isArray(value) ? value : [{ value }]) : `${text(item.item_name_snapshot)}\n${text(item.item_code_snapshot)}${item.specification_snapshot ? `\n${item.specification_snapshot}` : ""}`,
-      itemCell("make_snapshot"), itemCell("quantity"), itemCell("uom_snapshot"), itemCell("unit_rate"), itemCell("basic_amount"), diff ? [itemCell("gst_rate"), itemCell("gst_amount")].flatMap((value: any) => Array.isArray(value) ? value : [{ value }]) : `${item.gst_rate || 0}%\n${money(item.gst_amount)}`, itemCell("total_amount"),
-    ]);
+    if (row.work_order_render) {
+      const description = [item.item_name_snapshot, item.specification_snapshot, item.additional_description_snapshot, item.make_snapshot].filter(Boolean).map((value) => text(value)).join("\n");
+      renderedItems.push([String(index + 1), description, itemCell("quantity"), itemCell("uom_snapshot"), itemCell("unit_rate"), diff ? [itemCell("gst_rate"), itemCell("gst_amount")].flatMap((value: any) => Array.isArray(value) ? value : [{ value }]) : `${item.gst_rate || 0}%\n${money(item.gst_amount)}`, itemCell("total_amount")]);
+    } else {
+      renderedItems.push([String(index + 1), diff ? [itemCell("item_name_snapshot"), itemCell("specification_snapshot")].flatMap((value: any) => Array.isArray(value) ? value : [{ value }]) : `${text(item.item_name_snapshot)}${item.specification_snapshot ? `\n${text(item.specification_snapshot)}` : ""}`, itemCell("make_snapshot"), itemCell("quantity"), itemCell("uom_snapshot"), itemCell("unit_rate"), diff ? itemCell("basic_amount") : money(Number(item.quantity || 0) * Number(item.unit_rate || 0)), diff ? [itemCell("gst_rate"), itemCell("gst_amount")].flatMap((value: any) => Array.isArray(value) ? value : [{ value }]) : `${item.gst_rate || 0}%\n${money(item.gst_amount)}`, itemCell("total_amount")]);
+    }
   }
   for (const diff of diffs.values()) {
     if (itemSnapshotDiff(diff).state !== "removed") continue;
     const old = diff.before || {};
-    renderedItems.push([String((row.items || []).length + 1), ["item_name_snapshot", "item_code_snapshot", "specification_snapshot"].map((field) => ({ value: formatItemValue(field, old), red: true, strike: true })), redlineCell("make_snapshot", null, diff, true), redlineCell("quantity", null, diff, true), redlineCell("uom_snapshot", null, diff, true), redlineCell("unit_rate", null, diff, true), redlineCell("basic_amount", null, diff, true), [{ value: `${old.gst_rate || 0}%`, red: true, strike: true }, { value: money(old.gst_amount), red: true, strike: true }], redlineCell("total_amount", null, diff, true)]);
+    renderedItems.push(row.work_order_render ? [String((row.items || []).length + 1), [old.item_name_snapshot, old.specification_snapshot, old.additional_description_snapshot, old.make_snapshot].filter(Boolean).map((value) => ({ value: text(value), red: true, strike: true })), redlineCell("quantity", null, diff, true), redlineCell("uom_snapshot", null, diff, true), redlineCell("unit_rate", null, diff, true), [{ value: `${old.gst_rate || 0}%`, red: true, strike: true }, { value: money(old.gst_amount), red: true, strike: true }], redlineCell("total_amount", null, diff, true)] : [String((row.items || []).length + 1), ["item_name_snapshot", "specification_snapshot"].map((field) => ({ value: formatItemValue(field, old), red: true, strike: true })), redlineCell("make_snapshot", null, diff, true), redlineCell("quantity", null, diff, true), redlineCell("uom_snapshot", null, diff, true), redlineCell("unit_rate", null, diff, true), [{ value: `${old.gst_rate || 0}%`, red: true, strike: true }, { value: money(old.gst_amount), red: true, strike: true }], redlineCell("total_amount", null, diff, true)]);
   }
-  itemTable(renderedItems, [24, 125, 42, 28, 34, 52, 64, 82, 60]);
+  itemTable(renderedItems, row.work_order_render ? [24, 240, 30, 40, 62, 60, 55] : [24, 125, 42, 28, 34, 52, 64, 82, 60]);
 
   const keyTerms = Array.isArray(row.commercial_snapshot?.key_terms) ? row.commercial_snapshot.key_terms : [];
   const keyTermsDiff = revisionCommercial(row);
   const keyBefore = revisionKeyTermMap(keyTermsDiff.before);
   const keyAfter = revisionKeyTermMap(keyTermsDiff.after);
   const keyTermDiffs = revisionRenderModel?.keyTerms || diffCollection(Array.isArray(keyTermsDiff.before.key_terms) ? keyTermsDiff.before.key_terms : [], Array.isArray(keyTermsDiff.after.key_terms) ? keyTermsDiff.after.key_terms : [], (term: any) => String(term.id ?? term.key ?? term.code ?? term.description ?? term.label ?? ""));
-  heading("KEY TERMS", 22);
+  if (row.work_order_render) {
+    const renderWorkOrderTerms = (title: string, values: string[]) => {
+      heading(title, 22);
+      const rows = values.length ? values.map((value, index) => [String(index + 1), value]) : [["—", "No items added."]];
+      table(["S.No.", title.slice(0, -1)], rows, [38, 493], 9);
+    };
+    renderWorkOrderTerms("INCLUSIONS", Array.isArray(row.work_order_inclusions) ? row.work_order_inclusions : []);
+    renderWorkOrderTerms("EXCLUSIONS", Array.isArray(row.work_order_exclusions) ? row.work_order_exclusions : []);
+  } else {
+    heading("KEY TERMS", 22);
   const keyRows: TableCell[][] = keyTerms.length ? keyTerms.map((term: any, index: number) => {
     const key = String(term.id ?? term.key ?? term.code ?? term.description ?? term.label ?? "");
     const termDiff = keyTermDiffs.find((entry: any) => entry.identity === key); const before = keyBefore.get(key); const current = text(term.value || term.terms || term.text); const previous = text(before?.value || before?.terms || before?.text);
@@ -574,7 +616,8 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
     return [String(index + 1), text(term.description || term.label), value];
   }) : [["—", "—", "No key terms added."]];
   for (const [key, before] of keyBefore) if (!keyAfter.has(key)) keyRows.push(["—", text(before.description || before.label), [{ value: text(before.value || before.terms || before.text), red: true, strike: true }]]);
-  table(["S.No.", "Description", "Terms"], keyRows, [38, 160, 313], 9);
+    table(["S.No.", "Description", "Terms"], keyRows, [38, 160, 313], 9);
+  }
 
   const structuredBefore = structuredClauses(revisionHeader(row).standard_terms_snapshot?.before);
   const structuredAfter = structuredClauses(revisionHeader(row).standard_terms_snapshot?.after);
@@ -621,7 +664,7 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
     });
   } else {
     terms.forEach((raw, index) => {
-      const trimmed = raw.trim(); if (!trimmed) { y -= TERMS_LEADING; return; }
+      const trimmed = raw.trim(); if (!trimmed) return;
       const parsed = parseTermsLine(trimmed); const markerWidth = parsed.marker ? termsTextWidth(`${parsed.marker} `, TERMS_SIZE) : 0; const textX = parsed.indent + markerWidth + parsed.markerOffset;
       const lines = wrapToPointWidth(parsed.content || parsed.raw, Math.max(42, RIGHT - textX), TERMS_SIZE, termsTextWidth); ensure(parsed.spacingBefore + lines.length * TERMS_LEADING + parsed.spacingAfter); y -= parsed.spacingBefore; if (parsed.marker) draw(parsed.marker, parsed.indent, y, TERMS_SIZE, parsed.bold); lines.forEach((lineText) => { draw(lineText, textX, y, TERMS_SIZE, parsed.bold); y -= TERMS_LEADING; }); y -= parsed.spacingAfter;
     });
@@ -743,6 +786,15 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
       const yPosition = isApproverSignature ? approverSignatureDrawY : image.name === "frozenHeader" ? PAGE_H - height : 0;
       pdfPage.drawImage(embedded, { x: xPosition, y: yPosition, width, height });
     }
+  }
+  if (row.work_order_render) {
+    const pageFont = await pdf.embedFont("Helvetica");
+    const outputPages = pdf.getPages();
+    outputPages.forEach((outputPage, index) => {
+      const label = `Page ${index + 1} of ${outputPages.length}`;
+      const width = pageFont.widthOfTextAtSize(label, PAGE_NUMBER_SIZE);
+      outputPage.drawText(label, { x: PAGE_W - 42 - width, y: 24, size: PAGE_NUMBER_SIZE, font: pageFont, color: rgb(0, 0, 0) });
+    });
   }
   return { pdf: Buffer.from(await pdf.save()), pageCount: pages.length, footerRenderedHeight };
 }

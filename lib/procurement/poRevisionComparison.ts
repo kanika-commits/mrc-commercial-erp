@@ -78,14 +78,14 @@ export function buildPurchaseOrderRevisionComparison(previous: any, current: any
     const before = unmatchedBefore[index]; const after = unmatchedCurrent[index];
     pairs.push({ before: before.item, after: after.item, key: legacySingleLineKey || `__position_${after.index}` });
   }
-  unmatchedBefore.slice(fallbackCount).forEach(({ item, index }: { item: any; index: number }) => {
+  unmatchedBefore.slice(fallbackCount).forEach(({ item, index }) => {
     const rawKey = stableItemIdentity(item);
     if (!rawKey) { pairs.push({ before: item, after: null, key: `__position_${index}` }); return; }
     const normalizedKey = String(rawKey);
     const occurrence = previousItems.slice(0, index).filter((candidate: any) => String(stableItemIdentity(candidate) || "") === normalizedKey).length;
     pairs.push({ before: item, after: null, key: occurrence === 0 ? normalizedKey : `${normalizedKey}#${occurrence}` });
   });
-  unmatchedCurrent.slice(fallbackCount).forEach(({ item, index }: { item: any; index: number }) => {
+  unmatchedCurrent.slice(fallbackCount).forEach(({ item, index }) => {
     const rawKey = stableItemIdentity(item);
     if (!rawKey) { pairs.push({ before: null, after: item, key: `__position_${index}` }); return; }
     const normalizedKey = String(rawKey);
