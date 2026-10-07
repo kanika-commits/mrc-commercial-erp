@@ -194,6 +194,19 @@ export default function PurchaseOrderDetailPage() {
     } catch (error: any) { setMessage(error.message || "Failed to open Purchase Order PDF."); }
   }
 
+  async function openComparisonPdf() {
+    if (!row?.id) return;
+    try {
+      const token = await getAccessToken();
+      const response = await fetch(`/api/procurement/purchase-orders/${row.id}/pdf?comparison=1`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) { const result = await response.json().catch(() => ({})); throw new Error(result.error || "Failed to open the comparison PDF."); }
+      const url = URL.createObjectURL(await response.blob());
+      const popup = window.open(url, "_blank", "noopener,noreferrer");
+      if (!popup) throw new Error("Please allow pop-ups to view the comparison PDF.");
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error: any) { setMessage(error.message || "Failed to open the comparison PDF."); }
+  }
+
 
   if (!row) return <p className="text-sm text-slate-500">{message || "Loading Purchase Order..."}</p>;
 
@@ -235,9 +248,10 @@ export default function PurchaseOrderDetailPage() {
       {row.status === "pending_approval" && approvalReview && canApprove && <button disabled={saving} onClick={() => action("approve")} className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white">Approve</button>}
       {row.status === "pending_approval" && approvalReview && canReject && <><button disabled={saving} onClick={() => setReasonAction("send_back")} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold">Send Back</button><button disabled={saving} onClick={() => setReasonAction("reject")} className="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700">Reject</button></>}
       <button type="button" disabled={pdfLoading} onClick={openPdf} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold">{pdfLoading ? "Opening PDF..." : "View / Download PO PDF"}</button>
+      {isRevision && <button type="button" onClick={() => void openComparisonPdf()} className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-900">View Comparison / Redline PDF</button>}
     </div>
     {message && <p className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">{message}</p>}
-    {isRevision && <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm"><p className="font-bold">Revision R-{row.revision_no}{revisionDisplay && <span className="ml-2 font-semibold">· {revisionDisplay}</span>}</p>{row.previous_revision_id && <p className="mt-1 text-slate-700">Previous Revision: {row.revision_history?.find((candidate: any) => candidate.id === row.previous_revision_id)?.po_number || "Previous Purchase Order"}</p>}</div>}
+    {isRevision && <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm"><p className="font-bold">Revision R-{row.revision_no}{revisionDisplay && <span className="ml-2 font-semibold">· {revisionDisplay}</span>}</p>{row.previous_revision_id && (() => { const previous = row.revision_history?.find((candidate: any) => candidate.id === row.previous_revision_id); return <p className="mt-1 text-slate-700">Previous Revision: <Link href={`/purchase/purchase-orders/${row.previous_revision_id}`} className="font-semibold underline">R-{previous?.revision_no ?? Math.max(0, Number(row.revision_no || 0) - 1)} · {previous?.po_number || "Previous Purchase Order"}</Link></p>; })()}</div>}
     {row.revision_history?.length > 1 && <section className="rounded-xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Revision History</h2><div className="mt-3 divide-y">{row.revision_history.map((revision: any) => <div key={revision.id} className="flex flex-wrap items-center justify-between gap-3 py-3"><div><Link href={`/purchase/purchase-orders/${revision.id}`} className="font-semibold text-slate-900 underline">R-{revision.revision_no || 0} · {revision.po_number}</Link><p className="text-xs text-slate-500">{String(revision.status || "").replace(/_/g, " ")} · {revision.superseded_by_revision_id ? "Superseded" : ["draft", "pending_approval", "sent_back"].includes(revision.status) ? "Revision in Progress" : ["approved", "issued"].includes(revision.status) ? "Current" : ""}</p></div><div className="flex gap-2"><Link href={`/purchase/purchase-orders/${revision.id}`} className="rounded border px-3 py-1 text-xs font-semibold">View PO</Link><button type="button" onClick={() => void openRevisionPdf(revision.id)} className="rounded border px-3 py-1 text-xs font-semibold">PDF</button></div></div>)}</div></section>}
     {reasonAction && <div className="rounded-lg border border-amber-200 bg-amber-50 p-4"><h2 className="font-semibold text-slate-900">{reasonAction === "reject" ? "Reject Purchase Order" : "Send Purchase Order Back"}</h2><p className="mt-1 text-sm text-slate-600">Enter a reason before continuing.</p><textarea value={reason} onChange={(event) => setReason(event.target.value)} className="mt-3 min-h-24 w-full rounded border border-amber-300 bg-white p-3 text-sm" placeholder="Reason" /><div className="mt-3 flex gap-2"><button type="button" disabled={!reason.trim() || saving} onClick={() => void action(reasonAction, reason.trim())} className="rounded bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Confirm</button><button type="button" onClick={() => { setReasonAction(null); setReason(""); }} className="rounded border border-slate-300 bg-white px-4 py-2 text-sm font-semibold">Cancel</button></div></div>}
 

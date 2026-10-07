@@ -232,6 +232,7 @@ async function makeLetterhead(row: any, admin: any) {
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await context.params;
+    const comparisonRequested = new URL(request.url).searchParams.get("comparison") === "1";
     const auth = await requireProcurementAny(request, [{ moduleCode: "procurement_purchase_orders", actionCode: "view" }, { moduleCode: "procurement_purchase_orders", actionCode: "edit" }, { moduleCode: "procurement_purchase_orders", actionCode: "approve" }]);
     if ("response" in auth) return auth.response;
     const admin = adminClient();
