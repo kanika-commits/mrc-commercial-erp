@@ -13,6 +13,7 @@ type Source = "direct" | "indent";
 type Item = { po_item_id?: string; item_id?: string; item_name: string; item_code?: string; description?: string; specification?: string; make?: string; quantity: string; uom?: string; unit_rate: string; gst_rate: string; source_requisition_line_key?: string; isMaterialMasterLinked?: boolean };
 type AttachmentDraft = { file: File; documentType: string };
 type AdditionalCharge = { name: string; amount: string };
+type KeyTerm = { description: string; terms: string };
 
 const FIXED_KEY_TERM_HEADINGS = ["Price Validity", "Freight", "Delivery Timeline", "Payment Terms"] as const;
 
@@ -73,7 +74,7 @@ export default function NewPurchaseOrderPage() {
   const [deliveryLocationId, setDeliveryLocationId] = useState("");
   const [gstRegistrationId, setGstRegistrationId] = useState("");
   const [additionalCharges, setAdditionalCharges] = useState<AdditionalCharge[]>([]);
-  const [keyTerms, setKeyTerms] = useState(FIXED_KEY_TERM_HEADINGS.map((description) => ({ description, terms: "" })));
+  const [keyTerms, setKeyTerms] = useState<KeyTerm[]>(FIXED_KEY_TERM_HEADINGS.map((description) => ({ description, terms: "" })));
   const [message, setMessage] = useState("");
   const errorRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
