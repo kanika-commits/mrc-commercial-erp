@@ -67,4 +67,4 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const packageState = await loadFrozenSupportingDocuments(result.admin, result.row);
     if (packageState.integrityError) return jsonError(packageState.integrityError, 409);
   }
-  const rpc = await result.admin.rpc("transition_procurement_purchase_order_atomic", { p_purchase_order_id: id, p_organization_id: result.row.organization_id, p_action: action, p_actor: actor(result.auth), p_note: text(body.note) || null }); if (rpc.error) throw rpc.error; return NextResponse.json({ result: rpc.data }); } catch (error: any) { return jsonError(error.message || "Failed to update Purchase Order workflow.", 500); } }
+  const rpc = await result.admin.rpc("transition_procurement_purchase_order_atomic", { p_purchase_order_id: id, p_organization_id: result.row.organization_id, p_action: action, p_actor: actor(result.auth), p_note: text(body.note) || null, p_freeze_projection: null }); if (rpc.error) throw rpc.error; return NextResponse.json({ result: rpc.data }); } catch (error: any) { return jsonError(error.message || "Failed to update Purchase Order workflow.", 500); } }
