@@ -70,22 +70,22 @@ export function buildPurchaseOrderRevisionComparison(previous: any, current: any
     beforeMatched.add(beforeIndex); currentMatched.add(currentIndex);
     pairs.push({ before: previousItems[beforeIndex], after: item, key: occurrence === 0 ? normalizedKey! : `${normalizedKey}#${occurrence}` });
   });
-  const unmatchedBefore = previousItems.map((item: any, index: number) => ({ item, index })).filter(({ index }) => !beforeMatched.has(index));
-  const unmatchedCurrent = currentItems.map((item: any, index: number) => ({ item, index })).filter(({ index }) => !currentMatched.has(index));
+  const unmatchedBefore = previousItems.map((item: any, index: number) => ({ item, index })).filter(({ index }: { index: number }) => !beforeMatched.has(index));
+  const unmatchedCurrent = currentItems.map((item: any, index: number) => ({ item, index })).filter(({ index }: { index: number }) => !currentMatched.has(index));
   const hasAnyStableIdentity = previousItems.some((item: any) => stableItemIdentity(item)) || currentItems.some((item: any) => stableItemIdentity(item));
   const fallbackCount = hasAnyStableIdentity ? 0 : Math.min(unmatchedBefore.length, unmatchedCurrent.length);
   for (let index = 0; index < fallbackCount; index += 1) {
     const before = unmatchedBefore[index]; const after = unmatchedCurrent[index];
     pairs.push({ before: before.item, after: after.item, key: legacySingleLineKey || `__position_${after.index}` });
   }
-  unmatchedBefore.slice(fallbackCount).forEach(({ item, index }) => {
+  unmatchedBefore.slice(fallbackCount).forEach(({ item, index }: { item: any; index: number }) => {
     const rawKey = stableItemIdentity(item);
     if (!rawKey) { pairs.push({ before: item, after: null, key: `__position_${index}` }); return; }
     const normalizedKey = String(rawKey);
     const occurrence = previousItems.slice(0, index).filter((candidate: any) => String(stableItemIdentity(candidate) || "") === normalizedKey).length;
     pairs.push({ before: item, after: null, key: occurrence === 0 ? normalizedKey : `${normalizedKey}#${occurrence}` });
   });
-  unmatchedCurrent.slice(fallbackCount).forEach(({ item, index }) => {
+  unmatchedCurrent.slice(fallbackCount).forEach(({ item, index }: { item: any; index: number }) => {
     const rawKey = stableItemIdentity(item);
     if (!rawKey) { pairs.push({ before: null, after: item, key: `__position_${index}` }); return; }
     const normalizedKey = String(rawKey);
