@@ -13,7 +13,7 @@ export type RevisionRenderModel = { items: RevisionRenderItem[]; keyTerms: Revis
 export function revisionRuns<T>(field: RevisionField<T>, format: (value: T) => string): RevisionRenderRun[] {
   if (field.state === "unchanged") return [{ text: format(field.value), color: "normal", strike: false }];
   if (field.state === "added") return [{ text: format(field.after), color: "red", strike: false }];
-  if (field.state === "removed") return [{ text: format(field.before), color: "normal", strike: true }];
+  if (field.state === "removed") return [{ text: format(field.before), color: "red", strike: true }];
   return [{ text: format(field.before), color: "normal", strike: true }, { text: format(field.after), color: "red", strike: false }];
 }
 

@@ -33,6 +33,9 @@ for (const [key, file] of Object.entries(sources)) {
 const { makePdf } = await import(output.renderer);
 const { buildPurchaseOrderRevisionComparison } = await import(output.comparison);
 const { buildPurchaseOrderRevisionPdfRenderModel } = await import(output.revisionRenderer);
+const pdfRoute = fs.readFileSync(path.join(root, "app/api/procurement/purchase-orders/[id]/pdf/route.ts"), "utf8");
+assert.match(pdfRoute, /const revisionPdfRequested = Number\(data\.revision_no \\|\\| 0\) > 0 && Boolean\(data\.previous_revision_id\)/);
+assert.match(pdfRoute, /\(comparisonRequested \|\| revisionPdfRequested\) && revisionPdfRequested/);
 
 const image = { name: "fixture", data: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"), width: 1000, height: 100, format: "png" };
 const standardTerms = JSON.stringify({ template_id: "fixture-standard", template_name: "Fixture Standard", clauses: Array.from({ length: 9 }, (_, i) => ({ heading: `Clause ${i + 1}`, clause_body: `Standard term body ${i + 1}`, sort_order: i })) });
@@ -66,6 +69,7 @@ console.log(`PO executable R-0 baseline: PASS (bytes=${result.pdf.length}, pages
 
 const brownKey = "cdafeb2d-56ee-493a-8147-a6bf5a67c4d0";
 const greyKey = "1b4de049-e2f3-4e58-a6c3-ed0893f54e94";
+const blueKey = "6c4f2a0e-8e22-4e61-a1e4-4d6c2bcb7f42";
 const clauseIds = ["term-01", "term-02", "term-03", "term-04", "term-05", "term-06", "term-07", "term-08", "term-09"];
 const identifiedTerms = JSON.stringify({ template_id: "fixture-standard", template_name: "Fixture Standard", clauses: clauseIds.map((id, i) => ({ id, heading: `Clause ${i + 1}`, clause_body: `Standard term body ${i + 1}`, sort_order: i })) });
 const previous = { ...row, id: "fixture-po-r0", po_number: "MRC/SEP/2026/0006/R-0", revision_no: 0, previous_revision_id: null, standard_terms_snapshot: identifiedTerms, items: [
@@ -78,8 +82,8 @@ const previous = { ...row, id: "fixture-po-r0", po_number: "MRC/SEP/2026/0006/R-
   { id: "payment", label: "Payment Terms", value: "30 days credit from the date of invoice." },
 ], additional_charges: [] } };
 const current = { ...previous, id: "fixture-po-r1", po_number: "MRC/SEP/2026/0006/R-1", revision_no: 1, previous_revision_id: previous.id, total_basic_amount: 205000, total_gst_amount: 31000, total_amount: 236000, standard_terms_snapshot: JSON.stringify({ template_id: "fixture-standard", clauses: [...clauseIds.map((id, i) => ({ id, heading: `Clause ${i + 1}`, clause_body: i === 0 ? "Changed standard term body" : `Standard term body ${i + 1}`, sort_order: i })), { id: "term-10", heading: "New clause", clause_body: "New standard term", sort_order: 9 }] }), items: [
-  { ...previous.items[0], specification_snapshot: "Changed epoxy coating", quantity: 45, unit_rate: 1234 },
-  previous.items[1],
+  { ...previous.items[0], item_name_snapshot: "Epoxy Dark Brown Revised", specification_snapshot: "Changed epoxy coating", quantity: 45, unit_rate: 1234 },
+  { ...previous.items[0], revision_line_key: blueKey, item_name_snapshot: "Epoxy Bright Blue", specification_snapshot: "New blue coating", quantity: 3, unit_rate: 500 },
 ], commercial_snapshot: { ...previous.commercial_snapshot, key_terms: previous.commercial_snapshot.key_terms.map((term) => term.id === "freight" ? { ...term, value: "This is test change too." } : term), additional_charges: [{ id: "test-charge", name: "Test Charge", amount: 1234 }] } };
 const comparison = buildPurchaseOrderRevisionComparison(previous, current);
 const brownComparison = comparison.items.find((item) => item.revision_line_key === brownKey);
@@ -88,9 +92,13 @@ assert.equal(brownComparison.fields.unit_rate.state, "changed");
 assert.equal(brownComparison.fields.unit_rate.before, 2850);
 assert.equal(brownComparison.fields.unit_rate.after, 1234);
 assert.equal(brownComparison.fields.quantity.state, "changed");
+assert.equal(brownComparison.fields.basic_amount.state, "changed");
 assert.equal(brownComparison.fields.gst_rate.state, "unchanged");
 assert.equal(brownComparison.fields.make_snapshot.state, "unchanged");
-assert.equal(greyComparison.state, "unchanged");
+assert.equal(greyComparison.state, "removed");
+const blueComparison = comparison.items.find((item) => item.revision_line_key === blueKey);
+assert.equal(blueComparison.state, "added");
+assert.ok(comparison.items.find((item) => item.revision_line_key === greyKey).state === "removed");
 assert.equal(comparison.keyTerms.find((term) => term.identity === "freight").state, "changed");
 const testChargeComparison = comparison.additionalCharges.find((charge) => charge.identity === "test-charge");
 assert.equal(testChargeComparison.state, "added");
@@ -107,6 +115,13 @@ assert.equal(presentation.additionalCharges.find((charge) => charge.identity ===
 assert.equal(presentation.additionalCharges.find((charge) => charge.identity === "test-charge").amount.runs[0].strike, false);
 assert.ok(presentation.items.find((item) => item.revision_line_key === brownKey).fields.specification_snapshot.runs.some((run) => run.color === "red"));
 assert.ok(presentation.items.find((item) => item.revision_line_key === brownKey).fields.quantity.runs.some((run) => run.color === "red"));
+assert.ok(presentation.items.find((item) => item.revision_line_key === brownKey).fields.basic_amount.runs.some((run) => run.color === "red"));
+for (const field of ["item_name_snapshot", "specification_snapshot", "quantity", "unit_rate", "basic_amount", "gst_rate", "gst_amount", "total_amount"]) {
+  assert.ok(presentation.items.find((item) => item.revision_line_key === blueKey).fields[field].runs.every((run) => run.color === "red"), `added ${field} was not entirely red`);
+}
+for (const field of ["item_name_snapshot", "specification_snapshot", "quantity", "unit_rate", "basic_amount", "gst_rate", "gst_amount", "total_amount"]) {
+  assert.ok(presentation.items.find((item) => item.revision_line_key === greyKey).fields[field].runs.every((run) => run.color === "red" && run.strike), `removed ${field} was not red and struck through`);
+}
 assert.ok(presentation.summary.total.runs.some((run) => run.color === "red"));
 assert.ok(presentation.standardTerms.flatMap((term) => [...term.heading.runs, ...term.body.runs]).some((run) => run.color === "red"));
 const revisionResult = await makePdf(current, { employee_name: "Test Creator", email: "creator@example.test", designation: "Procurement Manager" }, { employee_name: "Test Approver", company: "MRC Infracon Limited", designation: "Director", signatureBlock: "Approved By", signatureAsset: null }, { letterhead: { header: image, footer: image, fullPage: false }, deliveryCompany: "MRC Infracon Limited" }, presentation);
@@ -118,7 +133,7 @@ for (const match of revisionResult.pdf.toString("latin1").matchAll(/stream\r?\n(
   try { revisionStreams.push(inflateSync(bytes).toString("latin1")); } catch { revisionStreams.push(match[1]); }
 }
 const revisionText = revisionStreams.join("\n");
-for (const value of ["MRC/SEP/2026/0006/R-1", "Epoxy Dark Brown", "Changed epoxy coating", "Epoxy Dark Grey", "2850", "1234", "45", "18%", "FOR at site.", "This is test change too.", "Test Charge", "Changed standard term body", "New standard term", ...Array.from({ length: 9 }, (_, i) => `Clause ${i + 1}`)]) assert.ok(revisionText.includes(value), `generated R-1 PDF missing ${value}`);
+for (const value of ["MRC/SEP/2026/0006/R-1", "Epoxy Dark Brown", "Epoxy Dark Brown Revised", "Changed epoxy coating", "Epoxy Bright Blue", "New blue coating", "Epoxy Dark Grey", "2850", "1234", "45", "3", "18%", "FOR at site.", "This is test change too.", "Test Charge", "Changed standard term body", "New standard term", ...Array.from({ length: 9 }, (_, i) => `Clause ${i + 1}`)]) assert.ok(revisionText.includes(value), `generated R-1 PDF missing ${value}`);
 assert.ok(revisionText.includes("0 0 0 RG"), "generated R-1 PDF is missing a black strike operator");
 assert.ok(revisionText.includes("0.72 0.08 0.08 rg"), "generated R-1 PDF is missing red changed-value styling");
 const testChargeText = revisionText.slice(Math.max(0, revisionText.indexOf("Test Charge") - 120), revisionText.indexOf("Test Charge") + 180);
@@ -137,8 +152,31 @@ for (const match of legacyResult.pdf.toString("latin1").matchAll(/stream\r?\n([\
 const legacyText = legacyStreams.join("\n");
 for (const value of ["SS 316 Chair Type Clamp 50", "Chair Clamp 50X65MM", "250 GMS", "230 GRM"]) assert.ok(legacyText.includes(value), `legacy null-key R-1 PDF missing ${value}`);
 assert.ok(legacyText.includes("0.72 0.08 0.08 rg"), "legacy null-key R-1 PDF missing red styling operator");
-assert.ok(legacyText.includes("0 0 0 RG"), "legacy null-key R-1 PDF missing black strike styling operator");
+assert.ok(legacyText.includes("0.72 0.08 0.08 rg"), "legacy null-key R-1 PDF missing red strike styling operator");
 console.log(`PO executable legacy NULL-key R-1 PDF: PASS (bytes=${legacyResult.pdf.length}, pages=${legacyResult.pageCount})`);
+
+const fallbackPrevious = { ...previous, id: "fallback-r0", po_number: "PI/SEP/2026/0007/R-0", revision_no: 0, items: [
+  { ...previous.items[0], revision_line_key: null, source_requisition_line_key: null, item_code_snapshot: "PI-0007-A", item_name_snapshot: "Original description", specification_snapshot: "Original specification" },
+  { ...previous.items[1], revision_line_key: null, source_requisition_line_key: null, item_code_snapshot: "PI-0007-B", item_name_snapshot: "Unchanged description" },
+] };
+const fallbackCurrent = { ...fallbackPrevious, id: "fallback-r1", po_number: "PI/SEP/2026/0007/R-1", revision_no: 1, previous_revision_id: fallbackPrevious.id, items: [
+  { ...fallbackPrevious.items[0], id: "new-item-a", item_name_snapshot: "Edited description", specification_snapshot: "Edited specification", quantity: 41, unit_rate: 2900 },
+  { ...fallbackPrevious.items[1], id: "new-item-b" },
+] };
+const fallbackComparison = buildPurchaseOrderRevisionComparison(fallbackPrevious, fallbackCurrent);
+assert.equal(fallbackComparison.items[0].fields.item_name_snapshot.state, "changed");
+assert.equal(fallbackComparison.items[0].fields.specification_snapshot.state, "changed");
+const fallbackPresentation = buildPurchaseOrderRevisionPdfRenderModel(fallbackCurrent, fallbackComparison);
+const fallbackResult = await makePdf(fallbackCurrent, { employee_name: "Test Creator" }, { employee_name: "Test Approver", signatureBlock: "Approved By", signatureAsset: null }, { letterhead: { header: image, footer: image, fullPage: false }, deliveryCompany: "MRC Infracon Limited" }, fallbackPresentation);
+const fallbackText = [];
+for (const match of fallbackResult.pdf.toString("latin1").matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
+  const bytes = Buffer.from(match[1], "latin1");
+  try { fallbackText.push(inflateSync(bytes).toString("latin1")); } catch { fallbackText.push(match[1]); }
+}
+const fallbackPdfText = fallbackText.join("\n");
+assert.ok(fallbackPdfText.includes("Edited description") && fallbackPdfText.includes("Edited specification"));
+assert.ok(fallbackPdfText.includes("0.72 0.08 0.08 rg"), "normal fallback-key R-1 PDF missing red changed-description styling");
+console.log(`PO executable fallback-key R-1 PDF: PASS (bytes=${fallbackResult.pdf.length}, pages=${fallbackResult.pageCount})`);
 
 const longTerms = JSON.stringify({ template_id: "fixture-long", clauses: Array.from({ length: 40 }, (_, i) => ({ id: `long-${i + 1}`, heading: `Long clause heading ${i + 1}`, clause_body: `This is a deliberately long standard term body for clause ${i + 1} that must wrap across measured lines without colliding with the next clause or overflowing the page boundary.`, sort_order: i })) });
 const longRow = { ...row, standard_terms_snapshot: longTerms };

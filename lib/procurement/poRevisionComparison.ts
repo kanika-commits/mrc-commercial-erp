@@ -45,10 +45,9 @@ export function buildPurchaseOrderRevisionComparison(previous: any, current: any
   const legacySingleLineKey = previousItems.length === 1 && currentItems.length === 1 && !previousItems[0]?.revision_line_key && !currentItems[0]?.revision_line_key
     ? "__legacy_single_line__"
     : null;
-  const itemKey = (item: any) => item?.revision_line_key ? String(item.revision_line_key) : legacySingleLineKey;
+  const itemIdentity = (item: any) => item?.revision_line_key || item?.source_requisition_line_key || item?.item_code_snapshot || item?.item_id_snapshot || null;
   const keyedEntries = (items: any[]) => items
-    .map((item: any) => [itemKey(item), item] as [string | null, any])
-    .filter(([key]: [string | null, any]) => key)
+    .map((item: any, index: number) => [itemIdentity(item) ? String(itemIdentity(item)) : legacySingleLineKey || `__position_${index}`, item] as [string, any])
     .map((entry: [string | null, any]) => [entry[0] as string, entry[1]] as [string, any]);
   const beforeItems: Map<string, any> = new Map(keyedEntries(previousItems));
   const afterItems: Map<string, any> = new Map(keyedEntries(currentItems));
@@ -57,7 +56,13 @@ export function buildPurchaseOrderRevisionComparison(previous: any, current: any
   for (const key of keys) {
     const before = beforeItems.get(key) || null;
     const after = afterItems.get(key) || null;
-    const fields = Object.fromEntries(ITEM_FIELDS.map((field) => [field, diffRevisionValue(before?.[field], after?.[field])]));
+    const fields = Object.fromEntries([
+      ...ITEM_FIELDS.map((field) => [field, diffRevisionValue(before?.[field], after?.[field])]),
+      ["basic_amount", diffRevisionValue(
+        before ? Number(before.quantity || 0) * Number(before.unit_rate || 0) : undefined,
+        after ? Number(after.quantity || 0) * Number(after.unit_rate || 0) : undefined,
+      )],
+    ]);
     const state = before && after ? (Object.values(fields).some((field: any) => field.state !== "unchanged") ? "changed" : "unchanged") : before ? "removed" : "added";
     items.push({ revision_line_key: key, state: state as RevisionState, before: before as Record<string, unknown> | null, after: after as Record<string, unknown> | null, fields });
   }
