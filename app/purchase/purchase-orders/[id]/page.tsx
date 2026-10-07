@@ -58,7 +58,6 @@ export default function PurchaseOrderDetailPage() {
   const [documentLoading, setDocumentLoading] = useState(false);
   const [documentsOpen, setDocumentsOpen] = useState(false);
   const [form, setForm] = useState({ po_date: "", delivery: {}, commercial: {}, standard_terms: "" });
-  const [additionalCharges, setAdditionalCharges] = useState<Array<{ name: string; amount: string }>>([]);
   const [reasonAction, setReasonAction] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [approvalReview, setApprovalReview] = useState(false);
@@ -69,11 +68,10 @@ export default function PurchaseOrderDetailPage() {
         apiFetch(`/api/procurement/purchase-orders/${id}`),
         apiFetch(`/api/procurement/purchase-orders/${id}/documents`),
       ]);
-      setRow(result.purchase_order);
+      setRow({ ...result.purchase_order, revision_history: result.revision_history || [result.purchase_order] });
       setDocuments(documentResult.documents || []);
       setEditMode(false);
       setForm({ po_date: result.purchase_order.po_date || "", delivery: result.purchase_order.delivery_snapshot || {}, commercial: result.purchase_order.commercial_snapshot || {}, standard_terms: result.purchase_order.standard_terms_snapshot || "" });
-      setAdditionalCharges(Array.isArray(result.purchase_order.commercial_snapshot?.additional_charges) ? result.purchase_order.commercial_snapshot.additional_charges.map((charge: any) => ({ name: String(charge.name || ""), amount: String(charge.amount ?? "") })) : []);
     } catch (error: any) {
       setMessage(error.message);
     }
@@ -152,7 +150,7 @@ export default function PurchaseOrderDetailPage() {
 
   async function save() {
     setSaving(true);
-    try { if (additionalCharges.some((charge) => !charge.name.trim() || !Number.isFinite(Number(charge.amount)) || Number(charge.amount) < 0)) throw new Error("Each additional charge needs a name and a valid non-negative amount."); await apiFetch(`/api/procurement/purchase-orders/${id}`, { method: "PUT", body: JSON.stringify({ ...form, commercial: { ...(form.commercial as any), additional_charges: additionalCharges.map((charge) => ({ name: charge.name.trim(), amount: Number(charge.amount) })) } }) }); await load(); setEditMode(false); setMessage("Purchase Order draft saved."); }
+    try { const commercial = { ...(form.commercial as any) }; delete commercial.freight_amount; if (Array.isArray(commercial.additional_charges)) commercial.additional_charges = commercial.additional_charges.filter((charge: any) => Number(charge.amount) > 0).map((charge: any) => ({ name: String(charge.name || "").trim(), amount: Number(charge.amount) })); await apiFetch(`/api/procurement/purchase-orders/${id}`, { method: "PUT", body: JSON.stringify({ ...form, commercial }) }); await load(); setEditMode(false); setMessage("Purchase Order draft saved."); }
     catch (error: any) { setMessage(error.message); }
     finally { setSaving(false); }
   }
@@ -184,9 +182,24 @@ export default function PurchaseOrderDetailPage() {
     }
   }
 
+  async function openRevisionPdf(revisionId: string) {
+    try {
+      const token = await getAccessToken();
+      const response = await fetch(`/api/procurement/purchase-orders/${revisionId}/pdf`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) { const result = await response.json().catch(() => ({})); throw new Error(result.error || "Failed to open Purchase Order PDF."); }
+      const url = URL.createObjectURL(await response.blob());
+      const popup = window.open(url, "_blank", "noopener,noreferrer");
+      if (!popup) throw new Error("Please allow pop-ups to view the Purchase Order PDF.");
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error: any) { setMessage(error.message || "Failed to open Purchase Order PDF."); }
+  }
+
+
   if (!row) return <p className="text-sm text-slate-500">{message || "Loading Purchase Order..."}</p>;
 
   const locked = !["draft", "sent_back"].includes(row.status);
+  const isRevision = Number(row.revision_no || 0) > 0 || Boolean(row.previous_revision_id);
+  const revisionDisplay = row.superseded_by_revision_id ? "Superseded" : ["approved", "issued"].includes(row.status) ? "Current Effective Revision" : ["draft", "pending_approval", "sent_back"].includes(row.status) ? "Revision in Progress" : "";
   const canApprove = hasGlobalAccess(access) || can(access?.permissions || [], "procurement_purchase_orders", "approve");
   const canReject = hasGlobalAccess(access) || can(access?.permissions || [], "procurement_purchase_orders", "reject");
   const sourceLabel = row.source_type === "indent" ? "Material Indent" : "Direct Purchase";
@@ -224,6 +237,8 @@ export default function PurchaseOrderDetailPage() {
       <button type="button" disabled={pdfLoading} onClick={openPdf} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold">{pdfLoading ? "Opening PDF..." : "View / Download PO PDF"}</button>
     </div>
     {message && <p className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">{message}</p>}
+    {isRevision && <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm"><p className="font-bold">Revision R-{row.revision_no}{revisionDisplay && <span className="ml-2 font-semibold">· {revisionDisplay}</span>}</p>{row.previous_revision_id && <p className="mt-1 text-slate-700">Previous Revision: {row.revision_history?.find((candidate: any) => candidate.id === row.previous_revision_id)?.po_number || "Previous Purchase Order"}</p>}</div>}
+    {row.revision_history?.length > 1 && <section className="rounded-xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Revision History</h2><div className="mt-3 divide-y">{row.revision_history.map((revision: any) => <div key={revision.id} className="flex flex-wrap items-center justify-between gap-3 py-3"><div><Link href={`/purchase/purchase-orders/${revision.id}`} className="font-semibold text-slate-900 underline">R-{revision.revision_no || 0} · {revision.po_number}</Link><p className="text-xs text-slate-500">{String(revision.status || "").replace(/_/g, " ")} · {revision.superseded_by_revision_id ? "Superseded" : ["draft", "pending_approval", "sent_back"].includes(revision.status) ? "Revision in Progress" : ["approved", "issued"].includes(revision.status) ? "Current" : ""}</p></div><div className="flex gap-2"><Link href={`/purchase/purchase-orders/${revision.id}`} className="rounded border px-3 py-1 text-xs font-semibold">View PO</Link><button type="button" onClick={() => void openRevisionPdf(revision.id)} className="rounded border px-3 py-1 text-xs font-semibold">PDF</button></div></div>)}</div></section>}
     {reasonAction && <div className="rounded-lg border border-amber-200 bg-amber-50 p-4"><h2 className="font-semibold text-slate-900">{reasonAction === "reject" ? "Reject Purchase Order" : "Send Purchase Order Back"}</h2><p className="mt-1 text-sm text-slate-600">Enter a reason before continuing.</p><textarea value={reason} onChange={(event) => setReason(event.target.value)} className="mt-3 min-h-24 w-full rounded border border-amber-300 bg-white p-3 text-sm" placeholder="Reason" /><div className="mt-3 flex gap-2"><button type="button" disabled={!reason.trim() || saving} onClick={() => void action(reasonAction, reason.trim())} className="rounded bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Confirm</button><button type="button" onClick={() => { setReasonAction(null); setReason(""); }} className="rounded border border-slate-300 bg-white px-4 py-2 text-sm font-semibold">Cancel</button></div></div>}
 
     <section className="mx-auto w-full max-w-[900px] overflow-hidden border border-slate-300 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.08)] print:shadow-none">
@@ -279,7 +294,6 @@ export default function PurchaseOrderDetailPage() {
             <dl className="w-full max-w-sm border-t border-slate-400 text-sm">
               <div className="flex justify-between border-b border-slate-200 py-2"><dt>Items Basic</dt><dd>{money(row.total_basic_amount)}</dd></div>
               <div className="flex justify-between border-b border-slate-200 py-2"><dt>GST</dt><dd>{money(row.total_gst_amount)}</dd></div>
-              <div className="flex justify-between border-b border-slate-200 py-2"><dt>Freight</dt><dd>{money(row.total_freight_amount)}</dd></div>
               <div className="flex justify-between border-b-2 border-slate-700 py-3 font-bold"><dt>Grand Total</dt><dd>{money(row.total_amount)}</dd></div>
             </dl>
           </div>
@@ -301,8 +315,6 @@ export default function PurchaseOrderDetailPage() {
       <h2 className="font-semibold">Draft Actions</h2>
       <div className="mt-4 grid gap-4 md:grid-cols-3">
         <label className="text-sm">PO Date<input disabled={locked} type="date" value={form.po_date} onChange={(event) => setForm({ ...form, po_date: event.target.value })} className="mt-1 h-10 w-full rounded-lg border px-3" /></label>
-        {Array.isArray((form.commercial as any)?.additional_charges) && <div className="text-sm md:col-span-2"><div className="flex items-center justify-between"><span>Additional Charges</span><button type="button" onClick={() => setAdditionalCharges((current) => [...current, { name: "", amount: "" }])} className="rounded border px-2 py-1 text-xs">+ Add Charge</button></div>{additionalCharges.map((charge, index) => <div key={index} className="mt-2 grid grid-cols-[1fr_140px_auto] gap-2"><input value={charge.name} onChange={(event) => setAdditionalCharges((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} className="h-10 rounded-lg border px-3" placeholder="Charge name" /><input type="number" min="0" step="0.01" value={charge.amount} onChange={(event) => setAdditionalCharges((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, amount: event.target.value } : item))} className="h-10 rounded-lg border px-3" placeholder="Amount" /><button type="button" onClick={() => setAdditionalCharges((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="text-xs text-red-700">Remove</button></div>)}</div>}
-        {!Array.isArray((form.commercial as any)?.additional_charges) && <label className="text-sm">Freight Amount<input disabled={locked} type="number" min="0" step="0.01" value={String((form.commercial as any)?.freight_amount ?? row.total_freight_amount ?? 0)} onChange={(event) => setForm({ ...form, commercial: { ...(form.commercial as any), freight_amount: event.target.value } })} className="mt-1 h-10 w-full rounded-lg border px-3" /></label>}
         <label className="text-sm md:col-span-2">Standard Terms<textarea disabled={locked} value={form.standard_terms} onChange={(event) => setForm({ ...form, standard_terms: event.target.value })} className="mt-1 min-h-24 w-full rounded-lg border p-2" /></label>
       </div>
       <div className="mt-4 flex gap-2"><button disabled={saving} onClick={save} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold">{saving ? "Saving..." : "Save Draft"}</button><button type="button" disabled={saving} onClick={() => setEditMode(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold">Cancel</button></div>

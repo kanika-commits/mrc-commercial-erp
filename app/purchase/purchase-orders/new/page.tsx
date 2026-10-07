@@ -25,50 +25,9 @@ function getCreatedId(value: any): string | null {
   return value.id || value.purchase_order_id || value.purchase_order?.id || value.purchase_orders?.[0]?.id || value.result?.id || value.result?.purchase_order_id || null;
 }
 
-function persistedItemId(value: unknown) {
-  return String(value || "").trim().toLowerCase();
-}
-
-function persistedItemContentKey(item: any) {
-  return JSON.stringify(Object.keys(item || {}).filter((key) => key !== "id" && key !== "po_item_id").sort().reduce((result, key) => ({ ...result, [key]: item[key] }), {}));
-}
-
-function persistedItemSetKey(items: any[]) {
-  return items.map(persistedItemContentKey).sort().join("\u001e");
-}
-
-function rebasePersistedItemIds(items: any[], originalRows: any[], latestRows: any[]) {
-  const latestIdsByContent = new Map<string, string[]>();
-  latestRows.forEach((row) => {
-    const content = persistedItemContentKey(row);
-    const ids = latestIdsByContent.get(content) || [];
-    ids.push(persistedItemId(row.id));
-    latestIdsByContent.set(content, ids);
-  });
-  const idMap = new Map<string, string>();
-  originalRows.forEach((row) => {
-    const ids = latestIdsByContent.get(persistedItemContentKey(row));
-    const nextId = ids?.shift();
-    if (nextId) idMap.set(persistedItemId(row.id), nextId);
-  });
-  return items.map((item) => {
-    const nextId = idMap.get(persistedItemId(item.po_item_id));
-    return nextId ? { ...item, po_item_id: nextId } : item;
-  });
-}
-
-function itemFromPersistedRow(item: any): Item {
-  return { po_item_id: item.id, item_id: item.item_id, item_name: item.item_name_snapshot || "", item_code: item.item_code_snapshot, description: item.description_snapshot || item.specification_snapshot || "", specification: item.specification_snapshot, make: item.make_snapshot || "", quantity: String(item.quantity ?? ""), uom: item.uom_snapshot || "", unit_rate: String(item.unit_rate ?? ""), gst_rate: String(item.gst_rate ?? "0"), source_requisition_line_key: item.source_requisition_line_key, isMaterialMasterLinked: false };
-}
-
 function fileSize(value: number) {
   if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`;
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function retainSelectedLookupOption(options: any[], id: string, labelKey: string, label: string) {
-  if (!id || options.some((option) => option.id === id)) return options;
-  return [{ id, [labelKey]: label || id }, ...options];
 }
 
 export default function NewPurchaseOrderPage() {
@@ -86,9 +45,6 @@ export default function NewPurchaseOrderPage() {
   const [indentLineKey, setIndentLineKey] = useState(params.get("line_key") || "");
   const [selectedIndentId, setSelectedIndentId] = useState(params.get("requisition_id") || "");
   const [items, setItems] = useState<Item[]>([{ item_name: "", quantity: "", unit_rate: "", gst_rate: "0" }]);
-  const originalPersistedItemIdsRef = useRef<string[]>([]);
-  const originalPersistedItemsRef = useRef<any[]>([]);
-  const originalPersistedItemContentRef = useRef<string>("");
   const [delivery, setDelivery] = useState({ location: "", address: "", expected_date: "" });
   const [commercial, setCommercial] = useState({ payment_terms: "", delivery_terms: "" });
   const [standardTerms, setStandardTerms] = useState("");
@@ -98,12 +54,10 @@ export default function NewPurchaseOrderPage() {
   const [deliveryLocationId, setDeliveryLocationId] = useState("");
   const [gstRegistrationId, setGstRegistrationId] = useState("");
   const [additionalCharges, setAdditionalCharges] = useState<AdditionalCharge[]>([]);
-  const [keyTerms, setKeyTerms] = useState([{ description: "Price Validity", terms: "" }, { description: "Freight", terms: "" }, { description: "Delivery Timeline", terms: "" }, { description: "Payment Terms", terms: "" }]);
+  const [keyTerms, setKeyTerms] = useState([{ description: "Price Validity", terms: "" }, { description: "Delivery Timeline", terms: "" }, { description: "Payment Terms", terms: "" }]);
   const [message, setMessage] = useState("");
   const errorRef = useRef<HTMLDivElement>(null);
-  const [lookupLoading, setLookupLoading] = useState(true);
-  const [draftLoading, setDraftLoading] = useState(Boolean(editId));
-  const loading = lookupLoading || draftLoading;
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [customDelivery, setCustomDelivery] = useState(false);
   const [materialOpenIndex, setMaterialOpenIndex] = useState<number | null>(null);
@@ -120,7 +74,6 @@ export default function NewPurchaseOrderPage() {
   const [revisionNo, setRevisionNo] = useState<number | null>(null);
   const [previousRevisionNumber, setPreviousRevisionNumber] = useState("");
   const revisionIdentityRef = useRef<{ source: Source; companyId: string; siteId: string; vendorId: string; requisitionId: string } | null>(null);
-  const draftLookupSelectionRef = useRef<{ companyId: string; siteId: string; vendorId: string }>({ companyId: "", siteId: "", vendorId: "" });
   const [createdPoId, setCreatedPoId] = useState<string | null>(null);
   const [creationRequestId] = useState(() => crypto.randomUUID());
   const previousCompanyIdRef = useRef(companyId);
@@ -135,23 +88,11 @@ export default function NewPurchaseOrderPage() {
     }).catch((error) => setMessage(error.message || "Vendor was created, but the Vendor list could not be refreshed."));
   };
 
-  const mergeDraftLookupOptions = (nextLookups: any, draft: any) => ({
-    ...nextLookups,
-    companies: retainSelectedLookupOption(nextLookups.companies || [], draft.company_id, "company_name", draft.company?.company_name),
-    sites: retainSelectedLookupOption(nextLookups.sites || [], draft.site_id, "site_name", draft.site?.site_name),
-    vendors: retainSelectedLookupOption(nextLookups.vendors || [], draft.vendor_id, "vendor_name", draft.vendor_name_snapshot),
-  });
-
   useEffect(() => {
     apiFetch("/api/procurement/purchase-orders/lookups")
-      .then((nextLookups) => setLookups((current: any) => ({
-        ...nextLookups,
-        companies: retainSelectedLookupOption(nextLookups.companies || [], draftLookupSelectionRef.current.companyId, "company_name", ""),
-        sites: retainSelectedLookupOption(nextLookups.sites || [], draftLookupSelectionRef.current.siteId, "site_name", ""),
-        vendors: retainSelectedLookupOption(nextLookups.vendors || [], draftLookupSelectionRef.current.vendorId, "vendor_name", ""),
-      })))
+      .then(setLookups)
       .catch((error) => setMessage(error.message || "Failed to load Purchase Order options."))
-      .finally(() => setLookupLoading(false));
+      .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
@@ -164,9 +105,6 @@ export default function NewPurchaseOrderPage() {
       setPreviousRevisionNumber(po.previous_revision_id ? String((result.revision_history || []).find((candidate: any) => candidate.id === po.previous_revision_id)?.po_number || "Previous revision") : "");
       const nextSource = ["direct", "indent"].includes(po.source_type) ? po.source_type as Source : "direct";
       revisionIdentityRef.current = { source: nextSource, companyId: po.company_id || "", siteId: po.site_id || "", vendorId: po.vendor_id || "", requisitionId: po.source_requisition_id || "" };
-      previousCompanyIdRef.current = po.company_id || "";
-      draftLookupSelectionRef.current = { companyId: po.company_id || "", siteId: po.site_id || "", vendorId: po.vendor_id || "" };
-      setLookups((current: any) => mergeDraftLookupOptions(current, po));
       setSource(nextSource);
       setCompanyId(po.company_id || ""); setSiteId(po.site_id || ""); setVendorId(po.vendor_id || ""); setPoDate(po.po_date || today());
       setDelivery(po.delivery_snapshot || {}); setCommercial(po.commercial_snapshot || {});
@@ -175,27 +113,24 @@ export default function NewPurchaseOrderPage() {
       setBillingContactId(po.delivery_snapshot?.master_selection?.billing_contact_id || po.delivery_snapshot?.billing_contact?.site_contact_id || po.delivery_snapshot?.master_selection?.site_contact_id || "");
       setDeliveryContactId(po.delivery_snapshot?.master_selection?.delivery_contact_id || po.delivery_snapshot?.delivery_contact?.site_contact_id || po.delivery_snapshot?.master_selection?.site_contact_id || po.delivery_snapshot?.site_contact_id || "");
       setAdditionalCharges(Array.isArray(po.commercial_snapshot?.additional_charges) ? po.commercial_snapshot.additional_charges.map((charge: any) => ({ name: String(charge.name || ""), amount: String(charge.amount ?? "") })) : []);
-      setKeyTerms(Array.isArray(po.commercial_snapshot?.key_terms) && po.commercial_snapshot.key_terms.length ? po.commercial_snapshot.key_terms : [{ description: "Price Validity", terms: "" }, { description: "Freight", terms: "" }, { description: "Delivery Timeline", terms: "" }, { description: "Payment Terms", terms: "" }]);
+      setKeyTerms(Array.isArray(po.commercial_snapshot?.key_terms) && po.commercial_snapshot.key_terms.length ? po.commercial_snapshot.key_terms : [{ description: "Price Validity", terms: "" }, { description: "Delivery Timeline", terms: "" }, { description: "Payment Terms", terms: "" }]);
       const parsedTerms = parsePurchaseOrderStandardTerms(po.standard_terms_snapshot);
       setStandardTerms(parsedTerms?.kind === "structured" ? parsedTerms.clauses.map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n") : parsedTerms?.text || "");
-      originalPersistedItemIdsRef.current = (po.items || []).map((item: any) => persistedItemId(item.id));
-      originalPersistedItemsRef.current = po.items || [];
-      originalPersistedItemContentRef.current = persistedItemSetKey(po.items || []);
-      setItems((po.items || []).map(itemFromPersistedRow));
+      setItems((po.items || []).map((item: any) => ({ po_item_id: item.id, item_id: item.item_id, item_name: item.item_name_snapshot || "", item_code: item.item_code_snapshot, description: item.description_snapshot || item.specification_snapshot || "", specification: item.specification_snapshot, make: item.make_snapshot || "", quantity: String(item.quantity ?? ""), uom: item.uom_snapshot || "", unit_rate: String(item.unit_rate ?? ""), gst_rate: String(item.gst_rate ?? "0"), source_requisition_line_key: item.source_requisition_line_key, isMaterialMasterLinked: false })));
       setExistingDocuments(documentResult.documents || []);
-      setDraftLoading(false);
-    }).catch((error) => { setMessage(error.message || "Failed to load the Draft Purchase Order."); setDraftLoading(false); });
+      setLoading(false);
+    }).catch((error) => { setMessage(error.message || "Failed to load the Draft Purchase Order."); setLoading(false); });
   }, [editId]);
 
   useEffect(() => {
-    if (!revisionNo || draftLoading) return;
+    if (!revisionNo || loading) return;
     const section = [...document.querySelectorAll("section")].find((candidate) => candidate.querySelector("h2")?.textContent?.trim() === "Basic Details");
     const controls = section ? [...section.querySelectorAll("select")] as HTMLSelectElement[] : [];
     const vendorIndex = controls.length > 3 ? 3 : 2;
     const locked = [controls[0], controls[1], controls[vendorIndex]].filter(Boolean);
     locked.forEach((control) => { control.disabled = true; control.setAttribute("aria-readonly", "true"); });
     return () => locked.forEach((control) => { control.disabled = false; control.removeAttribute("aria-readonly"); });
-  }, [revisionNo, draftLoading]);
+  }, [revisionNo, loading]);
 
   useEffect(() => {
     if (!editId || !lookups.items?.length) return;
@@ -244,7 +179,7 @@ export default function NewPurchaseOrderPage() {
   const selectedLetterhead = (lookups.letterheads || []).find((row: any) => row.company_id === companyId);
   const deliveryAddressFor = (row: any) => [row?.address_line1, row?.address_line2, row?.city, row?.state, row?.pincode].filter(Boolean).join(", ") || row?.address || "";
   const deliveryCompanyName = (row: any) => row?.company?.company_name || lookups.companies.find((company: any) => company.id === row?.company_id)?.company_name || "";
-  const selectedGstBilling = gstBillingMasters.find((row: any) => row.id === gstRegistrationId) || (!gstRegistrationId && gstBillingMasters.length === 1 ? gstBillingMasters[0] : null);
+  const selectedGstBilling = gstBillingMasters.find((row: any) => row.id === gstRegistrationId) || (gstBillingMasters.length === 1 ? gstBillingMasters[0] : null);
   const selectedBilling = selectedGstBilling?.billing_address || null;
   const deliveryLocations = (lookups.delivery_locations || []).filter((row: any) => row.billing_address_id === selectedBilling?.id && row.site_id === siteId && row.status === "active").sort((a: any, b: any) => String(a.location_name || "").localeCompare(String(b.location_name || "")));
   const defaultDeliveryLocation = deliveryLocations.length === 1 ? deliveryLocations[0] : null;
@@ -255,26 +190,23 @@ export default function NewPurchaseOrderPage() {
   const selectedBillingContact = siteContacts.find((row: any) => row.id === billingContactId) || defaultSiteContact;
   const revisionIdentityLocked = Boolean(revisionNo);
   useEffect(() => {
-    if (lookupLoading) return;
-    setGstRegistrationId((current) => current || (gstBillingMasters.length === 1 ? gstBillingMasters[0].id : ""));
-  }, [companyId, gstBillingMasters.length, lookupLoading]);
+    setGstRegistrationId((current) => gstBillingMasters.some((row: any) => row.id === current) ? current : gstBillingMasters.length === 1 ? gstBillingMasters[0].id : "");
+  }, [companyId, gstBillingMasters.length]);
   useEffect(() => {
-    if (lookupLoading || !siteId) {
-      if (lookupLoading) return;
+    if (!siteId) {
       setDeliveryContactId("");
       return;
     }
-    setDeliveryContactId((current) => current || defaultSiteContact?.id || "");
-    setBillingContactId((current) => current || defaultSiteContact?.id || "");
-  }, [siteId, defaultSiteContact?.id, siteContacts.length, lookupLoading]);
+    setDeliveryContactId((current) => siteContacts.some((row: any) => row.id === current) ? current : defaultSiteContact?.id || "");
+    setBillingContactId((current) => siteContacts.some((row: any) => row.id === current) ? current : defaultSiteContact?.id || "");
+  }, [siteId, defaultSiteContact?.id, siteContacts.length]);
   useEffect(() => {
-    if (lookupLoading || !siteId) {
-      if (lookupLoading) return;
+    if (!siteId) {
       setDeliveryLocationId("");
       return;
     }
-    setDeliveryLocationId((current) => current || defaultDeliveryLocation?.id || "");
-  }, [siteId, defaultDeliveryLocation?.id, deliveryLocations.length, lookupLoading]);
+    setDeliveryLocationId((current) => deliveryLocations.some((row: any) => row.id === current) ? current : defaultDeliveryLocation?.id || "");
+  }, [siteId, defaultDeliveryLocation?.id, deliveryLocations.length]);
   useEffect(() => {
     setDelivery((current) => ({ ...current, location: selectedDeliveryLocation?.location_name || "", address: selectedDeliveryLocation ? deliveryAddressFor(selectedDeliveryLocation) : "" }));
   }, [selectedDeliveryLocation?.id]);
@@ -292,9 +224,8 @@ export default function NewPurchaseOrderPage() {
     previousCompanyIdRef.current = companyId;
   }, [companyId]);
   useEffect(() => {
-    if (lookupLoading) return;
-    setTermsTemplateId((current) => current || companyTerms.find((row: any) => row.is_default)?.id || companyTerms[0]?.id || "");
-  }, [companyTerms, lookupLoading]);
+    setTermsTemplateId((current) => companyTerms.some((row: any) => row.id === current) ? current : companyTerms.find((row: any) => row.is_default)?.id || companyTerms[0]?.id || "");
+  }, [companyTerms]);
   useEffect(() => {
     if (!selectedTerms || standardTerms.trim()) return;
     const clauses = (selectedTerms.sections || []).filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order).map((section: any) => `${section.heading}\n${section.clause_body}`).join("\n\n");
@@ -462,56 +393,28 @@ export default function NewPurchaseOrderPage() {
     setSaving(true);
     try {
       const deliveryPayload = { expected_date: delivery.expected_date, location: selectedDeliveryLocation.location_name, address: deliveryAddressFor(selectedDeliveryLocation), delivery_location_id: selectedDeliveryLocation.id, site_contact_id: selectedDeliveryContact.id };
-      const body = { source_type: source, company_id: companyId, site_id: siteId, vendor_id: vendorId, po_date: poDate, source_requisition_id: selectedIndent?.requisition_id || params.get("requisition_id") || null, expected_original_item_ids: editId ? [...originalPersistedItemIdsRef.current] : undefined, items: items.map((item) => ({ ...item, item_id: item.item_id || undefined, unit_rate: Number(item.unit_rate), quantity: Number(item.quantity), gst_rate: Number(item.gst_rate), make_snapshot: item.make })), master_selection: { gst_registration_id: selectedGstBilling.id, billing_contact_id: selectedBillingContact.id, delivery_location_id: selectedDeliveryLocation.id, delivery_contact_id: selectedDeliveryContact.id }, delivery: deliveryPayload, commercial: { ...commercial, additional_charges: additionalCharges.map((charge) => ({ name: charge.name.trim(), amount: Number(charge.amount) })) }, standard_terms: standardTerms, standard_terms_template_id: selectedTerms?.id || null, standard_terms_sections: selectedTerms?.sections?.filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order) || [], key_terms: keyTerms };
+      const identity = revisionNo && revisionIdentityRef.current ? revisionIdentityRef.current : null;
+      const body = { source_type: identity?.source || source, company_id: identity?.companyId || companyId, site_id: identity?.siteId || siteId, vendor_id: identity?.vendorId || vendorId, po_date: poDate, source_requisition_id: identity?.requisitionId || selectedIndent?.requisition_id || params.get("requisition_id") || null, items: items.map((item) => ({ ...item, item_id: item.item_id || undefined, unit_rate: Number(item.unit_rate), quantity: Number(item.quantity), gst_rate: Number(item.gst_rate), make_snapshot: item.make })), master_selection: { gst_registration_id: selectedGstBilling.id, billing_contact_id: selectedBillingContact.id, delivery_location_id: selectedDeliveryLocation.id, delivery_contact_id: selectedDeliveryContact.id }, delivery: deliveryPayload, commercial: { ...commercial, additional_charges: explicitCharges.map((charge) => ({ name: charge.name.trim(), amount: Number(charge.amount) })) }, standard_terms: standardTerms, standard_terms_template_id: selectedTerms?.id || null, standard_terms_sections: selectedTerms?.sections?.filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order) || [], key_terms: keyTerms };
       (body as any).creation_request_id = creationRequestId;
       if (editId) {
-        const saveExistingDraft = async (requestBody: any, attempt: "initial" | "retry" = "initial") => {
-          await apiFetch(`/api/procurement/purchase-orders/${editId}`, { method: "PUT", headers: { "x-po-save-attempt": attempt }, body: JSON.stringify(requestBody) });
-          try {
-            await uploadAttachments(editId);
-          } catch (error: any) {
-            setCreatedPoId(editId);
-            setMessage(`Purchase Order details were saved, but a supporting document upload failed. Please retry the document upload. ${error.message}`);
-            return;
-          }
-          router.push(`/purchase/purchase-orders/${editId}`);
-        };
+        await apiFetch(`/api/procurement/purchase-orders/${editId}`, { method: "PUT", body: JSON.stringify(body) });
         try {
-          await saveExistingDraft(body, "initial");
+          await uploadAttachments(editId);
         } catch (error: any) {
-          if (!String(error.message || "").includes("The editable item set changed")) throw error;
-          try {
-            const latest = await apiFetch(`/api/procurement/purchase-orders/${editId}`);
-            const latestItems = latest.purchase_order?.items || [];
-            if (persistedItemSetKey(latestItems) !== originalPersistedItemContentRef.current) {
-              setMessage("The saved item set changed. Your current form values remain unchanged; review the latest Purchase Order before saving again.");
-              return;
-            }
-            const latestPersistedItemIds = latestItems.map((item: any) => persistedItemId(item.id));
-            const rebasedItems = rebasePersistedItemIds(body.items, originalPersistedItemsRef.current, latestItems);
-            const rebasedPersistedItemIds = rebasedItems.map((item: any) => persistedItemId(item.po_item_id)).filter(Boolean).sort();
-            const latestPersistedItemIdSet = [...latestPersistedItemIds].sort();
-            if (rebasedPersistedItemIds.join("\u001e") !== latestPersistedItemIdSet.join("\u001e")) {
-              setMessage("The saved item set changed. Your current form values remain unchanged; review the latest Purchase Order before saving again.");
-              return;
-            }
-            originalPersistedItemIdsRef.current = latestPersistedItemIds;
-            await saveExistingDraft({ ...body, items: rebasedItems, expected_original_item_ids: latestPersistedItemIds }, "retry");
-          } catch (retryError: any) {
-            setMessage(retryError.message || "The saved item set changed. Your current form values remain unchanged; review the latest Purchase Order before saving again.");
-          }
+          setCreatedPoId(editId);
+          setMessage(`Purchase Order details were saved, but a supporting document upload failed. Please retry the document upload. ${error.message}`);
+          return;
         }
+        router.push(`/purchase/purchase-orders/${editId}`);
         return;
       }
       const result = await apiFetch("/api/procurement/purchase-orders", { method: "POST", body: JSON.stringify(body) });
       const id = getCreatedId(result.result || result); if (id) { try { await uploadAttachments(id); router.push(`/purchase/purchase-orders/${id}`); } catch (error: any) { setCreatedPoId(id); setMessage(`Purchase Order draft was created, but an attachment failed: ${error.message}`); } } else router.push("/purchase/purchase-orders");
-    } catch (error: any) {
-      setMessage(error.message || "Failed to save Purchase Order draft. Your current form values remain unchanged.");
-    }
+    } catch (error: any) { setMessage(error.message || "Failed to create Purchase Order draft."); }
     finally { setSaving(false); }
   }
 
-  if (draftLoading) return <p className="text-sm text-slate-500">Loading Draft Purchase Order...</p>;
+  if (loading) return <p className="text-sm text-slate-500">Loading Purchase Order options...</p>;
   return <section className="mx-auto max-w-[1500px] space-y-5 pb-12">
     <header className="flex flex-wrap items-start justify-between gap-4"><div><Link href={editId ? `/purchase/purchase-orders/${editId}` : "/purchase/purchase-orders"} className="text-sm text-slate-500">← {editId ? "Purchase Order" : "Purchase Orders"}</Link><p className="mt-3 text-xs font-semibold uppercase tracking-widest text-amber-700">Purchase</p><h1 className="text-3xl font-bold text-slate-950">{revisionNo ? `Revision R-${revisionNo}` : editId ? "Edit Draft Purchase Order" : "Create Purchase Order"}</h1><p className="text-sm text-slate-500">{revisionNo ? `Previous Revision: ${previousRevisionNumber}` : editId ? "Update the existing Draft Purchase Order." : "Create a simple draft from a direct purchase or approved Material Indent."}</p></div></header>
     {message && <div ref={errorRef} className="scroll-mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert"><div className="flex items-start justify-between gap-3"><div>{message}{createdPoId && <p className="mt-2"><Link className="font-semibold underline" href={`/purchase/purchase-orders/${createdPoId}`}>Open the draft to retry attachments.</Link></p>}</div><button type="button" aria-label="Dismiss error" onClick={() => setMessage("")} className="shrink-0 text-lg font-semibold leading-none text-red-700" title="Dismiss error">×</button></div></div>}
@@ -549,7 +452,7 @@ export default function NewPurchaseOrderPage() {
     <section className="rounded-2xl border bg-white shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b p-5"><div><h2 className="font-semibold">Items</h2><p className="text-xs text-slate-500">Taxable = quantity × rate. GST is calculated per line.</p></div>{source === "direct" && <button type="button" onClick={() => setItems((current) => [...current, { item_name: "", quantity: "", unit_rate: "", gst_rate: "0" }])} className="rounded-lg border px-3 py-2 text-sm font-semibold">Add Item</button>}</div>
       <div className="overflow-x-auto">
-                <table className="w-full min-w-[1800px] table-fixed text-left text-sm"><colgroup><col className="w-[280px]" /><col className="w-[240px]" /><col className="w-[180px]" /><col className="w-[120px]" /><col className="w-[120px]" /><col className="w-[130px]" /><col className="w-[110px]" /><col className="w-[130px]" /><col className="w-[130px]" /><col className="w-[140px]" /><col className="w-[100px]" /></colgroup><thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="p-3">Material / Item</th><th className="p-3">Description / Specification</th><th className="p-3">Make / Brand</th><th className="p-3">Quantity</th><th className="p-3">Unit</th><th className="p-3">Rate</th><th className="p-3">GST %</th><th className="p-3">Taxable</th><th className="p-3">GST Amount</th><th className="p-3">Total</th><th className="p-3">Action</th></tr></thead><tbody className="divide-y">{items.map((item, index) => { const taxable = Number(item.quantity || 0) * Number(item.unit_rate || 0); const gst = taxable * Number(item.gst_rate || 0) / 100; const search = item.item_name.trim().toLowerCase(); const matches = search ? (lookups.items || []).filter((material: any) => `${material.item_code || ""} ${material.item_name || ""}`.toLowerCase().includes(search)).slice(0, 8) : []; const linkedMaterial = item.isMaterialMasterLinked || Boolean(item.item_id) || Boolean(item.item_code && (lookups.items || []).some((material: any) => material.item_code === item.item_code)); const linkedUom = item.item_id ? (lookups.items || []).find((material: any) => material.id === item.item_id)?.default_uom?.uom_code : (lookups.items || []).find((material: any) => material.item_code === item.item_code)?.default_uom?.uom_code; return <tr key={`${item.source_requisition_line_key || "item"}-${index}`}><td className="relative z-10 p-3"><input ref={(element) => { materialInputRefs.current[index] = element; }} value={item.item_name} readOnly={source !== "direct"} onFocus={(event) => source === "direct" && (event.currentTarget.value.trim() ? openMaterialMenu(index, event.currentTarget) : (setMaterialOpenIndex(null), setMaterialMenuPosition(null)))} onBlur={() => window.setTimeout(() => { setMaterialOpenIndex(null); setMaterialMenuPosition(null); }, 150)} onChange={(event) => { updateItem(index, "item_name", event.target.value); setItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, item_id: undefined, item_code: undefined, isMaterialMasterLinked: false } : row)); if (event.target.value.trim()) openMaterialMenu(index, event.currentTarget); else { setMaterialOpenIndex(null); setMaterialMenuPosition(null); } }} placeholder={source === "direct" ? "Search material name or code..." : "Source-controlled material"} className="h-9 w-64 rounded border px-2 disabled:bg-slate-50" />{item.item_code && <small className="block text-xs text-slate-500">{item.item_code}</small>}{source === "direct" && materialMenuPosition?.index === index && <div data-material-menu="true" style={{ position: "fixed", left: materialMenuPosition.left, top: materialMenuPosition.top, width: materialMenuPosition.width }} className="z-[100] rounded-lg border bg-white p-1 shadow-xl"><div className="max-h-64 overflow-y-auto">{matches.map((material: any) => <button type="button" key={material.id} onMouseDown={(event) => event.preventDefault()} onClick={() => selectMaterial(index, material)} className="block w-full rounded px-3 py-2 text-left hover:bg-slate-50"><span className="block text-xs font-semibold text-slate-500">{material.item_code || "No code"}</span><span className="block text-sm font-semibold">{material.item_name}</span></button>)}{matches.length === 0 && search && <p className="px-3 py-2 text-xs text-slate-500">No matching Material Master item.</p>}</div>{search && <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => useCustomItem(index)} className="w-full border-t px-3 py-2 text-left text-sm font-semibold text-slate-700">+ Use "{item.item_name}" as Custom / New Item</button>}</div>}</td><td className="p-3"><input value={item.description ?? item.specification ?? ""} readOnly={source !== "direct"} onChange={(event) => updateItem(index, "description", event.target.value)} className="h-9 w-52 rounded border px-2" /></td><td className="p-3"><input value={item.make || ""} readOnly={false} onChange={(event) => updateItem(index, "make", event.target.value)} className="h-9 w-40 rounded border px-2" placeholder="Select or enter Make / Brand" /></td><td className="p-3"><input type="number" min="0" step="0.001" max={source === "indent" ? indentRemainingQuantity(item) : undefined} value={item.quantity} onChange={(event) => updateItem(index, "quantity", event.target.value)} className="h-9 w-28 rounded border px-2" /></td><td className="p-3">{linkedMaterial ? <span className="inline-flex h-9 min-w-24 items-center rounded border bg-slate-50 px-3" title="Derived from Material Master">{linkedUom || item.uom || "—"}</span> : source === "direct" && !item.item_id ? <input value={item.uom || ""} onChange={(event) => updateItem(index, "uom", event.target.value)} placeholder="Unit" className="h-9 w-24 rounded border px-2" /> : item.uom || "—"}</td><td className="p-3"><input type="number" min="0" step="0.01" value={item.unit_rate} readOnly={false} onChange={(event) => updateItem(index, "unit_rate", event.target.value)} className="h-9 w-28 rounded border px-2" /></td><td className="p-3"><input type="number" min="0" step="0.01" value={item.gst_rate} readOnly={false} onChange={(event) => updateItem(index, "gst_rate", event.target.value)} className="h-9 w-24 rounded border px-2" /></td><td className="p-3">{money(taxable)}</td><td className="p-3">{money(gst)}</td><td className="p-3 font-semibold">{money(taxable + gst)}</td><td className="p-3">{((source === "direct" && items.length > 1) || source === "indent") && <button type="button" onClick={() => { setItems((current) => current.filter((_, itemIndex) => itemIndex !== index)); if (materialOpenIndex === index) { setMaterialOpenIndex(null); setMaterialMenuPosition(null); } }} className="text-xs font-semibold text-red-700">Remove</button>}</td></tr>; })}</tbody></table>
+                <table className="w-full min-w-[1800px] table-fixed text-left text-sm"><colgroup><col className="w-[280px]" /><col className="w-[240px]" /><col className="w-[180px]" /><col className="w-[120px]" /><col className="w-[120px]" /><col className="w-[130px]" /><col className="w-[110px]" /><col className="w-[130px]" /><col className="w-[130px]" /><col className="w-[140px]" /><col className="w-[100px]" /></colgroup><thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="p-3">Material / Item</th><th className="p-3">Description / Specification</th><th className="p-3">Make / Brand</th><th className="p-3">Quantity</th><th className="p-3">Unit</th><th className="p-3">Rate</th><th className="p-3">GST %</th><th className="p-3">Taxable</th><th className="p-3">GST Amount</th><th className="p-3">Total</th><th className="p-3">Action</th></tr></thead><tbody className="divide-y">{items.map((item, index) => { const taxable = Number(item.quantity || 0) * Number(item.unit_rate || 0); const gst = taxable * Number(item.gst_rate || 0) / 100; const search = item.item_name.trim().toLowerCase(); const matches = search ? (lookups.items || []).filter((material: any) => `${material.item_code || ""} ${material.item_name || ""}`.toLowerCase().includes(search)).slice(0, 8) : []; const linkedMaterial = item.isMaterialMasterLinked || Boolean(item.item_id) || Boolean(item.item_code && (lookups.items || []).some((material: any) => material.item_code === item.item_code)); const linkedUom = item.item_id ? (lookups.items || []).find((material: any) => material.id === item.item_id)?.default_uom?.uom_code : (lookups.items || []).find((material: any) => material.item_code === item.item_code)?.default_uom?.uom_code; return <tr key={`${item.source_requisition_line_key || "item"}-${index}`}><td className="relative z-10 p-3"><input ref={(element) => { materialInputRefs.current[index] = element; }} value={item.item_name} readOnly={source !== "direct"} onFocus={(event) => source === "direct" && (event.currentTarget.value.trim() ? openMaterialMenu(index, event.currentTarget) : (setMaterialOpenIndex(null), setMaterialMenuPosition(null)))} onBlur={() => window.setTimeout(() => { setMaterialOpenIndex(null); setMaterialMenuPosition(null); }, 150)} onChange={(event) => { updateItem(index, "item_name", event.target.value); setItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, item_id: undefined, item_code: undefined, isMaterialMasterLinked: false } : row)); if (event.target.value.trim()) openMaterialMenu(index, event.currentTarget); else { setMaterialOpenIndex(null); setMaterialMenuPosition(null); } }} placeholder={source === "direct" ? "Search material name or code..." : "Source-controlled material"} className="h-9 w-64 rounded border px-2 disabled:bg-slate-50" />{item.item_code && <small className="block text-xs text-slate-500">{item.item_code}</small>}{source === "direct" && materialMenuPosition?.index === index && <div data-material-menu="true" style={{ position: "fixed", left: materialMenuPosition.left, top: materialMenuPosition.top, width: materialMenuPosition.width }} className="z-[100] rounded-lg border bg-white p-1 shadow-xl"><div className="max-h-64 overflow-y-auto">{matches.map((material: any) => <button type="button" key={material.id} onMouseDown={(event) => event.preventDefault()} onClick={() => selectMaterial(index, material)} className="block w-full rounded px-3 py-2 text-left hover:bg-slate-50"><span className="block text-xs font-semibold text-slate-500">{material.item_code || "No code"}</span><span className="block text-sm font-semibold">{material.item_name}</span></button>)}{matches.length === 0 && search && <p className="px-3 py-2 text-xs text-slate-500">No matching Material Master item.</p>}</div>{search && <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => useCustomItem(index)} className="w-full border-t px-3 py-2 text-left text-sm font-semibold text-slate-700">+ Use "{item.item_name}" as Custom / New Item</button>}</div>}</td><td className="p-3"><input value={item.description || item.specification || ""} readOnly={source !== "direct"} onChange={(event) => updateItem(index, "description", event.target.value)} className="h-9 w-52 rounded border px-2" /></td><td className="p-3"><input value={item.make || ""} readOnly={false} onChange={(event) => updateItem(index, "make", event.target.value)} className="h-9 w-40 rounded border px-2" placeholder="Select or enter Make / Brand" /></td><td className="p-3"><input type="number" min="0" step="0.001" max={source === "indent" ? indentRemainingQuantity(item) : undefined} value={item.quantity} onChange={(event) => updateItem(index, "quantity", event.target.value)} className="h-9 w-28 rounded border px-2" /></td><td className="p-3">{linkedMaterial ? <span className="inline-flex h-9 min-w-24 items-center rounded border bg-slate-50 px-3" title="Derived from Material Master">{linkedUom || item.uom || "—"}</span> : source === "direct" && !item.item_id ? <input value={item.uom || ""} onChange={(event) => updateItem(index, "uom", event.target.value)} placeholder="Unit" className="h-9 w-24 rounded border px-2" /> : item.uom || "—"}</td><td className="p-3"><input type="number" min="0" step="0.01" value={item.unit_rate} readOnly={false} onChange={(event) => updateItem(index, "unit_rate", event.target.value)} className="h-9 w-28 rounded border px-2" /></td><td className="p-3"><input type="number" min="0" step="0.01" value={item.gst_rate} readOnly={false} onChange={(event) => updateItem(index, "gst_rate", event.target.value)} className="h-9 w-24 rounded border px-2" /></td><td className="p-3">{money(taxable)}</td><td className="p-3">{money(gst)}</td><td className="p-3 font-semibold">{money(taxable + gst)}</td><td className="p-3">{((source === "direct" && items.length > 1) || source === "indent") && <button type="button" onClick={() => { setItems((current) => current.filter((_, itemIndex) => itemIndex !== index)); if (materialOpenIndex === index) { setMaterialOpenIndex(null); setMaterialMenuPosition(null); } }} className="text-xs font-semibold text-red-700">Remove</button>}</td></tr>; })}</tbody></table>
       </div>
     </section>
     <section className="rounded-2xl border bg-white p-5 shadow-sm">

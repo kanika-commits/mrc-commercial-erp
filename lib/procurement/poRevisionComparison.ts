@@ -13,7 +13,7 @@ export type RevisionItemComparison = {
   fields: Record<string, RevisionField<unknown>>;
 };
 
-const ITEM_FIELDS = ["item_name_snapshot", "item_code_snapshot", "specification_snapshot", "make_snapshot", "quantity", "uom_snapshot", "unit_rate", "discount_percent", "discount_amount", "taxable_amount", "gst_rate", "gst_amount", "total_amount", "remarks_snapshot"];
+const ITEM_FIELDS = ["item_name_snapshot", "specification_snapshot", "make_snapshot", "quantity", "uom_snapshot", "unit_rate", "discount_percent", "discount_amount", "taxable_amount", "gst_rate", "gst_amount", "total_amount", "remarks_snapshot"];
 
 export function normalizeRevisionText(value: unknown): string {
   return String(value ?? "").replace(/\r\n/g, "\n").split("\n").map((line) => line.trim()).filter(Boolean).join("\n").trim();
@@ -40,18 +40,8 @@ export function visibleRevisionClause(clause: any) {
 }
 
 export function buildPurchaseOrderRevisionComparison(previous: any, current: any) {
-  const previousItems = Array.isArray(previous?.items) ? previous.items : [];
-  const currentItems = Array.isArray(current?.items) ? current.items : [];
-  const legacySingleLineKey = previousItems.length === 1 && currentItems.length === 1 && !previousItems[0]?.revision_line_key && !currentItems[0]?.revision_line_key
-    ? "__legacy_single_line__"
-    : null;
-  const itemKey = (item: any) => item?.revision_line_key ? String(item.revision_line_key) : legacySingleLineKey;
-  const keyedEntries = (items: any[]) => items
-    .map((item: any) => [itemKey(item), item] as [string | null, any])
-    .filter(([key]: [string | null, any]) => key)
-    .map((entry: [string | null, any]) => [entry[0] as string, entry[1]] as [string, any]);
-  const beforeItems: Map<string, any> = new Map(keyedEntries(previousItems));
-  const afterItems: Map<string, any> = new Map(keyedEntries(currentItems));
+  const beforeItems: Map<string, any> = new Map((Array.isArray(previous?.items) ? previous.items : []).filter((item: any) => item?.revision_line_key).map((item: any) => [String(item.revision_line_key), item] as [string, any]));
+  const afterItems: Map<string, any> = new Map((Array.isArray(current?.items) ? current.items : []).filter((item: any) => item?.revision_line_key).map((item: any) => [String(item.revision_line_key), item] as [string, any]));
   const items: RevisionItemComparison[] = [];
   const keys = new Set([...beforeItems.keys(), ...afterItems.keys()]);
   for (const key of keys) {

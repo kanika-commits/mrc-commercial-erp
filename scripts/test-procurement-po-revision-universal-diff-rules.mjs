@@ -1,0 +1,20 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const route = fs.readFileSync("lib/procurement/poPdfRenderer.server.ts", "utf8") + "\n" + fs.readFileSync("app/api/procurement/purchase-orders/[id]/pdf/route.ts", "utf8");
+const scalar = (before, after) => before === after ? "unchanged" : before == null ? "added" : after == null ? "removed" : "changed";
+assert.equal(scalar(2850, 1234), "changed");
+assert.equal(scalar("FOR at site.", "This is test change too."), "changed");
+assert.equal(scalar(undefined, 1234), "added");
+assert.match(route, /type RevisionValueDiff/);
+assert.match(route, /function diffScalar/);
+assert.match(route, /function diffPath/);
+assert.match(route, /function diffCollection/);
+assert.match(route, /data\.previous_revision_id/);
+assert.match(route, /buildPurchaseOrderRevisionComparison|diffScalar/);
+assert.match(route, /diffCollection\(Array\.isArray\(keyTermsDiff\.before\.key_terms\)/);
+assert.match(route, /revision_line_key/);
+assert.match(route, /drawRedline/);
+assert.doesNotMatch(route, /REVISION CHANGES/);
+assert.doesNotMatch(route, /Previous Revision:/);
+console.log("Universal PO revision diff rules passed.");
