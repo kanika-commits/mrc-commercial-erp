@@ -89,11 +89,10 @@ export async function DELETE(
       );
     }
 
-    const [items, documents, vendors, files, changes, driveFolders] = await Promise.all([
+    const [items, documents, vendors, changes, driveFolders] = await Promise.all([
       loadRows(admin, "work_order_items", id),
       loadRows(admin, "work_order_documents", id),
       loadRows(admin, "work_order_vendors", id),
-      loadRows(admin, "work_order_files", id),
       loadRows(admin, "work_order_changes", id),
       loadRows(admin, "work_order_drive_folders", id),
     ]);
@@ -111,7 +110,7 @@ export async function DELETE(
       documentNumber: workOrder.wo_number,
       deletionReason: "Platform Owner deleted from Work Order Approval.",
       recordSnapshot: deleted || workOrder,
-      relatedSnapshot: { items, documents, vendors, files, changes, drive_folders: driveFolders },
+      relatedSnapshot: { items, documents, vendors, changes, drive_folders: driveFolders },
       fileSnapshot: { storageFilesPreserved: true, driveFilesPreserved: true },
     });
 
