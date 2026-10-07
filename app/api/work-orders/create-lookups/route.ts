@@ -45,7 +45,10 @@ export async function GET(request: Request) {
     const gst_billing_masters: any = scoped(admin.from("company_gst_registrations").select("id,organization_id,company_id,gstin,legal_name,trade_name,state,state_code,registration_type,is_default,status").eq("status", "active").order("is_default", { ascending: false }));
     const billing_addresses: any = scoped(admin.from("company_billing_addresses").select("id,organization_id,company_id,gst_registration_id,label,address_line1,address_line2,city,state,pincode,gstin,contact_name,mobile,email,is_default,status").eq("status", "active"));
     const delivery_locations: any = scoped(admin.from("site_delivery_locations").select("id,organization_id,company_id,company:companies(company_name),site_id,billing_address_id,billing_address:company_billing_addresses!inner(id,gst_registration_id),location_name,address,address_line1,address_line2,city,state,pincode,gstin,contact_name,mobile,email,is_default,status").eq("status", "active"));
-    const site_contacts: any = scoped(admin.from("site_contacts").select("id,organization_id,site_id,contact_name,designation,mobile,email,contact_type,is_default,status").eq("status", "active").order("contact_name"));
+    // Site contacts are authorized through their canonical site's organization and site scope.
+    // Do not apply the denormalized contact organization_id separately: legacy rows may carry
+    // a stale organization value even though their site is authorized and unchanged.
+    const site_contacts: any = admin.from("site_contacts").select("id,organization_id,site_id,contact_name,designation,mobile,email,contact_type,is_default,status").eq("status", "active").order("contact_name");
     if (!hasGlobalProcurementAccess(auth)) {
       if ((auth.companies || []).length > 0 && companies) companies = companies.in("id", auth.companies);
       if ((auth.sites || []).length > 0 && sites) sites = sites.in("id", auth.sites);
@@ -82,6 +85,7 @@ export async function GET(request: Request) {
     const billingRows = dependentData["Billing Address Master"] || [];
     const accessibleSiteIds = new Set((siteResult.data || []).map((site: any) => site.id));
     const accessibleBillingIds = new Set(billingRows.map((row: any) => row.id));
+    dependentData["Site Contact Master"] = (dependentData["Site Contact Master"] || []).filter((row: any) => accessibleSiteIds.has(row.site_id));
     const gstBillingMasters = (dependentData["GST/Billing Master"] || [])
       .map((gst: any) => {
         const linked = billingRows.filter((row: any) => row.company_id === gst.company_id && row.gst_registration_id === gst.id);
