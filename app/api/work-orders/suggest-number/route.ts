@@ -15,13 +15,13 @@ export async function GET(request: Request) {
 
   const admin = adminClient();
   const scope = await loadActorOrganizationScope(admin, auth);
-  const activeOrganizationId = resolveWriteOrganizationId(scope);
   const [{ data: company, error: companyError }, { data: site, error: siteError }] = await Promise.all([
     admin.from("companies").select("id,organization_id,company_code,status").eq("id", companyId).maybeSingle(),
     admin.from("sites").select("id,organization_id,company_id,site_code,status").eq("id", siteId).maybeSingle(),
   ]);
   if (companyError) throw companyError;
   if (siteError) throw siteError;
+  const activeOrganizationId = resolveWriteOrganizationId(scope, company?.organization_id);
   const access: any = auth;
   const globalAccess = hasGlobalProcurementAccess(auth);
   const companyAllowed = globalAccess || (access.companies || []).length === 0 || access.companies.includes(companyId);

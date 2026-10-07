@@ -69,8 +69,8 @@ async function loadAuthorizedPreviewData(admin: any, auth: any, request: Request
   const primaryVendorContact = (vendorContactsResult.data || [])[0] || {};
   const vendorSnapshot = { vendor_id: vendor.id, vendor_name: vendor.vendor_name, address: vendor.address || null, gstin: vendor.gstin || null, pan: vendor.pan || null, contact_person: primaryVendorContact.contact_name || "", phone: primaryVendorContact.contact_number || "", email: primaryVendorContact.email || "", contacts: vendorContactsResult.data || [] };
   const letterheadSnapshot = { id: letterheadResult.data.id, company_id: letterheadResult.data.company_id, letterhead_name: letterheadResult.data.letterhead_name, version_id: letterheadVersion.id, version_number: letterheadVersion.version_number, header_storage_provider: letterheadVersion.header_storage_provider, header_storage_bucket: letterheadVersion.header_storage_bucket, header_storage_key: letterheadVersion.header_storage_key, footer_storage_provider: letterheadVersion.footer_storage_provider, footer_storage_bucket: letterheadVersion.footer_storage_bucket, footer_storage_key: letterheadVersion.footer_storage_key, header_height_points: letterheadVersion.header_height_points, footer_height_points: letterheadVersion.footer_height_points };
-  const terms = (termsResult.data.sections || []).filter((section: any) => section.status === "active").sort((a: any, b: any) => Number(a.sort_order || 0) - Number(b.sort_order || 0)).map((section: any) => `${section.heading}\n${section.clause_body}`).join("\n\n");
-  return { company, site, vendorSnapshot, itemMap, gst: gstResult.data, billing: billingResult.data, delivery: deliveryResult.data, billingContact, deliveryContact, letterheadSnapshot, terms };
+    const termsClauses = (termsResult.data.sections || []).filter((section: any) => section.status === "active").sort((a: any, b: any) => Number(a.sort_order || 0) - Number(b.sort_order || 0)).map((section: any) => ({ heading: section.heading, clause_body: section.clause_body }));
+  return { company, site, vendorSnapshot, itemMap, gst: gstResult.data, billing: billingResult.data, delivery: deliveryResult.data, billingContact, deliveryContact, letterheadSnapshot, terms: termsClauses };
 }
 
 export async function POST(request: Request) {
@@ -97,8 +97,6 @@ export async function POST(request: Request) {
       const gstAmount = basic * Number(item.gst_percent || 0) / 100;
       return { item_name_snapshot: master.item_header, item_code_snapshot: "", specification_snapshot: master.description || "", additional_description_snapshot: item.additional_description || "", make_snapshot: master.mode_of_measurement || "", quantity: item.quantity, uom_snapshot: master.unit || "", unit_rate: item.unit_rate, gst_rate: item.gst_percent, gst_amount: gstAmount, total_amount: basic + gstAmount, serial_no: index + 1 };
     });
-    const rawTerms = authorized.terms.replace(/Purchase Order/g, "Work Order").replace(/\bPO\b/g, "WO");
-    const terms = rawTerms.split(/\n\s*\n/).map((block: string, index: number) => block.trim() ? `${index + 1}. ${block.trim()}` : block).join("\n\n");
     const keyTerms = [
       ...(body.work_order_key_terms?.inclusions || []).filter(Boolean).map((value: string) => ({ description: "Inclusion", value })),
       ...(body.work_order_key_terms?.exclusions || []).filter(Boolean).map((value: string) => ({ description: "Exclusion", value })),
@@ -116,7 +114,7 @@ export async function POST(request: Request) {
       created_by_name: auth.user.user_metadata?.full_name || auth.user.email,
       created_by_email: auth.user.email || null,
       created_at_display: new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }).format(new Date()),
-      work_order_key_terms: body.work_order_key_terms, standard_terms_snapshot: terms,
+      work_order_key_terms: body.work_order_key_terms, standard_terms_snapshot: authorized.terms.map((clause: any) => ({ ...clause, heading: String(clause.heading || "").replace(/Purchase Order/g, "Work Order").replace(/\bPO\b/g, "WO"), clause_body: String(clause.clause_body || "").replace(/Purchase Order/g, "Work Order").replace(/\bPO\b/g, "WO") })), standard_terms_clauses: authorized.terms,
     }, await loadWorkOrderLetterheadAssets(authorized.letterheadSnapshot, authorized.letterheadSnapshot.id, authorized.company.id));
     const merged = supportingFiles.length ? await appendWorkOrderSupportingPdfs(rendered, supportingFiles) : rendered;
     const combined = await addWorkOrderPackagePageNumbers(await addWorkOrderDraftWatermark(merged), { plain: true });

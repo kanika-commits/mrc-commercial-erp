@@ -3,11 +3,13 @@ import { requirePermission } from "@/lib/serverPermissions";
 import { adminClient, hasGlobalProcurementAccess } from "@/lib/serverProcurementAccess";
 import { isInOrganizationScope, loadActorOrganizationScope, resolveWriteOrganizationId } from "@/lib/serverOrganizationScope";
 import { validateWorkOrderSupportingFiles } from "@/lib/workOrderSupportingDocuments.server";
+import { PDFDocument } from "pdf-lib";
 
 const n = (value: unknown) => { const result = Number(value); return Number.isFinite(result) ? result : NaN; };
 const text = (value: unknown) => String(value ?? "").trim();
 const WORK_ORDER_TYPES = new Set(["Consultant", "Contractor (Labour)", "Contractor (SITC)", "Daily Wage", "Rental"]);
 const SUPPORTING_DOCUMENT_BUCKET = "work-order-documents";
+const REVIEWED_PDF_KEY = "pilot-reviewed-pdf";
 
 function supportingDocumentPath(workOrderId: string, index: number, fileName: string) {
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "supporting-document";
@@ -16,14 +18,17 @@ function supportingDocumentPath(workOrderId: string, index: number, fileName: st
 
 export async function POST(request: Request) {
   const uploadedSupportingPaths: string[] = [];
+  let createdWorkOrderId = "";
   try {
     const auth = await requirePermission(request, "work_orders", "add");
     if ("response" in auth) return auth.response;
     let body: any = {};
     let supportingFiles: File[] = [];
+    let reviewedPdfBase64 = "";
     if (request.headers.get("content-type")?.includes("multipart/form-data")) {
       const formData = await request.formData();
       body = JSON.parse(String(formData.get("payload") || "{}"));
+      reviewedPdfBase64 = text(formData.get("reviewed_pdf_base64"));
       supportingFiles = formData.getAll("supporting_documents").filter((value): value is File => value instanceof File && value.size > 0);
     } else {
       body = await request.json().catch(() => ({}));
@@ -40,7 +45,21 @@ export async function POST(request: Request) {
     if (creationRequestId) {
       const { data: existing, error: existingError } = await admin.from("work_orders").select("id,wo_number,approval_status,total_basic_amount,total_gst_amount,total_amount").eq("creation_request_id", creationRequestId).maybeSingle();
       if (existingError) throw existingError;
-      if (existing) return NextResponse.json({ workOrder: existing, idempotent: true });
+      if (existing) {
+        const { data: reviewedDocument, error: reviewedDocumentError } = await admin.from("work_order_documents").select("id").eq("work_order_id", existing.id).eq("drive_sync_key", REVIEWED_PDF_KEY).maybeSingle();
+        if (reviewedDocumentError) throw reviewedDocumentError;
+        if (!reviewedDocument) return NextResponse.json({ error: "This submission already exists but has no stored reviewed PDF artifact. It cannot be safely retried." }, { status: 409 });
+        return NextResponse.json({ workOrder: existing, idempotent: true });
+      }
+    }
+    if (request.headers.get("content-type")?.includes("multipart/form-data") && !reviewedPdfBase64) return NextResponse.json({ error: "The reviewed Work Order PDF artifact is required. Generate the preview again before submitting." }, { status: 400 });
+    let reviewedPdfBytes: Buffer | null = null;
+    if (reviewedPdfBase64) {
+      try {
+        reviewedPdfBytes = Buffer.from(reviewedPdfBase64, "base64");
+        const reviewedPdf = await PDFDocument.load(reviewedPdfBytes);
+        if (reviewedPdf.getPageCount() < 1) throw new Error("The reviewed PDF has no pages.");
+      } catch { return NextResponse.json({ error: "The reviewed Work Order PDF artifact is invalid. Generate the preview again before submitting." }, { status: 400 }); }
     }
     const scope = await loadActorOrganizationScope(admin, auth);
     const [companyResult, siteResult, vendorResult] = await Promise.all([
@@ -51,7 +70,7 @@ export async function POST(request: Request) {
     if (companyResult.error) throw companyResult.error; if (siteResult.error) throw siteResult.error; if (vendorResult.error) throw vendorResult.error;
     const company = companyResult.data, site = siteResult.data, vendor = vendorResult.data;
     if (!company || !site || !vendor) return NextResponse.json({ error: "Selected company, site, or vendor was not found." }, { status: 404 });
-    const activeOrganizationId = resolveWriteOrganizationId(scope);
+    const activeOrganizationId = resolveWriteOrganizationId(scope, company.organization_id);
     const access: any = auth;
     const globalAccess = hasGlobalProcurementAccess(auth);
     const companyAllowed = globalAccess || (access.companies || []).length === 0 || access.companies.includes(company.id);
@@ -84,7 +103,8 @@ export async function POST(request: Request) {
     if (!deliveryContact) return NextResponse.json({ error: "Selected Delivery Contact is missing, inactive, or outside the selected site." }, { status: 400 });
     if (!letterheadResult.data) return NextResponse.json({ error: "Selected Letterhead is missing or inactive for the selected company." }, { status: 400 });
     if (!termsResult.data) return NextResponse.json({ error: "Selected Terms & Conditions master is missing or inactive for the selected company." }, { status: 400 });
-    const vendorSnapshot = { vendor_id: vendor.id, vendor_name: vendor.vendor_name, vendor_role: text(body.vendor_role) || "Main Contractor", address: vendor.address || null, gstin: vendor.gstin || null, pan: vendor.pan || null, contacts: vendorContacts || [] };
+    const primaryVendorContact = (vendorContacts || [])[0] || {};
+    const vendorSnapshot = { vendor_id: vendor.id, vendor_name: vendor.vendor_name, vendor_role: text(body.vendor_role) || "Main Contractor", address: vendor.address || null, gstin: vendor.gstin || null, pan: vendor.pan || null, contact_person: primaryVendorContact.contact_name || "", phone: primaryVendorContact.contact_number || "", email: primaryVendorContact.email || "", contacts: vendorContacts || [] };
     const deliverySnapshot = { vendor_snapshot: vendorSnapshot, master_selection: { gst_registration_id: gstResult.data.id, billing_address_id: billingResult.data.id, delivery_location_id: deliveryResult.data.id, billing_contact_id: billingContact.id, delivery_contact_id: deliveryContact.id }, gst_billing: gstResult.data, billing_address: billingResult.data, delivery_location: deliveryResult.data, billing_contact: billingContact, delivery_contact: deliveryContact };
     const ids = Array.from(new Set(lines.map((line: any) => text(line.item_master_id)).filter(Boolean)));
     if (!ids.length || ids.length !== lines.length) return NextResponse.json({ error: "Each line must use a canonical Work Order Item Master item." }, { status: 400 });
@@ -108,8 +128,24 @@ export async function POST(request: Request) {
     const exclusions = Array.isArray(keyTerms.exclusions) ? keyTerms.exclusions.map((value: unknown) => text(value)).filter(Boolean) : [];
     const additional = Array.isArray(keyTerms.additional) ? keyTerms.additional.map((entry: any) => ({ label: text(entry?.label), value: text(entry?.value) })).filter((entry: any) => entry.label || entry.value) : [];
     if (inclusions.length < 1 || exclusions.length < 1) return NextResponse.json({ error: "At least one Mandatory Inclusion and one Mandatory Exclusion are required." }, { status: 400 });
-    const { data: workOrder, error: workOrderError } = await admin.from("work_orders").insert({ organization_id: company.organization_id, company_id: companyId, site_id: siteId, wo_number: woNumber, wo_date: text(body.wo_date), wo_type: woType, description: text(body.description) || null, status: "active", approval_status: "draft", wo_value: Number(totalBasic.toFixed(2)), gst_percent: n(body.gst_percent) >= 0 ? n(body.gst_percent) : 0, total_basic_amount: Number(totalBasic.toFixed(2)), total_gst_amount: Number(totalGst.toFixed(2)), total_amount: total, standard_terms_snapshot: text(body.standard_terms_snapshot), delivery_snapshot: deliverySnapshot, work_order_key_terms: { inclusions, exclusions, additional }, letterhead_snapshot: body.letterhead_snapshot || null, creation_request_id: creationRequestId || null, created_by: auth.user.id, created_by_name: auth.user.user_metadata?.full_name || auth.user.email, created_by_email: auth.user.email || null }).select("id,organization_id,wo_number,approval_status,total_basic_amount,total_gst_amount,total_amount").single();
+    const standardTermsClauses = (termsResult.data.sections || []).filter((section: any) => section.status === "active").sort((a: any, b: any) => Number(a.sort_order || 0) - Number(b.sort_order || 0)).map((section: any) => ({
+      heading: String(section.heading || "").replace(/Purchase Order/g, "Work Order").replace(/\bPO\b/g, "WO"),
+      clause_body: String(section.clause_body || "").replace(/Purchase Order/g, "Work Order").replace(/\bPO\b/g, "WO"),
+    }));
+    const proposedWorkOrderId = crypto.randomUUID();
+    const reviewedArtifactPath = reviewedPdfBytes ? `structured-pilot/${proposedWorkOrderId}/reviewed-package.pdf` : "";
+    if (reviewedPdfBytes) {
+      const { error: reviewedUploadError } = await admin.storage.from(SUPPORTING_DOCUMENT_BUCKET).upload(reviewedArtifactPath, reviewedPdfBytes, { contentType: "application/pdf", upsert: false });
+      if (reviewedUploadError) throw new Error(`Could not store the reviewed Work Order PDF artifact: ${reviewedUploadError.message}`);
+      uploadedSupportingPaths.push(reviewedArtifactPath);
+    }
+    const { data: workOrder, error: workOrderError } = await admin.from("work_orders").insert({ id: proposedWorkOrderId, organization_id: company.organization_id, company_id: companyId, site_id: siteId, wo_number: woNumber, wo_date: text(body.wo_date), wo_type: woType, description: text(body.description) || null, status: "active", approval_status: "draft", wo_value: Number(totalBasic.toFixed(2)), gst_percent: n(body.gst_percent) >= 0 ? n(body.gst_percent) : 0, total_basic_amount: Number(totalBasic.toFixed(2)), total_gst_amount: Number(totalGst.toFixed(2)), total_amount: total, standard_terms_snapshot: JSON.stringify(standardTermsClauses), delivery_snapshot: deliverySnapshot, work_order_key_terms: { inclusions, exclusions, additional }, letterhead_snapshot: body.letterhead_snapshot || null, creation_request_id: creationRequestId || null, created_by: auth.user.id, created_by_name: auth.user.user_metadata?.full_name || auth.user.email, created_by_email: auth.user.email || null }).select("id,organization_id,wo_number,approval_status,total_basic_amount,total_gst_amount,total_amount").single();
     if (workOrderError) { if (workOrderError.code === "23505") return NextResponse.json({ error: "Work Order number or creation request already exists." }, { status: 409 }); throw workOrderError; }
+    createdWorkOrderId = workOrder.id;
+    if (reviewedPdfBytes) {
+      const { error: reviewedDocumentError } = await admin.from("work_order_documents").insert({ organization_id: workOrder.organization_id, work_order_id: workOrder.id, file_name: `${workOrder.wo_number}-reviewed-package.pdf`, file_url: reviewedArtifactPath, file_path: reviewedArtifactPath, uploaded_at: new Date().toISOString(), drive_sync_key: REVIEWED_PDF_KEY, drive_sync_status: "succeeded" });
+      if (reviewedDocumentError) throw new Error(`Could not confirm the reviewed Work Order PDF artifact metadata: ${reviewedDocumentError.message}`);
+    }
     const { error: vendorError } = await admin.from("work_order_vendors").insert({ organization_id: company.organization_id, work_order_id: workOrder.id, vendor_id: vendor.id, vendor_role: text(body.vendor_role) || "Main Contractor", is_primary: true });
     if (vendorError) throw vendorError;
     const { error: lineError } = await admin.from("work_order_items").insert(normalizedLines.map((line: any) => ({ ...line, work_order_id: workOrder.id })));
@@ -128,6 +164,9 @@ export async function POST(request: Request) {
   } catch (error: any) {
     if (uploadedSupportingPaths.length) {
       try { await adminClient().storage.from(SUPPORTING_DOCUMENT_BUCKET).remove(uploadedSupportingPaths); } catch { /* best-effort cleanup */ }
+    }
+    if (createdWorkOrderId) {
+      try { await adminClient().from("work_orders").delete().eq("id", createdWorkOrderId); } catch { /* best-effort cleanup */ }
     }
     return NextResponse.json({ error: error.message || "Could not create Work Order." }, { status: 500 });
   }

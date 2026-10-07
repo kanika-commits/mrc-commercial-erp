@@ -21,10 +21,13 @@ export default function WorkOrderPilotPreviewPage() {
     setMessage("");
     try {
       const submitForm = new FormData();
-      submitForm.append("payload", JSON.stringify({ ...draft.payload, creation_request_id: crypto.randomUUID() }));
+      const previewParts = draft.previewUrl.match(/^data:application\/pdf;base64,(.+)$/);
+      if (!previewParts?.[1]) throw new Error("The reviewed Work Order PDF preview is missing. Return to the form and generate a fresh preview.");
+      submitForm.append("payload", JSON.stringify({ ...draft.payload, creation_request_id: draft.creationRequestId }));
+      submitForm.append("reviewed_pdf_base64", previewParts[1]);
       draft.supportingDocuments.forEach((file) => submitForm.append("supporting_documents", file, file.name));
       const result = await apiFetch("/api/work-orders/create", { method: "POST", body: submitForm });
-      router.push(`/work-orders/${result.workOrder.id}/preview`);
+      router.push(`/work-orders/${result.workOrder.id}`);
     } catch (error: any) {
       setMessage(error.message);
     } finally {
