@@ -138,12 +138,9 @@ export default function WorkOrderDetailPage() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
 const [debitNotes, setDebitNotes] = useState<any[]>([]);
-const [documents, setDocuments] = useState<any[]>([]);
   const [workOrderChanges, setWorkOrderChanges] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingRelated, setLoadingRelated] = useState(false);
-  const [loadingDocuments, setLoadingDocuments] = useState(false);
-  const [documentsLoaded, setDocumentsLoaded] = useState(false);
   const [loadingReviewPdf, setLoadingReviewPdf] = useState(false);
   const [message, setMessage] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
@@ -194,9 +191,6 @@ const [documents, setDocuments] = useState<any[]>([]);
       setMessage("");
       setStatusMessage("");
       setLoadingRelated(false);
-      setLoadingDocuments(false);
-      setDocumentsLoaded(false);
-      setDocuments([]);
       setVendors([]);
       setRaBills([]);
       setInvoices([]);
@@ -418,56 +412,6 @@ const [documents, setDocuments] = useState<any[]>([]);
     } finally {
       setLoadingRelated(false);
     }
-  }
-
-  async function loadDocuments() {
-    try {
-      setLoadingDocuments(true);
-      setStatusMessage("");
-
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
-      if (!token) {
-        throw new Error("Unable to load Work Order files: missing auth session.");
-      }
-
-      const documentResponse = await fetch(
-        `/api/work-orders/documents?work_order_id=${encodeURIComponent(workOrderId)}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-      const documentResult = await documentResponse.json();
-
-      if (!documentResponse.ok) {
-        throw new Error(documentResult.error || "Failed to load Work Order files.");
-      }
-
-      setDocuments(documentResult.documents || []);
-      setDocumentsLoaded(true);
-    } catch (error: any) {
-      setStatusMessage(error.message || "Failed to load Work Order files.");
-    } finally {
-      setLoadingDocuments(false);
-    }
-  }
-
-  function openDocument(document: any) {
-    recordClientAuditEvent({ eventType: "view_document", entityType: "work_order", recordId: workOrderId, documentId: document.id, source: "work_order_detail" });
-    if (!document.signed_url) {
-      setMessage(
-        document.signed_url_error ||
-          "Unable to open Work Order file. Signed URL was not available."
-      );
-      return;
-    }
-
-    window.open(document.signed_url, "_blank", "noopener,noreferrer");
   }
 
   async function openReviewPdf() {
@@ -1312,49 +1256,10 @@ function downloadWOLedger(workOrderId: string) {
       disabled={loadingReviewPdf}
       className="mb-3 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
     >
-      {loadingReviewPdf ? "Opening review PDF..." : "Review Work Order PDF"}
+      {loadingReviewPdf ? "Opening review PDF..." : "Review Complete Work Order PDF"}
     </button>
   )}
 
-  {!documentsLoaded ? (
-    <button
-      type="button"
-      onClick={loadDocuments}
-      disabled={loadingDocuments}
-      className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-    >
-      {loadingDocuments ? "Loading files..." : "Load Work Order files"}
-    </button>
-  ) : documents.length === 0 ? (
-    <p className="text-gray-500">
-      {workOrder.creation_request_id ? "No supporting documents attached." : "No files attached."}
-    </p>
-  ) : (
-    <div className="space-y-2">
-      {documents.map((doc) => (
-        <div
-          key={doc.id}
-          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-slate-50 p-3"
-        >
-          <div>
-            <p className="font-medium text-slate-950">
-              {doc.file_name || "Work Order file"}
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              {doc.file_path || "-"}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => openDocument(doc)}
-            className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800"
-          >
-            Open
-          </button>
-        </div>
-      ))}
-    </div>
-  )}
 </div>
         {workOrder.description && (
           <div className="mt-4">
