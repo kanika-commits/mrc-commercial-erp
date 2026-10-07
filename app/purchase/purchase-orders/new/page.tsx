@@ -185,7 +185,7 @@ export default function NewPurchaseOrderPage() {
   const defaultDeliveryLocation = deliveryLocations.length === 1 ? deliveryLocations[0] : null;
   const selectedDeliveryLocation = deliveryLocations.find((row: any) => row.id === deliveryLocationId) || defaultDeliveryLocation;
   const siteContacts = (lookups.site_contacts || []).filter((row: any) => row.site_id === siteId && row.status === "active").sort((a: any, b: any) => Number(b.is_default) - Number(a.is_default) || String(a.contact_name || "").localeCompare(String(b.contact_name || "")));
-  const defaultSiteContact = siteContacts.find((row: any) => row.is_default) || (siteContacts.length === 1 ? siteContacts[0] : null);
+  const defaultSiteContact = siteContacts.find((row: any) => row.is_default) || siteContacts[0] || null;
   const selectedDeliveryContact = siteContacts.find((row: any) => row.id === deliveryContactId) || defaultSiteContact;
   const selectedBillingContact = siteContacts.find((row: any) => row.id === billingContactId) || defaultSiteContact;
   const revisionIdentityLocked = Boolean(revisionNo);
