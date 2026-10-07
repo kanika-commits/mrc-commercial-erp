@@ -48,6 +48,11 @@ export async function renderApprovedWorkOrderPdfById(
     : { block: null, asset: null };
   const delivery = order.delivery_snapshot || {};
   const company = delivery.gst_billing ? { company_name: delivery.gst_billing.legal_name || delivery.gst_billing.trade_name } : {};
+  let standardTermsClauses: any[] | null = null;
+  try {
+    const parsed = JSON.parse(String(order.standard_terms_snapshot || ""));
+    if (Array.isArray(parsed)) standardTermsClauses = parsed;
+  } catch { /* legacy flattened snapshots continue through the existing fallback */ }
   const site = { site_name: delivery.delivery_location?.location_name || "" };
   const bytes = await renderWorkOrderPdf({
     ...order,
@@ -60,6 +65,7 @@ export async function renderApprovedWorkOrderPdfById(
     company,
     site,
     vendor_snapshot: delivery.vendor_snapshot || {},
+    standard_terms_clauses: standardTermsClauses || undefined,
     items: (linesResult.data || []).map((item: any) => ({
       ...item,
       item_name_snapshot: item.item_header_snapshot,

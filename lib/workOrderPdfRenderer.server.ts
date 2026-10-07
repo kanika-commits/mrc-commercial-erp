@@ -291,11 +291,13 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
   heading("KEY TERMS", 58, 11);
   table(["S.No.", "Key Term", "Terms"], normalizeKeyTerms(row.work_order_key_terms).map((term, index) => [String(index + 1), term.label, term.value]), [32, 120, CONTENT - 152], false, [], 8.5);
   heading("TERMS & CONDITIONS", 70);
+  const structuredTerms = Array.isArray(row.standard_terms_clauses) ? row.standard_terms_clauses : null;
   const termsLines = value(row.standard_terms_snapshot || "-").split(/\r?\n/).filter((line) => line.trim());
   const termsLeading = 9;
   const clauseBlocks: Array<{ heading: string; body: string[] }> = [];
   let currentClause: { heading: string; body: string[] } | null = null;
-  termsLines.forEach((line) => {
+  if (structuredTerms) structuredTerms.forEach((clause: any) => clauseBlocks.push({ heading: value(clause.heading), body: [value(clause.clause_body)] }));
+  else termsLines.forEach((line) => {
     if (/^\s*\d+\.\s+\S/.test(line)) {
       currentClause = { heading: line, body: [] };
       clauseBlocks.push(currentClause);
@@ -305,16 +307,48 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
       clauseBlocks.push({ heading: "", body: [line] });
     }
   });
-  clauseBlocks.forEach((clause) => {
-    const headingLines = clause.heading ? wrap(clause.heading, CONTENT, TERMS_SIZE) : [];
-    const bodyLines = clause.body.flatMap((line) => wrap(line, CONTENT, TERMS_SIZE));
-    const totalLines = headingLines.length + bodyLines.length;
-    const availableLines = Math.max(1, Math.floor((y - Math.max(BODY_BOTTOM, footerHeight + 22)) / termsLeading));
-    if (headingLines.length && totalLines <= availableLines) ensure(totalLines * termsLeading);
-    else if (headingLines.length) ensure((headingLines.length + Math.min(1, bodyLines.length)) * termsLeading);
-    headingLines.forEach((line) => { draw(line, LEFT, y - 4, TERMS_SIZE, true); y -= termsLeading; });
-    bodyLines.forEach((line) => { ensure(termsLeading); draw(line, LEFT, y - 4, TERMS_SIZE, false); y -= termsLeading; });
-  });
+  if (structuredTerms) {
+    const serialWidth = 34;
+    const headingWidth = 120;
+    const termsWidth = CONTENT - serialWidth - headingWidth;
+    const rowPadding = 6;
+    const drawTermsHeader = () => {
+      const headerHeight = 22;
+      ensure(headerHeight);
+      rect(LEFT, y, CONTENT, headerHeight, true);
+      draw("S.No.", LEFT + rowPadding, y - 14, TERMS_SIZE, true);
+      draw("Description", LEFT + serialWidth + rowPadding, y - 14, TERMS_SIZE, true);
+      draw("Terms", LEFT + serialWidth + headingWidth + rowPadding, y - 14, TERMS_SIZE, true);
+      [LEFT, LEFT + serialWidth, LEFT + serialWidth + headingWidth, RIGHT].forEach((x) => page.drawLine({ start: { x, y }, end: { x, y: y - headerHeight }, thickness: 0.6, color: BORDER }));
+      page.drawLine({ start: { x: LEFT, y: y - headerHeight }, end: { x: RIGHT, y: y - headerHeight }, thickness: 0.6, color: BORDER });
+      y -= headerHeight;
+    };
+    drawTermsHeader();
+    clauseBlocks.forEach((clause, clauseIndex) => {
+      const headingLines = clause.heading ? wrap(clause.heading, headingWidth - rowPadding * 2, TERMS_SIZE) : [""];
+      const bodyLines = clause.body.flatMap((line) => wrap(line, termsWidth - rowPadding * 2, TERMS_SIZE));
+      const rowLines = Math.max(headingLines.length, bodyLines.length, 1);
+      const rowHeight = rowLines * termsLeading + rowPadding * 2;
+      const pageCountBeforeEnsure = pages.length;
+      ensure(rowHeight);
+      if (pages.length > pageCountBeforeEnsure) drawTermsHeader();
+      rect(LEFT, y, CONTENT, rowHeight);
+      [LEFT, LEFT + serialWidth, LEFT + serialWidth + headingWidth, RIGHT].forEach((x) => page.drawLine({ start: { x, y }, end: { x, y: y - rowHeight }, thickness: 0.6, color: BORDER }));
+      draw(String(clauseIndex + 1), LEFT + rowPadding, y - rowPadding - TERMS_SIZE + 2, TERMS_SIZE, true);
+      headingLines.forEach((line, index) => draw(line, LEFT + serialWidth + rowPadding, y - rowPadding - TERMS_SIZE + 2 - index * termsLeading, TERMS_SIZE, true));
+      bodyLines.forEach((line, index) => draw(line, LEFT + serialWidth + headingWidth + rowPadding, y - rowPadding - TERMS_SIZE + 2 - index * termsLeading, TERMS_SIZE, false));
+      y -= rowHeight;
+    });
+  } else {
+    clauseBlocks.forEach((clause) => {
+      const headingLines = clause.heading ? wrap(clause.heading, CONTENT, TERMS_SIZE) : [];
+      const bodyLines = clause.body.flatMap((line) => wrap(line, CONTENT, TERMS_SIZE));
+      const totalLines = headingLines.length + bodyLines.length;
+      if (headingLines.length) ensure(Math.max(1, totalLines) * termsLeading);
+      headingLines.forEach((line) => { draw(line, LEFT, y - 4, TERMS_SIZE, true); y -= termsLeading; });
+      bodyLines.forEach((line) => { ensure(termsLeading); draw(line, LEFT, y - 4, TERMS_SIZE, false); y -= termsLeading; });
+    });
+  }
 
   const approved = ["approved", "issued"].includes(String(row.approval_status || row.status || "").toLowerCase());
   const signaturePadding = 12;
