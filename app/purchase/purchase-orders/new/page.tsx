@@ -25,6 +25,10 @@ function getCreatedId(value: any): string | null {
   return value.id || value.purchase_order_id || value.purchase_order?.id || value.purchase_orders?.[0]?.id || value.result?.id || value.result?.purchase_order_id || null;
 }
 
+function normalizeKeyTerm(term: any) {
+  return { description: String(term?.description ?? term?.label ?? ""), terms: String(term?.terms ?? term?.value ?? "") };
+}
+
 function fileSize(value: number) {
   if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`;
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
@@ -77,6 +81,7 @@ export default function NewPurchaseOrderPage() {
   const [createdPoId, setCreatedPoId] = useState<string | null>(null);
   const [creationRequestId] = useState(() => crypto.randomUUID());
   const previousCompanyIdRef = useRef(companyId);
+  const originalPersistedItemIdsRef = useRef<string[]>([]);
 
   const canAddVendors = can(access?.permissions || [], "vendors", "add");
   const canEditVendors = can(access?.permissions || [], "vendors", "edit");
@@ -113,10 +118,11 @@ export default function NewPurchaseOrderPage() {
       setBillingContactId(po.delivery_snapshot?.master_selection?.billing_contact_id || po.delivery_snapshot?.billing_contact?.site_contact_id || po.delivery_snapshot?.master_selection?.site_contact_id || "");
       setDeliveryContactId(po.delivery_snapshot?.master_selection?.delivery_contact_id || po.delivery_snapshot?.delivery_contact?.site_contact_id || po.delivery_snapshot?.master_selection?.site_contact_id || po.delivery_snapshot?.site_contact_id || "");
       setAdditionalCharges(Array.isArray(po.commercial_snapshot?.additional_charges) ? po.commercial_snapshot.additional_charges.map((charge: any) => ({ name: String(charge.name || ""), amount: String(charge.amount ?? "") })) : []);
-      setKeyTerms(Array.isArray(po.commercial_snapshot?.key_terms) && po.commercial_snapshot.key_terms.length ? po.commercial_snapshot.key_terms : [{ description: "Price Validity", terms: "" }, { description: "Delivery Timeline", terms: "" }, { description: "Payment Terms", terms: "" }]);
+      setKeyTerms(Array.isArray(po.commercial_snapshot?.key_terms) && po.commercial_snapshot.key_terms.length ? po.commercial_snapshot.key_terms.map(normalizeKeyTerm) : [{ description: "Price Validity", terms: "" }, { description: "Delivery Timeline", terms: "" }, { description: "Payment Terms", terms: "" }]);
       const parsedTerms = parsePurchaseOrderStandardTerms(po.standard_terms_snapshot);
       setStandardTerms(parsedTerms?.kind === "structured" ? parsedTerms.clauses.map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n") : parsedTerms?.text || "");
       setItems((po.items || []).map((item: any) => ({ po_item_id: item.id, item_id: item.item_id, item_name: item.item_name_snapshot || "", item_code: item.item_code_snapshot, description: item.description_snapshot || item.specification_snapshot || "", specification: item.specification_snapshot, make: item.make_snapshot || "", quantity: String(item.quantity ?? ""), uom: item.uom_snapshot || "", unit_rate: String(item.unit_rate ?? ""), gst_rate: String(item.gst_rate ?? "0"), source_requisition_line_key: item.source_requisition_line_key, isMaterialMasterLinked: false })));
+      originalPersistedItemIdsRef.current = (po.items || []).map((item: any) => String(item.id || item.po_item_id || "").trim().toLowerCase());
       setExistingDocuments(documentResult.documents || []);
       setLoading(false);
     }).catch((error) => { setMessage(error.message || "Failed to load the Draft Purchase Order."); setLoading(false); });
@@ -394,7 +400,7 @@ export default function NewPurchaseOrderPage() {
     try {
       const deliveryPayload = { expected_date: delivery.expected_date, location: selectedDeliveryLocation.location_name, address: deliveryAddressFor(selectedDeliveryLocation), delivery_location_id: selectedDeliveryLocation.id, site_contact_id: selectedDeliveryContact.id };
       const identity = revisionNo && revisionIdentityRef.current ? revisionIdentityRef.current : null;
-      const body = { source_type: identity?.source || source, company_id: identity?.companyId || companyId, site_id: identity?.siteId || siteId, vendor_id: identity?.vendorId || vendorId, po_date: poDate, source_requisition_id: identity?.requisitionId || selectedIndent?.requisition_id || params.get("requisition_id") || null, items: items.map((item) => ({ ...item, item_id: item.item_id || undefined, unit_rate: Number(item.unit_rate), quantity: Number(item.quantity), gst_rate: Number(item.gst_rate), make_snapshot: item.make })), master_selection: { gst_registration_id: selectedGstBilling.id, billing_contact_id: selectedBillingContact.id, delivery_location_id: selectedDeliveryLocation.id, delivery_contact_id: selectedDeliveryContact.id }, delivery: deliveryPayload, commercial: { ...commercial, additional_charges: explicitCharges.map((charge) => ({ name: charge.name.trim(), amount: Number(charge.amount) })) }, standard_terms: standardTerms, standard_terms_template_id: selectedTerms?.id || null, standard_terms_sections: selectedTerms?.sections?.filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order) || [], key_terms: keyTerms };
+      const body = { source_type: identity?.source || source, company_id: identity?.companyId || companyId, site_id: identity?.siteId || siteId, vendor_id: identity?.vendorId || vendorId, po_date: poDate, source_requisition_id: identity?.requisitionId || selectedIndent?.requisition_id || params.get("requisition_id") || null, expected_original_item_ids: editId ? [...originalPersistedItemIdsRef.current] : undefined, items: items.map((item) => ({ ...item, po_item_id: item.po_item_id || undefined, item_id: item.item_id || undefined, unit_rate: Number(item.unit_rate), quantity: Number(item.quantity), gst_rate: Number(item.gst_rate), make_snapshot: item.make })), master_selection: { gst_registration_id: selectedGstBilling.id, billing_contact_id: selectedBillingContact.id, delivery_location_id: selectedDeliveryLocation.id, delivery_contact_id: selectedDeliveryContact.id }, delivery: deliveryPayload, commercial: { ...commercial, additional_charges: explicitCharges.map((charge) => ({ name: charge.name.trim(), amount: Number(charge.amount) })) }, standard_terms: standardTerms, standard_terms_template_id: selectedTerms?.id || null, standard_terms_sections: selectedTerms?.sections?.filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order) || [], key_terms: keyTerms.map(normalizeKeyTerm) };
       (body as any).creation_request_id = creationRequestId;
       if (editId) {
         await apiFetch(`/api/procurement/purchase-orders/${editId}`, { method: "PUT", body: JSON.stringify(body) });
