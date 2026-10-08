@@ -577,7 +577,7 @@ export default function WorkOrdersPage() {
       }
 
       const response = await fetch(
-        `/api/work-orders?work_order_id=${encodeURIComponent(deleteWorkOrder.id)}`,
+        `/api/work-orders/register/${encodeURIComponent(deleteWorkOrder.id)}`,
         {
           method: "DELETE",
           headers: {
