@@ -83,6 +83,8 @@ export default function WorkOrderApprovalPage() {
   const [companies, setCompanies] = useState<Map<string, string>>(new Map());
   const [sites, setSites] = useState<Map<string, string>>(new Map());
   const [documents, setDocuments] = useState<Map<string, any[]>>(new Map());
+  const [loadingDocuments, setLoadingDocuments] = useState<Record<string, boolean>>({});
+  const [documentErrors, setDocumentErrors] = useState<Record<string, string>>({});
   const [editRows, setEditRows] = useState<Record<string, any>>({});
   const [replacementFiles, setReplacementFiles] = useState<Record<string, File | null>>({});
   const [editingWorkOrderId, setEditingWorkOrderId] = useState<string | null>(null);
@@ -165,10 +167,6 @@ export default function WorkOrderApprovalPage() {
       setReplacementFiles({});
       setEditingWorkOrderId(null);
 
-      const workOrderIds = Array.from(
-        new Set((woData || []).map((wo: any) => wo.id).filter(Boolean))
-      );
-
       setCompanies(
         new Map(
           (approvalResult.companies || []).map((item: any) => [
@@ -186,48 +184,53 @@ export default function WorkOrderApprovalPage() {
         ),
       );
 
-      if (workOrderIds.length > 0) {
+      const pilotWorkOrderIds = Array.from(
+        new Set((woData || []).filter((wo: any) => wo.creation_request_id).map((wo: any) => wo.id).filter(Boolean)),
+      );
+      if (pilotWorkOrderIds.length > 0) {
         const token = session?.access_token;
-
-        if (!token) {
-          throw new Error("Unable to load Work Order files: missing auth session.");
-        }
-
+        if (!token) throw new Error("Unable to load Work Order files: missing auth session.");
         const documentResponse = await fetch(
-          `/api/work-orders/documents?work_order_ids=${encodeURIComponent(
-            workOrderIds.join(",")
-          )}`,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          }
+          `/api/work-orders/documents?work_order_ids=${encodeURIComponent(pilotWorkOrderIds.join(","))}`,
+          { headers: { Authorization: `Bearer ${token}` } },
         );
         const documentResult = await documentResponse.json();
-
-        if (!documentResponse.ok) {
-          throw new Error(
-            documentResult.error || "Failed to load Work Order files."
-          );
-        }
-
+        if (!documentResponse.ok) throw new Error(documentResult.error || "Failed to load Work Order files.");
         const docMap = new Map<string, any[]>();
-
         (documentResult.documents || []).forEach((doc: any) => {
-          const current = docMap.get(doc.work_order_id) || [];
-          docMap.set(doc.work_order_id, [...current, doc]);
+          docMap.set(doc.work_order_id, [...(docMap.get(doc.work_order_id) || []), doc]);
         });
-
         setDocuments(docMap);
       } else {
         setDocuments(new Map());
       }
 
       setWorkOrders(woData || []);
+      setDocumentErrors({});
     } catch (error: any) {
       setMessage(error.message || "Failed to load work orders.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadDocuments(workOrder: any) {
+    try {
+      setLoadingDocuments((prev) => ({ ...prev, [workOrder.id]: true }));
+      setDocumentErrors((prev) => ({ ...prev, [workOrder.id]: "" }));
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Your session expired. Please log in again.");
+      const response = await fetch(
+        `/api/work-orders/documents?work_order_id=${encodeURIComponent(workOrder.id)}`,
+        { headers: { Authorization: `Bearer ${session.access_token}` } },
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Failed to load Work Order files.");
+      setDocuments((prev) => new Map(prev).set(workOrder.id, result.documents || []));
+    } catch (error: any) {
+      setDocumentErrors((prev) => ({ ...prev, [workOrder.id]: error.message || "Failed to load Work Order files." }));
+    } finally {
+      setLoadingDocuments((prev) => ({ ...prev, [workOrder.id]: false }));
     }
   }
 
@@ -538,7 +541,18 @@ export default function WorkOrderApprovalPage() {
                       </td>
 
                       <td className="px-4 py-5">
-                        {currentDocuments.length === 0 ? (
+                        {!wo.creation_request_id && !documents.has(wo.id) ? (
+                          <div className="flex justify-center">
+                            <button
+                              type="button"
+                              onClick={() => void loadDocuments(wo)}
+                              disabled={loadingDocuments[wo.id]}
+                              className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 hover:underline disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {loadingDocuments[wo.id] ? "Loading documents…" : "Load documents"}
+                            </button>
+                          </div>
+                        ) : currentDocuments.length === 0 ? (
                           <div className="flex justify-center">
                             <span className="inline-flex items-center gap-1 text-xs text-slate-400">
                               <FileText className="h-3.5 w-3.5" />
@@ -566,6 +580,9 @@ export default function WorkOrderApprovalPage() {
                               </div>
                             ))}
                           </div>
+                        )}
+                        {documentErrors[wo.id] && (
+                          <p className="mt-1 text-center text-xs text-rose-700">{documentErrors[wo.id]}</p>
                         )}
                       </td>
 
