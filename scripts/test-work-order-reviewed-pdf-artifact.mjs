@@ -4,9 +4,11 @@ import fs from "node:fs";
 const createRoute = fs.readFileSync("app/api/work-orders/create/route.ts", "utf8");
 const approvalLoader = fs.readFileSync("lib/workOrderApprovedPdf.server.ts", "utf8");
 const submitPage = fs.readFileSync("app/work-orders/new/structured/preview/page.tsx", "utf8");
+const formPage = fs.readFileSync("app/work-orders/new/structured/page.tsx", "utf8");
 
 assert.match(submitPage, /reviewed_pdf_base64/);
-assert.match(submitPage, /creation_request_id: draft\.creationRequestId/);
+assert.match(submitPage, /JSON\.stringify\(draft\.payload\)/);
+assert.match(formPage, /creation_request_id: crypto\.randomUUID\(\)/);
 assert.match(createRoute, /PDFDocument\.load\(reviewedPdfBytes\)/);
 assert.match(createRoute, /drive_sync_key: REVIEWED_PDF_KEY/);
 assert.match(createRoute, /file_url: reviewedArtifactPath/);
