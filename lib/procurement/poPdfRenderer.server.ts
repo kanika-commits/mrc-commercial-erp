@@ -534,7 +534,7 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
   const shippingAddress = shipping.address || [shipping.address_line1, shipping.address_line2, shipping.city, shipping.state, shipping.pincode].filter(Boolean).join(", ");
   table(["Vendor Details", row.work_order_render ? "Work Order Details" : "Purchase Order Details"], [], [270, 241], 9);
   labeledTable([
-    `Vendor Name: ${text(row.vendor_name_snapshot || vendor.vendor_name)}\nContact Person: ${text(vendorContactName)}\nAddress: ${text(vendor.address)}\nMobile: ${text(vendorPhone)}\nEmail: ${text(vendorEmail)}\nGSTIN: ${text(vendor.gstin)}`,
+    `Vendor Name: ${text(row.vendor_name_snapshot || vendor.vendor_name)}\nContact Person: ${text(vendorContactName)}\nAddress: ${text(vendor.address)}\nPAN: ${text(vendor.pan)}\nMobile: ${text(vendorPhone)}\nEmail: ${text(vendorEmail)}\nGSTIN: ${text(vendor.gstin)}`,
     `${row.work_order_render ? "Work Order No" : "Purchase Order No"}: ${text(row.po_number)}\nDate: ${date(row.po_date)}\nCompany: ${text(row.company?.company_name)}\nSite: ${text(row.site?.site_name)}${row.work_order_render ? `\nType: ${text(row.wo_type)}` : ""}`,
   ], [270, 241], 9);
 
