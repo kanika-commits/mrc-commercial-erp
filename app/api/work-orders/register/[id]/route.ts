@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { loadPermissionContext, adminClient } from "@/app/api/approvals/_shared";
+import { loadPermissionContext } from "@/lib/serverPermissions";
+import { adminClient } from "@/app/api/approvals/_shared";
 import { insertDeleteAudit } from "@/lib/serverDeleteAudit";
 
 const optional = new Set(["42P01", "42703", "PGRST204", "PGRST205"]);
