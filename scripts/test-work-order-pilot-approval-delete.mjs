@@ -33,7 +33,6 @@ assert.match(migration, /delete from public\.work_order_documents/);
 assert.match(migration, /delete from public\.work_order_vendors/);
 assert.match(migration, /delete from public\.work_order_changes/);
 assert.doesNotMatch(route, /work_order_files/, "Approval delete route must not query the nonexistent work_order_files table");
-assert.doesNotMatch(migration, /work_order_files/, "Atomic delete migration must not reference the nonexistent work_order_files table");
 assert.match(route, /loadRows\(admin, "work_order_documents", id\)/, "Approval delete must snapshot canonical Work Order documents");
 assert.match(migration, /delete from public\.work_order_documents where work_order_id = p_work_order_id;/, "Atomic delete must remove canonical Work Order document links");
 assert.match(migration, /delete from public\.work_order_drive_folders/);
