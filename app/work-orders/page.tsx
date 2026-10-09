@@ -36,6 +36,7 @@ type WorkOrder = {
   company_id: string | null;
   site_id: string | null;
   organization_id: string | null;
+  creation_request_id?: string | null;
   department: string | null;
   cost_code: string | null;
   created_at: string | null;
@@ -102,6 +103,15 @@ const PAGE_SIZE = 50;
 function cleanValue(...values: Array<string | null | undefined>) {
   const value = values.find((item) => item && item.trim().length > 0);
   return value?.trim() || "Unassigned";
+}
+
+function reviewedPackageName(woNumber: string | null | undefined) {
+  const safeNumber = String(woNumber || "work-order").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "work-order";
+  return `${safeNumber}.reviewed-package.pdf`;
+}
+
+export default function WorkOrdersPageRoute() {
+  return <WorkOrdersPage />;
 }
 
 function getCompanyName(wo: WorkOrder) {
@@ -313,7 +323,7 @@ function FilterGroup({
   );
 }
 
-export default function WorkOrdersPage() {
+export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
   const { access } = useAccessContext();
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -338,6 +348,8 @@ export default function WorkOrdersPage() {
   const [loadingDocumentsByWorkOrder, setLoadingDocumentsByWorkOrder] = useState<
     Record<string, boolean>
   >({});
+  const [loadedReviewedPackages, setLoadedReviewedPackages] = useState<Record<string, string>>({});
+  const [loadingReviewedPackages, setLoadingReviewedPackages] = useState<Record<string, boolean>>({});
   const [sortField, setSortField] = useState<SortField>("wo_number");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [message, setMessage] = useState("");
@@ -362,6 +374,26 @@ export default function WorkOrdersPage() {
     }
 
     window.open(document.signed_url, "_blank", "noopener,noreferrer");
+  }
+
+  async function loadReviewedPackage(workOrder: WorkOrder) {
+    try {
+      setLoadingReviewedPackages((previous) => ({ ...previous, [workOrder.id]: true }));
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Unable to open Work Order package: missing auth session.");
+      const response = await fetch(`/api/work-orders/${workOrder.id}/generated-pdf`, { headers: { Authorization: `Bearer ${session.access_token}` } });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || "Could not open Work Order package.");
+      }
+      const packageBlob = await response.blob();
+      const packageUrl = URL.createObjectURL(packageBlob);
+      setLoadedReviewedPackages((previous) => ({ ...previous, [workOrder.id]: packageUrl }));
+    } catch (reviewError: any) {
+      setError(reviewError.message || "Could not load Work Order package.");
+    } finally {
+      setLoadingReviewedPackages((previous) => ({ ...previous, [workOrder.id]: false }));
+    }
   }
 
   async function loadDocumentsForWorkOrder(workOrderId: string) {
@@ -428,6 +460,7 @@ export default function WorkOrdersPage() {
       sort_direction: sortDirection,
       include_documents: "count",
     });
+    if (pilotOnly) params.set("pilot_only", "1");
 
     if (debouncedWoSearch) params.set("wo_search", debouncedWoSearch);
     if (debouncedContractorSearch) {
@@ -462,6 +495,7 @@ export default function WorkOrdersPage() {
     sortField,
     statusFilterKey,
     typeFilterKey,
+    pilotOnly,
   ]);
   const requestKey = `${requestQuery}|refresh=${refreshNonce}`;
 
@@ -684,11 +718,11 @@ export default function WorkOrdersPage() {
 
         <div className="flex flex-wrap items-center gap-4">
           <Link
-            href="/work-orders/new"
+            href={pilotOnly ? "/work-orders/new/structured" : "/work-orders/new"}
             className="inline-flex items-center gap-2 bg-[#00658b] px-6 py-3 text-sm font-bold text-white transition hover:bg-[#005174]"
           >
             <Plus className="h-4 w-4" />
-            New Work Order
+            {pilotOnly ? "New Work Order PDF Pilot" : "New Work Order"}
           </Link>
         </div>
       </section>
@@ -917,6 +951,23 @@ export default function WorkOrdersPage() {
                         const isLoadingDocuments = loadingDocumentsByWorkOrder[wo.id] === true;
                         const documentCount =
                           Number(wo.document_count ?? loadedDocuments?.length ?? 0) || 0;
+
+                        if (pilotOnly) {
+                          return (
+                            <div className="space-y-2 text-sm">
+                              <div className="font-semibold text-slate-800">1 package</div>
+                              {loadedReviewedPackages[wo.id] ? (
+                                <a href={loadedReviewedPackages[wo.id]} download={reviewedPackageName(wo.wo_number)} target="_blank" rel="noreferrer" className="font-semibold text-[#00658b] hover:underline">
+                                  {reviewedPackageName(wo.wo_number)}
+                                </a>
+                              ) : (
+                                <button type="button" onClick={() => void loadReviewedPackage(wo)} disabled={loadingReviewedPackages[wo.id]} className="font-semibold text-[#00658b] hover:underline disabled:opacity-50">
+                                  {loadingReviewedPackages[wo.id] ? "Loading package…" : "Load documents"}
+                                </button>
+                              )}
+                            </div>
+                          );
+                        }
 
                         if (loadedDocuments && loadedDocuments.length > 0) {
                           return (

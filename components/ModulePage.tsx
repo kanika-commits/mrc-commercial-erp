@@ -129,6 +129,11 @@ const pageMeta: Record<
     className: "from-amber-50 to-white border-amber-100 text-amber-700",
     description: "Create and manage work orders.",
   },
+  work_order_forms: {
+    icon: FileText,
+    className: "from-sky-50 to-white border-sky-100 text-sky-700",
+    description: "Create and manage Work Order Pilot forms.",
+  },
   work_order_pdf_pilot: {
     icon: FileText,
     className: "from-sky-50 to-white border-sky-100 text-sky-700",
@@ -263,6 +268,17 @@ export default function ModulePage({
         module_name: "Work Order PDF Pilot",
         route: "/work-orders/new/structured",
         sort_order: 30.5,
+      });
+      moduleRows.sort((first, second) => first.sort_order - second.sort_order);
+    }
+    if (groupCode === "purchase" && (globalAccess || can(permissions, "work_orders", "add")) && !moduleRows.some((page) => page.route === "/forms/work-orders")) {
+      moduleRows.push({
+        id: "purchase-work-order-forms",
+        module_group: "purchase",
+        module_code: "work_orders",
+        module_name: "Work Order Forms",
+        route: "/forms/work-orders",
+        sort_order: 30.6,
       });
       moduleRows.sort((first, second) => first.sort_order - second.sort_order);
     }
@@ -422,7 +438,9 @@ function SettingsSections({ pages }: { pages: ModuleRow[] }) {
 
 function ModulePageCard({ page }: { page: ModuleRow }) {
   const metaKey =
-    page.route === "/hr/departments"
+    page.route === "/forms/work-orders"
+      ? "work_order_forms"
+      : page.route === "/hr/departments"
       ? "hr_departments"
       : page.route === "/hr/designations"
         ? "hr_designations"
