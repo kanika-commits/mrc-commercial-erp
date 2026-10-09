@@ -7,7 +7,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch } from "@/components/hr/hrClient";
 import { supabase } from "@/lib/supabase";
-import { getWorkOrderPilotDraft, setWorkOrderPilotDraft } from "@/lib/workOrderPilotDraft.client";
+import { clearWorkOrderPilotDraft, getWorkOrderPilotDraft, setWorkOrderPilotDraft } from "@/lib/workOrderPilotDraft.client";
 
 type Line = { item_master_id: string; additional_description: string; quantity: string; unit_rate: string; gst_percent: string };
 type KeyTerms = { inclusions: string[]; exclusions: string[]; additional: Array<{ label: string; value: string }> };
@@ -22,6 +22,8 @@ export default function NewWorkOrderPage() {
   const revisionId = searchParams.get("revision");
   const revisionWorkOrderId = searchParams.get("work_order");
   const returningFromPreview = searchParams.get("from") === "preview";
+  const explicitlyResuming = Boolean(draftId || revisionId || returningFromPreview);
+  if (!explicitlyResuming) clearWorkOrderPilotDraft();
   const preservedPreviewDraft = returningFromPreview ? getWorkOrderPilotDraft() : null;
   const [lookups, setLookups] = useState<any>({ companies: [], sites: [], vendors: [], items: [], letterheads: [], terms_templates: [], gst_billing_masters: [], billing_addresses: [], delivery_locations: [], site_contacts: [] });
   const [form, setForm] = useState<any>(() => preservedPreviewDraft?.form || ({ company_id: "", site_id: "", vendor_id: "", vendor_role: "Main Contractor", wo_number: "", wo_date: new Date().toISOString().slice(0, 10), wo_type: "Consultant", description: "", letterhead_id: "", terms_template_id: "", standard_terms_snapshot: "", gst_registration_id: "", billing_address_id: "", delivery_location_id: "", billing_contact_id: "", delivery_contact_id: "" }));

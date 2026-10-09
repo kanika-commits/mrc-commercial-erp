@@ -19,3 +19,7 @@ export function getWorkOrderPilotDraft() {
 export function setWorkOrderPilotDraft(next: WorkOrderPilotDraft) {
   draft = next;
 }
+
+export function clearWorkOrderPilotDraft() {
+  draft = null;
+}

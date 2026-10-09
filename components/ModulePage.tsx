@@ -260,17 +260,6 @@ export default function ModulePage({
       });
       moduleRows.sort((first, second) => first.sort_order - second.sort_order);
     }
-    if (groupCode === "purchase" && (globalAccess || can(permissions, "work_orders", "add")) && !moduleRows.some((page) => page.route === "/work-orders/new/structured")) {
-      moduleRows.push({
-        id: "purchase-work-order-pdf-pilot",
-        module_group: "purchase",
-        module_code: "work_orders",
-        module_name: "Work Order PDF Pilot",
-        route: "/work-orders/new/structured",
-        sort_order: 30.5,
-      });
-      moduleRows.sort((first, second) => first.sort_order - second.sort_order);
-    }
     if (groupCode === "purchase" && (globalAccess || can(permissions, "work_orders", "add")) && !moduleRows.some((page) => page.route === "/forms/work-orders")) {
       moduleRows.push({
         id: "purchase-work-order-forms",
