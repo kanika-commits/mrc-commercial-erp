@@ -1120,6 +1120,7 @@ export async function PATCH(
         .update({
           approval_status: "approved",
           status: "active",
+          approved_by: permission.user.id,
           approved_by_name: userName,
           approved_by_email: userEmail,
           approved_at: new Date().toISOString(),

@@ -87,7 +87,7 @@ export async function syncPilotWorkOrderToDrive(admin: any, workOrderId: string)
 
     const { data: documents, error: documentsError } = await admin.from("work_order_documents").select("id,organization_id,work_order_id,file_name,file_url,file_path,uploaded_at,drive_sync_key").eq("work_order_id", workOrderId).order("uploaded_at", { ascending: true });
     if (documentsError) throw documentsError;
-    for (const [index, document] of (documents || []).filter((row: any) => row.drive_sync_key !== "pilot-generated-pdf").entries()) {
+    for (const [index, document] of (documents || []).filter((row: any) => !["pilot-generated-pdf", "pilot-reviewed-pdf"].includes(row.drive_sync_key)).entries()) {
       if (isDriveUrl(document.file_url)) continue;
       const path = storagePath(document);
       if (!path) throw new Error(`Supporting document ${document.file_name || index + 1} has no storage path.`);

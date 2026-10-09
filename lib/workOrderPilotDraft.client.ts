@@ -7,6 +7,7 @@ export type WorkOrderPilotDraft = {
   supportingDocuments: File[];
   payload: any;
   previewUrl: string;
+  creationRequestId: string;
 };
 
 let draft: WorkOrderPilotDraft | null = null;

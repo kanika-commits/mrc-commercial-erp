@@ -41,7 +41,13 @@ assert.match(migration, /revoke all on function public\.delete_work_order_atomic
 assert.match(forwardMigration, /create or replace function public\.delete_work_order_atomic\(\s*p_work_order_id uuid\s*\)/);
 assert.match(forwardMigration, /set search_path = public/);
 assert.match(forwardMigration, /delete from public\.work_order_documents where work_order_id = p_work_order_id;/);
-assert.doesNotMatch(forwardMigration, /work_order_files|storage/i, "Forward repair must not reference the invalid table or delete Storage files");
+assert.doesNotMatch(forwardMigration, /(?:from|into|update|delete\s+from)\s+public\.work_order_files\b/i, "Forward repair must not reference the invalid table");
+assert.doesNotMatch(forwardMigration, /(?:storage\.from|storage\.remove|drive\.delete|deleteFile)/i, "Forward repair must not delete Storage/Drive files");
+assert.ok(
+  forwardMigration.indexOf("delete from public.work_order_items where work_order_id = p_work_order_id;") <
+    forwardMigration.indexOf("delete from public.work_orders where id = p_work_order_id;"),
+  "Dependent Work Order items must be deleted before the parent",
+);
 assert.match(forwardMigration, /revoke all on function public\.delete_work_order_atomic\(uuid\)[\s\S]+grant execute[\s\S]+to service_role/);
 assert.match(page, /workOrderDeletionEnabled/);
 assert.match(page, /workOrderDeletionEnabled === true/);

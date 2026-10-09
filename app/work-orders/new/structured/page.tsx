@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch } from "@/components/hr/hrClient";
+import { supabase } from "@/lib/supabase";
 import { getWorkOrderPilotDraft, setWorkOrderPilotDraft } from "@/lib/workOrderPilotDraft.client";
 
 type Line = { item_master_id: string; additional_description: string; quantity: string; unit_rate: string; gst_percent: string };
@@ -18,6 +19,8 @@ export default function NewWorkOrderPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const draftId = searchParams.get("draft");
+  const revisionId = searchParams.get("revision");
+  const revisionWorkOrderId = searchParams.get("work_order");
   const returningFromPreview = searchParams.get("from") === "preview";
   const preservedPreviewDraft = returningFromPreview ? getWorkOrderPilotDraft() : null;
   const [lookups, setLookups] = useState<any>({ companies: [], sites: [], vendors: [], items: [], letterheads: [], terms_templates: [], gst_billing_masters: [], billing_addresses: [], delivery_locations: [], site_contacts: [] });
@@ -32,6 +35,31 @@ export default function NewWorkOrderPage() {
   const [lookupRetry, setLookupRetry] = useState(0);
   const [lookupLoading, setLookupLoading] = useState(true);
   const [supportingDocuments, setSupportingDocuments] = useState<File[]>(() => preservedPreviewDraft?.supportingDocuments || []);
+  const [revision, setRevision] = useState<any>(null);
+  const [applicableDate, setApplicableDate] = useState("");
+  const [revisionMessage, setRevisionMessage] = useState("");
+  const [revisionSaveState, setRevisionSaveState] = useState<"saved" | "saving" | "">("");
+  const [revisionHydration, setRevisionHydration] = useState<"loading" | "ready" | "error">(revisionId && revisionWorkOrderId ? "loading" : "ready");
+
+  useEffect(() => {
+    if (!revisionId || !revisionWorkOrderId) return;
+    let cancelled = false;
+    setRevisionHydration("loading");
+    apiFetch(`/api/work-orders/${revisionWorkOrderId}/revisions/${revisionId}`).then((result: any) => {
+      if (cancelled) return;
+      const snapshot = result.revision?.snapshot || {};
+      const fields = snapshot.fields || {};
+      const selection = fields.delivery_snapshot?.master_selection || {};
+      setRevision(result.revision);
+      setApplicableDate(result.revision?.applicable_date || "");
+      setForm((current: any) => ({ ...current, ...fields, wo_date: result.revision?.applicable_date || fields.wo_date || "", vendor_id: fields.vendor_id || fields.delivery_snapshot?.vendor_snapshot?.vendor_id || "", vendor_role: fields.vendor_role || fields.delivery_snapshot?.vendor_snapshot?.vendor_role || "Main Contractor", gst_registration_id: selection.gst_registration_id || "", billing_address_id: selection.billing_address_id || "", delivery_location_id: selection.delivery_location_id || "", billing_contact_id: selection.billing_contact_id || "", delivery_contact_id: selection.delivery_contact_id || "", letterhead_id: fields.letterhead_id || fields.letterhead_snapshot?.id || "", terms_template_id: fields.terms_template_id || "" }));
+      setKeyTerms(fields.work_order_key_terms || { inclusions: [""], exclusions: [""], additional: [] });
+      setLines((snapshot.items || []).map((item: any) => ({ item_master_id: item.item_master_id || "", additional_description: item.additional_description_snapshot || "", quantity: String(item.quantity ?? ""), unit_rate: String(item.unit_rate ?? ""), gst_percent: String(item.gst_percent ?? "0") })));
+      setNumberEdited(true);
+      setRevisionHydration("ready");
+    }).catch((e: any) => { if (!cancelled) { setRevisionMessage(e.message || "Unable to load revision draft."); setRevisionHydration("error"); } });
+    return () => { cancelled = true; };
+  }, [revisionId, revisionWorkOrderId]);
 
   useEffect(() => {
     setLookupLoading(true);
@@ -107,6 +135,7 @@ export default function NewWorkOrderPage() {
 
   useEffect(() => {
     if (!form.site_id) return;
+    if (revisionId && revisionHydration !== "ready") return;
     setForm((current: any) => {
       const billingValid = siteContacts.some((row: any) => row.id === current.billing_contact_id);
       const deliveryValid = siteContacts.some((row: any) => row.id === current.delivery_contact_id);
@@ -115,11 +144,63 @@ export default function NewWorkOrderPage() {
       if (nextBillingId === current.billing_contact_id && nextDeliveryId === current.delivery_contact_id) return current;
       return { ...current, billing_contact_id: nextBillingId, delivery_contact_id: nextDeliveryId };
     });
-  }, [form.site_id, siteContacts, defaultSiteContact?.id]);
+  }, [form.site_id, siteContacts, defaultSiteContact?.id, revisionId, revisionHydration]);
 
   useEffect(() => {
+    if (revisionId && revisionHydration !== "ready") return;
     if (form.billing_address_id && !selectedBillingAddress) setForm((current: any) => ({ ...current, billing_address_id: "", delivery_location_id: "", billing_contact_id: "", delivery_contact_id: "" }));
-  }, [form.billing_address_id, selectedBillingAddress?.id]);
+  }, [form.billing_address_id, selectedBillingAddress?.id, revisionId, revisionHydration]);
+
+  async function saveRevisionSnapshot() {
+    if (!revisionId || !revisionWorkOrderId || !applicableDate) {
+      setRevisionMessage("Applicable Date is required.");
+      return null;
+    }
+    const selectedItems = lines.map((line, index) => {
+      const item = lookups.items.find((candidate: any) => candidate.id === line.item_master_id) || {};
+      const basicAmount = Number(line.quantity || 0) * Number(line.unit_rate || 0);
+      const gstAmount = basicAmount * Number(line.gst_percent || 0) / 100;
+      return {
+        item_master_id: line.item_master_id,
+        item_header_snapshot: item.item_header || "",
+        description_snapshot: item.description || "",
+        additional_description_snapshot: line.additional_description || "",
+        unit_snapshot: item.unit || "",
+        mode_of_measurement_snapshot: item.mode_of_measurement || "",
+        quantity: Number(line.quantity || 0),
+        unit_rate: Number(line.unit_rate || 0),
+        gst_percent: Number(line.gst_percent || 0),
+        basic_amount: basicAmount,
+        gst_amount: gstAmount,
+        line_total: basicAmount + gstAmount,
+        sort_order: index + 1,
+      };
+    });
+    const snapshot = {
+      fields: {
+        ...form,
+        ...(revision ? { wo_date: applicableDate } : {}),
+        delivery_snapshot: deliveryLocations.find((row: any) => row.id === form.delivery_location_id) || null,
+        work_order_key_terms: keyTerms,
+        letterhead_snapshot: selectedLetterhead || null,
+      },
+      totals: { wo_value: totals.basic, gst_percent: form.gst_percent || 0, total_basic_amount: totals.basic, total_gst_amount: totals.gst, total_amount: totals.total },
+      items: selectedItems,
+    };
+    setRevisionSaveState("saving");
+    const saved = await apiFetch(`/api/work-orders/${revisionWorkOrderId}/revisions/${revisionId}`, { method: "PATCH", body: JSON.stringify({ applicable_date: applicableDate, snapshot }) });
+    setRevision(saved.revision || revision);
+    setRevisionSaveState("saved");
+    return saved.revision || revision;
+  }
+
+  useEffect(() => {
+    if (revisionHydration !== "ready" || !revision || revision.status !== "draft" || !applicableDate || !revisionId || !revisionWorkOrderId) return;
+    const timer = window.setTimeout(() => {
+      saveRevisionSnapshot().catch((error: any) => setRevisionMessage(error.message || "Could not autosave revision draft."));
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [form, keyTerms, lines, applicableDate, revisionHydration]);
 
   useEffect(() => {
     const master = gstMasters.find((row: any) => row.id === form.gst_registration_id);
@@ -138,6 +219,7 @@ export default function NewWorkOrderPage() {
 
   async function preview(event: React.FormEvent) {
     event.preventDefault();
+    if (revisionId && revisionHydration !== "ready") { setRevisionMessage(revisionHydration === "error" ? "Unable to load the revision draft. Return to the Work Order and try again." : "Loading revision data…"); return; }
     setMessage("");
     const missing = [!form.company_id && "Company", !form.site_id && "Site", !form.vendor_id && "Vendor", !form.wo_number.trim() && "Work Order Number", !form.gst_registration_id && "GST/Billing Master", !form.billing_address_id && "Billing Address", !form.delivery_location_id && "Delivery Location", !form.billing_contact_id && "Billing Contact", !form.delivery_contact_id && "Delivery Contact", !form.letterhead_id && "Letterhead", !form.terms_template_id && "Terms & Conditions"].filter(Boolean);
     if (missing.length || lines.some((l) => !l.item_master_id || Number(l.quantity) <= 0 || Number(l.unit_rate) < 0)) {
@@ -176,6 +258,22 @@ export default function NewWorkOrderPage() {
         items: lines,
         item_snapshots: lines.map((line) => lookups.items.find((item: any) => item.id === line.item_master_id) || null),
       };
+      if (revisionId && revisionWorkOrderId) {
+        const saved = await saveRevisionSnapshot();
+        if (!saved) return;
+        const session = (await supabase.auth.getSession()).data.session;
+        const previewResponse = await fetch(`/api/work-orders/${revisionWorkOrderId}/revisions/${revisionId}/preview`, { method: "POST", headers: { Authorization: `Bearer ${session?.access_token || ""}` } });
+        if (!previewResponse.ok) throw new Error((await previewResponse.json().catch(() => ({}))).error || "Could not render revision PDF.");
+        const blob = await previewResponse.blob();
+        const reader = new FileReader();
+        const base64 = await new Promise<string>((resolve, reject) => { reader.onload = () => resolve(String(reader.result).split(",")[1] || ""); reader.onerror = reject; reader.readAsDataURL(blob); });
+        const artifactResponse = await fetch(`/api/work-orders/${revisionWorkOrderId}/revisions/${revisionId}`, { method: "POST", headers: { Authorization: `Bearer ${session?.access_token || ""}`, "Content-Type": "application/json" }, body: JSON.stringify({ action: "artifact", base64 }) });
+        if (!artifactResponse.ok) throw new Error((await artifactResponse.json().catch(() => ({}))).error || "Could not store reviewed revision PDF.");
+        setRevision(saved.revision || revision);
+        setRevisionMessage("Reviewed revision PDF stored and verified. You can submit this immutable revision.");
+        router.push(`/work-orders/new/structured/preview?revision=${encodeURIComponent(revisionId)}&work_order=${encodeURIComponent(revisionWorkOrderId)}`);
+        return;
+      }
       const previewForm = new FormData();
       previewForm.append("payload", JSON.stringify(payload));
       supportingDocuments.forEach((file) => previewForm.append("supporting_documents", file, file.name));
@@ -184,7 +282,8 @@ export default function NewWorkOrderPage() {
         body: previewForm,
       });
       if (result.pdf_base64) {
-        setWorkOrderPilotDraft({ form, keyTerms, lines, supportingDocuments, payload, previewUrl: `data:application/pdf;base64,${result.pdf_base64}` });
+        const creationRequestId = crypto.randomUUID();
+        setWorkOrderPilotDraft({ form, keyTerms, lines, supportingDocuments, payload, previewUrl: `data:application/pdf;base64,${result.pdf_base64}`, creationRequestId });
         router.push("/work-orders/new/structured/preview");
       }
     } catch (e: any) {
@@ -194,13 +293,16 @@ export default function NewWorkOrderPage() {
     }
   }
 
+
+  if (revisionId && revisionHydration !== "ready") return <section className="mx-auto max-w-3xl space-y-6"><header className="rounded-2xl border bg-white p-6"><p className="text-xs font-semibold uppercase tracking-widest text-sky-700">Work Orders</p><h1 className="mt-2 text-2xl font-bold">{revisionHydration === "error" ? "Unable to load revision" : "Loading revision"}</h1><p className="mt-2 text-sm text-slate-600">{revisionMessage || "Loading the saved revision before enabling the form…"}</p><Link href={revisionWorkOrderId ? `/work-orders/${revisionWorkOrderId}` : "/work-orders"} className="mt-4 inline-block rounded-xl border px-4 py-2 text-sm font-semibold">Back to Work Order</Link></header></section>;
   return <section className="mx-auto max-w-7xl space-y-6">
-    <header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-sky-700">Work Orders</p><h1 className="text-3xl font-bold">Create Work Order</h1><p className="mt-1 text-sm text-slate-500">Structured lines use immutable Work Order Item Master snapshots.</p></div><Link href="/work-orders" className="rounded-xl border px-4 py-2 text-sm font-semibold">Back to Work Orders</Link></header>
+    <header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-sky-700">Work Orders</p><h1 className="text-3xl font-bold">{revision ? `Pilot Work Order Revision R-${revision.revision_number}` : "Create Work Order"}</h1><p className="mt-1 text-sm text-slate-500">{revision ? "Edit the complete Work Order. The current version remains unchanged until issuance." : "Structured lines use immutable Work Order Item Master snapshots."}</p></div><Link href="/work-orders" className="rounded-xl border px-4 py-2 text-sm font-semibold">Back to Work Orders</Link></header>
+    {revision && <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><p className="text-sm font-semibold">Revision identifier <span className="ml-2 font-normal">R{revision.revision_number}</span></p><p className="mt-3 text-sm text-slate-700">Upon issuance of this Revised Work Order, the previous Work Order and all prior versions are superseded and shall stand cancelled and replaced by this Revised Work Order.</p>{revisionSaveState && <p className="mt-2 text-xs text-slate-500">{revisionSaveState === "saving" ? "Saving draft…" : "Draft saved"}</p>}{revisionMessage && <p className="mt-2 text-sm text-slate-700">{revisionMessage}</p>}</section>}
     <form onSubmit={preview} className="space-y-6">
       <section className="grid gap-4 rounded-2xl border bg-white p-5 md:grid-cols-3">
-        {([['company_id', 'Company'], ['site_id', 'Site'], ['vendor_id', 'Vendor']] as const).map(([field, label]) => <label key={field} className="text-sm font-semibold">{label}<select required disabled={lookupLoading} className="mt-1 w-full rounded-lg border p-2 disabled:bg-slate-50" value={(form as any)[field]} onChange={(e) => { if (field !== 'vendor_id') { setNumberEdited(false); setNumberError(""); } setForm({ ...form, [field]: e.target.value, ...(field === 'site_id' ? { billing_contact_id: '', delivery_contact_id: '', delivery_location_id: '', wo_number: '' } : field === 'company_id' ? { gst_registration_id: '', billing_address_id: '', delivery_location_id: '', billing_contact_id: '', delivery_contact_id: '', wo_number: '' } : {}) }); }}>{<option value="">{lookupLoading ? `Loading ${label.toLowerCase()}s…` : `Select ${label.toLowerCase()}`}</option>}{(field === 'company_id' ? lookups.companies : field === 'site_id' ? sites : lookups.vendors).map((row: any) => <option key={row.id} value={row.id}>{row.company_name || row.site_name || row.vendor_name}</option>)}</select></label>)}
-        <label className="text-sm font-semibold">WO Number *<input required aria-describedby={numberError ? "wo-number-error" : undefined} className="mt-1 w-full rounded-lg border p-2" value={form.wo_number} onChange={(e) => { setNumberEdited(true); setNumberError(""); setForm({ ...form, wo_number: e.target.value }); }} placeholder="SITE/CODE/101" />{numberLoading && <span className="mt-1 block text-xs font-normal text-slate-500">Generating next Work Order Number…</span>}{numberError && <span id="wo-number-error" role="alert" className="mt-1 block text-xs font-normal text-red-700">{numberError}</span>}</label>
-        <label className="text-sm font-semibold">WO Date<input required type="date" className="mt-1 w-full rounded-lg border p-2" value={form.wo_date} onChange={(e) => setForm({ ...form, wo_date: e.target.value })} /></label>
+        {([['company_id', 'Company'], ['site_id', 'Site'], ['vendor_id', 'Vendor']] as const).map(([field, label]) => <label key={field} className="text-sm font-semibold">{label}<select required disabled={lookupLoading || Boolean(revision)} className="mt-1 w-full rounded-lg border p-2 disabled:bg-slate-50" value={(form as any)[field]} onChange={(e) => { if (field !== 'vendor_id') { setNumberEdited(false); setNumberError(""); } setForm({ ...form, [field]: e.target.value, ...(field === 'site_id' ? { billing_contact_id: '', delivery_contact_id: '', delivery_location_id: '', wo_number: '' } : field === 'company_id' ? { gst_registration_id: '', billing_address_id: '', delivery_location_id: '', billing_contact_id: '', delivery_contact_id: '', wo_number: '' } : {}) }); }}>{<option value="">{lookupLoading ? `Loading ${label.toLowerCase()}s…` : `Select ${label.toLowerCase()}`}</option>}{(field === 'company_id' ? lookups.companies : field === 'site_id' ? sites : lookups.vendors).map((row: any) => <option key={row.id} value={row.id}>{row.company_name || row.site_name || row.vendor_name}</option>)}</select></label>)}
+        <label className="text-sm font-semibold">WO Number *<input required readOnly={Boolean(revision)} aria-describedby={numberError ? "wo-number-error" : undefined} className="mt-1 w-full rounded-lg border p-2 read-only:bg-slate-50" value={form.wo_number} onChange={(e) => { setNumberEdited(true); setNumberError(""); setForm({ ...form, wo_number: e.target.value }); }} placeholder="SITE/CODE/101" />{numberLoading && <span className="mt-1 block text-xs font-normal text-slate-500">Generating next Work Order Number…</span>}{numberError && <span id="wo-number-error" role="alert" className="mt-1 block text-xs font-normal text-red-700">{numberError}</span>}</label>
+        <label className="text-sm font-semibold">{revision ? "WO Revision Applicable Date *" : "WO Date"}<input required type="date" className="mt-1 w-full rounded-lg border p-2" value={revision ? applicableDate : form.wo_date} onChange={(e) => revision ? setApplicableDate(e.target.value) : setForm({ ...form, wo_date: e.target.value })} /></label>
         <label className="text-sm font-semibold">WO Type *<select required className="mt-1 w-full rounded-lg border p-2" value={form.wo_type} onChange={(e) => setForm({ ...form, wo_type: e.target.value })}><option value="">Select Work Order type</option>{['Consultant', 'Contractor (Labour)', 'Contractor (SITC)', 'Daily Wage', 'Rental'].map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
         <label className="text-sm font-semibold md:col-span-3">Description<textarea className="mt-1 w-full rounded-lg border p-2" rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
       </section>
@@ -214,7 +316,7 @@ export default function NewWorkOrderPage() {
       </section>
       <section className="rounded-2xl border bg-white p-5"><div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-bold">Key Terms</h2><button type="button" className="rounded-lg border px-3 py-2 text-sm font-semibold" onClick={addKeyTerm}>+ Add Additional Term</button></div><div className="overflow-x-auto"><table className="min-w-[520px] w-full border-collapse text-sm"><thead className="bg-slate-50"><tr><th className="w-56 border p-3 text-left">Key Term</th><th className="border p-3 text-left">Terms</th></tr></thead><tbody><tr><td className="border p-3 font-semibold">Inclusions *</td><td className="border p-3"><textarea required rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={keyTerms.inclusions[0] || ""} onChange={(e) => updateKeyTerm('inclusions', 0, e.target.value)} /></td></tr><tr><td className="border p-3 font-semibold">Exclusions *</td><td className="border p-3"><textarea required rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={keyTerms.exclusions[0] || ""} onChange={(e) => updateKeyTerm('exclusions', 0, e.target.value)} /></td></tr>{keyTerms.inclusions.slice(1).map((entry, index) => <tr key={`inclusion-${index + 1}`}><td className="border p-3 font-semibold"><div className="flex items-center justify-between gap-2"><span>Inclusions {index + 2}</span><button type="button" className="text-xs font-semibold text-red-700" onClick={() => setKeyTerms((current) => ({ ...current, inclusions: current.inclusions.filter((_, i) => i !== index + 1) }))}>Remove</button></div></td><td className="border p-3"><textarea rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={entry} onChange={(e) => updateKeyTerm('inclusions', index + 1, e.target.value)} /></td></tr>)}{keyTerms.exclusions.slice(1).map((entry, index) => <tr key={`exclusion-${index + 1}`}><td className="border p-3 font-semibold"><div className="flex items-center justify-between gap-2"><span>Exclusions {index + 2}</span><button type="button" className="text-xs font-semibold text-red-700" onClick={() => setKeyTerms((current) => ({ ...current, exclusions: current.exclusions.filter((_, i) => i !== index + 1) }))}>Remove</button></div></td><td className="border p-3"><textarea rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={entry} onChange={(e) => updateKeyTerm('exclusions', index + 1, e.target.value)} /></td></tr>)}{keyTerms.additional.map((term, index) => <tr key={`additional-${index}`}><td className="border p-3"><div className="flex items-center gap-2"><input className="min-w-0 flex-1 rounded-lg border p-2" placeholder="Description" value={term.label} onChange={(e) => setKeyTerms((current) => ({ ...current, additional: current.additional.map((row, i) => i === index ? { ...row, label: e.target.value } : row) }))} /><button type="button" className="shrink-0 text-xs font-semibold text-red-700" onClick={() => setKeyTerms((current) => ({ ...current, additional: current.additional.filter((_, i) => i !== index) }))}>Remove</button></div></td><td className="border p-3"><textarea rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" placeholder="Terms" value={term.value} onChange={(e) => setKeyTerms((current) => ({ ...current, additional: current.additional.map((row, i) => i === index ? { ...row, value: e.target.value } : row) }))} /></td></tr>)}</tbody></table></div></section>
       <section className="space-y-4 rounded-2xl border bg-white p-5"><div><h2 className="text-lg font-bold">Supporting Documents</h2><p className="text-sm text-slate-500">Any file type is accepted. PDFs and common images are shown in the preview; other files are listed there and remain attached after submission.</p></div><input type="file" multiple onChange={(event) => { const files = Array.from(event.target.files || []); setSupportingDocuments((current) => [...current, ...files]); event.currentTarget.value = ""; setMessage(""); }} className="block w-full rounded-lg border p-2 text-sm" />{supportingDocuments.length > 0 && <ul className="space-y-2 text-sm">{supportingDocuments.map((file, index) => <li key={`${file.name}-${index}`} className="flex items-center justify-between gap-3 rounded-lg border bg-slate-50 px-3 py-2"><span className="truncate">{file.name}</span><button type="button" className="shrink-0 font-semibold text-red-700" onClick={() => setSupportingDocuments((current) => current.filter((_, fileIndex) => fileIndex !== index))}>Remove</button></li>)}</ul>}</section>
-      {message && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"><p>{message}</p><button type="button" className="mt-2 rounded border border-red-300 px-3 py-1 font-semibold" onClick={() => setLookupRetry((value) => value + 1)}>Retry lookup loading</button></div>}<button type="submit" disabled={saving} className="rounded-xl bg-slate-950 px-5 py-3 font-semibold text-white disabled:opacity-50">{saving ? 'Generating Preview…' : 'Preview Work Order PDF'}</button>
+      {message && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"><p>{message}</p><button type="button" className="mt-2 rounded border border-red-300 px-3 py-1 font-semibold" onClick={() => setLookupRetry((value) => value + 1)}>Retry lookup loading</button></div>}<button type="submit" disabled={saving} className="rounded-xl bg-slate-950 px-5 py-3 font-semibold text-white disabled:opacity-50">{saving ? 'Generating Preview…' : revision ? 'Preview revised PDF' : 'Preview Work Order PDF'}</button>
     </form>
   </section>;
 }

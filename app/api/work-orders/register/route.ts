@@ -569,6 +569,14 @@ async function loadFilterMetadata(
 function applyCommonFilters(query: any, filters: any) {
   let next = query;
 
+  if (filters.pilotOnly) {
+    next = next.not("creation_request_id", "is", null);
+  } else {
+    // Keep Pilot-created Work Orders in the dedicated Forms register while
+    // preserving them for approval, detail, and downstream Work Order flows.
+    next = next.is("creation_request_id", null);
+  }
+
   if (filters.companyIds?.length) {
     next = next.in("company_id", filters.companyIds);
   }
@@ -813,6 +821,7 @@ export async function GET(request: Request) {
     );
     const woSearch = String(searchParams.get("wo_search") || "").trim();
     const contractorSearch = String(searchParams.get("contractor_search") || "").trim();
+    const pilotOnly = searchParams.get("pilot_only") === "1";
     const metadataPromise = loadFilterMetadata(
       admin,
       restrictedSiteIds,
@@ -875,6 +884,7 @@ export async function GET(request: Request) {
     } else if (needsMetadataForFilters) {
       metadata = await metadataPromise;
       const commonFilters = {
+        pilotOnly,
         companyIds: explicitCompanyIds.length
           ? explicitCompanyIds
           : selectedCompanyLabels.flatMap((label) => metadata.companyLabelMap.get(label) || []),
@@ -900,6 +910,7 @@ export async function GET(request: Request) {
       total = pageRows.total;
     } else {
       const commonFilters = {
+        pilotOnly,
         companyIds: explicitCompanyIds,
         siteIds: explicitSiteIds,
         statuses,

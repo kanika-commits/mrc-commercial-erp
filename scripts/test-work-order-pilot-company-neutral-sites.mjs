@@ -14,6 +14,10 @@ for (const source of [lookup, suggest, create, preview]) {
 
 assert.match(lookup, /sites = sites\.in\("id", auth\.sites\)/);
 assert.match(suggest, /company\.organization_id !== site\.organization_id/);
+assert.match(suggest, /resolveWriteOrganizationId\(scope, company\?\.organization_id\)/);
+assert.doesNotMatch(suggest, /const activeOrganizationId = resolveWriteOrganizationId\(scope\);/);
+assert.match(create, /resolveWriteOrganizationId\(scope, company\.organization_id\)/);
+assert.doesNotMatch(create, /const activeOrganizationId = resolveWriteOrganizationId\(scope\);/);
 assert.match(create, /company\.organization_id !== site\.organization_id/);
 assert.match(preview, /company\.organization_id !== site\.organization_id/);
 

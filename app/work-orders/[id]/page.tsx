@@ -138,6 +138,11 @@ export default function WorkOrderDetailPage() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
 const [debitNotes, setDebitNotes] = useState<any[]>([]);
+  const [documents, setDocuments] = useState<any[]>([]);
+  const [documentsLoaded, setDocumentsLoaded] = useState(false);
+  const [loadingDocuments, setLoadingDocuments] = useState(false);
+  const [documentError, setDocumentError] = useState("");
+  const [reviewedPackageUrl, setReviewedPackageUrl] = useState("");
   const [workOrderChanges, setWorkOrderChanges] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingRelated, setLoadingRelated] = useState(false);
@@ -196,6 +201,10 @@ const [debitNotes, setDebitNotes] = useState<any[]>([]);
       setInvoices([]);
       setPayments([]);
       setDebitNotes([]);
+      setDocuments([]);
+      setDocumentsLoaded(false);
+      setDocumentError("");
+      setReviewedPackageUrl("");
       setWorkOrderChanges([]);
 
       const { data: woData, error: woError } = await supabase
@@ -414,7 +423,30 @@ const [debitNotes, setDebitNotes] = useState<any[]>([]);
     }
   }
 
-  async function openReviewPdf() {
+  async function loadDocuments() {
+    try {
+      setLoadingDocuments(true);
+      setDocumentError("");
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Your session expired. Please log in again.");
+      const response = await fetch(
+        `/api/work-orders/documents?work_order_id=${encodeURIComponent(workOrderId)}`,
+        { headers: { Authorization: `Bearer ${session.access_token}` } },
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Failed to load Work Order documents.");
+      setDocuments(result.documents || []);
+      setDocumentsLoaded(true);
+    } catch (error: any) {
+      setDocumentError(error.message || "Failed to load Work Order documents.");
+    } finally {
+      setLoadingDocuments(false);
+    }
+  }
+
+  async function loadReviewedPackage() {
     try {
       setLoadingReviewPdf(true);
       setMessage("");
@@ -432,9 +464,7 @@ const [debitNotes, setDebitNotes] = useState<any[]>([]);
         throw new Error(result.error || "Unable to generate Work Order PDF.");
       }
 
-      const objectUrl = URL.createObjectURL(await response.blob());
-      window.open(objectUrl, "_blank", "noopener,noreferrer");
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      setReviewedPackageUrl(URL.createObjectURL(await response.blob()));
     } catch (error: any) {
       setMessage(error.message || "Unable to generate Work Order PDF.");
     } finally {
@@ -1249,16 +1279,54 @@ function downloadWOLedger(workOrderId: string) {
     Work Order Files
   </h3>
 
-  {workOrder.creation_request_id && (
+  {workOrder.creation_request_id ? (
+    reviewedPackageUrl ? (
+      <div className="space-y-2">
+        <p className="text-sm font-semibold text-slate-800">1 package</p>
+        <a href={reviewedPackageUrl} download={`${String(workOrder.wo_number || "work-order").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "work-order"}.reviewed-package.pdf`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm font-semibold text-sky-700 hover:underline">
+          <Download className="h-4 w-4" />
+          {`${String(workOrder.wo_number || "work-order").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "work-order"}.reviewed-package.pdf`}
+        </a>
+      </div>
+    ) : (
+      <button type="button" onClick={loadReviewedPackage} disabled={loadingReviewPdf} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60">
+        {loadingReviewPdf ? "Loading package..." : "Load documents"}
+      </button>
+    )
+  ) : !documentsLoaded ? (
     <button
       type="button"
-      onClick={openReviewPdf}
-      disabled={loadingReviewPdf}
-      className="mb-3 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+      onClick={loadDocuments}
+      disabled={loadingDocuments}
+      className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
     >
-      {loadingReviewPdf ? "Opening review PDF..." : "Review Complete Work Order PDF"}
+      {loadingDocuments ? "Loading documents..." : "Load documents"}
     </button>
+  ) : documents.length === 0 ? (
+    <p className="text-sm text-slate-500">No files attached.</p>
+  ) : (
+    <div className="space-y-2">
+      {documents.map((document) => (
+        <div key={document.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2">
+          <span className="text-sm font-medium text-slate-800">{document.file_name || "Attached file"}</span>
+          {document.signed_url ? (
+            <a
+              href={document.signed_url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-2 text-sm font-semibold text-sky-700 hover:underline"
+            >
+              <Download className="h-4 w-4" />
+              Open / download
+            </a>
+          ) : (
+            <span className="text-sm text-amber-700">File link unavailable</span>
+          )}
+        </div>
+      ))}
+    </div>
   )}
+  {documentError && <p className="mt-2 text-sm text-red-700">{documentError}</p>}
 
 </div>
         {workOrder.description && (
@@ -1351,13 +1419,22 @@ function downloadWOLedger(workOrderId: string) {
 
             {canUpdateStatus && (
               <div className="flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  onClick={() => { setCreationRequestId(crypto.randomUUID()); openChangeModal("rate_terms_revision"); }}
-                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
-                >
-                  Add Rate/Terms Revision
-                </button>
+                {workOrder.creation_request_id ? (
+                  <Link
+                    href={`/work-orders/${workOrderId}/revisions/new`}
+                    className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+                  >
+                    Create Pilot Revision
+                  </Link>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { setCreationRequestId(crypto.randomUUID()); openChangeModal("rate_terms_revision"); }}
+                    className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+                  >
+                    Add Rate/Terms Revision
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => { setCreationRequestId(crypto.randomUUID()); openChangeModal("additional_work"); }}

@@ -80,6 +80,9 @@ function badgeClass(value?: string | null) {
 export default function WorkOrderApprovalPage() {
   const { access } = useAccessContext();
   const [workOrders, setWorkOrders] = useState<any[]>([]);
+  const [documentsByWorkOrder, setDocumentsByWorkOrder] = useState<Record<string, any[]>>({});
+  const [loadingDocumentsByWorkOrder, setLoadingDocumentsByWorkOrder] = useState<Record<string, boolean>>({});
+  const [documentErrorsByWorkOrder, setDocumentErrorsByWorkOrder] = useState<Record<string, string>>({});
   const [companies, setCompanies] = useState<Map<string, string>>(new Map());
   const [sites, setSites] = useState<Map<string, string>>(new Map());
   const [editRows, setEditRows] = useState<Record<string, any>>({});
@@ -90,6 +93,9 @@ export default function WorkOrderApprovalPage() {
   const [deletingId, setDeletingId] = useState("");
   const [workOrderDeletionEnabled, setWorkOrderDeletionEnabled] = useState(false);
   const [message, setMessage] = useState("");
+  const [pilotRevisions, setPilotRevisions] = useState<Record<string, any>>({});
+  const [pilotRevisionComments, setPilotRevisionComments] = useState<Record<string, string>>({});
+  const [pilotRevisionBusy, setPilotRevisionBusy] = useState("");
   // Approval module permissions govern approval queues/actions; base work_orders permissions govern normal WO CRUD.
   const canViewWorkOrderApprovals =
     hasGlobalAccess(access) ||
@@ -186,10 +192,32 @@ export default function WorkOrderApprovalPage() {
       );
 
       setWorkOrders(woData || []);
+      setDocumentsByWorkOrder({});
+      setDocumentErrorsByWorkOrder({});
     } catch (error: any) {
       setMessage(error.message || "Failed to load work orders.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadDocuments(workOrder: any) {
+    try {
+      setLoadingDocumentsByWorkOrder((prev) => ({ ...prev, [workOrder.id]: true }));
+      setDocumentErrorsByWorkOrder((prev) => ({ ...prev, [workOrder.id]: "" }));
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Your session expired. Please log in again.");
+      const response = await fetch(
+        `/api/work-orders/documents?work_order_id=${encodeURIComponent(workOrder.id)}`,
+        { headers: { Authorization: `Bearer ${session.access_token}` } },
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Failed to load Work Order documents.");
+      setDocumentsByWorkOrder((prev) => ({ ...prev, [workOrder.id]: result.documents || [] }));
+    } catch (error: any) {
+      setDocumentErrorsByWorkOrder((prev) => ({ ...prev, [workOrder.id]: error.message || "Failed to load Work Order documents." }));
+    } finally {
+      setLoadingDocumentsByWorkOrder((prev) => ({ ...prev, [workOrder.id]: false }));
     }
   }
 
@@ -210,6 +238,42 @@ export default function WorkOrderApprovalPage() {
     } catch (error: any) {
       setMessage(error.message || "Unable to open the Work Order review PDF.");
     }
+  }
+
+  async function loadPilotRevision(workOrder: any) {
+    try {
+      setPilotRevisionBusy(workOrder.id);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Your session expired. Please log in again.");
+      const response = await fetch(`/api/work-orders/${workOrder.id}/revisions`, { headers: { Authorization: `Bearer ${session.access_token}` } });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to load Pilot revision.");
+      const revision = (result.revisions || []).find((row: any) => row.status === "submitted");
+      if (!revision) throw new Error("No submitted Pilot revision is awaiting approval.");
+      setPilotRevisions((prev) => ({ ...prev, [workOrder.id]: revision }));
+      const pdf = await fetch(`/api/work-orders/${workOrder.id}/revisions/${revision.id}/preview`, { method: "POST", headers: { Authorization: `Bearer ${session.access_token}` } });
+      if (!pdf.ok) throw new Error((await pdf.json().catch(() => ({}))).error || "Unable to open revised PDF.");
+      const url = URL.createObjectURL(await pdf.blob());
+      window.open(url, "_blank", "noopener,noreferrer");
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error: any) { setMessage(error.message || "Unable to load Pilot revision."); } finally { setPilotRevisionBusy(""); }
+  }
+
+  async function actOnPilotRevision(workOrder: any, action: "approve" | "send_back") {
+    const revision = pilotRevisions[workOrder.id];
+    if (!revision) return;
+    const comment = String(pilotRevisionComments[workOrder.id] || "").trim();
+    if (action === "send_back" && !comment) { setMessage("A send-back comment is required."); return; }
+    try {
+      setPilotRevisionBusy(workOrder.id);
+      const { data: { session } } = await supabase.auth.getSession();
+      const response = await fetch(`/api/work-orders/${workOrder.id}/revisions/${revision.id}`, { method: "POST", headers: { Authorization: `Bearer ${session?.access_token || ""}`, "Content-Type": "application/json" }, body: JSON.stringify({ action: action === "send_back" ? "send_back" : "approve", ...(action === "send_back" ? { comment } : {}) }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || `Unable to ${action} revision.`);
+      setPilotRevisions((prev) => ({ ...prev, [workOrder.id]: result.revision }));
+      setMessage(action === "approve" ? "Pilot revision approved and issued." : "Pilot revision sent back for correction.");
+      await loadWorkOrders();
+    } catch (error: any) { setMessage(error.message || "Pilot revision action failed."); } finally { setPilotRevisionBusy(""); }
   }
 
   function updateEditRow(workOrderId: string, field: string, value: string) {
@@ -534,6 +598,38 @@ export default function WorkOrderApprovalPage() {
 
                       <td className="px-4 py-5">
                         <div className="space-y-2">
+                        {!wo.creation_request_id && (
+                          <>
+                            {!documentsByWorkOrder[wo.id] ? (
+                              <button
+                                type="button"
+                                onClick={() => void loadDocuments(wo)}
+                                disabled={loadingDocumentsByWorkOrder[wo.id]}
+                                className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 hover:underline disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {loadingDocumentsByWorkOrder[wo.id] ? "Loading documents…" : "Load documents"}
+                              </button>
+                            ) : documentsByWorkOrder[wo.id].length === 0 ? (
+                              <span className="text-xs text-slate-500">No documents</span>
+                            ) : (
+                              documentsByWorkOrder[wo.id].map((document: any) => (
+                                <a
+                                  key={document.id}
+                                  href={document.signed_url || undefined}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="flex items-center gap-1 text-xs font-semibold text-sky-700 hover:underline"
+                                >
+                                  {document.file_name || "Attached file"}
+                                  <ExternalLink className="h-3 w-3" />
+                                </a>
+                              ))
+                            )}
+                            {documentErrorsByWorkOrder[wo.id] && (
+                              <span className="block text-xs text-rose-700">{documentErrorsByWorkOrder[wo.id]}</span>
+                            )}
+                          </>
+                        )}
                         {wo.creation_request_id && (
                           <button
                             type="button"
@@ -572,6 +668,14 @@ export default function WorkOrderApprovalPage() {
                           >
                             View
                           </Link>
+
+                          {wo.creation_request_id && canApproveWorkOrderApprovals && (
+                            <>
+                              <button type="button" disabled={pilotRevisionBusy === wo.id} onClick={() => void loadPilotRevision(wo)} className="rounded border border-indigo-200 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-50 disabled:opacity-60">{pilotRevisionBusy === wo.id ? "Loading…" : "Review revised PDF"}</button>
+                              {pilotRevisions[wo.id]?.status === "submitted" && <button type="button" disabled={pilotRevisionBusy === wo.id} onClick={() => void actOnPilotRevision(wo, "approve")} className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60">Approve revision</button>}
+                              {pilotRevisions[wo.id]?.status === "submitted" && <div className="flex items-center gap-1"><input aria-label={`Send-back comment for ${wo.wo_number || wo.id}`} className="w-40 rounded border px-2 py-1 text-xs" placeholder="Send-back comment" value={pilotRevisionComments[wo.id] || ""} onChange={(event) => setPilotRevisionComments((prev) => ({ ...prev, [wo.id]: event.target.value }))} /><button type="button" disabled={pilotRevisionBusy === wo.id} onClick={() => void actOnPilotRevision(wo, "send_back")} className="rounded bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60">Send back</button></div>}
+                            </>
+                          )}
 
                           {(canEditWorkOrderApprovals ||
                             canUploadWorkOrderApprovalFiles) && (
