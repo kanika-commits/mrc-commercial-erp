@@ -1,0 +1,14 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+const creditNew = fs.readFileSync("app/credit-notes/new/page.tsx", "utf8");
+const debitNew = fs.readFileSync("app/debit-notes/new/page.tsx", "utf8");
+const creditRegister = fs.readFileSync("app/credit-notes/page.tsx", "utf8");
+assert.match(creditNew, /\/api\/commercial\/create-lookups/); assert.match(debitNew, /\/api\/commercial\/create-lookups/);
+assert.match(creditNew, /Step 1/); assert.match(creditNew, /Select Site &amp; Work Order/); assert.match(creditNew, /Step 2/); assert.match(creditNew, /Credit Note Details/); assert.match(creditNew, /Step 3/); assert.match(creditNew, /Supporting Documents/); assert.match(creditNew, /Attach supporting documents/);
+assert.match(creditNew, /isSelectionComplete/);
+assert.match(creditNew, /nth-of-type\(n\+2\)/);
+assert.match(creditNew, /setForm\(\(current: any\) => \(\{ \.\.\.current, work_order_id: "", vendor_id: ""/);
+assert.match(creditNew, /lookups\.work_orders.*note\.work_order_id/);
+assert.match(creditRegister, /href="\/credit-notes\/new"/); assert.match(creditRegister, /Search Credit Notes/); assert.match(creditRegister, /Credit Note Register/);
+assert.doesNotMatch(creditNew, /api\/debit-notes/); assert.doesNotMatch(creditRegister, /api\/debit-notes/);
+console.log("Credit and Debit Note lookup/navigation contract passed.");

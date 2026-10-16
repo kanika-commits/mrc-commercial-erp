@@ -103,6 +103,8 @@ const MODULE_ACTIONS: Record<string, PermissionAction[]> = {
   itc_claims: ["view", "approve", "delete"],
   payments: ["view", "add", "delete"],
   debit_notes: ["view", "add", "delete"],
+  credit_notes: ["view", "add", "edit", "delete"],
+  credit_note_approval: ["view", "approve", "reject"],
 
   hr_employees: ["view", "add", "edit", "delete"],
   hr_departments: ["view", "add", "edit", "delete"],

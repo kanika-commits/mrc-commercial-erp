@@ -84,6 +84,8 @@ const PERMISSION_PRESENTATION: Record<string, VisiblePermissionPresentation> = {
 
   ra_bills: { visible_group: "Project Management", visible_name: "RA Bills", visible_sort_order: 10 },
   debit_notes: { visible_group: "Project Management", visible_name: "Debit Notes", visible_sort_order: 20 },
+  credit_notes: { visible_group: "Project Management", visible_name: "Credit Notes", visible_sort_order: 21 },
+  credit_note_approval: { visible_group: "Project Management", visible_name: "Credit Note Approvals", visible_sort_order: 31, visible_actions: ["view", "approve", "reject"] },
   ra_approval: { visible_group: "Project Management", visible_name: "RA Bills / Debit Note Approvals", visible_sort_order: 30 },
 
   purchase_requisitions: { visible_group: "Store Management", visible_name: "Material Indent", visible_sort_order: 5, visible_actions: ["view", "add", "edit", "delete", "submit", "export"] },
