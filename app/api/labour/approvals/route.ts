@@ -18,6 +18,7 @@ import {
 import { normalizeText } from "@/lib/labour/constants";
 import { dateText } from "@/lib/labour/v2";
 import type { ErpAuditAction } from "@/lib/serverAudit";
+import { insertNotificationOnce, resolveNotificationRecipients } from "@/lib/serverNotificationRecipients";
 
 const ACTIVE_STATUSES = ["pending_pm_approval", "pending_ho_approval", "sent_back_by_pm", "sent_back_by_ho", "final_approved"];
 const EDITABLE_STATUSES = ["draft", "sent_back_by_pm", "sent_back_by_ho"];
@@ -2004,7 +2005,8 @@ async function transitionStandardPeriod(access: any, request: Request, payload: 
       if (recipientUserId && recipientUserId !== access.auth.user.id) {
         const approverName = actorName(access) || access.auth.user.email || "Approver";
         const { data: site } = await access.admin.from("sites").select("site_name").eq("id", period.site_id).maybeSingle();
-        const notification = await access.admin.from("user_notifications").insert({
+        const recipients = await resolveNotificationRecipients(access.admin, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, moduleCode: "labour_daily_submission", actionCode: "view" });
+        if (recipients.includes(recipientUserId)) await insertNotificationOnce(access.admin, {
           organization_id: period.organization_id,
           recipient_user_id: recipientUserId,
           notification_type: "labour_attendance_sent_back",
@@ -2016,7 +2018,6 @@ async function transitionStandardPeriod(access: any, request: Request, payload: 
           created_by: access.auth.user.id,
           created_by_name: approverName,
         });
-        if (notification.error) console.error("Labour attendance notification creation failed:", notification.error.message);
       }
     }
     return NextResponse.json({ updated: true, status: "reopened" });
