@@ -23,7 +23,7 @@ const moduleCards = [
     title: "Project Management",
     href: "/modules/project-management",
     description: "RA bills, debit notes and commercial approvals.",
-    checkModules: ["ra_bills", "debit_notes", "ra_approval"],
+    checkModules: ["ra_bills", "debit_notes", "credit_notes", "credit_note_approval", "ra_approval"],
     icon: FileText,
     tone: "orange",
     status: "Idle",
