@@ -279,6 +279,10 @@ export default function ModulePage({
       moduleRows.push({ id: "store-goods-receipts", module_group: "store_management", module_code: "procurement_goods_receipts", module_name: "Purchase Order Tracking", route: "/store/goods-receipts", sort_order: 7 });
       moduleRows.sort((first, second) => first.sort_order - second.sort_order);
     }
+    if (groupCode === "project_management" && (globalAccess || can(permissions, "credit_notes", "view")) && !moduleRows.some((page) => page.route === "/credit-notes")) {
+      moduleRows.push({ id: "project-credit-notes", module_group: "project_management", module_code: "credit_notes", module_name: "Credit Notes", route: "/credit-notes", sort_order: 21 });
+      moduleRows.sort((first, second) => first.sort_order - second.sort_order);
+    }
 
     if (groupCode !== "settings") return moduleRows;
 

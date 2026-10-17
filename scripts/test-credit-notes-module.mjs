@@ -15,7 +15,7 @@ const api = fs.readFileSync("app/api/credit-notes/route.ts", "utf8");
 const migration = fs.readFileSync("supabase/migrations/202610140001_create_credit_notes.sql", "utf8");
 assert.match(api, /from\("credit_notes"\)/);
 assert.match(api, /from\("credit_note_documents"\)/);
-assert.match(api, /credit_note_approval/);
+assert.match(api, /credit_notes/);
 assert.doesNotMatch(api, /from\("debit_notes"\)/);
 assert.doesNotMatch(api, /api\/debit-notes/);
 assert.match(migration, /create table if not exists public\.credit_notes/);

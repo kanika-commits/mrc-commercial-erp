@@ -29,6 +29,7 @@ export default function ApprovalsPage() {
   const { access } = useAccessContext();
   const [bills, setBills] = useState<any[]>([]);
   const [debitNotes, setDebitNotes] = useState<any[]>([]);
+  const [creditNotes, setCreditNotes] = useState<any[]>([]);
 
   const [workOrders, setWorkOrders] = useState<any[]>([]);
   const [vendors, setVendors] = useState<any[]>([]);
@@ -37,6 +38,7 @@ export default function ApprovalsPage() {
 
   const [raDocuments, setRaDocuments] = useState<any[]>([]);
   const [debitDocuments, setDebitDocuments] = useState<any[]>([]);
+  const [creditDocuments, setCreditDocuments] = useState<any[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState("");
@@ -47,11 +49,16 @@ export default function ApprovalsPage() {
     hasGlobalAccess(access) ||
     can(access?.permissions || [], "ra_approval", "view") ||
     can(access?.permissions || [], "ra_approval", "approve") ||
-    can(access?.permissions || [], "ra_approval", "reject");
+    can(access?.permissions || [], "ra_approval", "reject") ||
+    can(access?.permissions || [], "credit_notes", "view") ||
+    can(access?.permissions || [], "credit_notes", "approve") ||
+    can(access?.permissions || [], "credit_notes", "reject");
   const canApproveCommercialApprovals =
     hasGlobalAccess(access) || can(access?.permissions || [], "ra_approval", "approve");
   const canRejectCommercialApprovals =
     hasGlobalAccess(access) || can(access?.permissions || [], "ra_approval", "reject");
+  const canApproveCreditNotes = hasGlobalAccess(access) || can(access?.permissions || [], "credit_notes", "approve");
+  const canRejectCreditNotes = hasGlobalAccess(access) || can(access?.permissions || [], "credit_notes", "reject");
 
   useEffect(() => {
     if (access) {
@@ -76,12 +83,14 @@ export default function ApprovalsPage() {
     if (!canViewCommercialApprovals) {
       setBills([]);
       setDebitNotes([]);
+      setCreditNotes([]);
       setWorkOrders([]);
       setVendors([]);
       setSites([]);
       setCompanies([]);
       setRaDocuments([]);
       setDebitDocuments([]);
+      setCreditDocuments([]);
       setLoading(false);
       return;
     }
@@ -108,12 +117,15 @@ export default function ApprovalsPage() {
 
     const raBills: any[] = approvalResult.bills || [];
     const notes: any[] = approvalResult.debitNotes || [];
+    const credit: any[] = approvalResult.creditNotes || [];
 
     setBills(raBills);
     setDebitNotes(notes);
+    setCreditNotes(credit);
 
     const raBillIds = raBills.map((b) => b.id);
     const debitNoteIds = notes.map((n) => n.id);
+    const creditNoteIds = credit.map((n) => n.id);
 
     let raDocumentData: any[] = [];
 
@@ -146,6 +158,7 @@ export default function ApprovalsPage() {
     }
 
     let debitDocumentData: any[] = [];
+    let creditDocumentData: any[] = [];
 
     if (debitNoteIds.length) {
       if (!token) {
@@ -175,12 +188,20 @@ export default function ApprovalsPage() {
       debitDocumentData = documentResult.documents || [];
     }
 
+    if (creditNoteIds.length) {
+      const documentResponse = await fetch(`/api/credit-notes/documents?credit_note_ids=${encodeURIComponent(creditNoteIds.join(","))}`, { headers: { Authorization: `Bearer ${token}` } });
+      const documentResult = await documentResponse.json();
+      if (!documentResponse.ok) { showMessage("error", documentResult.error || "Failed to load Credit Note documents."); setLoading(false); return; }
+      creditDocumentData = documentResult.documents || [];
+    }
+
     setWorkOrders(approvalResult.workOrders || []);
     setVendors(approvalResult.vendors || []);
     setSites(approvalResult.sites || []);
     setCompanies(approvalResult.companies || []);
     setRaDocuments(raDocumentData || []);
     setDebitDocuments(debitDocumentData || []);
+    setCreditDocuments(creditDocumentData || []);
 
     setLoading(false);
   }
@@ -236,6 +257,13 @@ export default function ApprovalsPage() {
       return;
     }
 
+    window.open(document.signed_url, "_blank", "noopener,noreferrer");
+  }
+
+  function creditDocumentsForNote(id: string) { return creditDocuments.filter((document) => document.credit_note_id === id); }
+  function openCreditDocument(document: any) {
+    recordClientAuditEvent({ eventType: "view_document", entityType: "credit_note", recordId: document.credit_note_id, documentId: document.id, source: "approvals" });
+    if (!document.signed_url) { showMessage("error", document.signed_url_error || "Unable to open Credit Note file."); return; }
     window.open(document.signed_url, "_blank", "noopener,noreferrer");
   }
 
@@ -375,6 +403,18 @@ async function updateDebitNoteStatus(
   setSavingId("");
 }
 
+async function updateCreditNoteStatus(noteId: string, action: ApprovalAction) {
+  const allowed = action === "Approved" ? canApproveCreditNotes : canRejectCreditNotes;
+  if (!allowed) { showMessage("error", "You do not have permission to perform this Credit Note approval action."); return; }
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) { showMessage("error", "Your session has expired. Please sign in again."); return; }
+  const response = await fetch(`/api/credit-notes?credit_note_id=${encodeURIComponent(noteId)}`, { method: "PATCH", headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" }, body: JSON.stringify({ action, rejection_reason: remarks[`cn-${noteId}`] || "" }) });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) { showMessage("error", result.error || "Credit Note approval failed."); return; }
+  setCreditNotes((previous) => previous.filter((note) => note.id !== noteId));
+  showMessage("success", action === "Approved" ? "Credit Note approved successfully." : "Credit Note rejected successfully.");
+}
+
   if (loading) {
     
     return <p className="text-sm text-slate-500">Loading approvals...</p>;
@@ -413,6 +453,7 @@ async function updateDebitNoteStatus(
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Summary title="Pending RA Bills" value={String(bills.length)} />
         <Summary title="Pending Debit Notes" value={String(debitNotes.length)} />
+        <Summary title="Pending Credit Notes" value={String(creditNotes.length)} />
         <Summary
           title="Pending RA Value"
           value={money(
@@ -786,6 +827,34 @@ async function updateDebitNoteStatus(
                 </tr>
               )}
             </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border bg-white shadow-sm">
+        <div className="border-b p-4">
+          <h2 className="font-semibold text-slate-950">Pending Credit Notes</h2>
+          <p className="text-xs text-slate-500">Approve or reject submitted Credit Notes.</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1100px] text-sm">
+            <thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr>
+              <th className="p-3 text-left">Credit Note</th><th className="p-3 text-left">Work Order</th><th className="p-3 text-left">Created By</th><th className="p-3 text-left">Submitted At</th><th className="p-3 text-right">Amount</th><th className="p-3 text-left">Files</th><th className="p-3 text-right">Action</th>
+            </tr></thead>
+            <tbody>{creditNotes.map((note) => {
+              const wo = maps.woMap.get(note.work_order_id);
+              const documents = creditDocumentsForNote(note.id);
+              const key = `cn-${note.id}`;
+              return <tr key={note.id} className="border-t align-top">
+                <td className="p-3"><Link href={`/credit-notes/${note.id}`} className="font-semibold text-blue-600 hover:underline">{note.credit_note_number}</Link><div className="text-xs text-slate-500">{note.credit_note_date || "-"}</div></td>
+                <td className="p-3">{wo?.wo_number || "Unavailable"}</td>
+                <td className="p-3"><div>{auditName(note.created_by_name, note.created_by_email)}</div>{note.created_by_email && <div className="text-xs text-slate-500">{note.created_by_email}</div>}</td>
+                <td className="p-3">{formatDateTime(note.created_at)}</td>
+                <td className="p-3 text-right font-semibold">{money(note.total_amount || note.gross_amount)}</td>
+                <td className="p-3">{documents.length} file(s){documents.map((document) => <div key={document.id} className="flex gap-2"><span className="max-w-[240px] truncate text-xs">{document.file_name || "Attachment"}</span><button type="button" onClick={() => openCreditDocument(document)} className="text-xs font-semibold text-blue-600">Open</button></div>)}</td>
+                <td className="p-3 text-right"><ActionButtons saving={savingId === key} viewHref={`/credit-notes/${note.id}`} showApprove={canApproveCreditNotes} showReject={canRejectCreditNotes} onApprove={() => updateCreditNoteStatus(note.id, "Approved")} onReject={() => updateCreditNoteStatus(note.id, "Rejected")} /></td>
+              </tr>;
+            })}{creditNotes.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-slate-500">No pending Credit Notes found.</td></tr>}</tbody>
           </table>
         </div>
       </div>

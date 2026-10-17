@@ -6,6 +6,7 @@ const form = fs.readFileSync("app/credit-notes/new/page.tsx", "utf8");
 assert.match(api, /export async function PUT/);
 assert.match(api, /Only pending Credit Notes can be edited/);
 assert.match(api, /Only pending Credit Notes can be reviewed/);
+assert.match(api, /requirePermission\(request, "credit_notes", action === "rejected" \? "reject" : "approve"\)/);
 assert.match(api, /linkedWorkOrder\.organization_id !== note\.organization_id/);
 assert.match(form, /credit_note_id/);
 assert.match(form, /method:\s*"PUT"/);

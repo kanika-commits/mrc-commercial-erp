@@ -161,7 +161,7 @@ export async function PATCH(request: Request) {
   const reason = String(body.rejection_reason || body.reason || "").trim();
   if (!["approved", "rejected", "retry_filing"].includes(action)) return fail("Approval action must be Approved, Rejected, or Retry filing.");
   if (action === "rejected" && reason.length < 10) return fail("Reason must be at least 10 characters for Reject.");
-  const auth = await requirePermission(request, "credit_note_approval", action === "rejected" ? "reject" : "approve");
+  const auth = await requirePermission(request, "credit_notes", action === "rejected" ? "reject" : "approve");
   if ("response" in auth) return auth.response;
   const client = admin();
   const found = await scopedNote(client, id, auth);
