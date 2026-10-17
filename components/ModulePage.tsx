@@ -358,6 +358,16 @@ export default function ModulePage({
         sort_order: 79,
       });
     }
+    if (globalAccess || can(permissions, "procurement_items", "view")) {
+      additionalRows.push({
+        id: "settings-work-order-item-master",
+        module_group: "settings",
+        module_code: "procurement_items",
+        module_name: "Masters - Work Order Item Master",
+        route: "/work-orders/item-masters",
+        sort_order: 80,
+      });
+    }
     return [...settingsRows, ...additionalRows].sort((first, second) => first.sort_order - second.sort_order);
   }, [access, groupCode, moduleNavigation]);
 

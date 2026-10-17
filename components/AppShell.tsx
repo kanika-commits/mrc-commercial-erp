@@ -349,6 +349,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         navLeaf("Designations", "hr_designations", "/hr/designations"),
         navLeaf("Labour Categories", "labour_trades", "/labour/trades"),
         navLeaf("Item / Material Master", "procurement_items", "/settings/items"),
+        navLeaf("Work Order Item Master", "procurement_items", "/work-orders/item-masters"),
         navLeaf("Bank Accounts", "company_bank_accounts", "/company-bank-accounts"),
         navLeaf("GST Registration Master", "procurement_gst_billing_delivery_master", "/settings/purchase-order-masters/gst-registrations"),
         navLeaf("Billing / Delivery Addresses", "procurement_gst_billing_delivery_master", "/settings/purchase-order-masters?master=billing-delivery"),
