@@ -23,7 +23,9 @@ export default function NewWorkOrderPage() {
   const revisionWorkOrderId = searchParams.get("work_order");
   const returningFromPreview = searchParams.get("from") === "preview";
   const explicitlyResuming = Boolean(draftId || revisionId || returningFromPreview);
-  if (!explicitlyResuming) clearWorkOrderPilotDraft();
+  useEffect(() => {
+    if (!explicitlyResuming) clearWorkOrderPilotDraft();
+  }, [explicitlyResuming]);
   const preservedPreviewDraft = returningFromPreview ? getWorkOrderPilotDraft() : null;
   const [lookups, setLookups] = useState<any>({ companies: [], sites: [], vendors: [], items: [], letterheads: [], terms_templates: [], gst_billing_masters: [], billing_addresses: [], delivery_locations: [], site_contacts: [] });
   const [form, setForm] = useState<any>(() => preservedPreviewDraft?.form || ({ company_id: "", site_id: "", vendor_id: "", vendor_role: "Main Contractor", wo_number: "", wo_date: new Date().toISOString().slice(0, 10), wo_type: "Consultant", description: "", letterhead_id: "", terms_template_id: "", standard_terms_snapshot: "", gst_registration_id: "", billing_address_id: "", delivery_location_id: "", billing_contact_id: "", delivery_contact_id: "" }));
@@ -283,11 +285,11 @@ export default function NewWorkOrderPage() {
         method: "POST",
         body: previewForm,
       });
-      if (result.pdf_base64) {
-        const creationRequestId = crypto.randomUUID();
-        setWorkOrderPilotDraft({ form, keyTerms, lines, supportingDocuments, payload, previewUrl: `data:application/pdf;base64,${result.pdf_base64}`, creationRequestId });
-        router.push("/work-orders/new/structured/preview");
-      }
+      const pdfBase64 = typeof result.pdf_base64 === "string" ? result.pdf_base64.trim() : "";
+      if (!pdfBase64) throw new Error("The preview response did not contain a PDF. Your form values were kept; please try Preview again.");
+      const creationRequestId = crypto.randomUUID();
+      setWorkOrderPilotDraft({ form, keyTerms, lines, supportingDocuments, payload, previewUrl: `data:application/pdf;base64,${pdfBase64}`, creationRequestId });
+      router.push("/work-orders/new/structured/preview");
     } catch (e: any) {
       setMessage(e.message);
     } finally {
