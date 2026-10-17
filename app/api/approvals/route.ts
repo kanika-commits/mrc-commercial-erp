@@ -14,6 +14,9 @@ const APPROVAL_PERMISSIONS = [
   { moduleCode: "ra_approval", actionCode: "view" },
   { moduleCode: "ra_approval", actionCode: "approve" },
   { moduleCode: "ra_approval", actionCode: "reject" },
+  { moduleCode: "credit_notes", actionCode: "view" },
+  { moduleCode: "credit_notes", actionCode: "approve" },
+  { moduleCode: "credit_notes", actionCode: "reject" },
 ];
 
 export async function GET(request: Request) {
@@ -34,6 +37,7 @@ export async function GET(request: Request) {
       "approve",
       "reject",
     ]);
+    const canLoadCreditNotes = canAny(auth.permissions, "credit_notes", ["view", "approve", "reject"]);
     const raQuery = canLoadApprovals
       ? applyWorkOrderScope(
           applyOrganizationScope(
@@ -97,9 +101,11 @@ export async function GET(request: Request) {
         )
       : null;
 
-    const [raBills, debitNotes] = await Promise.all([
+    const creditQuery = canLoadCreditNotes ? applyWorkOrderScope(applyOrganizationScope(admin.from("credit_notes").select(`id, organization_id, work_order_id, vendor_id, credit_note_number, credit_note_date, credit_note_type, reason, gross_amount, total_amount, status, approval_status, created_at, created_by_name, created_by_email`).ilike("approval_status", "pending").order("created_at", { ascending: false }), organizationScope), allowedWorkOrderIds) : null;
+    const [raBills, debitNotes, creditNotes] = await Promise.all([
       safeQuery(raQuery),
       safeQuery(debitQuery),
+      safeQuery(creditQuery),
     ]);
 
     const workOrderIds = Array.from(
@@ -165,6 +171,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       bills: raBills,
       debitNotes,
+      creditNotes,
       workOrders,
       vendors,
       sites,
