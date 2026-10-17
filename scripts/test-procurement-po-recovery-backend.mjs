@@ -6,8 +6,17 @@ const createRoute = fs.readFileSync("app/api/procurement/purchase-orders/route.t
 const debitRoute = fs.readFileSync("app/api/debit-notes/route.ts", "utf8");
 const helper = fs.readFileSync("lib/procurement/contractorRecoveryDebitNote.server.ts", "utf8");
 const core = fs.readFileSync("lib/procurement/contractorRecoveryCore.ts", "utf8");
+const lookupRoute = fs.readFileSync("app/api/procurement/purchase-orders/lookups/route.ts", "utf8");
+const form = fs.readFileSync("app/purchase/purchase-orders/new/page.tsx", "utf8");
 
 assert.match(helper, /ensureRecoveryDraft/);
+assert.match(helper, /from\("work_order_vendors"\)/);
+assert.match(helper, /eq\("vendor_id", vendorId\)/);
+assert.match(helper, /Main Contractor/);
+assert.match(helper, /Subcontractor/);
+assert.match(lookupRoute, /work_order_vendors\(vendor_id,vendor_role,is_primary\)/);
+assert.match(form, /work_order_vendors\?\.some/);
+assert.match(form, /recovery_work_order_id: null/);
 assert.match(core, /source_purchase_order_id/);
 assert.match(core, /code !== "23505"/);
 assert.match(core, /source_purchase_order_documents/);
@@ -18,7 +27,9 @@ assert.match(core, /status: "Draft"/);
 assert.match(core, /approval_status: "Pending"/);
 assert.match(createRoute, /validatePurchaseOrderPurpose/);
 assert.match(createRoute, /validateRecoveryWorkOrder/);
+assert.match(createRoute, /recoveryWorkOrderId!, selectedVendorId/);
 assert.match(poRoute, /recoveryFields/);
+assert.match(poRoute, /recoveryWorkOrderId!, recoveryVendorId/);
 assert.match(poRoute, /action === "submit" \|\| action === "approve"/);
 assert.match(poRoute, /ensureContractorRecoveryDebitNote/);
 assert.match(debitRoute, /source_purchase_order_id/);

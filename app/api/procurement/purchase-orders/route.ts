@@ -95,7 +95,7 @@ export async function POST(request: Request) {
     const organizationId = "organizationId" in scope ? scope.organizationId : null;
     if (!organizationId) return jsonError("Selected company/site organization is invalid.", 400);
     const recovery = validatePurchaseOrderPurpose(body.commercial?.purpose, body.commercial?.recovery_work_order_id);
-    if (recovery.purpose === "Recover from contractor") await validateRecoveryWorkOrder(admin, organizationId, selectedCompanyId, selectedSiteId, recovery.recoveryWorkOrderId!);
+    if (recovery.purpose === "Recover from contractor") await validateRecoveryWorkOrder(admin, organizationId, selectedCompanyId, selectedSiteId, recovery.recoveryWorkOrderId!, selectedVendorId);
     const vendor = await admin.from("vendors").select("id,organization_id,vendor_name,address,pan,gstin,status,is_deleted").eq("id", selectedVendorId).eq("organization_id", organizationId).maybeSingle();
     if (vendor.error) throw vendor.error; if (!vendor.data || vendor.data.status === "deleted" || vendor.data.is_deleted) return jsonError("Vendor is invalid for the selected organization.", 400);
     if (!text(vendor.data.address)) return jsonError("Vendor Address is required before creating the Purchase Order.", 400);

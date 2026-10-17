@@ -133,8 +133,9 @@ export async function PUT(
       commercial.purpose ?? result.row.purpose ?? result.row.commercial_snapshot?.purpose,
       commercial.recovery_work_order_id ?? result.row.recovery_work_order_id ?? result.row.commercial_snapshot?.recovery_work_order_id,
     );
+    const recoveryVendorId = text(body.vendor_id) || result.row.vendor_id;
     if (recovery.purpose === "Recover from contractor") {
-      await validateRecoveryWorkOrder(result.admin, result.row.organization_id, result.row.company_id, result.row.site_id, recovery.recoveryWorkOrderId!);
+      await validateRecoveryWorkOrder(result.admin, result.row.organization_id, result.row.company_id, result.row.site_id, recovery.recoveryWorkOrderId!, recoveryVendorId);
     }
     commercial.purpose = recovery.purpose;
     commercial.recovery_work_order_id = recovery.recoveryWorkOrderId;
