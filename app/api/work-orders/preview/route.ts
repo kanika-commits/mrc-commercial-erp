@@ -95,7 +95,7 @@ export async function POST(request: Request) {
       if (!master) throw new Error(`Item ${index + 1} is outside the authorized Work Order Item Master scope.`);
       const basic = Number(item.quantity || 0) * Number(item.unit_rate || 0);
       const gstAmount = basic * Number(item.gst_percent || 0) / 100;
-      return { item_name_snapshot: master.item_header, item_code_snapshot: "", specification_snapshot: master.description || "", additional_description_snapshot: item.additional_description || "", make_snapshot: master.mode_of_measurement || "", quantity: item.quantity, uom_snapshot: master.unit || "", unit_rate: item.unit_rate, gst_rate: item.gst_percent, gst_amount: gstAmount, total_amount: basic + gstAmount, serial_no: index + 1 };
+      return { item_name_snapshot: master.item_header, item_header_snapshot: master.item_header, description_snapshot: master.description || "", item_code_snapshot: "", specification_snapshot: master.description || "", additional_description_snapshot: item.additional_description || "", make_snapshot: master.mode_of_measurement || "", quantity: item.quantity, uom_snapshot: master.unit || "", unit_snapshot: master.unit || "", mode_of_measurement_snapshot: master.mode_of_measurement || "", unit_rate: item.unit_rate, gst_rate: item.gst_percent, gst_amount: gstAmount, total_amount: basic + gstAmount, serial_no: index + 1 };
     });
     const keyTerms = [
       ...(body.work_order_key_terms?.inclusions || []).filter(Boolean).map((value: string) => ({ description: "Inclusion", value })),
