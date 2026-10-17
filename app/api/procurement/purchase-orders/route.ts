@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { adminClient, applyCompanySiteAccess, applyOrganizationAccess, jsonError, requireProcurementPermission, text, validateOrganizationSiteAccess } from "@/lib/serverProcurementAccess";
 import { createPrivateStorageAdapter } from "@/lib/storage/privateStorage";
+import { validatePurchaseOrderPurpose, validateRecoveryWorkOrder } from "@/lib/procurement/contractorRecoveryDebitNote.server";
 
 const MODULE = "procurement_purchase_orders";
 function normalizePurchaseOrderItems(items: any[]) {
@@ -93,6 +94,8 @@ export async function POST(request: Request) {
     const scope = await validateOrganizationSiteAccess(admin, auth, selectedCompanyId, selectedSiteId); if ("error" in scope) return jsonError(String(scope.error), Number(scope.status || 400));
     const organizationId = "organizationId" in scope ? scope.organizationId : null;
     if (!organizationId) return jsonError("Selected company/site organization is invalid.", 400);
+    const recovery = validatePurchaseOrderPurpose(body.commercial?.purpose, body.commercial?.recovery_work_order_id);
+    if (recovery.purpose === "Recover from contractor") await validateRecoveryWorkOrder(admin, organizationId, selectedCompanyId, selectedSiteId, recovery.recoveryWorkOrderId!);
     const vendor = await admin.from("vendors").select("id,organization_id,vendor_name,address,pan,gstin,status,is_deleted").eq("id", selectedVendorId).eq("organization_id", organizationId).maybeSingle();
     if (vendor.error) throw vendor.error; if (!vendor.data || vendor.data.status === "deleted" || vendor.data.is_deleted) return jsonError("Vendor is invalid for the selected organization.", 400);
     if (!text(vendor.data.address)) return jsonError("Vendor Address is required before creating the Purchase Order.", 400);
@@ -126,7 +129,7 @@ export async function POST(request: Request) {
     const vendorSnapshot = { vendor_name: vendor.data.vendor_name, address: vendor.data.address || null, gstin: primaryGstin.data?.gstin || vendor.data.gstin || null, pan: vendor.data.pan || null, contact_person: contact.data?.contact_name || null, phone: contact.data?.contact_number || null, email: contact.data?.email || null, designation: contact.data?.designation || null };
     const creationRequestId = text(body.creation_request_id) || null;
     if (creationRequestId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(creationRequestId)) return jsonError("Creation request ID is invalid.", 400);
-    const rpcArgs: any = { p_source_type: sourceType, p_organization_id: organizationId, p_company_id: selectedCompanyId, p_site_id: selectedSiteId, p_vendor_id: selectedVendorId, p_vendor_snapshot: vendorSnapshot, p_source_requisition_id: requisitionId, p_source_requisition_number: requisitionNumber, p_items: items, p_fields: { po_date: text(body.po_date), delivery: body.delivery || {}, master_selection: body.master_selection || {}, commercial: { ...(body.commercial || {}), additional_charges: additional.charges, key_terms: keyTerms }, standard_terms: text(body.standard_terms), standard_terms_template_id: text(body.standard_terms_template_id), standard_terms_sections: Array.isArray(body.standard_terms_sections) ? body.standard_terms_sections : [] }, p_actor: actor(auth) };
+    const rpcArgs: any = { p_source_type: sourceType, p_organization_id: organizationId, p_company_id: selectedCompanyId, p_site_id: selectedSiteId, p_vendor_id: selectedVendorId, p_vendor_snapshot: vendorSnapshot, p_source_requisition_id: requisitionId, p_source_requisition_number: requisitionNumber, p_items: items, p_fields: { po_date: text(body.po_date), delivery: body.delivery || {}, master_selection: body.master_selection || {}, commercial: { ...(body.commercial || {}), purpose: recovery.purpose, recovery_work_order_id: recovery.recoveryWorkOrderId, additional_charges: additional.charges, key_terms: keyTerms }, standard_terms: text(body.standard_terms), standard_terms_template_id: text(body.standard_terms_template_id), standard_terms_sections: Array.isArray(body.standard_terms_sections) ? body.standard_terms_sections : [] }, p_actor: actor(auth) };
     const rpcName = creationRequestId ? "create_procurement_purchase_order_draft_idempotent_atomic" : "create_procurement_purchase_order_draft_atomic";
     if (creationRequestId) rpcArgs.p_creation_request_id = creationRequestId;
     const result = await admin.rpc(rpcName, rpcArgs);

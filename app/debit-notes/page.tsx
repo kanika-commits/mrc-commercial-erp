@@ -58,7 +58,9 @@ export default function DebitNotesPage() {
         .from("debit_notes")
         .select(`
           id,
+          organization_id,
           work_order_id,
+          source_purchase_order_id,
           ra_bill_id,
           vendor_id,
           debit_note_number,
@@ -76,7 +78,6 @@ export default function DebitNotesPage() {
           approved_at,
           created_at
         `)
-        .ilike("approval_status", "approved")
         .order("created_at", { ascending: false });
 
       if (noteError) throw noteError;
@@ -165,9 +166,10 @@ export default function DebitNotesPage() {
   const woMap = new Map((workOrders || []).map((wo: any) => [wo.id, wo]));
   const vendorMap = new Map((vendors || []).map((vendor: any) => [vendor.id, vendor]));
 
-  const totalNotes = notes.length;
+  const approvedNotes = notes.filter((note: any) => String(note.approval_status || "").toLowerCase() === "approved");
+  const totalNotes = approvedNotes.length;
 
-  const totalDebitValue = notes.reduce(
+  const totalDebitValue = approvedNotes.reduce(
     (sum: number, note: any) =>
       sum + Number(note.total_amount || note.gross_amount || 0),
     0
@@ -278,6 +280,10 @@ export default function DebitNotesPage() {
 
                     <td className="p-3 font-semibold text-slate-950">
                       {note.debit_note_number}
+                      <div className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-xs ${statusClass(note.approval_status)}`}>
+                        {note.status || note.approval_status || "Unknown"}
+                      </div>
+                      {note.source_purchase_order_id && <div className="mt-1 text-xs text-slate-500">Contractor recovery</div>}
                     </td>
 
                     <td className="p-3">{vendor?.vendor_name || "-"}</td>

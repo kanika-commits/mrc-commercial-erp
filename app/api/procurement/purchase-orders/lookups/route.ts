@@ -16,18 +16,21 @@ export async function GET(request: Request) {
     let sites: any = applyOrganizationAccess(admin.from("sites").select("id,organization_id,company_id,site_name,site_code,location,state,status").eq("status", "active").order("site_name"), auth);
     let vendors: any = applyOrganizationAccess(admin.from("vendors").select("id,organization_id,vendor_name,contractor_type,pan,address,gstin,profile_status,status,is_deleted").eq("status", "active").eq("is_deleted", false).order("vendor_name"), auth);
     let items: any = applyOrganizationAccess(admin.from("procurement_items").select("id,organization_id,item_code,item_name,description,hsn_sac,default_uom_id,default_uom:procurement_uoms(id,uom_code,uom_name)").eq("status", "active").order("item_name"), auth);
-    if (!companies || !sites || !vendors || !items) return NextResponse.json({ companies: [], sites: [], vendors: [], items: [], indents: [] });
+    let workOrders: any = applyOrganizationAccess(admin.from("work_orders").select("id,organization_id,company_id,site_id,wo_number,status,approval_status").eq("status", "active").in("approval_status", ["pending", "approved"]), auth);
+    workOrders = workOrders && applyCompanySiteAccess(workOrders, auth);
+    if (!companies || !sites || !vendors || !items || !workOrders) return NextResponse.json({ companies: [], sites: [], vendors: [], items: [], work_orders: [], indents: [] });
     if (!auth.isGlobalAccess && !(auth.roleCodes || []).includes("platform_owner")) {
       if ((auth.sites || []).length > 0) sites = sites.in("id", auth.sites);
       if ((auth.companies || []).length > 0) companies = companies.in("id", auth.companies);
     }
-    const [companyResult, siteResult, vendorResult, itemResult] = await Promise.all([
+    const [companyResult, siteResult, vendorResult, itemResult, workOrderResult] = await Promise.all([
       companies,
       sites,
       vendors,
       items,
+      workOrders,
     ]);
-    for (const result of [companyResult, siteResult, vendorResult, itemResult]) if (result.error) throw result.error;
+    for (const result of [companyResult, siteResult, vendorResult, itemResult, workOrderResult]) if (result.error) throw result.error;
 
     const vendorIds = (vendorResult.data || []).map((vendor: any) => vendor.id);
     const vendorIdBatches = Array.from({ length: Math.ceil(vendorIds.length / 100) }, (_, index) => vendorIds.slice(index * 100, (index + 1) * 100));
@@ -93,11 +96,11 @@ export async function GET(request: Request) {
     });
     let requisitions: any = applyOrganizationAccess(admin.from("purchase_requisitions").select("id,requisition_number,requisition_date,organization_id,company_id,site_id,items:purchase_requisition_items(line_key,item_code_snapshot,item_name_snapshot,specification,uom_snapshot,quantity,required_by_date,sort_order)").eq("procurement_flow", "billing_engineer").in("status", ["approved", "pending_approval"]), auth);
     requisitions = requisitions && applyCompanySiteAccess(requisitions, auth);
-    if (!requisitions) return NextResponse.json({ companies: companyResult.data || [], sites: siteResult.data || [], vendors: vendorOptions, items: itemResult.data || [], indents: [], gst_billing_masters: gstBillingMasters, billing_addresses: billingAddresses, terms_templates: termsTemplates, delivery_locations: deliveryLocations, site_contacts: siteContacts, address_contacts: addressContacts, letterheads });
+    if (!requisitions) return NextResponse.json({ companies: companyResult.data || [], sites: siteResult.data || [], vendors: vendorOptions, items: itemResult.data || [], work_orders: workOrderResult.data || [], indents: [], gst_billing_masters: gstBillingMasters, billing_addresses: billingAddresses, terms_templates: termsTemplates, delivery_locations: deliveryLocations, site_contacts: siteContacts, address_contacts: addressContacts, letterheads });
     const requisitionResult = await requisitions; if (requisitionResult.error) throw requisitionResult.error;
     const rows = requisitionResult.data || [];
     const ids = rows.map((row: any) => row.id);
-    if (!ids.length) return NextResponse.json({ companies: companyResult.data || [], sites: siteResult.data || [], vendors: vendorOptions, items: itemResult.data || [], indents: [], gst_billing_masters: gstBillingMasters, billing_addresses: billingAddresses, terms_templates: termsTemplates, delivery_locations: deliveryLocations, site_contacts: siteContacts, address_contacts: addressContacts, letterheads });
+    if (!ids.length) return NextResponse.json({ companies: companyResult.data || [], sites: siteResult.data || [], vendors: vendorOptions, items: itemResult.data || [], work_orders: workOrderResult.data || [], indents: [], gst_billing_masters: gstBillingMasters, billing_addresses: billingAddresses, terms_templates: termsTemplates, delivery_locations: deliveryLocations, site_contacts: siteContacts, address_contacts: addressContacts, letterheads });
     const [stateResult, orderedResult] = await Promise.all([
       admin.from("purchase_requisition_line_approval_state").select("requisition_id,requisition_item_line_key,approval_status,current_approval_layer").in("requisition_id", ids),
       admin.from("procurement_purchase_order_items").select("source_requisition_id,source_requisition_line_key,quantity,purchase_order:procurement_purchase_orders!inner(status)").in("source_requisition_id", ids),
@@ -107,7 +110,7 @@ export async function GET(request: Request) {
     const consumed = new Map<string, number>();
     for (const row of orderedResult.data || []) if (!['rejected', 'cancelled'].includes(row.purchase_order?.[0]?.status)) consumed.set(`${row.source_requisition_id}:${row.source_requisition_line_key}`, (consumed.get(`${row.source_requisition_id}:${row.source_requisition_line_key}`) || 0) + Number(row.quantity || 0));
     const indents = rows.flatMap((row: any) => (row.items || []).filter((item: any) => eligible.has(`${row.id}:${item.line_key}`)).map((item: any) => ({ requisition_id: row.id, requisition_number: row.requisition_number, requisition_date: row.requisition_date, company_id: row.company_id, site_id: row.site_id, ...item, ordered_quantity: consumed.get(`${row.id}:${item.line_key}`) || 0, remaining_quantity: Math.max(0, Number(item.quantity || 0) - (consumed.get(`${row.id}:${item.line_key}`) || 0)) })).filter((item: any) => item.remaining_quantity > 0));
-    return NextResponse.json({ companies: companyResult.data || [], sites: siteResult.data || [], vendors: vendorOptions, items: itemResult.data || [], indents, gst_billing_masters: gstBillingMasters, billing_addresses: billingAddresses, terms_templates: termsTemplates, delivery_locations: deliveryLocations, site_contacts: siteContacts, address_contacts: addressContacts, letterheads });
+    return NextResponse.json({ companies: companyResult.data || [], sites: siteResult.data || [], vendors: vendorOptions, items: itemResult.data || [], work_orders: workOrderResult.data || [], indents, gst_billing_masters: gstBillingMasters, billing_addresses: billingAddresses, terms_templates: termsTemplates, delivery_locations: deliveryLocations, site_contacts: siteContacts, address_contacts: addressContacts, letterheads });
   } catch (error: any) {
     return jsonError(error.message || "Failed to load Purchase Order lookups.", 500);
   }
