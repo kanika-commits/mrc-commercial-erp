@@ -1,0 +1,10 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+const route = fs.readFileSync("app/api/notifications/route.ts", "utf8");
+const migration = fs.readFileSync("supabase/migrations/202610170003_user_notifications_lifecycle.sql", "utf8");
+assert.match(migration, /dismissed_at timestamptz/);
+for (const type of ["work_order_submitted_for_approval", "contractor_recovery_debit_note", "pilot_ra_bill_over_quantity_exception", "labour_attendance_sent_back"]) assert.match(route, new RegExp(type));
+assert.match(route, /Notification: linked record deleted/);
+assert.match(route, /dismissed_at/);
+assert.match(route, /recipient_user_id.*auth\.user\.id/);
+console.log("Notification lifecycle contract passed");
