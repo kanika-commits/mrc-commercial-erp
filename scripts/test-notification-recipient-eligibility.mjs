@@ -1,0 +1,25 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const resolver = fs.readFileSync("lib/serverNotificationRecipients.ts", "utf8");
+const labour = fs.readFileSync("app/api/labour/approvals/route.ts", "utf8");
+const notifications = fs.readFileSync("app/api/notifications/route.ts", "utf8");
+const workOrders = fs.readFileSync("app/api/work-orders/route.ts", "utf8");
+const allSource = [resolver, labour, notifications, workOrders].join("\n");
+
+assert.match(resolver, /user_permissions/);
+assert.match(resolver, /role_permissions/);
+assert.match(resolver, /organization_id/);
+assert.match(resolver, /company_id/);
+assert.match(resolver, /site_id/);
+assert.match(resolver, /platform_owner/);
+assert.match(labour, /resolveNotificationRecipients/);
+assert.match(labour, /moduleCode: "labour_daily_submission"/);
+assert.match(notifications, /loadPermissionContext/);
+assert.doesNotMatch(notifications, /requireAnyPermission/);
+assert.match(resolver, /insertNotificationOnce/);
+assert.match(allSource, /moduleCode: "wo_approval"/);
+assert.match(allSource, /moduleCode: "labour_daily_submission"/);
+assert.match(resolver, /organization_id: notification\.organization_id/);
+assert.match(resolver, /recipient_user_id: notification\.recipient_user_id/);
+console.log("notification recipient eligibility contract: ok");
