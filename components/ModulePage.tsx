@@ -275,6 +275,10 @@ export default function ModulePage({
       moduleRows.push({ id: "purchase-purchase-order-approvals", module_group: "purchase", module_code: "procurement_purchase_orders", module_name: "Purchase Order Approval", route: "/purchase/purchase-order-approvals", sort_order: 41 });
       moduleRows.sort((first, second) => first.sort_order - second.sort_order);
     }
+    if (groupCode === "project_management" && (globalAccess || can(permissions, "ra_bills", "view")) && !moduleRows.some((page) => page.route === "/forms/pilot/ra-bills")) {
+      moduleRows.push({ id: "project-pilot-ra-bills", module_group: "project_management", module_code: "ra_bills", module_name: "RA Bills (Pilot)", route: "/forms/pilot/ra-bills", sort_order: 3.1 });
+      moduleRows.sort((first, second) => first.sort_order - second.sort_order);
+    }
     if (groupCode === "store_management" && (globalAccess || can(permissions, "procurement_goods_receipts", "view")) && !moduleRows.some((page) => page.route === "/store/goods-receipts")) {
       moduleRows.push({ id: "store-goods-receipts", module_group: "store_management", module_code: "procurement_goods_receipts", module_name: "Purchase Order Tracking", route: "/store/goods-receipts", sort_order: 7 });
       moduleRows.sort((first, second) => first.sort_order - second.sort_order);

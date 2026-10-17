@@ -1,0 +1,23 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const route = fs.readFileSync("app/api/work-orders/pilot-ra-bills/[id]/detail/route.ts", "utf8");
+const dashboard = fs.readFileSync("app/forms/pilot/ra-bills/page.tsx", "utf8");
+const detailPage = fs.readFileSync("app/forms/pilot/ra-bills/[id]/page.tsx", "utf8");
+assert.match(dashboard, /href=\{\"\/forms\/pilot\/ra-bills\/\"\+b\.id\}/);
+assert.match(route, /\.eq\("id", id\)\.in\("status", \["draft", "submitted", "approved", "rejected", "sent_back"\]\)/);
+assert.match(route, /applyOrganizationScope\(query, scope\)/);
+assert.match(route, /from\("work_order_pilot_ra_bill_deletion_audit"\)/);
+assert.match(route, /\.eq\("ra_bill_id", id\)\.eq\("organization_id", bill\.organization_id\)/);
+assert.doesNotMatch(route, /deletion_audit:work_order_pilot_ra_bill_deletion_audit/);
+assert.match(route, /deletion_audit: auditResult\.data \|\| null/);
+assert.match(route, /bill\.status !== "draft"/);
+assert.match(route, /historyResult = await admin\.from\("work_order_pilot_ra_bills"\)/);
+assert.doesNotMatch(route, /historyResult[\s\S]{0,300}neq\("status", "rejected"\)/);
+assert.match(route, /deletion_audit: auditResult\.data \|\| null/);
+assert.match(route, /if \(!result\.data\) return NextResponse\.json\(\{ error: "Pilot RA Bill not found\." \}, \{ status: 404 \}\)/);
+assert.match(route, /work_order_pilot_ra_bill_review_cycles/);
+assert.doesNotMatch(detailPage, /if \(!bill \|\| !cycle\)/);
+assert.match(detailPage, /if \(!bill\)/);
+assert.match(detailPage, /cycle\?\.status/);
+console.log("Pilot RA Bill detail route contract passed");

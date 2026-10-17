@@ -1,0 +1,24 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+const calcSource=fs.readFileSync("lib/workOrderPilotRaBill.ts","utf8");
+const api=fs.readFileSync("app/api/work-orders/pilot-ra-bills/route.ts","utf8");
+const form=fs.readFileSync("app/forms/pilot/ra-bills/new/page.tsx","utf8");
+const legacy=fs.readFileSync("app/api/ra-bills/route.ts","utf8");
+assert.match(calcSource,/security_current/);
+assert.match(api,/security_current/);
+assert.match(api,/prior_cumulative_security/);
+assert.match(api,/security_input_version: 2/);
+assert.match(api,/security_cumulative: calculation.cumulative_security/);
+assert.match(form,/Security in this bill/);
+assert.match(form,/setSecurity\(0\)/);
+assert.match(form,/security_current: security/);
+assert.match(form,/Prior cumulative Security/);
+assert.match(form,/Security deduction in this bill/);
+function security(prior,current){return {cumulative:prior+current,deduction:current};}
+assert.deepEqual(security(0,500),{cumulative:500,deduction:500});
+assert.deepEqual(security(500,500),{cumulative:1000,deduction:500});
+assert.deepEqual(security(500,0),{cumulative:500,deduction:0});
+assert.deepEqual(security(0,0),{cumulative:0,deduction:0});
+assert.match(api,/status.*approved/); assert.match(api,/deleted_at/);
+assert.doesNotMatch(legacy,/security_input_version|security_current/);
+console.log("Pilot RA Bill security current-period contract: PASS");

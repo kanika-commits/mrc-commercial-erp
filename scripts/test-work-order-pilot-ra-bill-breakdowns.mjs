@@ -1,0 +1,13 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+const page = fs.readFileSync("app/forms/pilot/ra-bills/new/page.tsx", "utf8");
+const route = fs.readFileSync("app/api/work-orders/pilot-ra-bills/route.ts", "utf8");
+assert.match(page, /Add breakdown/); assert.match(page, /removeChild/); assert.match(page, /editChild/); assert.match(page, /breakdowns\.length \+ 1/); assert.match(page, /cumulative quantity/); assert.match(page, /release percent/); assert.match(page, /Work Done till Previous Bill/); assert.match(page, /Adjusted Net Payable/);
+assert.match(page, /disabled=\{currentQty\(row\) <= 0\}/);
+assert.match(page, /disabled=\{currentChildQty\(child\) <= 0\}/);
+assert.match(page, /onFocus=\{\(e\) => e\.currentTarget\.select\(\)\}/);
+assert.match(page, /rowReleaseError\(row\)/);
+assert.match(page, /childReleaseError\(row, child\)/);
+assert.match(page, /validationErrors/);
+assert.match(route, /Array\.isArray\(submitted\?\.breakdowns\)/); assert.match(route, /duplicate breakdown/i); assert.match(route, /child\.cumulative_qty/); assert.match(route, /child\.release_percent/); assert.match(route, /breakdowns\.length \? undefined/);
+console.log("Pilot RA Bill breakdown add/edit/remove, numbering, child inputs, and server validation contract passed.");

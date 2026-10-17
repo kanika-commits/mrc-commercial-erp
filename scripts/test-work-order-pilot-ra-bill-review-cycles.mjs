@@ -1,0 +1,10 @@
+import fs from "node:fs";
+const approval = fs.readFileSync("app/api/work-orders/pilot-ra-bills/approvals/[id]/route.ts", "utf8");
+const attachments = fs.readFileSync("app/api/work-orders/pilot-ra-bills/[id]/attachments/route.ts", "utf8");
+const migration = fs.readFileSync("supabase/migrations/202610100003_work_order_pilot_ra_bill_review_cycles.sql", "utf8");
+const submit = fs.readFileSync("app/api/work-orders/pilot-ra-bills/[id]/route.ts", "utf8");
+for (const token of ["send_back", "A send-back reason is required", "send_back_work_order_pilot_ra_bill", "approve_work_order_pilot_ra_bill_cycle", "applyOrganizationScope", "auth.user.id"]) if (!approval.includes(token)) throw new Error(`Missing Pilot review safeguard: ${token}`);
+for (const token of ["sent_back", "status", "draft"]) if (!attachments.includes(token)) throw new Error(`Missing sent-back attachment lifecycle rule: ${token}`);
+for (const token of ["cycle_number", "attachment_manifest", "work_order_pilot_ra_bill_review_audit", "send_back_reason", "unique (ra_bill_id, cycle_number)"]) if (!migration.includes(token)) throw new Error(`Missing immutable review-cycle schema: ${token}`);
+for (const token of ["submit_work_order_pilot_ra_bill_with_cycle", "p_manifest_sha256", "p_actor"]) if (!submit.includes(token)) throw new Error(`Submission is not cycle-bound: ${token}`);
+console.log("Pilot RA Bill review-cycle contract passed");

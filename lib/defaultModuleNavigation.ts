@@ -64,6 +64,7 @@ const approvedNavigationRoutes: Record<string, string> = {
   "/work-orders": "purchase",
   "/approvals/work-orders": "purchase",
   "/ra-bills": "project_management",
+  "/forms/pilot/ra-bills": "project_management",
   "/debit-notes": "project_management",
   "/approvals": "project_management",
   "/invoices": "accounts",
@@ -421,6 +422,15 @@ export const DEFAULT_MODULE_NAVIGATION = filterVisibleModuleNavigation({
       module_name: "RA Bills",
       route: "/ra-bills",
       sort_order: 3,
+      status: "active",
+    },
+    {
+      id: "default-pilot-ra-bills",
+      module_group: "project_management",
+      module_code: "ra_bills",
+      module_name: "RA Bills (Pilot)",
+      route: "/forms/pilot/ra-bills",
+      sort_order: 3.1,
       status: "active",
     },
     {

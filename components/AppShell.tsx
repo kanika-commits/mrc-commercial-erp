@@ -263,6 +263,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         "Project Management",
         [
           navLeaf("RA Bills", "ra_bills", "/ra-bills"),
+          navLeaf("RA Bills (Pilot)", "ra_bills", "/forms/pilot/ra-bills"),
           navLeaf("Debit Notes", "debit_notes", "/debit-notes"),
           navLeaf("Approvals", "ra_approval", "/approvals"),
         ],
