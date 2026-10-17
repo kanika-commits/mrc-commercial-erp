@@ -14,4 +14,4 @@ assert.match(modulePage, /can\(permissions, "work_orders", "add"\)/);
 assert.match(workOrders, /New Work Order PDF Pilot/);
 assert.match(workOrders, /pilotOnly \? "\/work-orders\/new\/structured" : "\/work-orders\/new"/);
 
-console.log("Pilot Work Order navigation contract: PASS");
+console.log("Work Order Form navigation contract: PASS");

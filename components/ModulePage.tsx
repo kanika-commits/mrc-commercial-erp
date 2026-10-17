@@ -276,7 +276,7 @@ export default function ModulePage({
       moduleRows.sort((first, second) => first.sort_order - second.sort_order);
     }
     if (groupCode === "project_management" && (globalAccess || can(permissions, "ra_bills", "view")) && !moduleRows.some((page) => page.route === "/forms/pilot/ra-bills")) {
-      moduleRows.push({ id: "project-pilot-ra-bills", module_group: "project_management", module_code: "ra_bills", module_name: "RA Bills (Pilot)", route: "/forms/pilot/ra-bills", sort_order: 3.1 });
+      moduleRows.push({ id: "project-pilot-ra-bills", module_group: "project_management", module_code: "ra_bills", module_name: "RA Bills Form", route: "/forms/pilot/ra-bills", sort_order: 3.1 });
       moduleRows.sort((first, second) => first.sort_order - second.sort_order);
     }
     if (groupCode === "project_management" && (globalAccess || can(permissions, "credit_notes", "view")) && !moduleRows.some((page) => page.route === "/credit-notes")) {

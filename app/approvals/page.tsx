@@ -131,7 +131,7 @@ export default function ApprovalsPage() {
     if (canViewPilotApprovals) {
       const response = await fetch("/api/work-orders/pilot-ra-bills/approvals", { headers: { Authorization: `Bearer ${token}` } });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) showMessage("error", result.error || "Failed to load Pilot RA Bill approvals.");
+      if (!response.ok) showMessage("error", result.error || "Failed to load RA Bills Form approvals.");
       else {
         const pilotRows = result.bills || [];
         setPilotBills(pilotRows);
@@ -139,7 +139,7 @@ export default function ApprovalsPage() {
           try {
             const detail = await fetch(`/api/work-orders/pilot-ra-bills/approvals/${bill.id}`, { headers: { Authorization: `Bearer ${token}` } });
             const result = await detail.json().catch(() => ({}));
-            return [bill.id, detail.ok && Array.isArray(result.attachments) ? [{ id: `pdf-${bill.id}`, kind: "reviewed_pdf", file_name: "Reviewed Pilot RA Bill PDF" }, ...result.attachments] : []] as const;
+            return [bill.id, detail.ok && Array.isArray(result.attachments) ? [{ id: `pdf-${bill.id}`, kind: "reviewed_pdf", file_name: "Reviewed RA Bills Form PDF" }, ...result.attachments] : []] as const;
           } catch { return [bill.id, []] as const; }
         }));
         setPilotAttachments(Object.fromEntries(attachmentResults));
@@ -362,17 +362,17 @@ export default function ApprovalsPage() {
     if (action === "reject" && !reason) { showMessage("error", "A rejection reason is required."); setPilotSavingId(""); return; }
     const response = await fetch(`/api/work-orders/pilot-ra-bills/approvals/${billId}`, { method: "POST", headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" }, body: JSON.stringify({ action, reason }) });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok) showMessage("error", result.error || "Could not review Pilot RA Bill.");
+    if (!response.ok) showMessage("error", result.error || "Could not review RA Bills Form.");
     else if (action === "approve" && result.filing_status === "pending") {
       setPilotBills((current) => current.filter((bill) => bill.id !== billId));
       showMessage("success", "Approved");
       await updatePilotStatus(billId, "file_drive");
     } else if (result.filing_failed) {
       setPilotDriveRetryId(billId);
-      showMessage("error", result.error || "Pilot RA Bill approved, but Drive filing failed; retry filing.");
+      showMessage("error", result.error || "RA Bills Form approved, but Drive filing failed; retry filing.");
     } else {
       setPilotBills((current) => current.filter((bill) => bill.id !== billId));
-      showMessage("success", action === "approve" ? "Approved" : action === "reject" ? "Pilot RA Bill rejected." : "Pilot RA Bill filed to Drive.");
+      showMessage("success", action === "approve" ? "Approved" : action === "reject" ? "RA Bills Form rejected." : "RA Bills Form filed to Drive.");
       if (action === "file_drive") setPilotDriveRetryId("");
     }
     setPilotSavingId("");
@@ -386,7 +386,7 @@ export default function ApprovalsPage() {
       const response = await fetch(`/api/work-orders/pilot-ra-bills/approvals/${billId}`, { headers: { Authorization: `Bearer ${session.access_token}` } });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || "Could not load Pilot attachments.");
-      setPilotAttachments((current) => ({ ...current, [billId]: [{ id: `pdf-${billId}`, kind: "reviewed_pdf", file_name: "Reviewed Pilot RA Bill PDF" }, ...(result.attachments || [])] }));
+      setPilotAttachments((current) => ({ ...current, [billId]: [{ id: `pdf-${billId}`, kind: "reviewed_pdf", file_name: "Reviewed RA Bills Form PDF" }, ...(result.attachments || [])] }));
     } catch (error: any) { showMessage("error", error.message || "Could not load Pilot attachments."); }
     finally { setPilotAttachmentsLoading(""); }
   }
@@ -938,7 +938,7 @@ async function updateDebitNoteStatus(
         </div>
       </div>
 
-      {pilotPdfLoading && <p className="text-sm text-slate-500">Loading reviewed Pilot RA Bill PDF…</p>}
+      {pilotPdfLoading && <p className="text-sm text-slate-500">Loading reviewed RA Bills Form PDF…</p>}
 
     </section>
   );
