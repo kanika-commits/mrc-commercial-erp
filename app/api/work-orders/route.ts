@@ -7,6 +7,7 @@ import { recordAuditEvent } from "@/lib/auditEvent";
 import { requirePermission } from "@/lib/serverPermissions";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { createWorkOrderDriveFolder } from "@/src/lib/googleDrive";
+import { insertNotificationOnce, resolveNotificationRecipients } from "@/lib/serverNotificationRecipients";
 
 const MODULE_CODE = "work_orders";
 const DOCUMENT_BUCKET = "work-order-documents";
@@ -538,6 +539,28 @@ export async function POST(request: Request) {
 
       if (!document?.file_name || !document?.file_path) {
         throw new Error("Work Order file metadata was not saved.");
+      }
+
+      const approvalRecipients = await resolveNotificationRecipients(admin, {
+        organizationId,
+        companyId,
+        siteId,
+        moduleCode: "wo_approval",
+        actionCode: "approve",
+      });
+      for (const recipientUserId of approvalRecipients) {
+        await insertNotificationOnce(admin, {
+          organization_id: organizationId,
+          recipient_user_id: recipientUserId,
+          notification_type: "work_order_submitted_for_approval",
+          title: "Work Order submitted for approval",
+          message: `Work Order ${woNumber} is pending approval.`,
+          target_url: `/work-orders/${workOrder.id}`,
+          related_entity_type: "work_order",
+          related_entity_id: workOrder.id,
+          created_by: auth.user.id,
+          created_by_name: userName,
+        });
       }
 
       try {
