@@ -13,7 +13,7 @@ export async function resolveNotificationRecipients(admin: AdminClient, options:
   const assignments = await admin.from("user_access_assignments").select("user_id,company_id,site_id").eq("organization_id", options.organizationId);
   if (assignments.error) throw assignments.error;
   const rows = assignments.data || [];
-  const organizationRoles = await admin.from("user_roles").select("user_id,role_id").eq("organization_id", options.organizationId);
+  const organizationRoles = await admin.from("user_roles").select("user_id,role_id");
   if (organizationRoles.error) throw organizationRoles.error;
   const userIds = [...new Set([...rows.map((row: any) => row.user_id), ...(organizationRoles.data || []).map((row: any) => row.user_id)].filter(Boolean))];
   if (!userIds.length) return [];
