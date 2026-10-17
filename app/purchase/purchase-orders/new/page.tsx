@@ -126,7 +126,7 @@ export default function NewPurchaseOrderPage() {
       revisionIdentityRef.current = { source: nextSource, companyId: po.company_id || "", siteId: po.site_id || "", vendorId: po.vendor_id || "", requisitionId: po.source_requisition_id || "" };
       setSource(nextSource);
       setCompanyId(po.company_id || ""); setSiteId(po.site_id || ""); setVendorId(po.vendor_id || ""); setPoDate(po.po_date || today());
-      setDelivery(po.delivery_snapshot || {}); setCommercial(po.commercial_snapshot || {});
+      setDelivery(po.delivery_snapshot || {}); setCommercial({ ...(po.commercial_snapshot || {}), purpose: po.purpose || po.commercial_snapshot?.purpose || "General Purchase", recovery_work_order_id: po.recovery_work_order_id || po.commercial_snapshot?.recovery_work_order_id || null });
       setDeliveryLocationId(po.delivery_snapshot?.master_selection?.delivery_location_id || po.delivery_snapshot?.delivery_location_id || "");
       setGstRegistrationId(po.delivery_snapshot?.master_selection?.gst_registration_id || po.delivery_snapshot?.gst_registration_id || "");
       setBillingContactId(po.delivery_snapshot?.master_selection?.billing_contact_id || po.delivery_snapshot?.billing_contact?.site_contact_id || po.delivery_snapshot?.master_selection?.site_contact_id || "");

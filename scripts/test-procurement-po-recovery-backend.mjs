@@ -28,6 +28,8 @@ assert.match(core, /approval_status: "Pending"/);
 assert.match(createRoute, /validatePurchaseOrderPurpose/);
 assert.match(createRoute, /validateRecoveryWorkOrder/);
 assert.match(createRoute, /recoveryWorkOrderId!, selectedVendorId/);
+assert.match(createRoute, /update\(\{ purpose: recovery\.purpose, recovery_work_order_id: recovery\.recoveryWorkOrderId \}\)/);
+assert.match(createRoute, /\.eq\("id", createdId\)/);
 assert.match(poRoute, /recoveryFields/);
 assert.match(poRoute, /recoveryWorkOrderId!, recoveryVendorId/);
 assert.match(poRoute, /action === "submit" \|\| action === "approve"/);

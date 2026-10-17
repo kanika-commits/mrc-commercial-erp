@@ -140,6 +140,13 @@ export async function POST(request: Request) {
       throw result.error;
     }
     const createdId = result.data?.purchase_order_id;
+    if (createdId) {
+      const persistedRecoveryFields = await admin.from("procurement_purchase_orders")
+        .update({ purpose: recovery.purpose, recovery_work_order_id: recovery.recoveryWorkOrderId })
+        .eq("id", createdId)
+        .eq("organization_id", organizationId);
+      if (persistedRecoveryFields.error) throw persistedRecoveryFields.error;
+    }
     return NextResponse.json({ result: result.data }, { status: 201 });
   } catch (error: any) { return jsonError(error.message || "Failed to create Purchase Order.", 500); }
 }
