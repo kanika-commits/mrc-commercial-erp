@@ -157,7 +157,7 @@ export default function PurchaseOrderDetailPage() {
 
   async function action(actionName: string, note?: string) {
     setSaving(true);
-    try { await apiFetch(`/api/procurement/purchase-orders/${id}`, { method: "POST", body: JSON.stringify({ action: actionName, note }) }); await load(); setReasonAction(null); setReason(""); if (actionName === "submit") { router.push("/purchase/purchase-orders?message=submitted"); return; } setMessage(`Purchase Order ${actionName.replace(/_/g, " ")} successful.`); }
+    try { await apiFetch(`/api/procurement/purchase-orders/${id}`, { method: "POST", body: JSON.stringify({ action: actionName, note }) }); await load(); setReasonAction(null); setReason(""); if (actionName === "submit") { router.push("/purchase/purchase-orders?message=submitted"); return; } if (actionName === "approve") { router.push("/purchase/purchase-orders?message=approved"); return; } setMessage(`Purchase Order ${actionName.replace(/_/g, " ")} successful.`); }
     catch (error: any) { setMessage(error.message); }
     finally { setSaving(false); }
   }
