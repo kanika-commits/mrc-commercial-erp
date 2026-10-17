@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { PDFDocument } from "pdf-lib";
 import { requirePermission } from "@/lib/serverPermissions";
+import { loadApprovalScope, loadAllowedWorkOrderIds, applyWorkOrderScope } from "@/app/api/approvals/_shared";
+import { applyOrganizationScope } from "@/lib/serverOrganizationScope";
 import { renderPilotRevisionPdf } from "@/lib/workOrderPilotRevisionPdf.server";
-import { isRevisionSchemaUnavailable } from "@/lib/workOrderPilotRevisions.server";
+import { isRevisionSchemaUnavailable, sha256 } from "@/lib/workOrderPilotRevisions.server";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string; revisionId: string }> }) {
   try {
@@ -10,18 +13,33 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if ("response" in auth) return auth.response;
     const { id, revisionId } = await params;
     const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-    const { data: revision, error } = await admin.from("work_order_pilot_revisions").select("*, work_orders!inner(creation_request_id,organization_id,company_id,site_id,wo_number,wo_date,created_by,created_by_name,created_by_email,created_at,work_order_key_terms,standard_terms_snapshot,total_basic_amount,total_gst_amount,total_amount,delivery_snapshot,company:companies(company_name),site:sites(site_name),letterhead_snapshot)").eq("id", revisionId).eq("work_order_id", id).maybeSingle();
+    const { organizationScope, assignments } = await loadApprovalScope(admin, auth);
+    let revisionQuery = admin.from("work_order_pilot_revisions").select("*, work_orders!inner(creation_request_id,organization_id,company_id,site_id,wo_number,wo_date,created_by,created_by_name,created_by_email,created_at,work_order_key_terms,standard_terms_snapshot,total_basic_amount,total_gst_amount,total_amount,delivery_snapshot,company:companies(company_name),site:sites(site_name),letterhead_snapshot)").eq("id", revisionId).eq("work_order_id", id);
+    revisionQuery = applyOrganizationScope(revisionQuery, organizationScope);
+    if (!revisionQuery) return NextResponse.json({ error: "Pilot revision not found." }, { status: 404 });
+    const allowedWorkOrderIds = await loadAllowedWorkOrderIds(admin, organizationScope, assignments);
+    revisionQuery = applyWorkOrderScope(revisionQuery, allowedWorkOrderIds);
+    if (!revisionQuery) return NextResponse.json({ error: "Pilot revision not found." }, { status: 404 });
+    const { data: revision, error } = await revisionQuery.maybeSingle();
     if (error) throw error;
     if (!revision || !revision.work_orders?.creation_request_id) return NextResponse.json({ error: "Pilot revision not found." }, { status: 404 });
     let bytes: Uint8Array;
-    if (revision.status !== "draft") {
-      const { data: artifact, error: artifactError } = await admin.from("work_order_pilot_revision_artifacts").select("storage_bucket,storage_path").eq("revision_id", revisionId).maybeSingle();
-      if (artifactError) throw artifactError;
-      if (!artifact) return NextResponse.json({ error: "The submitted Pilot revision PDF artifact is missing." }, { status: 409 });
+    const { data: artifact, error: artifactError } = await admin.from("work_order_pilot_revision_artifacts").select("storage_bucket,storage_path,sha256,byte_length,page_count").eq("revision_id", revisionId).maybeSingle();
+    if (artifactError) throw artifactError;
+    if (artifact && revision.status !== "draft") {
       const stored = await admin.storage.from(artifact.storage_bucket).download(artifact.storage_path);
       if (stored.error || !stored.data) return NextResponse.json({ error: "The submitted Pilot revision PDF artifact could not be loaded." }, { status: 409 });
       bytes = new Uint8Array(await stored.data.arrayBuffer());
+      const validHash = sha256(bytes) === artifact.sha256;
+      const validLength = bytes.length === Number(artifact.byte_length);
+      let validPages = true;
+      if (validHash && validLength) {
+        const verifiedPdf = await PDFDocument.load(bytes);
+        validPages = verifiedPdf.getPageCount() === Number(artifact.page_count);
+      }
+      if (!validHash || !validLength || !validPages) return NextResponse.json({ error: "The reviewed Pilot revision PDF artifact failed integrity verification. Return to edit and generate a fresh review." }, { status: 409 });
     } else {
+      if (revision.status !== "draft") return NextResponse.json({ error: "The submitted Pilot revision PDF artifact is missing." }, { status: 409 });
       const [{ data: predecessor }, { data: vendorLink, error: vendorLinkError }, { data: canonicalItems, error: canonicalItemsError }] = await Promise.all([
         revision.predecessor_revision_id ? admin.from("work_order_pilot_revisions").select("snapshot").eq("id", revision.predecessor_revision_id).maybeSingle() : Promise.resolve({ data: null }),
         admin.from("work_order_vendors").select("vendor_id,vendor_role").eq("work_order_id", id).eq("is_primary", true).maybeSingle(),

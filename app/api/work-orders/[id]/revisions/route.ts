@@ -28,6 +28,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (String(loaded.data.approval_status).toLowerCase() !== "approved") return NextResponse.json({ error: "Only an approved Pilot Work Order can be revised." }, { status: 409 });
     const body = await request.json().catch(() => ({})); const applicableDate = String(body.applicable_date || "").trim(); const requestId = String(body.creation_request_id || "").trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(applicableDate) || !requestId) return NextResponse.json({ error: "Applicable date and idempotency key are required." }, { status: 400 });
+    const { error: effectiveDateError } = await loaded.db.rpc("validate_work_order_pilot_revision_effective_date", { p_work_order_id: id, p_applicable_date: applicableDate });
+    if (effectiveDateError) return NextResponse.json({ error: effectiveDateError.message }, { status: 409 });
     const { data: items, error: itemsError } = await loaded.db.from("work_order_items").select("*").eq("work_order_id", id).order("sort_order"); if (itemsError) throw itemsError;
     const snapshot = body.snapshot || buildRevisionSnapshot(loaded.data, items || []); const digest = sha256(Buffer.from(JSON.stringify(snapshot)));
     const { data: existing } = await loaded.db.from("work_order_pilot_revisions").select("*").eq("work_order_id", id).eq("creation_request_id", requestId).maybeSingle(); if (existing) return NextResponse.json({ revision: existing, idempotent: true });
