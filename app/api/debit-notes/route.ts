@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import {
-  requireDeletePermission,
-} from "@/lib/serverDeleteAudit";
+import { requireDeletePermission } from "@/lib/serverDeleteAudit";
 import { recordAuditEvent } from "@/lib/auditEvent";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { uploadDriveFile } from "@/src/lib/googleDrive";
@@ -133,7 +131,7 @@ async function readApprovalAction(request: Request) {
   const body = await request.json().catch(() => ({}));
   const action = String(body.action || body.approval_status || "").trim();
   const rejectionReason = String(
-    body.rejection_reason || body.rejectionReason || ""
+    body.rejection_reason || body.rejectionReason || "",
   ).trim();
 
   return { action, rejectionReason };
@@ -150,14 +148,14 @@ async function readDeletionReason(request: Request) {
   if (contentType.includes("multipart/form-data")) {
     const formData = await request.formData();
     return String(
-      formData.get("deletion_reason") || formData.get("deletionReason") || ""
+      formData.get("deletion_reason") || formData.get("deletionReason") || "",
     ).trim();
   }
 
   if (contentType.includes("application/x-www-form-urlencoded")) {
     const formData = await request.formData();
     return String(
-      formData.get("deletion_reason") || formData.get("deletionReason") || ""
+      formData.get("deletion_reason") || formData.get("deletionReason") || "",
     ).trim();
   }
 
@@ -190,7 +188,7 @@ async function countDirectLinks(
   admin: ReturnType<typeof adminClient>,
   table: string,
   column: string,
-  id: string
+  id: string,
 ) {
   const { count, error } = await admin
     .from(table)
@@ -208,7 +206,7 @@ async function countDirectLinks(
 async function cleanupDebitNote(
   admin: ReturnType<typeof adminClient>,
   debitNoteId?: string,
-  uploadedPaths: string[] = []
+  uploadedPaths: string[] = [],
 ) {
   if (uploadedPaths.length > 0) {
     await admin.storage.from(DOCUMENT_BUCKET).remove(uploadedPaths);
@@ -236,7 +234,7 @@ export async function POST(request: Request) {
     let vendorId = String(formData.get("vendor_id") || "").trim();
     const raBillId = String(formData.get("ra_bill_id") || "").trim();
     const debitNoteNumber = String(
-      formData.get("debit_note_number") || ""
+      formData.get("debit_note_number") || "",
     ).trim();
     const debitNoteDate = String(formData.get("debit_note_date") || "").trim();
     const debitNoteType = String(formData.get("debit_note_type") || "").trim();
@@ -249,42 +247,42 @@ export async function POST(request: Request) {
     if (!workOrderId) {
       return NextResponse.json(
         { error: "Work Order is required." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (!debitNoteNumber) {
       return NextResponse.json(
         { error: "Debit Note Number is required." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (!debitNoteDate) {
       return NextResponse.json(
         { error: "Debit Note Date is required." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (!debitNoteType) {
       return NextResponse.json(
         { error: "Debit Note Type is required." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (!Number.isFinite(grossAmount) || grossAmount <= 0) {
       return NextResponse.json(
         { error: "Gross amount is required." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (!reason) {
       return NextResponse.json(
         { error: "Reason is required." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -292,7 +290,9 @@ export async function POST(request: Request) {
 
     const { data: workOrder, error: workOrderError } = await admin
       .from("work_orders")
-      .select("id, organization_id, company_id, site_id, wo_number, status, approval_status")
+      .select(
+        "id, organization_id, company_id, site_id, wo_number, status, approval_status",
+      )
       .eq("id", workOrderId)
       .maybeSingle();
 
@@ -301,11 +301,13 @@ export async function POST(request: Request) {
     if (!workOrder) {
       return NextResponse.json(
         { error: "Selected Work Order was not found." },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
-    const workOrderStatus = String(workOrder.status || "").trim().toLowerCase();
+    const workOrderStatus = String(workOrder.status || "")
+      .trim()
+      .toLowerCase();
     const workOrderApprovalStatus = String(workOrder.approval_status || "")
       .trim()
       .toLowerCase();
@@ -315,8 +317,11 @@ export async function POST(request: Request) {
       !["pending", "approved"].includes(workOrderApprovalStatus)
     ) {
       return NextResponse.json(
-        { error: "This Work Order is suspended and cannot accept new transactions." },
-        { status: 400 }
+        {
+          error:
+            "This Work Order is suspended and cannot accept new transactions.",
+        },
+        { status: 400 },
       );
     }
 
@@ -325,7 +330,7 @@ export async function POST(request: Request) {
     if (!isInOrganizationScope(organizationScope, workOrder.organization_id)) {
       return NextResponse.json(
         { error: "You do not have access to this organization." },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -341,7 +346,7 @@ export async function POST(request: Request) {
       if (!raBill) {
         return NextResponse.json(
           { error: "Selected RA Bill was not found." },
-          { status: 404 }
+          { status: 404 },
         );
       }
 
@@ -352,7 +357,7 @@ export async function POST(request: Request) {
       ) {
         return NextResponse.json(
           { error: "Selected RA Bill is not available for this Work Order." },
-          { status: 403 }
+          { status: 403 },
         );
       }
     }
@@ -366,8 +371,8 @@ export async function POST(request: Request) {
       vendorLinkQuery = vendorLinkQuery.eq("vendor_id", vendorId);
     }
 
-    const { data: vendorLinks, error: vendorLinkError } = await vendorLinkQuery
-      .order("is_primary", { ascending: false });
+    const { data: vendorLinks, error: vendorLinkError } =
+      await vendorLinkQuery.order("is_primary", { ascending: false });
 
     if (vendorLinkError) throw vendorLinkError;
 
@@ -377,7 +382,7 @@ export async function POST(request: Request) {
     if (!vendorLink) {
       return NextResponse.json(
         { error: "No vendor is linked to this Work Order." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -386,7 +391,7 @@ export async function POST(request: Request) {
     if (!vendorId) {
       return NextResponse.json(
         { error: "Vendor could not be found for this Work Order." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -398,16 +403,16 @@ export async function POST(request: Request) {
     if (duplicateError) throw duplicateError;
 
     const duplicate = (existingDebitNotes || []).find(
-  (note) =>
-    normalized(String(note.debit_note_number || "")) ===
-      normalized(debitNoteNumber) &&
-    normalized(String(note.approval_status || "")) !== "rejected"
-);
+      (note) =>
+        normalized(String(note.debit_note_number || "")) ===
+          normalized(debitNoteNumber) &&
+        normalized(String(note.approval_status || "")) !== "rejected",
+    );
 
     if (duplicate) {
       return NextResponse.json(
         { error: "Debit Note number already exists." },
-        { status: 409 }
+        { status: 409 },
       );
     }
 
@@ -455,10 +460,10 @@ export async function POST(request: Request) {
         const optimizedFile = await optimizeUploadFile(
           fileBuffer,
           file.type || "application/octet-stream",
-          file.name
+          file.name,
         );
         const filePath = `${workOrder.organization_id}/pending/${debitNote.id}/${Date.now()}-${safeFileName(
-          file.name
+          file.name,
         )}`;
 
         const { error: uploadError } = await admin.storage
@@ -485,42 +490,50 @@ export async function POST(request: Request) {
       }
 
       try {
-        await recordAuditEvent(admin, auth.user, {
-          organizationId: workOrder.organization_id,
-          companyId: workOrder.company_id,
-          siteId: workOrder.site_id,
-          moduleCode: MODULE_CODE,
-          entityType: "debit_note",
-          recordId: debitNote.id,
-          recordNumber: debitNoteNumber,
-          parentEntityType: "work_order",
-          parentRecordId: workOrderId,
-          action: "create",
-          actionCategory: "create",
-          activityLabel: "Created Debit Note",
-          description: `Created Debit Note ${debitNoteNumber}.`,
-          workflowStage: "Pending Approval",
-          reason,
-          newValues: {
-            id: debitNote.id,
-            debit_note_number: debitNoteNumber,
-            debit_note_date: debitNoteDate,
-            debit_note_type: debitNoteType,
-            work_order_id: workOrderId,
-            work_order_number: workOrder.wo_number,
-            ra_bill_id: raBillId || null,
-            vendor_id: vendorId,
+        await recordAuditEvent(
+          admin,
+          auth.user,
+          {
+            organizationId: workOrder.organization_id,
+            companyId: workOrder.company_id,
+            siteId: workOrder.site_id,
+            moduleCode: MODULE_CODE,
+            entityType: "debit_note",
+            recordId: debitNote.id,
+            recordNumber: debitNoteNumber,
+            parentEntityType: "work_order",
+            parentRecordId: workOrderId,
+            action: "create",
+            actionCategory: "create",
+            activityLabel: "Created Debit Note",
+            description: `Created Debit Note ${debitNoteNumber}.`,
+            workflowStage: "Pending Approval",
             reason,
-            gross_amount: roundedGross,
-            gst_amount: 0,
-            total_amount: roundedGross,
-            status: "Draft",
-            approval_status: "Pending",
-            attachment_count: uploadedPaths.length,
+            newValues: {
+              id: debitNote.id,
+              debit_note_number: debitNoteNumber,
+              debit_note_date: debitNoteDate,
+              debit_note_type: debitNoteType,
+              work_order_id: workOrderId,
+              work_order_number: workOrder.wo_number,
+              ra_bill_id: raBillId || null,
+              vendor_id: vendorId,
+              reason,
+              gross_amount: roundedGross,
+              gst_amount: 0,
+              total_amount: roundedGross,
+              status: "Draft",
+              approval_status: "Pending",
+              attachment_count: uploadedPaths.length,
+            },
           },
-        }, request);
+          request,
+        );
       } catch (auditError) {
-        console.error("[Commercial Audit] Debit Note create audit failed", auditError);
+        console.error(
+          "[Commercial Audit] Debit Note create audit failed",
+          auditError,
+        );
       }
 
       return NextResponse.json({ id: debitNote.id });
@@ -547,10 +560,7 @@ export async function POST(request: Request) {
       ? "Failed to save Debit Note attachment metadata. Please contact support."
       : message || "Failed to create Debit Note.";
 
-    return NextResponse.json(
-      { error: friendlyMessage },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: friendlyMessage }, { status: 500 });
   }
 }
 
@@ -584,7 +594,7 @@ export async function PATCH(request: Request) {
   const auth = await requirePermission(
     request,
     "ra_approval",
-    normalizedAction === "approved" ? "approve" : "reject"
+    normalizedAction === "approved" ? "approve" : "reject",
   );
 
   if ("response" in auth) {
@@ -604,6 +614,19 @@ export async function PATCH(request: Request) {
 
   if (!debitNote) {
     return fail("Debit Note was not found.", 404);
+  }
+
+  if (normalizedAction === "approved" && debitNote.source_purchase_order_id) {
+    const { data: sourcePurchaseOrder, error: sourcePurchaseOrderError } = await admin
+      .from("procurement_purchase_orders")
+      .select("id,status,organization_id")
+      .eq("id", debitNote.source_purchase_order_id)
+      .eq("organization_id", debitNote.organization_id)
+      .maybeSingle();
+    if (sourcePurchaseOrderError) return fail("Failed to verify source Purchase Order.", 500, sourcePurchaseOrderError);
+    if (!sourcePurchaseOrder || !["approved", "issued"].includes(String(sourcePurchaseOrder.status || "").toLowerCase())) {
+      return fail("This contractor-recovery Debit Note cannot be approved until the linked Purchase Order is approved.", 409);
+    }
   }
 
   const organizationScope = await loadActorOrganizationScope(admin, auth);
@@ -637,11 +660,18 @@ export async function PATCH(request: Request) {
       .maybeSingle();
 
     if (driveFolderError) {
-      return fail("Failed to load Work Order Drive folder.", 500, driveFolderError);
+      return fail(
+        "Failed to load Work Order Drive folder.",
+        500,
+        driveFolderError,
+      );
     }
 
     if (!driveFolder?.debit_notes_folder_id) {
-      return fail("Work Order Google Drive Debit Notes folder was not found.", 400);
+      return fail(
+        "Work Order Google Drive Debit Notes folder was not found.",
+        400,
+      );
     }
 
     for (const document of documents || []) {
@@ -654,7 +684,7 @@ export async function PATCH(request: Request) {
       if (!tempPath) {
         return fail(
           `Temporary file path was not found for ${document.file_name || "attachment"}.`,
-          400
+          400,
         );
       }
 
@@ -663,7 +693,11 @@ export async function PATCH(request: Request) {
         .download(tempPath);
 
       if (downloadError || !fileBlob) {
-        return fail("Failed to read temporary Debit Note attachment.", 500, downloadError);
+        return fail(
+          "Failed to read temporary Debit Note attachment.",
+          500,
+          downloadError,
+        );
       }
 
       const fileBuffer = Buffer.from(await fileBlob.arrayBuffer());
@@ -671,7 +705,7 @@ export async function PATCH(request: Request) {
       const optimizedFile = await optimizeUploadFile(
         fileBuffer,
         mimeTypeFromFileName(fileName),
-        fileName
+        fileName,
       );
       const driveFile = await uploadDriveFile({
         targetFolderId: driveFolder.debit_notes_folder_id,
@@ -692,7 +726,7 @@ export async function PATCH(request: Request) {
         return fail(
           "Failed to update Debit Note document after Google Drive upload.",
           500,
-          documentUpdateError
+          documentUpdateError,
         );
       }
 
@@ -704,7 +738,7 @@ export async function PATCH(request: Request) {
         return fail(
           "Failed to delete temporary Debit Note attachment after Google Drive upload.",
           500,
-          storageDeleteError
+          storageDeleteError,
         );
       }
     }
@@ -725,33 +759,41 @@ export async function PATCH(request: Request) {
     }
 
     try {
-      await recordAuditEvent(admin, auth.user, {
-        organizationId: debitNote.organization_id,
-        moduleCode: MODULE_CODE,
-        entityType: "debit_note",
-        recordId: debitNote.id,
-        recordNumber: debitNote.debit_note_number,
-        parentEntityType: "work_order",
-        parentRecordId: debitNote.work_order_id,
-        action: "approve",
-        actionCategory: "workflow",
-        activityLabel: "Approved Debit Note",
-        description: `Approved Debit Note ${debitNote.debit_note_number}.`,
-        workflowStage: "Approved",
-        oldValues: {
-          status: debitNote.status,
-          approval_status: debitNote.approval_status,
+      await recordAuditEvent(
+        admin,
+        auth.user,
+        {
+          organizationId: debitNote.organization_id,
+          moduleCode: MODULE_CODE,
+          entityType: "debit_note",
+          recordId: debitNote.id,
+          recordNumber: debitNote.debit_note_number,
+          parentEntityType: "work_order",
+          parentRecordId: debitNote.work_order_id,
+          action: "approve",
+          actionCategory: "workflow",
+          activityLabel: "Approved Debit Note",
+          description: `Approved Debit Note ${debitNote.debit_note_number}.`,
+          workflowStage: "Approved",
+          oldValues: {
+            status: debitNote.status,
+            approval_status: debitNote.approval_status,
+          },
+          newValues: {
+            status: "Approved",
+            approval_status: "Approved",
+            approved_by_name: userName,
+            approved_by_email: userEmail,
+            approved_at: now,
+          },
         },
-        newValues: {
-          status: "Approved",
-          approval_status: "Approved",
-          approved_by_name: userName,
-          approved_by_email: userEmail,
-          approved_at: now,
-        },
-      }, request);
+        request,
+      );
     } catch (auditError) {
-      console.error("[Commercial Audit] Debit Note approval audit failed", auditError);
+      console.error(
+        "[Commercial Audit] Debit Note approval audit failed",
+        auditError,
+      );
     }
 
     return NextResponse.json({ approved: true });
@@ -769,14 +811,18 @@ export async function PATCH(request: Request) {
     });
 
   if (rejectionAuditError) {
-    return fail("Failed to save Debit Note rejection reason.", 500, rejectionAuditError);
+    return fail(
+      "Failed to save Debit Note rejection reason.",
+      500,
+      rejectionAuditError,
+    );
   }
 
   const tempPaths = Array.from(
-    new Set((documents || []).map(documentStoragePath).filter(Boolean))
+    new Set((documents || []).map(documentStoragePath).filter(Boolean)),
   );
   const driveDocuments = (documents || []).filter((document) =>
-    isGoogleDriveUrl(document.file_url)
+    isGoogleDriveUrl(document.file_url),
   );
 
   if (tempPaths.length > 0) {
@@ -785,7 +831,11 @@ export async function PATCH(request: Request) {
       .remove(tempPaths);
 
     if (storageDeleteError) {
-      return fail("Failed to delete temporary Debit Note attachments.", 500, storageDeleteError);
+      return fail(
+        "Failed to delete temporary Debit Note attachments.",
+        500,
+        storageDeleteError,
+      );
     }
   }
 
@@ -800,7 +850,7 @@ export async function PATCH(request: Request) {
           file_path: document.file_path,
           file_url: document.file_url,
         })),
-      }
+      },
     );
   }
 
@@ -810,7 +860,11 @@ export async function PATCH(request: Request) {
     .eq("debit_note_id", debitNoteId);
 
   if (documentDeleteError) {
-    return fail("Failed to delete rejected Debit Note document rows.", 500, documentDeleteError);
+    return fail(
+      "Failed to delete rejected Debit Note document rows.",
+      500,
+      documentDeleteError,
+    );
   }
 
   const { error: debitNoteDeleteError } = await admin
@@ -819,36 +873,48 @@ export async function PATCH(request: Request) {
     .eq("id", debitNoteId);
 
   if (debitNoteDeleteError) {
-    return fail("Failed to delete rejected Debit Note.", 500, debitNoteDeleteError);
+    return fail(
+      "Failed to delete rejected Debit Note.",
+      500,
+      debitNoteDeleteError,
+    );
   }
 
   try {
-    await recordAuditEvent(admin, auth.user, {
-      organizationId: debitNote.organization_id,
-      moduleCode: MODULE_CODE,
-      entityType: "debit_note",
-      recordId: debitNote.id,
-      recordNumber: debitNote.debit_note_number,
-      parentEntityType: "work_order",
-      parentRecordId: debitNote.work_order_id,
-      action: "reject",
-      actionCategory: "workflow",
-      activityLabel: "Rejected Debit Note",
-      description: `Rejected Debit Note ${debitNote.debit_note_number}.`,
-      workflowStage: "Rejected",
-      reason: rejectionReason,
-      oldValues: debitNote,
-      relatedSnapshot: {
-        debit_note_documents: documents || [],
+    await recordAuditEvent(
+      admin,
+      auth.user,
+      {
+        organizationId: debitNote.organization_id,
+        moduleCode: MODULE_CODE,
+        entityType: "debit_note",
+        recordId: debitNote.id,
+        recordNumber: debitNote.debit_note_number,
+        parentEntityType: "work_order",
+        parentRecordId: debitNote.work_order_id,
+        action: "reject",
+        actionCategory: "workflow",
+        activityLabel: "Rejected Debit Note",
+        description: `Rejected Debit Note ${debitNote.debit_note_number}.`,
+        workflowStage: "Rejected",
+        reason: rejectionReason,
+        oldValues: debitNote,
+        relatedSnapshot: {
+          debit_note_documents: documents || [],
+        },
+        fileSnapshot: {
+          bucket: DOCUMENT_BUCKET,
+          paths: tempPaths,
+          drive_files_not_deleted: driveDocuments,
+        },
       },
-      fileSnapshot: {
-        bucket: DOCUMENT_BUCKET,
-        paths: tempPaths,
-        drive_files_not_deleted: driveDocuments,
-      },
-    }, request);
+      request,
+    );
   } catch (auditError) {
-    console.error("[Commercial Audit] Debit Note rejection audit failed", auditError);
+    console.error(
+      "[Commercial Audit] Debit Note rejection audit failed",
+      auditError,
+    );
   }
 
   return NextResponse.json({
@@ -868,7 +934,7 @@ export async function DELETE(request: Request) {
         step,
         details,
       },
-      { status }
+      { status },
     );
   };
 
@@ -884,14 +950,18 @@ export async function DELETE(request: Request) {
   }
 
   if (!debitNoteId) {
-    return fail("parse_request", { message: "debit_note_id is required." }, 400);
+    return fail(
+      "parse_request",
+      { message: "debit_note_id is required." },
+      400,
+    );
   }
 
   if (deletionReason.length < 10) {
     return fail(
       "parse_request",
       { message: "Deletion reason must be at least 10 characters." },
-      400
+      400,
     );
   }
 
@@ -915,7 +985,7 @@ export async function DELETE(request: Request) {
   const permission = await requireDeletePermission(
     admin,
     auth.user,
-    MODULE_CODE
+    MODULE_CODE,
   ).catch((error) => ({
     error,
     status: 500,
@@ -936,24 +1006,28 @@ export async function DELETE(request: Request) {
   }
 
   if (!debitNote) {
-    return fail("fetch_debit_note", { message: "Debit Note was not found." }, 404);
+    return fail(
+      "fetch_debit_note",
+      { message: "Debit Note was not found." },
+      404,
+    );
   }
 
   const organizationScope = await loadOrganizationScopeForUser(
     admin,
-    auth.user.id
+    auth.user.id,
   );
 
   if (!isInOrganizationScope(organizationScope, debitNote.organization_id)) {
     return fail(
       "fetch_debit_note",
       { message: "You do not have access to this organization." },
-      403
+      403,
     );
   }
 
   const normalizedApprovalStatus = String(
-    debitNote.approval_status || debitNote.status || ""
+    debitNote.approval_status || debitNote.status || "",
   )
     .trim()
     .toLowerCase();
@@ -976,11 +1050,7 @@ export async function DELETE(request: Request) {
   }
 
   const paths = Array.from(
-    new Set(
-      documents
-        .map(documentStoragePath)
-        .filter(Boolean)
-    )
+    new Set(documents.map(documentStoragePath).filter(Boolean)),
   );
 
   if (paths.length > 0) {
@@ -1014,33 +1084,23 @@ export async function DELETE(request: Request) {
   }
 
   try {
-    await recordAuditEvent(admin, auth.user, {
-      organizationId: debitNote.organization_id,
-      moduleCode: MODULE_CODE,
-      entityType: "debit_note",
-      recordId: debitNote.id,
-      recordNumber: debitNote.debit_note_number,
-      parentEntityType: "work_order",
-      parentRecordId: debitNote.work_order_id,
-      action: "delete",
-      actionCategory: "delete",
-      activityLabel: "Deleted Debit Note",
-      description: `Deleted Debit Note ${debitNote.debit_note_number}.`,
-      reason: deletionReason,
-      oldValues: debitNote,
-      relatedSnapshot: {
-        debit_note_documents: documents,
-      },
-      fileSnapshot: {
-        bucket: DOCUMENT_BUCKET,
-        paths,
-      },
-      deleteSnapshot: {
-        documentType: "Debit Note",
-        documentId: debitNote.id,
-        documentNumber: debitNote.debit_note_number,
-        deletionReason,
-        recordSnapshot: debitNote,
+    await recordAuditEvent(
+      admin,
+      auth.user,
+      {
+        organizationId: debitNote.organization_id,
+        moduleCode: MODULE_CODE,
+        entityType: "debit_note",
+        recordId: debitNote.id,
+        recordNumber: debitNote.debit_note_number,
+        parentEntityType: "work_order",
+        parentRecordId: debitNote.work_order_id,
+        action: "delete",
+        actionCategory: "delete",
+        activityLabel: "Deleted Debit Note",
+        description: `Deleted Debit Note ${debitNote.debit_note_number}.`,
+        reason: deletionReason,
+        oldValues: debitNote,
         relatedSnapshot: {
           debit_note_documents: documents,
         },
@@ -1048,10 +1108,28 @@ export async function DELETE(request: Request) {
           bucket: DOCUMENT_BUCKET,
           paths,
         },
+        deleteSnapshot: {
+          documentType: "Debit Note",
+          documentId: debitNote.id,
+          documentNumber: debitNote.debit_note_number,
+          deletionReason,
+          recordSnapshot: debitNote,
+          relatedSnapshot: {
+            debit_note_documents: documents,
+          },
+          fileSnapshot: {
+            bucket: DOCUMENT_BUCKET,
+            paths,
+          },
+        },
       },
-    }, request);
+      request,
+    );
   } catch (auditError) {
-    console.error("[Commercial Audit] Debit Note delete audit failed", auditError);
+    console.error(
+      "[Commercial Audit] Debit Note delete audit failed",
+      auditError,
+    );
   }
 
   return NextResponse.json({

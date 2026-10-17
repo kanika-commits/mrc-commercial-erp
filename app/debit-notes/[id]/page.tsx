@@ -48,6 +48,8 @@ export default function DebitNoteDetailPage() {
         .select(`
           id,
           organization_id,
+          source_purchase_order_id,
+          source_purchase_order_documents,
           work_order_id,
           ra_bill_id,
           vendor_id,
@@ -77,6 +79,17 @@ export default function DebitNoteDetailPage() {
       if (!noteData) throw new Error("Debit Note was not found.");
 
       setNote(noteData);
+
+      if (noteData.source_purchase_order_id) {
+        const { data: sourcePo, error: sourcePoError } = await supabase
+          .from("procurement_purchase_orders")
+          .select("id,po_number,po_date,purpose,recovery_work_order_id,vendor_name_snapshot,total_basic_amount,total_gst_amount,total_amount,status")
+          .eq("id", noteData.source_purchase_order_id)
+          .eq("organization_id", noteData.organization_id)
+          .maybeSingle();
+        if (sourcePoError) throw sourcePoError;
+        if (sourcePo) setNote((current: any) => ({ ...current, source_purchase_order: sourcePo }));
+      }
 
       if (noteData.work_order_id) {
         const { data: woData, error: woError } = await supabase
@@ -198,6 +211,9 @@ export default function DebitNoteDetailPage() {
           <ArrowLeft className="h-4 w-4" />
           Back to Debit Notes
         </Link>
+        {note.source_purchase_order_id && String(note.status || "").toLowerCase() === "draft" && String(note.approval_status || "").toLowerCase() === "pending" && (
+          <Link href={`/debit-notes/new?recovery_draft_id=${encodeURIComponent(debitNoteId)}`} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white">Edit</Link>
+        )}
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -205,6 +221,22 @@ export default function DebitNoteDetailPage() {
         <Summary title="Type" value={note.debit_note_type || "-"} />
         <Summary title="Approval Status" value={note.approval_status || "-"} />
       </div>
+
+      {note.source_purchase_order && (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
+          <h2 className="text-xl font-semibold text-slate-950">Source Purchase Order</h2>
+          <div className="mt-4 grid gap-4 md:grid-cols-4">
+            <Info label="PO Number" value={note.source_purchase_order.po_number || "-"} />
+            <Info label="PO Date" value={note.source_purchase_order.po_date || "-"} />
+            <Info label="Vendor" value={note.source_purchase_order.vendor_name_snapshot || vendor?.vendor_name || "-"} />
+            <Info label="Purpose" value={note.source_purchase_order.purpose || "General Purchase"} />
+            <Info label="Basic Amount" value={money(note.source_purchase_order.total_basic_amount)} />
+            <Info label="GST Amount" value={money(note.source_purchase_order.total_gst_amount)} />
+            <Info label="Total Amount" value={money(note.source_purchase_order.total_amount)} />
+            <Info label="PO Status" value={note.source_purchase_order.status || "-"} />
+          </div>
+        </section>
+      )}
 
       <section className="rounded-2xl border bg-white p-6 shadow-sm">
         <div className="mb-4 flex items-center gap-2">

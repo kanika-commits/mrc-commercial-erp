@@ -1,14 +1,21 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, FileMinus, Upload } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import AlertMessage from "@/components/AlertMessage";
 
+function money(value: number) {
+  return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
+}
+
 export default function NewDebitNotePage() {
   const router = useRouter();
+  const params = useSearchParams();
+  const recoveryDraftId = params.get("recovery_draft_id");
+  const [recoverySource, setRecoverySource] = useState<any>(null);
 
   const [sites, setSites] = useState<any[]>([]);
   const [workOrders, setWorkOrders] = useState<any[]>([]);
@@ -31,6 +38,20 @@ export default function NewDebitNotePage() {
   useEffect(() => {
     loadInitialData();
   }, []);
+
+  useEffect(() => {
+    if (!recoveryDraftId) return;
+    (async () => {
+      const response = await fetchWithToken(`/api/debit-notes/recovery-drafts/${encodeURIComponent(recoveryDraftId)}`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Failed to load recovery Debit Note draft.");
+      const draft = result.debit_note;
+      setRecoverySource({ po: result.source_purchase_order, workOrder: result.work_order });
+      setSelectedSiteId(result.work_order.site_id || "");
+      setSelectedWO(result.work_order);
+      setForm({ work_order_id: draft.work_order_id, vendor_id: draft.vendor_id || "", debit_note_number: draft.debit_note_number || "", debit_note_date: draft.debit_note_date || "", debit_note_type: draft.debit_note_type || "Contractor Recovery", reason: draft.reason || "", amount: String(draft.total_amount ?? draft.gross_amount ?? "") });
+    })().catch((error) => setMessage(error.message || "Failed to load recovery Debit Note draft."));
+  }, [recoveryDraftId]);
 
   async function fetchWithToken(url: string) {
     const {
@@ -85,6 +106,7 @@ export default function NewDebitNotePage() {
       {
         headers: {
           Authorization: `Bearer ${session.access_token}`,
+          ...(recoveryDraftId ? { "Content-Type": "application/json" } : {}),
         },
       }
     );
@@ -243,12 +265,13 @@ export default function NewDebitNotePage() {
       formData.append("gross_amount", String(amount));
       files.forEach((file) => formData.append("attachments", file));
 
-      const response = await fetch("/api/debit-notes", {
-        method: "POST",
+      const response = await fetch(recoveryDraftId ? `/api/debit-notes/recovery-drafts/${encodeURIComponent(recoveryDraftId)}` : "/api/debit-notes", {
+        method: recoveryDraftId ? "PATCH" : "POST",
         headers: {
           Authorization: `Bearer ${session.access_token}`,
+          ...(recoveryDraftId ? { "Content-Type": "application/json" } : {}),
         },
-        body: formData,
+        body: recoveryDraftId ? JSON.stringify({ debit_note_number: form.debit_note_number.trim(), debit_note_date: form.debit_note_date, debit_note_type: form.debit_note_type, reason: form.reason.trim() }) : formData,
       });
       const result = await response.json();
 
@@ -288,6 +311,7 @@ export default function NewDebitNotePage() {
           Back
         </Link>
       </div>
+      {recoverySource && <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h2 className="font-semibold">Source Purchase Order</h2><div className="mt-3 grid gap-3 text-sm md:grid-cols-4"><div><b>PO Number</b><p>{recoverySource.po?.po_number || "-"}</p></div><div><b>Purpose</b><p>{recoverySource.po?.purpose || "Recover from contractor"}</p></div><div><b>Work Order</b><p>{recoverySource.workOrder?.wo_number || "-"}</p></div><div><b>Total Amount</b><p>{money(Number(recoverySource.po?.total_amount || 0))}</p></div></div><p className="mt-2 text-xs text-slate-600">Source PO, Work Order, amounts, and documents are read-only.</p></section>}
 
       <AlertMessage
         type="error"

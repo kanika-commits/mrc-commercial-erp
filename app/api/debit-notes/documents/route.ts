@@ -97,7 +97,7 @@ export async function GET(request: Request) {
     const admin = adminClient();
     const { data: debitNotes, error: debitNotesError } = await admin
       .from("debit_notes")
-      .select("id, organization_id, work_order_id")
+      .select("id, organization_id, work_order_id, company_id, site_id, source_purchase_order_id, source_purchase_order_documents")
       .in("id", debitNoteIds);
 
     if (debitNotesError) throw debitNotesError;
@@ -120,6 +120,33 @@ export async function GET(request: Request) {
         { error: "You do not have access to this organization." },
         { status: 403 }
       );
+    }
+
+    const recoveryNotes = (debitNotes || []).filter((note: any) => note.source_purchase_order_id);
+    const sourceDocuments: any[] = [];
+    for (const note of recoveryNotes) {
+      const manifest = Array.isArray(note.source_purchase_order_documents) ? note.source_purchase_order_documents : [];
+      if (!manifest.length) continue;
+      const { data: poDocuments, error: poDocumentsError } = await admin
+        .from("procurement_purchase_order_documents")
+        .select("id,purchase_order_id,original_file_name,mime_type,storage_bucket,storage_key,created_at")
+        .eq("purchase_order_id", note.source_purchase_order_id)
+        .eq("organization_id", note.organization_id)
+        .eq("status", "active")
+        .in("id", manifest.map((entry: any) => String(entry.document_id || entry.id || "")).filter(Boolean));
+      if (poDocumentsError) throw poDocumentsError;
+      for (const document of poDocuments || []) {
+        const entry = manifest.find((candidate: any) => String(candidate.document_id || candidate.id) === String(document.id));
+        if (!entry) continue;
+        let signed_url: string | null = null;
+        let signed_url_error: string | null = null;
+        if (document.storage_bucket && document.storage_key) {
+          const signed = await admin.storage.from(document.storage_bucket).createSignedUrl(document.storage_key, 600);
+          signed_url = signed.data?.signedUrl || null;
+          signed_url_error = signed.error?.message || null;
+        }
+        sourceDocuments.push({ id: document.id, debit_note_id: note.id, source_purchase_order_id: note.source_purchase_order_id, file_name: document.original_file_name, mime_type: document.mime_type, uploaded_at: document.created_at, signed_url, signed_url_error, source: "purchase_order" });
+      }
     }
 
     const { organizationScope: approvalOrganizationScope, assignments } =
@@ -184,7 +211,7 @@ export async function GET(request: Request) {
       })
     );
 
-    return NextResponse.json({ documents: signedDocuments });
+    return NextResponse.json({ documents: [...signedDocuments, ...sourceDocuments] });
   } catch (error: any) {
     return NextResponse.json(
       { error: error.message || "Failed to load Debit Note documents." },
