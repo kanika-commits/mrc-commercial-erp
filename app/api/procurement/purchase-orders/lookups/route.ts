@@ -16,7 +16,7 @@ export async function GET(request: Request) {
     let sites: any = applyOrganizationAccess(admin.from("sites").select("id,organization_id,company_id,site_name,site_code,location,state,status").eq("status", "active").order("site_name"), auth);
     let vendors: any = applyOrganizationAccess(admin.from("vendors").select("id,organization_id,vendor_name,contractor_type,pan,address,gstin,profile_status,status,is_deleted").eq("status", "active").eq("is_deleted", false).order("vendor_name"), auth);
     let items: any = applyOrganizationAccess(admin.from("procurement_items").select("id,organization_id,item_code,item_name,description,hsn_sac,default_uom_id,default_uom:procurement_uoms(id,uom_code,uom_name)").eq("status", "active").order("item_name"), auth);
-    let workOrders: any = applyOrganizationAccess(admin.from("work_orders").select("id,organization_id,company_id,site_id,wo_number,status,approval_status").eq("status", "active").in("approval_status", ["pending", "approved"]), auth);
+    let workOrders: any = applyOrganizationAccess(admin.from("work_orders").select("id,organization_id,company_id,site_id,wo_number,status,approval_status,work_order_vendors(vendor_id,vendor_role,is_primary)").eq("status", "active").in("approval_status", ["pending", "approved"]), auth);
     workOrders = workOrders && applyCompanySiteAccess(workOrders, auth);
     if (!companies || !sites || !vendors || !items || !workOrders) return NextResponse.json({ companies: [], sites: [], vendors: [], items: [], work_orders: [], indents: [] });
     if (!auth.isGlobalAccess && !(auth.roleCodes || []).includes("platform_owner")) {
