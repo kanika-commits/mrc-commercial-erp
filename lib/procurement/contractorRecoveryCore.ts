@@ -13,7 +13,7 @@ export function recoveryDraftPayload(po: any, workOrder: any, documents: any[], 
   const basic = Number(po.total_basic_amount ?? 0);
   const gst = Number(po.total_gst_amount ?? po.gst_amount ?? 0);
   const total = Number(po.total_amount ?? po.grand_total ?? basic + gst);
-  return { organization_id: po.organization_id, work_order_id: workOrder.id, source_purchase_order_id: po.id, source_purchase_order_documents: documents, vendor_id: po.vendor_id, debit_note_number: `DN-PO-${po.po_number}`, debit_note_date: new Date().toISOString().slice(0, 10), debit_note_type: "Contractor Recovery", reason: `Contractor recovery for Purchase Order ${po.po_number}. ${String(note ?? "").trim()}`.trim(), gross_amount: basic, gst_amount: gst, total_amount: total, status: "Draft", approval_status: "Pending", created_by_name: actor.name || actor.email, created_by_email: actor.email };
+  return { organization_id: po.organization_id, work_order_id: workOrder.id, source_purchase_order_id: po.id, source_purchase_order_documents: documents, vendor_id: po.recovery_vendor_id, debit_note_number: `DN-PO-${po.po_number}`, debit_note_date: new Date().toISOString().slice(0, 10), debit_note_type: "Contractor Recovery", reason: `Contractor recovery for Purchase Order ${po.po_number}. ${String(note ?? "").trim()}`.trim(), gross_amount: basic, gst_amount: gst, total_amount: total, status: "Draft", approval_status: "Pending", created_by_name: actor.name || actor.email, created_by_email: actor.email };
 }
 
 export async function ensureRecoveryDraft(deps: any, po: any, workOrder: any, documents: any[], note: unknown, actor: any) {

@@ -6,25 +6,30 @@ export function normalizePurchaseOrderPurpose(value: unknown) {
   return purpose === "Standard" ? "General Purchase" : purpose;
 }
 
-export function validatePurchaseOrderPurpose(purposeValue: unknown, recoveryWorkOrderId: unknown) {
+export function validatePurchaseOrderPurpose(purposeValue: unknown, recoveryWorkOrderId: unknown, recoveryVendorId: unknown) {
   const purpose = normalizePurchaseOrderPurpose(purposeValue);
   if (!PURCHASE_ORDER_PURPOSES.has(purpose)) throw new Error("Purchase Order purpose is invalid.");
   const workOrderId = String(recoveryWorkOrderId ?? "").trim();
+  const vendorId = String(recoveryVendorId ?? "").trim();
   if (purpose === CONTRACTOR_RECOVERY_PURPOSE && !workOrderId) throw new Error("A linked Work Order is required for contractor recovery Purchase Orders.");
-  return { purpose, recoveryWorkOrderId: purpose === CONTRACTOR_RECOVERY_PURPOSE ? workOrderId : null };
+  if (purpose === CONTRACTOR_RECOVERY_PURPOSE && !vendorId) throw new Error("A Recovery Vendor is required for contractor recovery Purchase Orders.");
+  return { purpose, recoveryWorkOrderId: purpose === CONTRACTOR_RECOVERY_PURPOSE ? workOrderId : null, recoveryVendorId: purpose === CONTRACTOR_RECOVERY_PURPOSE ? vendorId : null };
 }
 
-export async function validateRecoveryWorkOrder(admin: any, organizationId: string, companyId: string, siteId: string, workOrderId: string) {
+export async function validateRecoveryWorkOrder(admin: any, organizationId: string, companyId: string, siteId: string, workOrderId: string, vendorId: string) {
   const result = await admin.from("work_orders").select("id,organization_id,company_id,site_id,wo_number").eq("id", workOrderId).eq("organization_id", organizationId).eq("company_id", companyId).eq("site_id", siteId).maybeSingle();
   if (result.error) throw result.error;
   if (!result.data) throw new Error("The recovery Work Order must match the Purchase Order organization, company and site.");
-  return result.data;
+  const vendorLink = await admin.from("work_order_vendors").select("id,work_order_id,vendor_id,vendor_role,is_primary").eq("work_order_id", workOrderId).eq("vendor_id", vendorId).maybeSingle();
+  if (vendorLink.error) throw vendorLink.error;
+  if (!vendorLink.data || !["Main Contractor", "Subcontractor"].includes(String(vendorLink.data.vendor_role || ""))) throw new Error("The recovery Work Order must be linked to the selected Purchase Order vendor as a main contractor or subcontractor.");
+  return { ...result.data, vendor_link: vendorLink.data };
 }
 
 export async function ensureContractorRecoveryDebitNote({ admin, po, auth, note, workOrder }: { admin: any; po: any; auth: any; note?: unknown; workOrder?: any }) {
-  const normalized = validatePurchaseOrderPurpose(po.purpose || po.commercial_snapshot?.purpose, po.recovery_work_order_id || po.commercial_snapshot?.recovery_work_order_id);
+  const normalized = validatePurchaseOrderPurpose(po.purpose || po.commercial_snapshot?.purpose, po.recovery_work_order_id || po.commercial_snapshot?.recovery_work_order_id, po.recovery_vendor_id || po.commercial_snapshot?.recovery_vendor_id);
   if (normalized.purpose !== CONTRACTOR_RECOVERY_PURPOSE) return null;
-  const linkedWorkOrder = workOrder || await validateRecoveryWorkOrder(admin, po.organization_id, po.company_id, po.site_id, normalized.recoveryWorkOrderId!);
+  const linkedWorkOrder = workOrder || await validateRecoveryWorkOrder(admin, po.organization_id, po.company_id, po.site_id, normalized.recoveryWorkOrderId!, normalized.recoveryVendorId!);
   const documents = await admin.from("procurement_purchase_order_documents").select("id,original_file_name,mime_type,size_bytes,storage_bucket,storage_key,document_type").eq("purchase_order_id", po.id).eq("organization_id", po.organization_id).eq("status", "active").order("sort_order");
   if (documents.error) throw documents.error;
   return ensureRecoveryDraft(
