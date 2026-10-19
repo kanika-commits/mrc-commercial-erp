@@ -14,7 +14,7 @@ assert.match(modules, /checkModules: \["ra_bills", "debit_notes", "credit_notes"
 assert.match(modulePage, /can\(permissions, page\.module_code, "view"\)/);
 assert.match(shell, /globalAccess \|\| can\(permissions, moduleCode, "view"\)/);
 assert.match(navigation, /module_code: "credit_notes"[\s\S]*?route: "\/credit-notes"/);
-assert.match(permissions, /credit_notes: \["view", "add", "edit", "delete"\]/);
+assert.match(permissions, /credit_notes: \["view", "add", "edit", "delete", "approve", "reject", "export"\]/);
 assert.match(presentation, /credit_notes: \{ visible_group: "Project Management"/);
 
 console.log("Credit Note sidebar and module-card visibility contract passed.");

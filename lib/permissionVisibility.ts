@@ -379,12 +379,26 @@ export function prepareVisiblePermissionModules<T extends PermissionModuleRow>(m
   if (!registryModules.some((module) => module.module_code === "procurement_purchase_orders")) {
     registryModules.push({ module_code: "procurement_purchase_orders", module_group: "purchase", module_name: "Purchase Orders", sort_order: 8, status: "active" } as T);
   }
+  if (!registryModules.some((module) => module.module_code === "credit_notes")) {
+    registryModules.push({ module_code: "credit_notes", module_group: "project_management", module_name: "Credit Notes", sort_order: 21, status: "active" } as T);
+  }
   const visibleModules = filterVisiblePermissionModules(registryModules)
     .map(presentVisiblePermissionModule);
 
   const purchaseOrders = visibleModules.find((module) => module.module_code === "procurement_purchase_orders");
   if (purchaseOrders && !visibleModules.some((module) => module.module_code === "procurement_purchase_order_approval")) {
     visibleModules.push({ ...purchaseOrders, id: "presentation-procurement-purchase-order-approval", module_code: "procurement_purchase_order_approval", permission_module_code: "procurement_purchase_orders", module_name: "Purchase Order Approval", sort_order: 9, visible_actions: ["view", "approve", "reject"] } as typeof purchaseOrders);
+  }
+
+  const itemMaster = visibleModules.find((module) => module.module_code === "procurement_items");
+  if (itemMaster && !visibleModules.some((module) => module.module_name === "Work Order Item Master")) {
+    visibleModules.push({
+      ...itemMaster,
+      id: "presentation-work-order-item-master",
+      module_name: "Work Order Item Master",
+      permission_module_code: "procurement_items",
+      sort_order: Number(itemMaster.sort_order || 0) + 0.1,
+    } as typeof itemMaster);
   }
 
   return visibleModules
