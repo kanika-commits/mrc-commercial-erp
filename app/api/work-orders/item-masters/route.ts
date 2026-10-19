@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { loadActorOrganizationScope, resolveWriteOrganizationId } from "@/lib/serverOrganizationScope";
-import { adminClient, ITEM_MODULE, jsonError, requireProcurementPermission, text } from "@/lib/serverProcurementAccess";
+import { adminClient, jsonError, requireProcurementPermission, text } from "@/lib/serverProcurementAccess";
+
+const ITEM_MODULE = "work_order_item_master";
 
 export async function GET(request: Request) {
   try {

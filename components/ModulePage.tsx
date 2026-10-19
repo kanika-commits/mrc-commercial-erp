@@ -358,11 +358,11 @@ export default function ModulePage({
         sort_order: 79,
       });
     }
-    if (globalAccess || can(permissions, "procurement_items", "view")) {
+    if (globalAccess || can(permissions, "work_order_item_master", "view")) {
       additionalRows.push({
         id: "settings-work-order-item-master",
         module_group: "settings",
-        module_code: "procurement_items",
+        module_code: "work_order_item_master",
         module_name: "Masters - Work Order Item Master",
         route: "/work-orders/item-masters",
         sort_order: 80,

@@ -82,6 +82,7 @@ const MODULE_ACTIONS: Record<string, PermissionAction[]> = {
   vendors: ["view", "add", "edit", "delete"],
   company_bank_accounts: ["view", "add", "edit", "delete"],
   procurement_items: ["view", "add", "edit", "delete", "export"],
+  work_order_item_master: ["view", "add", "edit", "delete", "export"],
   procurement_purchase_queue: ["view", "take_up"],
 
   work_orders: ["view", "add", "edit", "delete", "export"],

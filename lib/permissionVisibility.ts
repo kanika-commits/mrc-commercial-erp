@@ -295,6 +295,7 @@ const PERMISSION_PRESENTATION: Record<string, VisiblePermissionPresentation> = {
   labour_trades: { visible_group: "Settings", visible_name: "Masters - Labour Categories", visible_sort_order: 60 },
   company_bank_accounts: { visible_group: "Settings", visible_name: "Masters - Bank Accounts", visible_sort_order: 70 },
   procurement_items: { visible_group: "Settings", visible_name: "Masters - Item / Material Master", visible_sort_order: 75 },
+  work_order_item_master: { visible_group: "Settings", visible_name: "Masters - Work Order Item Master", visible_sort_order: 79 },
   hr_employee_attendance_policy: { visible_group: "Settings", visible_name: "Policies - Employee Attendance Policy", visible_sort_order: 80 },
   labour_muster_configuration: { visible_group: "Settings", visible_name: "Policies - Labour Attendance Policy", visible_sort_order: 90 },
 
@@ -390,15 +391,8 @@ export function prepareVisiblePermissionModules<T extends PermissionModuleRow>(m
     visibleModules.push({ ...purchaseOrders, id: "presentation-procurement-purchase-order-approval", module_code: "procurement_purchase_order_approval", permission_module_code: "procurement_purchase_orders", module_name: "Purchase Order Approval", sort_order: 9, visible_actions: ["view", "approve", "reject"] } as typeof purchaseOrders);
   }
 
-  const itemMaster = visibleModules.find((module) => module.module_code === "procurement_items");
-  if (itemMaster && !visibleModules.some((module) => module.module_name === "Work Order Item Master")) {
-    visibleModules.push({
-      ...itemMaster,
-      id: "presentation-work-order-item-master",
-      module_name: "Work Order Item Master",
-      permission_module_code: "procurement_items",
-      sort_order: Number(itemMaster.sort_order || 0) + 0.1,
-    } as typeof itemMaster);
+  if (!visibleModules.some((module) => module.module_code === "work_order_item_master")) {
+    visibleModules.push({ module_code: "work_order_item_master", module_group: "settings", module_name: "Masters - Work Order Item Master", sort_order: 79, status: "active", permission_note: null, technical_group: "settings", visible_actions: null, visible_action_labels: null } as (typeof visibleModules)[number]);
   }
 
   return visibleModules

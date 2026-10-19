@@ -66,6 +66,7 @@ const settingsViewModules = [
   "labour_trades",
   "company_bank_accounts",
   "procurement_items",
+  "work_order_item_master",
   "procurement_gst_billing_delivery_master",
   "procurement_site_contact_master",
   "procurement_letterhead_master",
@@ -81,6 +82,7 @@ function hasSettingsViewAccess(access: CurrentUserAccess) {
 
 function settingsRouteAccess(pathname: string, access: CurrentUserAccess) {
   if (pathname === "/settings/items") return can(access.permissions, "procurement_items", "view");
+  if (pathname === "/work-orders/item-masters") return can(access.permissions, "work_order_item_master", "view");
   if (pathname === "/settings/purchase-order-masters/site-contacts") return can(access.permissions, "procurement_site_contact_master", "view");
   if (pathname === "/settings/purchase-order-masters/letterheads") return can(access.permissions, "procurement_letterhead_master", "view");
   if (pathname === "/settings/purchase-order-masters") return can(access.permissions, "procurement_po_terms_master", "view") || can(access.permissions, "procurement_gst_billing_delivery_master", "view");
