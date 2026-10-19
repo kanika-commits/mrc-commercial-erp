@@ -10,7 +10,8 @@ assert.match(createRoute, /body\.commercial\?\.purpose/);
 assert.match(createRoute, /body\.commercial\?\.recovery_work_order_id/);
 assert.match(createRoute, /purpose: recovery\.purpose, recovery_work_order_id: recovery\.recoveryWorkOrderId/);
 assert.match(createRoute, /const createdId = result\.data\?\.purchase_order_id;/);
-assert.match(createRoute, /\.update\(\{ purpose: recovery\.purpose, recovery_work_order_id: recovery\.recoveryWorkOrderId, recovery_vendor_id: recovery\.recoveryVendorId \}\)/);
+assert.match(createRoute, /recovery\.purpose === "Recover from contractor"/);
+assert.match(createRoute, /: \{ purpose: recovery\.purpose \}/);
 assert.match(createRoute, /\.eq\("id", createdId\)/);
 assert.match(createRoute, /\.eq\("organization_id", organizationId\)/);
 

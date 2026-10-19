@@ -132,13 +132,17 @@ export async function PUT(
     const recovery = validatePurchaseOrderPurpose(
       commercial.purpose ?? result.row.purpose ?? result.row.commercial_snapshot?.purpose,
       commercial.recovery_work_order_id ?? result.row.recovery_work_order_id ?? result.row.commercial_snapshot?.recovery_work_order_id,
+      commercial.recovery_vendor_id ?? result.row.recovery_vendor_id ?? result.row.commercial_snapshot?.recovery_vendor_id,
     );
-    const recoveryVendorId = text(body.vendor_id) || result.row.vendor_id;
+    const recoveryVendorId = recovery.recoveryVendorId;
     if (recovery.purpose === "Recover from contractor") {
-      await validateRecoveryWorkOrder(result.admin, result.row.organization_id, result.row.company_id, result.row.site_id, recovery.recoveryWorkOrderId!, recoveryVendorId);
+      await validateRecoveryWorkOrder(result.admin, result.row.organization_id, result.row.company_id, result.row.site_id, recovery.recoveryWorkOrderId!, recoveryVendorId!);
     }
-    commercial.purpose = recovery.purpose;
-    commercial.recovery_work_order_id = recovery.recoveryWorkOrderId;
+    const { recovery_vendor_id: _recoveryVendorId, recovery_work_order_id: _recoveryWorkOrderId, ...commercialInput } = commercial;
+    const recoveryCommercial = recovery.purpose === "Recover from contractor"
+      ? { recovery_work_order_id: recovery.recoveryWorkOrderId, recovery_vendor_id: recovery.recoveryVendorId }
+      : {};
+    const persistedCommercial = { ...commercialInput, purpose: recovery.purpose, ...recoveryCommercial };
     if (Array.isArray(body.key_terms)) commercial.key_terms = body.key_terms;
     if (
       Object.prototype.hasOwnProperty.call(commercial, "additional_charges")
@@ -212,7 +216,7 @@ export async function PUT(
           po_date: text(body.po_date),
           delivery: body.delivery || {},
           master_selection: body.master_selection || {},
-          commercial,
+          commercial: persistedCommercial,
           standard_terms: text(body.standard_terms),
           items,
           ...(expectedOriginalItemIds
@@ -225,7 +229,9 @@ export async function PUT(
     if (rpc.error) throw rpc.error;
     const recoveryFields = await result.admin
       .from("procurement_purchase_orders")
-      .update({ purpose: recovery.purpose, recovery_work_order_id: recovery.recoveryWorkOrderId })
+      .update(recovery.purpose === "Recover from contractor"
+        ? { purpose: recovery.purpose, recovery_work_order_id: recovery.recoveryWorkOrderId, recovery_vendor_id: recovery.recoveryVendorId }
+        : { purpose: recovery.purpose })
       .eq("id", id)
       .eq("organization_id", result.row.organization_id);
     if (recoveryFields.error) throw recoveryFields.error;
