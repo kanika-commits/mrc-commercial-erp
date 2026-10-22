@@ -81,6 +81,7 @@ function hasSettingsViewAccess(access: CurrentUserAccess) {
 
 function settingsRouteAccess(pathname: string, access: CurrentUserAccess) {
   if (pathname === "/settings/items") return can(access.permissions, "procurement_items", "view");
+  if (pathname === "/work-orders/item-masters") return can(access.permissions, "procurement_items", "view");
   if (pathname === "/settings/purchase-order-masters/site-contacts") return can(access.permissions, "procurement_site_contact_master", "view");
   if (pathname === "/settings/purchase-order-masters/letterheads") return can(access.permissions, "procurement_letterhead_master", "view");
   if (pathname === "/settings/purchase-order-masters") return can(access.permissions, "procurement_po_terms_master", "view") || can(access.permissions, "procurement_gst_billing_delivery_master", "view");
@@ -282,8 +283,11 @@ function hasRouteAccess(
 
   if (pathname === "/settings/password") return true;
 
+  const explicitSettingsAccess = settingsRouteAccess(pathname, access);
+  if (explicitSettingsAccess !== null) return explicitSettingsAccess;
+
   if (pathname.startsWith("/settings")) {
-    return settingsRouteAccess(pathname, access) ?? hasSettingsViewAccess(access);
+    return hasSettingsViewAccess(access);
   }
 
   const explicitHrAccess = hasExplicitHrRouteAccess(pathname, access, navigation);
