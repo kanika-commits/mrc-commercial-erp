@@ -386,6 +386,17 @@ export function prepareVisiblePermissionModules<T extends PermissionModuleRow>(m
     visibleModules.push({ ...purchaseOrders, id: "presentation-procurement-purchase-order-approval", module_code: "procurement_purchase_order_approval", permission_module_code: "procurement_purchase_orders", module_name: "Purchase Order Approval", sort_order: 9, visible_actions: ["view", "approve", "reject"] } as typeof purchaseOrders);
   }
 
+  const itemMaster = visibleModules.find((module) => module.module_code === "procurement_items");
+  if (itemMaster && !visibleModules.some((module) => module.module_name === "Work Order Item Master")) {
+    visibleModules.push({
+      ...itemMaster,
+      id: "presentation-work-order-item-master",
+      module_name: "Work Order Item Master",
+      permission_module_code: "procurement_items",
+      sort_order: Number(itemMaster.sort_order || 0) + 0.1,
+    } as typeof itemMaster);
+  }
+
   return visibleModules
     .sort((a, b) => {
       const groupOrder =
