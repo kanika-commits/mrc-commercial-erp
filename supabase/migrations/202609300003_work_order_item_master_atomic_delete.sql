@@ -12,6 +12,7 @@ security definer
 set search_path = public
 as $$
 declare
+  v_master_table constant regclass := 'public.work_order_item_masters'::regclass;
   v_item public.work_order_item_masters%rowtype;
   v_reference_count bigint;
   v_result text;
@@ -20,12 +21,9 @@ begin
     raise exception using message = 'INVALID_REQUEST';
   end if;
 
-  select * into v_item
-  from public.work_order_item_masters
-  where id = p_id
-    and organization_id = p_organization_id
-    and status <> 'deleted'
-  for update;
+  execute format('select * from %s where id = $1 and organization_id = $2 and status <> ''deleted'' for update', v_master_table)
+    into v_item
+    using p_id, p_organization_id;
 
   if not found then raise exception using message = 'NOT_FOUND'; end if;
 
@@ -35,14 +33,12 @@ begin
     and item_master_id = p_id;
 
   if v_reference_count = 0 then
-    delete from public.work_order_item_masters
-    where id = p_id and organization_id = p_organization_id;
+    execute format('delete from %s where id = $1 and organization_id = $2', v_master_table)
+      using p_id, p_organization_id;
     v_result := 'deleted';
   else
-    update public.work_order_item_masters
-    set status = 'inactive', updated_by = p_actor_id, updated_by_name = p_actor_name,
-        updated_by_email = p_actor_email, updated_at = now()
-    where id = p_id and organization_id = p_organization_id;
+    execute format('update %s set status = ''inactive'', updated_by = $1, updated_by_name = $2, updated_by_email = $3, updated_at = now() where id = $4 and organization_id = $5', v_master_table)
+      using p_actor_id, p_actor_name, p_actor_email, p_id, p_organization_id;
     v_result := 'deactivated';
   end if;
 
