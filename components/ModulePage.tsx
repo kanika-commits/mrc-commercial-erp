@@ -301,6 +301,9 @@ export default function ModulePage({
       globalAccess || can(permissions, "procurement_letterhead_master", "view") ? {
         id: "settings-letterhead-master", module_group: "settings", module_code: "procurement_letterhead_master", module_name: "Masters - Letterheads", route: "/settings/purchase-order-masters/letterheads", sort_order: 78,
       } : null,
+      globalAccess || can(permissions, "procurement_items", "view") ? {
+        id: "settings-work-order-item-master", module_group: "settings", module_code: "procurement_items", module_name: "Masters - Work Order Item Master", route: "/work-orders/item-masters", sort_order: 79,
+      } : null,
       globalAccess || can(permissions, "procurement_po_terms_master", "view") ? {
         id: "settings-po-terms-conditions", module_group: "settings", module_code: "procurement_po_terms_master", module_name: "Masters - PO Terms & Conditions", route: "/settings/purchase-order-masters", sort_order: 79,
       } : null,
