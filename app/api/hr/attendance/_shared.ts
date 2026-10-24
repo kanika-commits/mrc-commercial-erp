@@ -667,11 +667,13 @@ export async function loadEligibleEmployees(
   if (employeeIds.length > 0) {
     const { data: historyRows, error: historyError } = await admin
       .from("employee_employment_history")
-      .select("employee_id, company_id, site_id, effective_from, effective_to, event_date, employment_status, event_type, source, is_manual")
+      .select("id, employee_id, company_id, site_id, effective_from, effective_to, event_date, employment_status, event_type, source, is_manual, created_at")
       .eq("organization_id", values.organizationId)
       .in("employee_id", employeeIds)
       .order("effective_from", { ascending: false, nullsFirst: false })
-      .order("event_date", { ascending: false, nullsFirst: false });
+      .order("event_date", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false, nullsFirst: false });
     if (historyError) throw historyError;
     for (const history of historyRows || []) {
       historyByEmployee.set(history.employee_id, [...(historyByEmployee.get(history.employee_id) || []), history]);
