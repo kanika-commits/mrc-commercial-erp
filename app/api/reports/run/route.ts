@@ -58,7 +58,6 @@ function adminClient() {
 
   return createClient(supabaseUrl, serviceRoleKey);
 }
-
 function jsonError(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
@@ -482,8 +481,8 @@ export async function GET(request: Request) {
       dataset: WORK_ORDER_DATASET_CODE,
       metadata: await loadMetadata(admin, access),
     });
-  } catch (error: any) {
-    return jsonError(error.message || "Failed to load report metadata.", 500);
+  } catch {
+    return jsonError("Unable to load report metadata.", 500);
   }
 }
 
@@ -510,7 +509,7 @@ export async function POST(request: Request) {
       group_by: validation.definition.groupBy,
       result,
     });
-  } catch (error: any) {
-    return jsonError(error.message || "Failed to run report.", 500);
+  } catch {
+    return jsonError("Unable to run report.", 500);
   }
 }

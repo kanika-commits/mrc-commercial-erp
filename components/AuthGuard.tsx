@@ -276,7 +276,7 @@ function hasRouteAccess(
     return can(access.permissions, "dashboard", "view");
   }
 
-  if (pathname === "/reports" || pathname.startsWith("/reports/")) {
+  if (pathname === "/reports" || pathname.startsWith("/reports/") || pathname === "/modules/reports") {
     return can(access.permissions, "reports", "view");
   }
 
