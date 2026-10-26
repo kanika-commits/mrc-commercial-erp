@@ -1,4 +1,4 @@
-export const REPORT_FILTERS = ["date_from", "date_to", "site_id", "event", "search"] as const;
+export const REPORT_FILTERS = ["date_from", "date_to", "site_id", "event", "search", "company_id", "department_id", "designation_id", "status", "employment_type"] as const;
 
 export type ReportFilter = (typeof REPORT_FILTERS)[number];
 
@@ -47,6 +47,15 @@ export const REPORT_REGISTRY: ReportDefinition[] = [{
   requiredEntitlements: ["reports", "procurement"],
   requiredPermissions: [{ module: "reports", action: "view" }, { module: "vendors", action: "view" }],
   filters: ["date_from", "date_to", "event", "search"], exports: ["pdf", "excel"], handler: "vendors",
+}, {
+  key: "employee_master",
+  area: "hr_labour",
+  subject: "employee",
+  type: "master",
+  description: "Authorized employee master fields within company and site scope.",
+  requiredEntitlements: ["reports", "hr"],
+  requiredPermissions: [{ module: "reports", action: "view" }, { module: "hr_employees", action: "view" }],
+  filters: ["company_id", "site_id", "department_id", "designation_id", "status", "employment_type", "search"], exports: ["pdf", "excel"], handler: "employees",
 }];
 
 export const REPORT_AREAS = [{ key: "hr_labour", label: "HR & Labour" }, { key: "procurement", label: "Purchase / Procurement" }];
