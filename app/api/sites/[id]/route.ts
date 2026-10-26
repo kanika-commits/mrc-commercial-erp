@@ -203,6 +203,83 @@ export async function PUT(
   }
 }
 
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const access = await assertSitePermission(request, "edit");
+
+    if ("error" in access) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
+    const { id } = await params;
+    const payload = await request.json().catch(() => ({}));
+    const status = String(payload.status || "").trim().toLowerCase();
+
+    if (status !== "active" && status !== "inactive") {
+      return NextResponse.json(
+        { error: "Site status must be active or inactive." },
+        { status: 400 }
+      );
+    }
+
+    const supabase = adminClient();
+    const organizationScope = await loadOrganizationScopeForUser(supabase, access.user.id);
+    const { data: site, error: siteError } = await supabase
+      .from("sites")
+      .select("id, organization_id, company_id, site_name, site_code, status")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (siteError) throw siteError;
+
+    if (!site || !isInOrganizationScope(organizationScope, site.organization_id)) {
+      return NextResponse.json({ error: "Site was not found." }, { status: 404 });
+    }
+
+    if (String(site.status || "active").toLowerCase() === status) {
+      return NextResponse.json({ site_id: id, status, changed: false });
+    }
+
+    const { error: updateError } = await supabase
+      .from("sites")
+      .update({ status })
+      .eq("id", id)
+      .eq("organization_id", site.organization_id);
+
+    if (updateError) throw updateError;
+
+    try {
+      await recordAuditEvent(supabase, access.user, {
+        organizationId: site.organization_id,
+        companyId: site.company_id,
+        moduleCode: "sites",
+        entityType: "site",
+        recordId: id,
+        recordNumber: site.site_code,
+        action: status === "inactive" ? "deactivate" : "activate",
+        actionCategory: "update",
+        activityLabel: status === "inactive" ? "Deactivated Site" : "Reactivated Site",
+        description: `${status === "inactive" ? "Deactivated" : "Reactivated"} site ${site.site_name}. Linked history and assignments were preserved.`,
+        workflowStage: "Status Change",
+        oldValues: site,
+        newValues: { status },
+      }, request);
+    } catch (auditError) {
+      console.error("[Admin Audit] Site status audit failed", auditError);
+    }
+
+    return NextResponse.json({ site_id: id, status, changed: true });
+  } catch (error) {
+    return NextResponse.json(
+      { error: "Failed to update site status." },
+      { status: 500 }
+    );
+  }
+}
+
 async function getDependencyCount(
   supabase: ReturnType<typeof adminClient>,
   table: string,
@@ -325,13 +402,6 @@ export async function DELETE(
       );
     }
 
-    const { error: accessDeleteError } = await supabase
-      .from("user_access_assignments")
-      .delete()
-      .eq("site_id", id);
-
-    if (accessDeleteError) throw accessDeleteError;
-
     const { error: deleteError } = await supabase.from("sites").delete().eq("id", id);
 
     if (deleteError) throw deleteError;
@@ -363,8 +433,17 @@ export async function DELETE(
 
     return NextResponse.json({ site_id: id, deleted: true });
   } catch (error: any) {
+    if (error?.code === "23503") {
+      return NextResponse.json(
+        {
+          error: "This site cannot be deleted because linked records still reference it. Deactivate it instead to preserve history and assignments.",
+        },
+        { status: 409 }
+      );
+    }
+
     return NextResponse.json(
-      { error: error.message || "Failed to delete site." },
+      { error: "Failed to delete site." },
       { status: 500 }
     );
   }
