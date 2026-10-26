@@ -282,6 +282,10 @@ function hasRouteAccess(
 
   if (pathname === "/settings/password") return true;
 
+  if (pathname === "/work-orders/item-masters") {
+    return can(access.permissions, "procurement_items", "view");
+  }
+
   if (pathname.startsWith("/settings")) {
     return settingsRouteAccess(pathname, access) ?? hasSettingsViewAccess(access);
   }

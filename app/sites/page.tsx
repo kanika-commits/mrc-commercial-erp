@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Building2, ChevronRight, Eye, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { Building2, ChevronRight, Eye, Pencil, Plus, Power, Search, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
@@ -72,6 +72,7 @@ export default function SitesPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [deleteSite, setDeleteSite] = useState<Site | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [changingStatusId, setChangingStatusId] = useState<string | null>(null);
   const permissions = access?.permissions || [];
   const canAddSites = can(permissions, "sites", "add");
   const canEditSites = can(permissions, "sites", "edit");
@@ -158,6 +159,54 @@ export default function SitesPage() {
       setMessage(error.message || "Failed to delete site.");
     } finally {
       setDeleting(false);
+    }
+  }
+
+  async function changeSiteStatus(site: Site) {
+    const currentStatus = statusLabel(site.status).toLowerCase();
+    const nextStatus = currentStatus === "active" ? "inactive" : currentStatus === "inactive" ? "active" : null;
+
+    if (!nextStatus) return;
+
+    const action = nextStatus === "inactive" ? "Deactivate" : "Reactivate";
+    const confirmed = window.confirm(
+      `${action} ${site.site_name || "this site"}? Linked history and assignments will be preserved; nothing will be deleted or rewritten.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setChangingStatusId(site.id);
+      setMessage("");
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Your session expired. Please log in again.");
+      }
+
+      const response = await fetch(`/api/sites/${site.id}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || `Failed to ${action.toLowerCase()} site.`);
+      }
+
+      setSites((prev) => prev.map((item) => item.id === site.id ? { ...item, status: nextStatus } : item));
+      setMessage(`Site ${nextStatus === "inactive" ? "deactivated" : "reactivated"}. Linked history and assignments were preserved.`);
+    } catch (error: any) {
+      setMessage(error.message || "Failed to update site status.");
+    } finally {
+      setChangingStatusId(null);
     }
   }
 
@@ -340,6 +389,18 @@ export default function SitesPage() {
                           >
                             <Pencil className="h-4 w-4" />
                           </Link>
+                        )}
+                        {canEditSites && (statusLabel(site.status).toLowerCase() === "active" || statusLabel(site.status).toLowerCase() === "inactive") && (
+                          <button
+                            type="button"
+                            onClick={() => void changeSiteStatus(site)}
+                            disabled={changingStatusId === site.id}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded text-slate-500 transition hover:bg-amber-50 hover:text-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            title={statusLabel(site.status).toLowerCase() === "active" ? "Deactivate site" : "Reactivate site"}
+                            aria-label={statusLabel(site.status).toLowerCase() === "active" ? `Deactivate ${site.site_name}` : `Reactivate ${site.site_name}`}
+                          >
+                            <Power className="h-4 w-4" />
+                          </button>
                         )}
                         {canDeleteSites && (
                           <button
