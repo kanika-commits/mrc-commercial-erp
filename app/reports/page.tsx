@@ -1,195 +1,143 @@
 "use client";
 
-import Link from "next/link";
-import {
-  ArrowRight,
-  BarChart3,
-  BriefcaseBusiness,
-  LayoutDashboard,
-  Library,
-  Save,
-  SlidersHorizontal,
-} from "lucide-react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAccessContext } from "@/components/AccessContext";
-import { can, hasGlobalAccess } from "@/lib/accessControl";
-import {
-  REPORT_CATEGORIES,
-  REPORT_DATASETS,
-  STANDARD_REPORT_TEMPLATES,
-  type ReportCategory,
-} from "@/lib/reports/reportCatalog";
+import { REPORT_AREAS, REPORT_REGISTRY } from "@/lib/reports/reportRegistry";
+import { supabase } from "@/lib/supabase";
+import VendorReportsPanel from "@/components/reports/VendorReportsPanel";
+import EmployeeReportsPanel from "@/components/reports/EmployeeReportsPanel";
 
-const categoryOrder: ReportCategory[] = ["commercial", "hr", "labour"];
+type Change = { field: string; before: string; after: string };
+type Row = { id: string; at: string; labour_id: string; labour_name: string; event: string; summary: string; site: string; company: string; performed_by: string; reason: string; changes: Change[] };
+const eventOptions = [
+  { key: "create", label: "Registered" },
+  { key: "update", label: "Details Updated" },
+  { key: "employment_change", label: "Employment Changed" },
+  { key: "salary_revision", label: "Rate Revised" },
+  { key: "transfer", label: "Transferred" },
+  { key: "activate", label: "Activated" },
+  { key: "deactivate", label: "Deactivated" },
+];
 
-export default function ReportsLandingPage() {
+export default function ReportsPage() {
   const { access, loading } = useAccessContext();
+  const [area, setArea] = useState("hr_labour");
+  const [subject, setSubject] = useState("labour");
+  const [reportType, setReportType] = useState("audit_trail");
+  const [organizationId, setOrganizationId] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [siteId, setSiteId] = useState("");
+  const [companyId, setCompanyId] = useState("");
+  const [event, setEvent] = useState("");
+  const [labourId, setLabourId] = useState("");
+  const [performedBy, setPerformedBy] = useState("");
+  const [labour, setLabour] = useState<{ id: string; label: string }[]>([]);
+  const [actors, setActors] = useState<{ id: string; name: string; email: string | null; group?: string }[]>([]);
+  const [sites, setSites] = useState<{ id: string; name: string }[]>([]);
+  const [companies, setCompanies] = useState<{ id: string; name: string }[]>([]);
+  const [available, setAvailable] = useState(false);
+  const [rows, setRows] = useState<Row[]>([]);
+  const [selected, setSelected] = useState<Row | null>(null);
+  const [generated, setGenerated] = useState(false);
+  const [page, setPage] = useState(1);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [metadataError, setMetadataError] = useState("");
+  const [vendorRows, setVendorRows] = useState<any[]>([]);
+  const [vendorSearch, setVendorSearch] = useState("");
+  const [vendorDuplicate, setVendorDuplicate] = useState("");
+  const [vendorStatus, setVendorStatus] = useState("");
+  const organizations = access?.organizations || [];
+  const definition = REPORT_REGISTRY[0];
+  const actorGroups = useMemo(() => Array.from(new Set(actors.map((actor) => actor.group || "Authorized users"))).map((group) => ({ group, actors: actors.filter((actor) => (actor.group || "Authorized users") === group) })), [actors]);
 
-  const visibleDatasets = useMemo(() => {
-    const permissions = access?.permissions || [];
-    const globalAccess = hasGlobalAccess(access);
-    const canViewReports = globalAccess || can(permissions, "reports", "view");
-    if (!canViewReports) return [];
+  const query = useMemo(() => {
+    const params = new URLSearchParams({ page: String(page) });
+    if (from) params.set("date_from", from); if (to) params.set("date_to", to); if (companyId) params.set("company_id", companyId); if (siteId) params.set("site_id", siteId); if (event) params.set("event", event); if (labourId) params.set("labour_id", labourId); if (performedBy) params.set("performed_by", performedBy);
+    return params;
+  }, [organizationId, from, to, companyId, siteId, event, labourId, performedBy, page]);
 
-    return REPORT_DATASETS.filter(
-      (dataset) =>
-        globalAccess ||
-        can(permissions, dataset.sourceModule, dataset.requiredAction),
-    );
-  }, [access]);
-
-  const visibleDatasetCodes = new Set(visibleDatasets.map((dataset) => dataset.code));
-  const visibleTemplates = STANDARD_REPORT_TEMPLATES.filter((template) =>
-    visibleDatasetCodes.has(template.datasetCode),
-  );
-
-  if (loading) {
-    return <p className="text-sm text-slate-500">Loading reports...</p>;
+  async function authHeaders() {
+    const { data: { session } } = await supabase.auth.getSession();
+    return { Authorization: `Bearer ${session?.access_token || ""}` };
   }
 
-  return (
-    <section className="space-y-6">
-      <div className="rounded-2xl border bg-white p-5 shadow-sm">
-        <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
-          Reports
-        </p>
-        <h1 className="text-2xl font-bold text-slate-950">Reports</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Create, analyse and visualize ERP reports from existing ConstructIQ data.
-        </p>
-      </div>
+  useEffect(() => { if (access?.organizations?.length === 1) setOrganizationId(access.organizations[0]); }, [access]);
+  useEffect(() => {
+    if (area === "procurement" && subject !== "vendor") {
+      setSubject("vendor");
+      setReportType("vendor_master");
+    }
+  }, [area, subject]);
+  useEffect(() => {
+    if (subject === "employee" && reportType !== "employee_master") setReportType("employee_master");
+    if (subject === "labour" && reportType !== "audit_trail") setReportType("audit_trail");
+    if (subject === "vendor" && !["vendor_master", "vendor_audit"].includes(reportType)) setReportType("vendor_master");
+  }, [subject, reportType]);
+  useEffect(() => {
+    if (subject !== "labour") return;
+    let cancelled = false;
+    setMetadataError("");
+    void supabase.auth.getSession().then(({ data: { session } }) => {
+      const tokenValue = session?.access_token || "";
+      const token = Boolean(tokenValue);
+      if (!token) {
+        throw new Error("No authenticated access token");
+      }
+      return fetch(`/api/reports/labour-audit?metadata=true${companyId ? `&company_id=${encodeURIComponent(companyId)}` : ""}${siteId ? `&site_id=${encodeURIComponent(siteId)}` : ""}`, { headers: { Authorization: `Bearer ${tokenValue}` } });
+    })
+      .then(async (response) => { const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.error || "Unable to load report filters."); return payload; })
+      .then((payload) => { if (cancelled) return; if (!organizationId && payload.organization_id) setOrganizationId(payload.organization_id); setAvailable(payload.report_available === true); setCompanies((payload.companies || []).map((company: any) => ({ id: company.id, name: company.company_name || company.name }))); setSites((payload.sites || []).map((site: any) => ({ id: site.id, name: site.site_name || site.name }))); const nextLabour = (payload.labour || []).map((worker: any) => ({ id: worker.id, label: [worker.labour_code, worker.worker_name].filter(Boolean).join(" — ") })); setLabour(nextLabour); if (labourId && !nextLabour.some((worker: any) => worker.id === labourId)) setLabourId(""); setActors(payload.actors || []); })
+      .catch((loadError: any) => { if (cancelled) return; setAvailable(false); setCompanies([]); setSites([]); setLabour([]); setActors([]); setMetadataError(loadError.message || "Unable to load report filters."); });
+    return () => { cancelled = true; };
+  }, [organizationId, companyId, siteId]);
+  useEffect(() => { if (performedBy && !actors.some((actor) => actor.id === performedBy)) setPerformedBy(""); }, [actors, performedBy]);
 
-      <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-        <Link
-          href="/reports/builder"
-          className="group rounded-2xl border border-slate-200 bg-slate-950 p-6 text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-        >
-          <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/10">
-            <SlidersHorizontal className="h-6 w-6" aria-hidden="true" />
-          </span>
-          <div className="mt-5">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">
-              Primary
-            </p>
-            <h2 className="mt-1 text-2xl font-bold">Create Custom Report</h2>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
-              Choose a dataset, fields, filters, grouping, measures and visualization before previewing the report.
-            </p>
-          </div>
-          <span className="mt-6 inline-flex items-center gap-2 text-sm font-semibold">
-            Open Builder
-            <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" aria-hidden="true" />
-          </span>
-        </Link>
+  async function generateReport(nextPage = 1) {
+    if (!organizationId) return;
+    setBusy(true); setError(""); setPage(nextPage);
+    const params = new URLSearchParams(query); params.set("page", String(nextPage));
+    try { const response = await fetch(`/api/reports/labour-audit?${params.toString()}`, { headers: await authHeaders() }); const payload = await response.json(); if (!response.ok) throw new Error(payload.error || "Unable to generate report."); setRows(payload.rows || []); setGenerated(true); }
+    catch (loadError: any) { setError(loadError.message || "Unable to generate report."); }
+    finally { setBusy(false); }
+  }
 
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
-          <ComingLaterCard
-            icon={Save}
-            title="Saved Reports"
-            description="User-saved report definitions will be added after report execution is approved."
-          />
-          <ComingLaterCard
-            icon={LayoutDashboard}
-            title="Dashboards"
-            description="Custom dashboard layouts and KPI cards are planned for a later phase."
-          />
-        </div>
-      </div>
+  async function generateVendorReport() {
+    setBusy(true); setError("");
+    try {
+      const params = new URLSearchParams({ search: vendorSearch });
+      if (reportType === "vendor_audit") params.set("kind", "audit");
+      if (vendorDuplicate) params.set("duplicate", vendorDuplicate);
+      if (vendorStatus) params.set("status", vendorStatus);
+      const response = await fetch(`/api/reports/vendors?${params.toString()}`, { headers: await authHeaders() });
+      const contentType = response.headers.get("content-type") || "";
+      const body = await response.text();
+      let payload: any = {};
+      if (body && contentType.includes("application/json")) payload = JSON.parse(body);
+      if (!response.ok) throw new Error(payload.error || body || `Vendor report failed (${response.status}).`);
+      setVendorRows(payload.rows || []); setGenerated(true);
+    } catch (loadError: any) { setError(loadError.message || "Unable to load vendor report."); } finally { setBusy(false); }
+  }
 
-      <section className="rounded-2xl border bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-950">Standard Reports</h2>
-            <p className="text-sm text-slate-500">
-              Predefined templates will open through the same report-builder model.
-            </p>
-          </div>
-          <button
-            type="button"
-            disabled
-            className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-400"
-          >
-            Browse Standard Reports
-          </button>
-        </div>
-        {visibleTemplates.length > 0 ? (
-          <div className="mt-4 divide-y rounded-xl border">
-            {visibleTemplates.map((template) => (
-              <div key={template.code} className="flex items-start gap-3 p-3">
-                <Library className="mt-0.5 h-4 w-4 text-slate-400" aria-hidden="true" />
-                <div>
-                  <p className="text-sm font-semibold text-slate-900">{template.title}</p>
-                  <p className="text-sm text-slate-500">{template.description}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="mt-4 rounded-xl border border-dashed p-4 text-sm text-slate-500">
-            No standard report templates are available for your current permissions.
-          </p>
-        )}
-      </section>
+  async function exportReport(format: "pdf" | "excel") { const params = new URLSearchParams(query); params.set("format", format); const response = await fetch(`/api/reports/labour-audit?${params.toString()}`, { headers: await authHeaders() }); if (!response.ok) { const payload = await response.json().catch(() => ({})); setError(payload.error || "Unable to export report."); return; } const blob = await response.blob(); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = format === "pdf" ? "Labour_Audit_Report.pdf" : "Labour_Audit_Report.xlsx"; anchor.click(); URL.revokeObjectURL(url); }
 
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-950">Available Data Sources</h2>
-          <p className="text-sm text-slate-500">
-            Dataset categories only. Report variations should be created through filters and grouping.
-          </p>
-        </div>
-        <div className="grid gap-3 md:grid-cols-3">
-          {categoryOrder.map((category) => {
-            const datasets = visibleDatasets.filter((dataset) => dataset.category === category);
-            const meta = REPORT_CATEGORIES[category];
-            return (
-              <article key={category} className="rounded-2xl border bg-white p-5 shadow-sm">
-                <div className="flex items-start gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-700">
-                    {category === "commercial" ? (
-                      <BriefcaseBusiness className="h-5 w-5" aria-hidden="true" />
-                    ) : category === "hr" ? (
-                      <BarChart3 className="h-5 w-5" aria-hidden="true" />
-                    ) : (
-                      <SlidersHorizontal className="h-5 w-5" aria-hidden="true" />
-                    )}
-                  </span>
-                  <div>
-                    <h3 className="text-base font-semibold text-slate-950">{meta.title}</h3>
-                    <p className="mt-1 text-sm text-slate-500">{meta.description}</p>
-                  </div>
-                </div>
-                <p className="mt-4 text-sm font-medium text-slate-700">
-                  {datasets.length} accessible dataset{datasets.length === 1 ? "" : "s"}
-                </p>
-              </article>
-            );
-          })}
-        </div>
-      </section>
-    </section>
-  );
-}
+  if (loading) return <p className="text-sm text-slate-500">Loading Reports...</p>;
+  if (!access) return <p className="text-sm text-slate-500">Reports access is unavailable.</p>;
+  if (subject === "vendor") return <section className="space-y-5"><header><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reports</p><h1 className="mt-2 text-2xl font-semibold">Report Centre</h1></header><div className="grid gap-3 rounded-xl border bg-white p-4 shadow-sm md:grid-cols-3"><label className="text-sm">Area / Module<select value={area} onChange={(e) => setArea(e.target.value)} className="mt-1 w-full rounded border p-2"><option value="procurement">Purchase / Procurement</option><option value="hr_labour">HR & Labour</option></select></label><label className="text-sm">Report For<select value={subject} onChange={(e) => { setSubject(e.target.value); setArea(e.target.value === "vendor" ? "procurement" : "hr_labour"); }} className="mt-1 w-full rounded border p-2"><option value="vendor">Vendor</option><option value="labour">Labour</option><option value="employee">Employee</option></select></label><label className="text-sm">Report Type<select value={reportType} onChange={(e) => setReportType(e.target.value)} className="mt-1 w-full rounded border p-2"><option value="vendor_master">Vendor Master</option><option value="vendor_audit">Audit Trail</option></select></label></div><VendorReportsPanel accessToken={null} reportType={reportType as "vendor_master" | "vendor_audit"} /></section>;
+  if (subject === "employee") return <section className="space-y-5"><header><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reports</p><h1 className="mt-2 text-2xl font-semibold">Report Centre</h1><p className="mt-1 text-sm text-slate-500">Employee Master uses only non-sensitive fields returned within your authorized HR scope.</p></header><div className="grid gap-3 rounded-xl border bg-white p-4 shadow-sm md:grid-cols-2"><label className="text-sm">Area / Module<select value={area} onChange={(e) => setArea(e.target.value)} className="mt-1 w-full rounded border p-2"><option value="hr_labour">HR & Labour</option></select></label><label className="text-sm">Report For<select value={subject} onChange={(e) => setSubject(e.target.value)} className="mt-1 w-full rounded border p-2"><option value="employee">Employee</option><option value="labour">Labour</option><option value="vendor">Vendor</option></select></label></div><EmployeeReportsPanel /></section>;
 
-function ComingLaterCard({
-  icon: Icon,
-  title,
-  description,
-}: {
-  icon: any;
-  title: string;
-  description: string;
-}) {
-  return (
-    <article className="rounded-2xl border bg-white p-5 shadow-sm">
-      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-700">
-        <Icon className="h-5 w-5" aria-hidden="true" />
-      </span>
-      <h2 className="mt-4 text-base font-semibold text-slate-950">{title}</h2>
-      <p className="mt-1 text-sm leading-6 text-slate-500">{description}</p>
-      <span className="mt-4 inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
-        Coming later
-      </span>
-    </article>
-  );
+  if (!available && organizationId && !metadataError) return <section className="space-y-5"><header><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reports</p><h1 className="mt-2 text-2xl font-semibold">Report Centre</h1></header><p className="rounded border border-slate-200 bg-white p-4 text-sm text-slate-600">No authorized reports are available for this organization.</p></section>;
+  return <section className="space-y-5">
+    <header><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reports</p><h1 className="mt-2 text-2xl font-semibold">Report Centre</h1><p className="mt-1 text-sm text-slate-500">Generate operational and audit reports within your authorized scope.</p></header>
+    <div className="grid gap-3 rounded-xl border bg-white p-4 shadow-sm md:grid-cols-3">
+      <label className="text-sm">Area / Module<select value={area} onChange={(e) => setArea(e.target.value)} className="mt-1 w-full rounded border p-2">{REPORT_AREAS.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label>
+      <label className="text-sm">Report For<select value={subject} onChange={(e) => { setSubject(e.target.value); setArea(e.target.value === "vendor" ? "procurement" : "hr_labour"); }} className="mt-1 w-full rounded border p-2"><option value="labour">Labour</option><option value="vendor">Vendor</option><option value="employee">Employee</option></select></label>
+      <label className="text-sm">Report Type<select value={reportType} onChange={(e) => setReportType(e.target.value)} className="mt-1 w-full rounded border p-2">{subject === "vendor" ? <><option value="vendor_master">Vendor Master</option><option value="vendor_audit">Audit Trail</option></> : subject === "employee" ? <option value="employee_master">Employee Master</option> : <option value="audit_trail">Audit Trail</option>}</select></label>
+    </div>
+    {subject === "vendor" ? <div className="rounded-xl border bg-white p-4 shadow-sm"><h2 className="text-base font-semibold">Vendor Report</h2><label className="text-sm">Status<select value={vendorStatus} onChange={(e) => setVendorStatus(e.target.value)} className="mt-1 w-full rounded border p-2"><option value="">All Statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label><div className="mt-3 grid gap-3 md:grid-cols-3"><label className="text-sm">Search Vendor<input value={vendorSearch} onChange={(e) => setVendorSearch(e.target.value)} placeholder="Search name, GSTIN, phone or email" className="mt-1 w-full rounded border p-2" /></label><label className="text-sm">Duplicate Check<select value={vendorDuplicate} onChange={(e) => setVendorDuplicate(e.target.value)} className="mt-1 w-full rounded border p-2"><option value="">All Vendors</option><option value="phone">Duplicate Phone</option><option value="gstin">Duplicate GSTIN</option></select></label></div><button type="button" onClick={() => void generateVendorReport()} disabled={busy} className="mt-4 rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{busy ? "Generating..." : "Generate Report"}</button>{vendorRows.length > 0 && <div className="mt-4 overflow-x-auto"><table className="min-w-full text-left text-sm"><thead><tr className="border-b"><th className="px-2 py-2">Vendor Name</th><th className="px-2 py-2">GSTIN</th><th className="px-2 py-2">Phone / Mobile</th><th className="px-2 py-2">Email</th><th className="px-2 py-2">Status</th><th className="px-2 py-2">Created On</th><th className="px-2 py-2">Created By</th></tr></thead><tbody>{vendorRows.map((row) => <tr key={row.id} className="border-b"><td className="px-2 py-2">{row.vendor_name || "—"}</td><td className="px-2 py-2">{row.gstin || "—"}</td><td className="px-2 py-2">{row.contacts?.map((contact: any) => contact.contact_number).filter(Boolean).join(", ") || "—"}</td><td className="px-2 py-2">{row.contacts?.map((contact: any) => contact.email).filter(Boolean).join(", ") || "—"}</td><td className="px-2 py-2">{row.status || "—"}</td><td className="px-2 py-2">{row.created_at ? new Date(row.created_at).toLocaleString() : "—"}</td><td className="px-2 py-2">{row.created_by || "Unavailable"}</td></tr>)}</tbody></table></div>}</div> : <div className="rounded-xl border bg-white p-4 shadow-sm"><h2 className="text-base font-semibold">Filters</h2><div className="mt-3 grid gap-3 md:grid-cols-3"><label className="text-sm">Date From<input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="mt-1 w-full rounded border p-2" /></label><label className="text-sm">Date To<input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="mt-1 w-full rounded border p-2" /></label><label className="text-sm">Company<select value={companyId} onChange={(e) => { setCompanyId(e.target.value); setSiteId(""); }} className="mt-1 w-full rounded border p-2"><option value="">All Companies</option>{companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}</select></label><label className="text-sm">Site<select value={siteId} onChange={(e) => setSiteId(e.target.value)} className="mt-1 w-full rounded border p-2"><option value="">All Sites</option>{sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}</select></label><label className="text-sm">Event Type<select value={event} onChange={(e) => setEvent(e.target.value)} className="mt-1 w-full rounded border p-2"><option value="">All Events</option>{eventOptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label><label className="text-sm">Labour<select value={labourId} onChange={(e) => setLabourId(e.target.value)} className="mt-1 w-full rounded border p-2"><option value="">All Labour</option>{labour.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label><label className="text-sm">Performed By<select value={performedBy} onChange={(e) => setPerformedBy(e.target.value)} className="mt-1 w-full rounded border p-2"><option value="">All Users</option>{actorGroups.map((entry) => <optgroup key={entry.group} label={entry.group}>{entry.actors.map((item) => <option key={item.id} value={item.id}>{item.email ? `${item.name} — ${item.email}` : item.name}</option>)}</optgroup>)}</select></label></div><button type="button" onClick={() => generateReport(1)} disabled={!organizationId || busy} className="mt-4 rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{busy ? "Generating..." : "Generate Report"}</button></div>}
+    {error && <p className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+    {generated && <section className="space-y-3"><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-lg font-semibold">Labour Audit Report</h2><p className="text-sm text-slate-500">{from || "All dates"} to {to || "today"} · {siteId ? "Selected site" : "All Sites"}</p></div><div className="flex gap-2"><button type="button" onClick={() => exportReport("pdf")} className="rounded border px-3 py-2 text-sm">Download PDF</button><button type="button" onClick={() => exportReport("excel")} className="rounded border px-3 py-2 text-sm">Export Excel</button></div></div><div className="overflow-x-auto rounded-xl border bg-white shadow-sm"><table className="min-w-full text-left text-sm"><thead className="border-b bg-slate-50"><tr>{["Date & Time", "Labour", "Event", "Change Summary", "Site", "Performed By", ""].map((heading) => <th key={heading} className="px-3 py-2 font-medium">{heading}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row.id} className="border-b last:border-0"><td className="whitespace-nowrap px-3 py-2">{new Date(row.at).toLocaleString()}</td><td className="px-3 py-2">{row.labour_name}<span className="block text-xs text-slate-500">{row.labour_id}</span></td><td className="px-3 py-2">{row.event}</td><td className="max-w-md px-3 py-2">{row.summary}</td><td className="px-3 py-2">{row.site}</td><td className="px-3 py-2">{row.performed_by}</td><td className="px-3 py-2"><button type="button" onClick={() => setSelected(row)} className="underline">Details</button></td></tr>)}</tbody></table>{!rows.length && <p className="p-6 text-sm text-slate-500">No audit events match these filters.</p>}</div><div className="flex items-center justify-between text-sm"><button type="button" onClick={() => generateReport(page - 1)} disabled={page <= 1 || busy} className="rounded border px-3 py-2 disabled:opacity-50">Previous</button><span>Page {page}</span><button type="button" onClick={() => generateReport(page + 1)} disabled={rows.length < 50 || busy} className="rounded border px-3 py-2 disabled:opacity-50">Next</button></div></section>}
+    {selected && <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setSelected(null)}><div className="max-h-[80vh] w-full max-w-2xl overflow-auto rounded-xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}><div className="flex items-start justify-between"><div><h2 className="text-lg font-semibold">Audit details</h2><p className="text-sm text-slate-500">{selected.labour_name} · {selected.event}</p></div><button type="button" onClick={() => setSelected(null)} aria-label="Close">Close</button></div><dl className="mt-4 space-y-2 text-sm"><div><dt className="font-medium">Reason</dt><dd>{selected.reason}</dd></div><div><dt className="font-medium">Performed by</dt><dd>{selected.performed_by}</dd></div></dl><table className="mt-4 min-w-full text-left text-sm"><thead><tr><th className="py-2">Field</th><th className="py-2">Previous</th><th className="py-2">New</th></tr></thead><tbody>{selected.changes.map((change) => <tr key={change.field} className="border-t"><td className="py-2">{change.field}</td><td className="py-2">{change.before}</td><td className="py-2">{change.after}</td></tr>)}</tbody></table></div></div>}
+  </section>;
 }

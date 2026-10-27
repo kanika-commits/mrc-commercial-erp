@@ -1,11 +1,3 @@
-import ModulePage from "@/components/ModulePage";
+import ReportsPage from "@/app/reports/page";
 
-export default function ReportsPage() {
-  return (
-    <ModulePage
-      groupCode="reports"
-      title="Reports"
-      description="Reports and exports."
-    />
-  );
-}
+export default ReportsPage;
