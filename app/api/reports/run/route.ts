@@ -319,11 +319,13 @@ async function baseQuery(admin: ReturnType<typeof adminClient>, auth: any, filte
   query = query.or(
     "and(approval_status.ilike.approved,status.eq.active),status.ilike.suspended,status.ilike.cancelled,approval_status.ilike.suspended,approval_status.ilike.cancelled",
   );
-  return applyFilters(query, filters);
+  // Supabase builders are thenables. Return them inside an object so callers
+  // can continue composing the query instead of accidentally executing it.
+  return { query: applyFilters(query, filters) };
 }
 
 async function applyVendorFilter(admin: ReturnType<typeof adminClient>, query: any, vendorIds: string[] | undefined) {
-  if (!vendorIds?.length) return query;
+  if (!vendorIds?.length) return { query };
   const { data, error } = await admin
     .from("work_order_vendors")
     .select("work_order_id")
@@ -331,14 +333,15 @@ async function applyVendorFilter(admin: ReturnType<typeof adminClient>, query: a
   if (error) throw error;
   const workOrderIds = Array.from(new Set((data || []).map((row: any) => row.work_order_id).filter(Boolean)));
   if (!workOrderIds.length) return null;
-  return query.in("id", workOrderIds);
+  return { query: query.in("id", workOrderIds) };
 }
 
 async function runTableReport(admin: ReturnType<typeof adminClient>, auth: any, definition: any) {
-  let query = await baseQuery(admin, auth, definition.filters);
-  if (!query) return { columns: fieldMeta(definition.selectedFields), rows: [], total: 0, page: definition.page, page_size: definition.pageSize };
-  query = await applyVendorFilter(admin, query, definition.filters.vendor_id);
-  if (!query) return { columns: fieldMeta(definition.selectedFields), rows: [], total: 0, page: definition.page, page_size: definition.pageSize };
+  const base = await baseQuery(admin, auth, definition.filters);
+  if (!base) return { columns: fieldMeta(definition.selectedFields), rows: [], total: 0, page: definition.page, page_size: definition.pageSize };
+  const filtered = await applyVendorFilter(admin, base.query, definition.filters.vendor_id);
+  if (!filtered) return { columns: fieldMeta(definition.selectedFields), rows: [], total: 0, page: definition.page, page_size: definition.pageSize };
+  const query = filtered.query;
 
   const from = (definition.page - 1) * definition.pageSize;
   const to = from + definition.pageSize - 1;
@@ -358,10 +361,11 @@ async function runTableReport(admin: ReturnType<typeof adminClient>, auth: any, 
 }
 
 async function runAggregateReport(admin: ReturnType<typeof adminClient>, auth: any, definition: any) {
-  let query = await baseQuery(admin, auth, definition.filters);
-  if (!query) return { rows: [], total: 0 };
-  query = await applyVendorFilter(admin, query, definition.filters.vendor_id);
-  if (!query) return { rows: [], total: 0 };
+  const base = await baseQuery(admin, auth, definition.filters);
+  if (!base) return { rows: [], total: 0 };
+  const filtered = await applyVendorFilter(admin, base.query, definition.filters.vendor_id);
+  if (!filtered) return { rows: [], total: 0 };
+  const query = filtered.query;
 
   const { data, error, count } = await query.limit(5000);
   if (error) throw error;
@@ -424,8 +428,8 @@ function uniqueOption(rows: Array<{ value: string; label: string }>) {
 }
 
 async function loadMetadata(admin: ReturnType<typeof adminClient>, auth: any) {
-  const query = await baseQuery(admin, auth, {});
-  if (!query) {
+  const base = await baseQuery(admin, auth, {});
+  if (!base) {
     return {
       fields: WORK_ORDER_FIELDS,
       filters: WORK_ORDER_FILTERS,
@@ -436,7 +440,7 @@ async function loadMetadata(admin: ReturnType<typeof adminClient>, auth: any) {
     };
   }
 
-  const { data, error } = await query.limit(5000);
+  const { data, error } = await base.query.limit(5000);
   if (error) throw error;
   const rows = data || [];
   const maps = await loadLookupMaps(admin, rows);

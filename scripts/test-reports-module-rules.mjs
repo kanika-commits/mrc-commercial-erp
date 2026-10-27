@@ -10,14 +10,18 @@ const authGuard = fs.readFileSync("components/AuthGuard.tsx", "utf8");
 const visibility = fs.readFileSync("lib/permissionVisibility.ts", "utf8");
 const permissionMatrix = fs.readFileSync("lib/permissionMatrix.ts", "utf8");
 
-assert.match(reportsPage, /Create Custom Report/, "Reports landing page must prioritize Create Custom Report");
-assert.match(reportsPage, /href="\/reports\/builder"/, "Create Custom Report must open the builder shell");
-assert.match(reportsPage, /Standard Reports/, "Reports landing page must include a compact Standard Reports section");
-assert.match(reportsPage, /Saved Reports/, "Reports landing page must reserve a Saved Reports option");
-assert.match(reportsPage, /Dashboards/, "Reports landing page must reserve a Dashboards option");
-assert.match(reportsPage, /Available Data Sources/, "Reports landing page must show dataset categories");
-assert.doesNotMatch(reportsPage, /group\.reports\.map/, "Reports landing page must not render large per-report card grids");
-assert.doesNotMatch(reportsPage, /Coming next[\s\S]*Coming next[\s\S]*Coming next/, "Reports landing page must not show many repeated Coming next report buttons");
+assert.match(reportsPage, /Report Centre/, "Reports page must use the unified Report Centre");
+assert.match(reportsPage, /Area \/ Module/, "Report Centre must expose the area selector");
+assert.match(reportsPage, /Report For/, "Report Centre must expose the subject selector");
+assert.match(reportsPage, /Report Type/, "Report Centre must expose the report type selector");
+assert.match(reportsPage, /value="employee"/, "Employee must be selectable in the main flow");
+assert.match(reportsPage, /value="employee_master"/, "Employee Master must be the Employee report type");
+assert.match(reportsPage, /EmployeeReportsPanel/, "Employee selection must render the secured Employee panel");
+assert.match(reportsPage, /VendorReportsPanel/, "Vendor selection must render the existing Vendor panels");
+assert.match(reportsPage, /labour-audit/, "Labour selection must use the existing Labour Audit flow");
+assert.match(reportsPage, /value="work_orders"/, "Work Orders must remain selectable");
+assert.match(reportsPage, /href="\/reports\/builder"/, "Work Orders must retain the existing secured builder");
+assert.doesNotMatch(reportsPage, /Create Custom Report/, "The old builder-first landing must not be the primary Reports experience");
 
 assert.match(builderPage, /Dataset/, "Report builder shell must include Dataset selector");
 assert.match(builderPage, /Fields/, "Report builder shell must include Fields section");
