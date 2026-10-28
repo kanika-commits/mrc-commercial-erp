@@ -313,7 +313,7 @@ export default function ModulePage({
         id: "settings-work-order-item-master", module_group: "settings", module_code: "procurement_items", module_name: "Masters - Work Order Item Master", route: "/work-orders/item-masters", sort_order: 79,
       } : null,
       globalAccess || can(permissions, "procurement_po_terms_master", "view") ? {
-        id: "settings-po-terms-conditions", module_group: "settings", module_code: "procurement_po_terms_master", module_name: "Masters - PO Terms & Conditions", route: "/settings/purchase-order-masters", sort_order: 79,
+        id: "settings-po-terms-conditions", module_group: "settings", module_code: "procurement_po_terms_master", module_name: "Masters - PO & WO Terms & Conditions", route: "/settings/purchase-order-masters", sort_order: 79,
       } : null,
     ].filter(Boolean) as ModuleRow[];
     settingsRows = [
@@ -356,7 +356,7 @@ export default function ModulePage({
         id: "settings-po-terms-conditions",
         module_group: "settings",
         module_code: "procurement_po_terms_master",
-        module_name: "Masters - PO Terms & Conditions",
+        module_name: "Masters - PO & WO Terms & Conditions",
         route: "/settings/purchase-order-masters",
         sort_order: 79,
       });
