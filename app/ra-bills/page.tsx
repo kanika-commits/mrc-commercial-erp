@@ -62,6 +62,7 @@ export default function RABillsPage() {
   }, [access, accessLoading, page, query]);
 
   const canDelete = can(access?.permissions || [], "ra_bills", "delete");
+  const canAdd = can(access?.permissions || [], "ra_bills", "add");
 
   async function loadBills() {
   try {
@@ -199,13 +200,15 @@ export default function RABillsPage() {
           </p>
         </div>
 
-        <Link
-          href="/ra-bills/new"
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-slate-800"
-        >
-          <Plus className="h-4 w-4" />
-          New RA Bill
-        </Link>
+        {canAdd && (
+          <Link
+            href="/ra-bills/new"
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-slate-800"
+          >
+            <Plus className="h-4 w-4" />
+            New RA Bill
+          </Link>
+        )}
       </div>
 
       {message && (
