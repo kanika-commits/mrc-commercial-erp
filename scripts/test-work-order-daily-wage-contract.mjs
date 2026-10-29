@@ -1,0 +1,42 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const form = fs.readFileSync("app/work-orders/new/structured/page.tsx", "utf8");
+const create = fs.readFileSync("app/api/work-orders/create/route.ts", "utf8");
+const preview = fs.readFileSync("app/api/work-orders/preview/route.ts", "utf8");
+const availability = fs.readFileSync("app/api/work-orders/pilot/availability/route.ts", "utf8");
+const renderer = fs.readFileSync("lib/workOrderPdfRenderer.server.ts", "utf8");
+const migration = fs.readFileSync("supabase/migrations/202610290001_work_order_daily_wage_contract.sql", "utf8");
+const nullable = fs.readFileSync("supabase/migrations/202610120003_work_order_pilot_daily_wage_manual_items.sql", "utf8");
+
+for (const label of ["Description of item", "Unit", "Labour Rate (₹)", "data-testid=\"daily-wage-items\""]) assert.match(form, new RegExp(label.replace(/[()[\].?+*]/g, "\\$&")), `Daily Wage form missing ${label}`);
+assert.match(form, /form\.wo_type === "Daily Wage"/);
+assert.match(form, /form\.wo_type !== "Daily Wage"[\s\S]+Select item/);
+assert.match(form, /description: item\.description_snapshot \|\| item\.item_header_snapshot/);
+assert.match(form, /unit: item\.unit_snapshot \|\| item\.uom_snapshot/);
+assert.match(create, /p_company_id: company\.id/);
+assert.match(create, /p_site_id: site\.id/);
+assert.match(create, /woType === "Daily Wage"[\s\S]+item_master_id: null/);
+assert.match(create, /woType !== "Daily Wage"[\s\S]+canonical Work Order Item Master/);
+assert.match(preview, /isDailyWage/);
+assert.match(preview, /description_snapshot: description/);
+assert.match(preview, /itemIds = isDailyWage \? \[\]/);
+assert.match(renderer, /row\.wo_type === "Daily Wage"/);
+assert.match(renderer, /Description of item/);
+assert.match(renderer, /Labour Rate \(INR\)/);
+assert.match(renderer, /isDailyWage \? \[\] :/);
+assert.match(availability, /workOrderType !== "Daily Wage"/);
+assert.match(availability, /company_id/);
+assert.match(availability, /site_id/);
+assert.match(availability, /site\.company_id !== company\.id/);
+assert.match(availability, /already has a Daily Wage Work Order/);
+assert.match(migration, /p_company_id uuid/);
+assert.match(migration, /p_site_id uuid/);
+assert.match(migration, /pg_advisory_xact_lock/);
+assert.match(migration, /company_id = p_company_id and site_id = p_site_id/);
+assert.match(migration, /v_type <> 'daily wage' then return '\{\}'::jsonb/);
+assert.match(migration, /v_type <> 'daily wage' then return new/);
+assert.match(nullable, /alter column item_master_id drop not null/);
+assert.match(nullable, /alter column mode_of_measurement_snapshot drop not null/);
+
+console.log("Daily Wage Work Order contract passed");

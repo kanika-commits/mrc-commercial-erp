@@ -76,6 +76,11 @@ export async function POST(request: Request) {
     const companyAllowed = globalAccess || (access.companies || []).length === 0 || access.companies.includes(company.id);
     const siteAllowed = globalAccess || (access.sites || []).length === 0 || access.sites.includes(site.id);
     if (!activeOrganizationId || !isInOrganizationScope(scope, company.organization_id) || company.organization_id !== activeOrganizationId || company.organization_id !== site.organization_id || company.organization_id !== vendor.organization_id || !companyAllowed || !siteAllowed) return NextResponse.json({ error: "Selected records are outside the active authorized organization scope." }, { status: 403 });
+    if (woType === "Daily Wage") {
+      const { data: duplicate, error: duplicateError } = await admin.rpc("validate_work_order_pilot_creation", { p_organization_id: company.organization_id, p_company_id: company.id, p_site_id: site.id, p_vendor_id: vendor.id, p_work_order_type: woType });
+      if (duplicateError) throw duplicateError;
+      if (duplicate?.existing_work_order_id) return NextResponse.json({ error: `A live Daily Wage Work Order already exists for this vendor: ${duplicate.existing_wo_number || duplicate.existing_work_order_id}.` }, { status: 409 });
+    }
     const { data: vendorContacts, error: vendorContactsError } = await admin.from("vendor_contacts").select("id,contact_name,contact_number,email,designation,is_primary").eq("organization_id", company.organization_id).eq("vendor_id", vendor.id).order("is_primary", { ascending: false }).order("created_at");
     if (vendorContactsError) throw vendorContactsError;
     const masterSelection = body.master_selection || {};
@@ -106,13 +111,18 @@ export async function POST(request: Request) {
     const primaryVendorContact = (vendorContacts || [])[0] || {};
     const vendorSnapshot = { vendor_id: vendor.id, vendor_name: vendor.vendor_name, vendor_role: text(body.vendor_role) || "Main Contractor", address: vendor.address || null, gstin: vendor.gstin || null, pan: vendor.pan || null, contact_person: primaryVendorContact.contact_name || "", phone: primaryVendorContact.contact_number || "", email: primaryVendorContact.email || "", contacts: vendorContacts || [] };
     const deliverySnapshot = { vendor_snapshot: vendorSnapshot, master_selection: { gst_registration_id: gstResult.data.id, billing_address_id: billingResult.data.id, delivery_location_id: deliveryResult.data.id, billing_contact_id: billingContact.id, delivery_contact_id: deliveryContact.id }, gst_billing: gstResult.data, billing_address: billingResult.data, delivery_location: deliveryResult.data, billing_contact: billingContact, delivery_contact: deliveryContact };
-    const ids = Array.from(new Set(lines.map((line: any) => text(line.item_master_id)).filter(Boolean)));
-    if (!ids.length || ids.length !== lines.length) return NextResponse.json({ error: "Each line must use a canonical Work Order Item Master item." }, { status: 400 });
+    const ids = woType === "Daily Wage" ? [] : Array.from(new Set(lines.map((line: any) => text(line.item_master_id)).filter(Boolean)));
+    if (woType !== "Daily Wage" && (!ids.length || ids.length !== lines.length)) return NextResponse.json({ error: "Each line must use a canonical Work Order Item Master item." }, { status: 400 });
     const { data: masters, error: masterError } = await admin.from("work_order_item_masters").select("id,organization_id,item_header,description,unit,mode_of_measurement,status").in("id", ids).eq("organization_id", company.organization_id).eq("status", "active");
     if (masterError) throw masterError;
     const masterMap = new Map((masters || []).map((item) => [item.id, item]));
     if (masterMap.size !== ids.length) return NextResponse.json({ error: "One or more Work Order Item Master items are unavailable." }, { status: 400 });
     const normalizedLines = lines.map((line: any, index: number) => {
+      if (woType === "Daily Wage") {
+        const description = text(line.description), unit = text(line.unit), rate = n(line.unit_rate);
+        if (!description || !unit || !Number.isFinite(rate) || rate < 0) throw new Error(`Complete Daily Wage item ${index + 1}.`);
+        return { organization_id: company.organization_id, item_master_id: null, item_header_snapshot: description, description_snapshot: description, additional_description_snapshot: null, unit_snapshot: unit, mode_of_measurement_snapshot: null, quantity: 1, unit_rate: rate, gst_percent: 0, basic_amount: Number(rate.toFixed(2)), gst_amount: 0, line_total: Number(rate.toFixed(2)), sort_order: index + 1, created_by: auth.user.id, created_by_name: auth.user.user_metadata?.full_name || auth.user.email, created_by_email: auth.user.email || null };
+      }
       const master = masterMap.get(text(line.item_master_id))!;
       const quantity = n(line.quantity), rate = n(line.unit_rate), gstPercent = n(line.gst_percent);
       if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(rate) || rate < 0 || !Number.isFinite(gstPercent) || gstPercent < 0) throw new Error(`Invalid values on item line ${index + 1}.`);
@@ -127,7 +137,7 @@ export async function POST(request: Request) {
     const inclusions = Array.isArray(keyTerms.inclusions) ? keyTerms.inclusions.map((value: unknown) => text(value)).filter(Boolean) : [];
     const exclusions = Array.isArray(keyTerms.exclusions) ? keyTerms.exclusions.map((value: unknown) => text(value)).filter(Boolean) : [];
     const additional = Array.isArray(keyTerms.additional) ? keyTerms.additional.map((entry: any) => ({ label: text(entry?.label), value: text(entry?.value) })).filter((entry: any) => entry.label || entry.value) : [];
-    if (inclusions.length < 1 || exclusions.length < 1) return NextResponse.json({ error: "At least one Mandatory Inclusion and one Mandatory Exclusion are required." }, { status: 400 });
+    if (woType !== "Daily Wage" && (inclusions.length < 1 || exclusions.length < 1)) return NextResponse.json({ error: "At least one Mandatory Inclusion and one Mandatory Exclusion are required." }, { status: 400 });
     const standardTermsClauses = (termsResult.data.sections || []).filter((section: any) => section.status === "active").sort((a: any, b: any) => Number(a.sort_order || 0) - Number(b.sort_order || 0)).map((section: any) => ({
       heading: String(section.heading || "").replace(/Purchase Order/g, "Work Order").replace(/\bPO\b/g, "WO"),
       clause_body: String(section.clause_body || "").replace(/Purchase Order/g, "Work Order").replace(/\bPO\b/g, "WO"),
@@ -139,8 +149,11 @@ export async function POST(request: Request) {
       if (reviewedUploadError) throw new Error(`Could not store the reviewed Work Order PDF artifact: ${reviewedUploadError.message}`);
       uploadedSupportingPaths.push(reviewedArtifactPath);
     }
-    const { data: workOrder, error: workOrderError } = await admin.from("work_orders").insert({ id: proposedWorkOrderId, organization_id: company.organization_id, company_id: companyId, site_id: siteId, wo_number: woNumber, wo_date: text(body.wo_date), wo_type: woType, description: text(body.description) || null, status: "active", approval_status: "draft", wo_value: Number(totalBasic.toFixed(2)), gst_percent: n(body.gst_percent) >= 0 ? n(body.gst_percent) : 0, total_basic_amount: Number(totalBasic.toFixed(2)), total_gst_amount: Number(totalGst.toFixed(2)), total_amount: total, standard_terms_snapshot: JSON.stringify(standardTermsClauses), delivery_snapshot: deliverySnapshot, work_order_key_terms: { inclusions, exclusions, additional }, letterhead_snapshot: body.letterhead_snapshot || null, creation_request_id: creationRequestId || null, created_by: auth.user.id, created_by_name: auth.user.user_metadata?.full_name || auth.user.email, created_by_email: auth.user.email || null }).select("id,organization_id,wo_number,approval_status,total_basic_amount,total_gst_amount,total_amount").single();
-    if (workOrderError) { if (workOrderError.code === "23505") return NextResponse.json({ error: "Work Order number or creation request already exists." }, { status: 409 }); throw workOrderError; }
+    const { data: workOrder, error: workOrderError } = await admin.from("work_orders").insert({ id: proposedWorkOrderId, organization_id: company.organization_id, company_id: companyId, site_id: siteId, wo_number: woNumber, wo_date: text(body.wo_date), wo_type: woType, pilot_vendor_id: vendor.id, pilot_work_order_type: woType, description: text(body.description) || null, status: "active", approval_status: "draft", wo_value: Number(totalBasic.toFixed(2)), gst_percent: n(body.gst_percent) >= 0 ? n(body.gst_percent) : 0, total_basic_amount: Number(totalBasic.toFixed(2)), total_gst_amount: Number(totalGst.toFixed(2)), total_amount: total, standard_terms_snapshot: JSON.stringify(standardTermsClauses), delivery_snapshot: deliverySnapshot, work_order_key_terms: { inclusions, exclusions, additional }, letterhead_snapshot: body.letterhead_snapshot || null, creation_request_id: creationRequestId || null, created_by: auth.user.id, created_by_name: auth.user.user_metadata?.full_name || auth.user.email, created_by_email: auth.user.email || null }).select("id,organization_id,wo_number,approval_status,total_basic_amount,total_gst_amount,total_amount").single();
+    if (workOrderError) {
+      if (workOrderError.code === "23505") return NextResponse.json({ error: woType === "Daily Wage" ? "A live Daily Wage Work Order already exists for this vendor at this site." : "Work Order number or creation request already exists." }, { status: 409 });
+      throw workOrderError;
+    }
     createdWorkOrderId = workOrder.id;
     if (reviewedPdfBytes) {
       const { error: reviewedDocumentError } = await admin.from("work_order_documents").insert({ organization_id: workOrder.organization_id, work_order_id: workOrder.id, file_name: `${workOrder.wo_number}-reviewed-package.pdf`, file_url: reviewedArtifactPath, file_path: reviewedArtifactPath, uploaded_at: new Date().toISOString(), drive_sync_key: REVIEWED_PDF_KEY, drive_sync_status: "succeeded" });

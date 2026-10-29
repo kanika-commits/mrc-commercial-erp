@@ -43,7 +43,9 @@ for (const column of ["Item Header", "Description", "Unit", "Mode of Measurement
 }
 assert.match(structuredForm, /apiFetch\("\/api\/work-orders\/preview"/);
 assert.match(structuredForm, /const payload = \{[\s\S]+\.\.\.form/);
-assert.match(structuredForm, /items: lines/);
+assert.match(structuredForm, /items: form\.wo_type === "Daily Wage" \? lines\.map/);
+assert.match(structuredForm, /Description of item/);
+assert.match(structuredForm, /data-testid="daily-wage-items"/);
 assert.match(structuredForm, /\/work-orders\/new\/structured\/preview/);
 assert.match(previewRoute, /requirePermission\(request, "work_orders", "add"\)/);
 assert.match(createRoute, /WORK_ORDER_TYPES/);

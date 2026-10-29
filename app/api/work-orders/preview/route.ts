@@ -44,7 +44,8 @@ async function loadAuthorizedPreviewData(admin: any, auth: any, request: Request
   const termsId = text(selection.terms_template_id, "");
   const billingContactId = text(contacts.billing_contact_id, "");
   const deliveryContactId = text(contacts.delivery_contact_id, "");
-  const itemIds = Array.from(new Set((Array.isArray(body.items) ? body.items : []).map((item: any) => text(item.item_master_id, "")).filter(Boolean)));
+  const isDailyWage = text(body.wo_type, "") === "Daily Wage";
+  const itemIds = isDailyWage ? [] : Array.from(new Set((Array.isArray(body.items) ? body.items : []).map((item: any) => text(item.item_master_id, "")).filter(Boolean)));
 
   const [gstResult, billingResult, deliveryResult, contactResult, letterheadResult, termsResult, itemResult, vendorContactsResult] = await Promise.all([
     admin.from("company_gst_registrations").select("id,organization_id,company_id,gstin,legal_name,trade_name,state,state_code,registration_type").eq("id", gstId).eq("organization_id", company.organization_id).eq("company_id", company.id).eq("status", "active").maybeSingle(),
@@ -63,7 +64,7 @@ async function loadAuthorizedPreviewData(admin: any, auth: any, request: Request
   const deliveryContact = siteContacts.find((row: any) => row.id === deliveryContactId);
   const letterheadVersion = (letterheadResult.data?.versions || []).filter((version: any) => version.version_status === "ready" && version.header_content_hash && version.footer_content_hash).sort((a: any, b: any) => Number(b.version_number || 0) - Number(a.version_number || 0))[0];
   const itemMap = new Map<string, any>((itemResult.data || []).map((item: any) => [item.id, item] as [string, any]));
-  if (!gstResult.data || !billingResult.data || !deliveryResult.data || !billingContact || !deliveryContact || !letterheadResult.data || !letterheadVersion || !termsResult.data || itemMap.size !== itemIds.length) throw new Error("One or more selected Work Order masters are missing, inactive, or outside the authorized scope.");
+  if (!gstResult.data || !billingResult.data || !deliveryResult.data || !billingContact || !deliveryContact || !letterheadResult.data || !letterheadVersion || !termsResult.data || (!isDailyWage && itemMap.size !== itemIds.length)) throw new Error("One or more selected Work Order masters are missing, inactive, or outside the authorized scope.");
   if (billingResult.data.gst_registration_id !== gstResult.data.id) throw new Error("Selected Billing Address is not linked to the selected GST/Billing Master.");
 
   const primaryVendorContact = (vendorContactsResult.data || [])[0] || {};
@@ -91,13 +92,20 @@ export async function POST(request: Request) {
     const admin = adminClient();
     const authorized = await loadAuthorizedPreviewData(admin, auth, request, body);
     const items = (Array.isArray(body.items) ? body.items : []).map((item: any, index: number) => {
+      if (text(body.wo_type, "") === "Daily Wage") {
+        const description = text(item.description, "");
+        const unit = text(item.unit, "");
+        const rate = Number(item.unit_rate);
+        if (!description || !unit || !Number.isFinite(rate) || rate < 0) throw new Error(`Complete Daily Wage item ${index + 1}.`);
+        return { item_name_snapshot: description, item_header_snapshot: description, description_snapshot: description, specification_snapshot: description, additional_description_snapshot: "", make_snapshot: "", quantity: 1, uom_snapshot: unit, unit_snapshot: unit, unit_rate: rate, gst_rate: 0, gst_amount: 0, total_amount: rate, serial_no: index + 1 };
+      }
       const master = authorized.itemMap.get(text(item.item_master_id, ""));
       if (!master) throw new Error(`Item ${index + 1} is outside the authorized Work Order Item Master scope.`);
       const basic = Number(item.quantity || 0) * Number(item.unit_rate || 0);
       const gstAmount = basic * Number(item.gst_percent || 0) / 100;
       return { item_name_snapshot: master.item_header, item_code_snapshot: "", specification_snapshot: master.description || "", additional_description_snapshot: item.additional_description || "", make_snapshot: master.mode_of_measurement || "", quantity: item.quantity, uom_snapshot: master.unit || "", unit_rate: item.unit_rate, gst_rate: item.gst_percent, gst_amount: gstAmount, total_amount: basic + gstAmount, serial_no: index + 1 };
     });
-    const keyTerms = [
+    const keyTerms = text(body.wo_type, "") === "Daily Wage" ? [] : [
       ...(body.work_order_key_terms?.inclusions || []).filter(Boolean).map((value: string) => ({ description: "Inclusion", value })),
       ...(body.work_order_key_terms?.exclusions || []).filter(Boolean).map((value: string) => ({ description: "Exclusion", value })),
     ];

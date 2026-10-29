@@ -310,7 +310,7 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
     });
     page.drawLine({ start: { x: LEFT + widths[0], y }, end: { x: LEFT + widths[0], y: y - bodyHeight }, thickness: 0.6, color: BORDER }); y -= bodyHeight + 8;
   };
-  const table = (headers: string[], rows: any[][], widths: number[], richDescription = false, footerRows: Array<[string, string]> = [], fontSize = BODY_SIZE) => {
+  const table = (headers: string[], rows: any[][], widths: number[], richDescription = false, footerRows: Array<[string, string]> = [], fontSize = BODY_SIZE, note = "") => {
     const tableWidth = widths.reduce((sum, width) => sum + width, 0);
     const drawRow = (cells: any[], isHeader = false) => {
       const rowParts = cells.map((cell, i) => {
@@ -384,6 +384,7 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
       const totalKey = ["total_basic_amount", "total_gst_amount", "total_amount"][index];
       drawFooter(footer, index === footerRows.length - 1, revisionMeta?.redlines?.totals?.[totalKey]);
     });
+    if (note) { ensure(LEADING + 4); draw(note, LEFT, y, Math.min(fontSize, 8), false); y -= LEADING + 4; }
     y -= 8;
   };
 
@@ -423,12 +424,15 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
     serial_no: itemRows.length + index + 1,
   }));
   const allItemRows = [...itemRows, ...deletedItemRows];
-  const itemWidths = [32, 168, 30, 45, 55, 65, 50, 66];
+  const isDailyWage = row.wo_type === "Daily Wage";
+  const itemWidths = isDailyWage ? [42, 260, 70, 86] : [32, 168, 30, 45, 55, 65, 50, 66];
   const renderedItemRows = allItemRows.map((item: any) => {
+    if (isDailyWage) return [String(item.serial_no), { text: item.description || item.description_snapshot || item.item_header_snapshot || item.item_name_snapshot || "—" }, display(item.unit || item.unit_snapshot || item.uom_snapshot), money(item.unit_rate)];
     const basicAmount = Number(item.quantity || 0) * Number(item.unit_rate || 0);
     const gstAmount = basicAmount * Number(item.gst_rate ?? item.gst_percent ?? 0) / 100;
     return [String(item.serial_no), item, display(item.quantity), display(item.uom_snapshot || item.unit_snapshot), money(item.unit_rate), money(basicAmount), display(item.gst_rate ?? item.gst_percent) + "%\n" + money(gstAmount), money(item.total_amount ?? item.line_total)];
   }).map((item: any[]) => {
+    if (isDailyWage) return item;
     const source = item[1];
     const diff = source.__revision?.fields || {};
     const cell = (text: any, key: string, format: (input: unknown) => string = display) => {
@@ -437,18 +441,20 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
     };
     return [item[0], cell(source, "description_snapshot"), cell(item[2], "quantity"), cell(item[3], "unit_snapshot"), cell(item[4], "unit_rate", money), cell(item[5], "basic_amount", money), cell(item[6], "gst_amount"), cell(item[7], "total_amount", money)];
   });
-  table(["S.No.", "Work Description", "Qty", "Unit", "Unit Rate", "Basic Amount", "GST", "Amount"], renderedItemRows, itemWidths, true, [
+  table(isDailyWage ? ["Sr. No.", "Description of item", "Unit", "Labour Rate (INR)"] : ["S.No.", "Work Description", "Qty", "Unit", "Unit Rate", "Basic Amount", "GST", "Amount"], renderedItemRows, itemWidths, !isDailyWage, isDailyWage ? [] : [
     ["Total Basic Amount", money(row.total_basic_amount)],
     ["GST", money(row.total_gst_amount)],
     ["Total Amount", money(row.total_amount)],
-  ]);
-  heading("KEY TERMS", 58, 11);
-  const keyTermDiffs: Array<{ label?: WorkOrderRedline; value?: WorkOrderRedline }> = revisionMeta?.redlines?.keyTerms || [];
-  const currentKeyTermRows = normalizeKeyTerms(row.work_order_key_terms);
-  const keyTermDiffFor = (term: { label: string }, index: number) => keyTermDiffs.find((candidate: any) => String(candidate.identity || candidate.label?.value || "").toLowerCase() === term.label.toLowerCase()) || keyTermDiffs[index];
-  const keyTermRows = currentKeyTermRows.map((term, index) => { const termDiff = keyTermDiffFor(term, index); return [String(index + 1), { text: term.label, diff: termDiff?.label }, { text: term.value, diff: termDiff?.value }]; });
-  keyTermDiffs.slice(currentKeyTermRows.length).forEach((term, index) => keyTermRows.push([String(currentKeyTermRows.length + index + 1), { text: String(term.label?.previous ?? term.label?.value ?? ""), diff: term.label }, { text: String(term.value?.previous ?? term.value?.value ?? ""), diff: term.value }]));
-  table(["S.No.", "Key Term", "Terms"], keyTermRows, [32, 120, CONTENT - 152], false, [], 8.5);
+  ], BODY_SIZE, isDailyWage ? "Labour rate for 8 hours of work." : "");
+  if (!isDailyWage) {
+    heading("KEY TERMS", 58, 11);
+    const keyTermDiffs: Array<{ label?: WorkOrderRedline; value?: WorkOrderRedline }> = revisionMeta?.redlines?.keyTerms || [];
+    const currentKeyTermRows = normalizeKeyTerms(row.work_order_key_terms);
+    const keyTermDiffFor = (term: { label: string }, index: number) => keyTermDiffs.find((candidate: any) => String(candidate.identity || candidate.label?.value || "").toLowerCase() === term.label.toLowerCase()) || keyTermDiffs[index];
+    const keyTermRows = currentKeyTermRows.map((term, index) => { const termDiff = keyTermDiffFor(term, index); return [String(index + 1), { text: term.label, diff: termDiff?.label }, { text: term.value, diff: termDiff?.value }]; });
+    keyTermDiffs.slice(currentKeyTermRows.length).forEach((term, index) => keyTermRows.push([String(currentKeyTermRows.length + index + 1), { text: String(term.label?.previous ?? term.label?.value ?? ""), diff: term.label }, { text: String(term.value?.previous ?? term.value?.value ?? ""), diff: term.value }]));
+    table(["S.No.", "Key Term", "Terms"], keyTermRows, [32, 120, CONTENT - 152], false, [], 8.5);
+  }
   heading("TERMS & CONDITIONS", 70);
   const structuredTerms = normalizeStructuredTerms(Array.isArray(row.standard_terms_clauses) ? row.standard_terms_clauses : row.standard_terms_snapshot);
   const termsLines = value(row.standard_terms_snapshot || "-").split(/\r?\n/).filter((line) => line.trim());
