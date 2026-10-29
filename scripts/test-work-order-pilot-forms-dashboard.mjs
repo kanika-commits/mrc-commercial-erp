@@ -10,12 +10,14 @@ const structuredForm = fs.readFileSync("app/work-orders/new/structured/page.tsx"
 const previewRoute = fs.readFileSync("app/api/work-orders/preview/route.ts", "utf8");
 const createRoute = fs.readFileSync("app/api/work-orders/create/route.ts", "utf8");
 
-assert.match(shell, /"module-forms"[\s\S]+"Forms"/);
 assert.match(shell, /navActionLeaf\("Work Order Forms", "work_orders", "add", "\/forms\/work-orders"\)/);
-assert.doesNotMatch(shell, /navLeaf\("Work Order Forms", "work_orders", "\/forms\/work-orders"\)/);
+assert.match(shell, /"module-project-management"[\s\S]+navActionLeaf\("Work Order Forms", "work_orders", "add", "\/forms\/work-orders"\)/);
+assert.doesNotMatch(shell, /"module-forms"/);
 assert.doesNotMatch(shell, /navActionLeaf\("Work Order PDF Pilot"/);
 assert.match(modulePage, /module_name: "Work Order Forms"/);
 assert.match(modulePage, /route: "\/forms\/work-orders"/);
+assert.match(modulePage, /groupCode === "project_management"[\s\S]+module_group: "project_management"/);
+assert.doesNotMatch(modulePage, /id: "purchase-work-order-forms"/);
 assert.match(modulePage, /can\(permissions, "work_orders", "add"\)/);
 assert.match(formsPage, /<WorkOrdersPage pilotOnly \/>/);
 assert.match(registerPage, /export function WorkOrdersPage\(\{ pilotOnly = false \}/);
@@ -40,6 +42,8 @@ for (const column of ["Item Header", "Description", "Unit", "Mode of Measurement
   assert.match(structuredForm, new RegExp(column.replace(/[ %]/g, "\\$&")));
 }
 assert.match(structuredForm, /apiFetch\("\/api\/work-orders\/preview"/);
+assert.match(structuredForm, /const payload = \{[\s\S]+\.\.\.form/);
+assert.match(structuredForm, /items: lines/);
 assert.match(structuredForm, /\/work-orders\/new\/structured\/preview/);
 assert.match(previewRoute, /requirePermission\(request, "work_orders", "add"\)/);
 assert.match(createRoute, /WORK_ORDER_TYPES/);

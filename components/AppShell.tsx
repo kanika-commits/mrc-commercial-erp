@@ -265,6 +265,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           navLeaf("RA Bills", "ra_bills", "/ra-bills"),
           navLeaf("Debit Notes", "debit_notes", "/debit-notes"),
           navLeaf("Credit Notes", "credit_notes", "/credit-notes"),
+          navActionLeaf("Work Order Forms", "work_orders", "add", "/forms/work-orders"),
           navLeaf("Approvals", "ra_approval", "/approvals"),
         ],
         "/modules/project-management",
@@ -316,15 +317,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         ],
         "/modules/purchase",
         ShoppingCart,
-      ),
-      topNested(
-        "module-forms",
-        "Forms",
-        [
-          navActionLeaf("Work Order Forms", "work_orders", "add", "/forms/work-orders"),
-        ],
-        "/forms/work-orders",
-        FileText,
       ),
       topNested(
         "module-accounts",

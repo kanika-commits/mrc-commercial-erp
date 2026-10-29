@@ -10,8 +10,9 @@ const legacyPage = fs.readFileSync("app/work-orders/page.tsx", "utf8");
 
 assert.doesNotMatch(modulePage, /module_name: "Work Order PDF Pilot"/);
 assert.doesNotMatch(modulePage, /route: "\/work-orders\/new\/structured"/);
-assert.match(shell, /navActionLeaf\("Work Order Forms", "work_orders", "add", "\/forms\/work-orders"\)/);
-assert.doesNotMatch(shell, /navLeaf\("Work Order Forms", "work_orders", "\/forms\/work-orders"\)/);
+assert.match(shell, /"module-project-management"[\s\S]+navActionLeaf\("Work Order Forms", "work_orders", "add", "\/forms\/work-orders"\)/);
+assert.doesNotMatch(shell, /"module-forms"/);
+assert.doesNotMatch(modulePage, /id: "purchase-work-order-forms"/);
 assert.match(formsPage, /<WorkOrdersPage pilotOnly \/>/);
 assert.match(formPage, /const explicitlyResuming = Boolean\(draftId \|\| revisionId \|\| returningFromPreview\)/);
 assert.match(formPage, /if \(!explicitlyResuming\) clearWorkOrderPilotDraft\(\)/);
