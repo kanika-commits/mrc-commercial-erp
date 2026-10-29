@@ -6,8 +6,13 @@ const registerPage = fs.readFileSync("app/work-orders/page.tsx", "utf8");
 const formsPage = fs.readFileSync("app/forms/work-orders/page.tsx", "utf8");
 const shell = fs.readFileSync("components/AppShell.tsx", "utf8");
 const modulePage = fs.readFileSync("components/ModulePage.tsx", "utf8");
+const structuredForm = fs.readFileSync("app/work-orders/new/structured/page.tsx", "utf8");
+const previewRoute = fs.readFileSync("app/api/work-orders/preview/route.ts", "utf8");
+const createRoute = fs.readFileSync("app/api/work-orders/create/route.ts", "utf8");
 
-assert.match(shell, /navLeaf\("Work Order Forms", "work_orders", "\/forms\/work-orders"\)/);
+assert.match(shell, /"module-forms"[\s\S]+"Forms"/);
+assert.match(shell, /navActionLeaf\("Work Order Forms", "work_orders", "add", "\/forms\/work-orders"\)/);
+assert.doesNotMatch(shell, /navLeaf\("Work Order Forms", "work_orders", "\/forms\/work-orders"\)/);
 assert.doesNotMatch(shell, /navActionLeaf\("Work Order PDF Pilot"/);
 assert.match(modulePage, /module_name: "Work Order Forms"/);
 assert.match(modulePage, /route: "\/forms\/work-orders"/);
@@ -27,5 +32,16 @@ assert.match(registerPage, /pilotOnly \? "New Work Order PDF Pilot" : "New Work 
 assert.match(registerPage, /loadDocumentsForWorkOrder/);
 assert.match(registerPage, /openDocument\(document\)/);
 assert.doesNotMatch(registerPage, /pilotOnly[\s\S]{0,500}\/forms\/ra-bills/);
+assert.match(structuredForm, /WO Type/);
+for (const type of ["Consultant", "Contractor (Labour)", "Contractor (SITC)", "Daily Wage", "Rental"]) {
+  assert.match(structuredForm, new RegExp(type.replace(/[()]/g, "\\$&")));
+}
+for (const column of ["Item Header", "Description", "Unit", "Mode of Measurement", "Quantity", "Unit Rate", "GST %"]) {
+  assert.match(structuredForm, new RegExp(column.replace(/[ %]/g, "\\$&")));
+}
+assert.match(structuredForm, /apiFetch\("\/api\/work-orders\/preview"/);
+assert.match(structuredForm, /\/work-orders\/new\/structured\/preview/);
+assert.match(previewRoute, /requirePermission\(request, "work_orders", "add"\)/);
+assert.match(createRoute, /WORK_ORDER_TYPES/);
 
 console.log("Work Order Pilot Forms dashboard contract: PASS");

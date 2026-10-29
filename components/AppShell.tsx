@@ -312,11 +312,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           navLeaf("Purchase Orders", "procurement_purchase_orders", "/purchase/purchase-orders"),
           navActionLeaf("Purchase Order Approval", "procurement_purchase_orders", "approve", "/purchase/purchase-order-approvals"),
           navLeaf("Work Orders", "work_orders", "/work-orders"),
-          navLeaf("Work Order Forms", "work_orders", "/forms/work-orders"),
           navLeaf("Work Order Approval", "wo_approval", "/approvals/work-orders"),
         ],
         "/modules/purchase",
         ShoppingCart,
+      ),
+      topNested(
+        "module-forms",
+        "Forms",
+        [
+          navActionLeaf("Work Order Forms", "work_orders", "add", "/forms/work-orders"),
+        ],
+        "/forms/work-orders",
+        FileText,
       ),
       topNested(
         "module-accounts",

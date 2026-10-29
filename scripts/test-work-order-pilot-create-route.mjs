@@ -5,7 +5,7 @@ const route = fs.readFileSync("app/api/work-orders/create/route.ts", "utf8");
 
 assert.match(route, /requirePermission\(request, "work_orders", "add"\)/);
 assert.match(route, /loadActorOrganizationScope/);
-assert.match(route, /resolveWriteOrganizationId\(scope\)/);
+assert.match(route, /resolveWriteOrganizationId\(scope, company\.organization_id\)/);
 assert.match(route, /isInOrganizationScope\(scope, company\.organization_id\)/);
 assert.match(route, /company\.organization_id !== site\.organization_id/);
 assert.match(route, /company\.organization_id !== vendor\.organization_id/);
