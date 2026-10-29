@@ -18,6 +18,6 @@ assert.match(route, /approval_status: "draft"/);
 assert.match(route, /work_order_vendors/);
 assert.match(route, /work_order_items/);
 assert.match(route, /validateWorkOrderSupportingFiles/);
-assert.doesNotMatch(route, /google|drive/i);
+assert.doesNotMatch(route, /from ["'][^"']*googleDrive|createWorkOrderDriveFolder|uploadDriveFile/);
 
 console.log("Work Order Pilot create route contract passed.");

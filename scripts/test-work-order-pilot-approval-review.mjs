@@ -15,12 +15,14 @@ const dateTime = read("../lib/dateTime.ts");
 
 assert.match(approvalApi, /creation_request_id/);
 assert.match(approvalPage, /Review Complete Work Order PDF/);
-assert.doesNotMatch(approvalPage, /openDocument|currentDocuments|>Open<|work-orders\/documents/);
+assert.match(approvalPage, /loadDocuments\(wo\)/);
+assert.match(approvalPage, /documentsByWorkOrder/);
 assert.match(approvalPage, /generated-pdf/);
 assert.match(approvalPage, /response\.blob\(\)/);
 assert.match(detailPage, /creation_request_id/);
-assert.match(detailPage, /Review Complete Work Order PDF/);
-assert.doesNotMatch(detailPage, /Load Work Order files|loadDocuments|openDocument|documentsLoaded/);
+assert.match(detailPage, /loadReviewedPackage/);
+assert.match(detailPage, /loadDocuments/);
+assert.match(detailPage, /documentsLoaded/);
 assert.match(detailPage, /generated-pdf/);
 assert.match(detailPage, /response\.blob\(\)/);
 assert.match(dateTime, /timeZone: "Asia\/Kolkata"/);

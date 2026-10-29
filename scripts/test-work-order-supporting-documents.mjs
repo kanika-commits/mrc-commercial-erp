@@ -60,7 +60,7 @@ assert.doesNotMatch(renderer, /`ID: \$\{creatorId\}`/);
 assert.doesNotMatch(renderer, /`ID: \$\{approverId\}`/);
 assert.match(renderer, /Signature: ____________________/);
 assert.match(renderer, /const clauseBlocks/);
-assert.match(renderer, /availableLines/);
+assert.match(renderer, /if \(structuredTerms\)/);
 
 assert.match(create, /work-order-documents/);
 assert.match(create, /created_by: auth\.user\.id/);
