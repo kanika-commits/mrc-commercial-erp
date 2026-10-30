@@ -4,6 +4,10 @@ import { loadPermissionContext } from "@/lib/serverPermissions";
 
 function adminClient() { return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!); }
 
+function failure(fallback: string) {
+  return NextResponse.json({ error: fallback }, { status: 500, headers: { "Cache-Control": "no-store" } });
+}
+
 export async function GET(request: Request) {
   try {
     const auth = await loadPermissionContext(request);
@@ -12,7 +16,7 @@ export async function GET(request: Request) {
     const { data, error } = await adminClient().from("user_notifications").select("id, notification_type, title, message, target_url, related_entity_type, related_entity_id, is_read, read_at, created_at").eq("recipient_user_id", auth.user.id).order("created_at", { ascending: false }).limit(limit);
     if (error) throw error;
     return NextResponse.json({ notifications: data || [] });
-  } catch (error: any) { return NextResponse.json({ error: error.message || "Failed to load notifications." }, { status: 500 }); }
+  } catch { return failure("Failed to load notifications."); }
 }
 
 export async function PATCH(request: Request) {
@@ -26,5 +30,5 @@ export async function PATCH(request: Request) {
     if (error) throw error;
     if (!data) return NextResponse.json({ error: "Notification not found." }, { status: 404 });
     return NextResponse.json({ notification: data });
-  } catch (error: any) { return NextResponse.json({ error: error.message || "Failed to mark notification read." }, { status: 500 }); }
+  } catch { return failure("Failed to mark notification read."); }
 }
