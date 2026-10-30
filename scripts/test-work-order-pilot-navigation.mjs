@@ -8,7 +8,10 @@ const pilotPage = fs.readFileSync("app/work-orders/new/structured/page.tsx", "ut
 assert.match(modulePage, /module_name: "Work Order Forms"/);
 assert.match(modulePage, /route: "\/forms\/work-orders"/);
 assert.match(modulePage, /can\(permissions, "work_orders", "add"\)/);
-assert.match(appShell, /navActionLeaf\("Work Order Forms", "work_orders", "add", "\/forms\/work-orders"\)/);
+const projectManagement = appShell.match(/topNested\(\s*"module-project-management"[\s\S]*?\n\s*\),\n\s*topNested\(/)?.[0] ?? "";
+const purchase = appShell.match(/topNested\(\s*"module-purchase"[\s\S]*?\n\s*\),\n\s*topNested\(/)?.[0] ?? "";
+assert.doesNotMatch(projectManagement, /Work Order Forms/);
+assert.match(purchase, /navActionLeaf\("Work Order Forms", "work_orders", "add", "\/forms\/work-orders"\)/);
 assert.match(appShell, /navLeaf\("Work Orders", "work_orders", "\/work-orders"\)/);
 assert.match(appShell, /navLeaf\("Work Order Approval", "wo_approval", "\/approvals\/work-orders"\)/);
 assert.match(pilotPage, /Create Work Order/);

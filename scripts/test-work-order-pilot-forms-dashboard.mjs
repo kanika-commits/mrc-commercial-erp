@@ -11,13 +11,16 @@ const previewRoute = fs.readFileSync("app/api/work-orders/preview/route.ts", "ut
 const createRoute = fs.readFileSync("app/api/work-orders/create/route.ts", "utf8");
 
 assert.match(shell, /navActionLeaf\("Work Order Forms", "work_orders", "add", "\/forms\/work-orders"\)/);
-assert.match(shell, /"module-project-management"[\s\S]+navActionLeaf\("Work Order Forms", "work_orders", "add", "\/forms\/work-orders"\)/);
+const projectManagement = shell.match(/topNested\(\s*"module-project-management"[\s\S]*?\n\s*\),\n\s*topNested\(/)?.[0] ?? "";
+const purchase = shell.match(/topNested\(\s*"module-purchase"[\s\S]*?\n\s*\),\n\s*topNested\(/)?.[0] ?? "";
+assert.doesNotMatch(projectManagement, /Work Order Forms/);
+assert.match(purchase, /navActionLeaf\("Work Order Forms", "work_orders", "add", "\/forms\/work-orders"\)/);
 assert.doesNotMatch(shell, /"module-forms"/);
 assert.doesNotMatch(shell, /navActionLeaf\("Work Order PDF Pilot"/);
 assert.match(modulePage, /module_name: "Work Order Forms"/);
 assert.match(modulePage, /route: "\/forms\/work-orders"/);
-assert.match(modulePage, /groupCode === "project_management"[\s\S]+module_group: "project_management"/);
-assert.doesNotMatch(modulePage, /id: "purchase-work-order-forms"/);
+assert.match(modulePage, /groupCode === "purchase"[\s\S]+id: "purchase-work-order-forms"[\s\S]+module_group: "purchase"/);
+assert.doesNotMatch(modulePage, /id: "project-work-order-forms"/);
 assert.match(modulePage, /can\(permissions, "work_orders", "add"\)/);
 assert.match(formsPage, /<WorkOrdersPage pilotOnly \/>/);
 assert.match(registerPage, /export function WorkOrdersPage\(\{ pilotOnly = false \}/);

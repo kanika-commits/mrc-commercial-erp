@@ -260,14 +260,14 @@ export default function ModulePage({
       });
       moduleRows.sort((first, second) => first.sort_order - second.sort_order);
     }
-    if (groupCode === "project_management" && (globalAccess || can(permissions, "work_orders", "add")) && !moduleRows.some((page) => page.route === "/forms/work-orders")) {
+    if (groupCode === "purchase" && (globalAccess || can(permissions, "work_orders", "add")) && !moduleRows.some((page) => page.route === "/forms/work-orders")) {
       moduleRows.push({
-        id: "project-work-order-forms",
-        module_group: "project_management",
+        id: "purchase-work-order-forms",
+        module_group: "purchase",
         module_code: "work_orders",
         module_name: "Work Order Forms",
         route: "/forms/work-orders",
-        sort_order: 8.25,
+        sort_order: 30.6,
       });
       moduleRows.sort((first, second) => first.sort_order - second.sort_order);
     }
