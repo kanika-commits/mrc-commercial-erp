@@ -17,7 +17,7 @@ assert.match(createRoute, /\.eq\("organization_id", organizationId\)/);
 
 assert.match(editPage, /purpose: "General Purchase"/);
 assert.match(editPage, /Recover from contractor/);
-assert.match(editPage, /po\.purpose \|\| po\.commercial_snapshot\?\.purpose/);
+assert.match(editPage, /purpose: po\.purpose \|\| po\.commercial_snapshot\?\.purpose/);
 assert.match(editPage, /po\.recovery_work_order_id \|\| po\.commercial_snapshot\?\.recovery_work_order_id/);
 assert.match(editPage, /recovery_vendor_id/);
 

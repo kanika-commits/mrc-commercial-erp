@@ -39,3 +39,11 @@ begin
   return new;
 end;
 $$;
+
+-- Replace the earlier recovery trigger so updates that only change the selected
+-- recovery vendor are validated by the same function and scope checks.
+drop trigger if exists procurement_purchase_order_recovery_fields_sync on public.procurement_purchase_orders;
+create trigger procurement_purchase_order_recovery_fields_sync
+before insert or update of commercial_snapshot, purpose, recovery_work_order_id, recovery_vendor_id
+on public.procurement_purchase_orders
+for each row execute function public.sync_procurement_purchase_order_recovery_fields();

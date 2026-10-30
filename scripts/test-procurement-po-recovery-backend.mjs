@@ -27,7 +27,7 @@ assert.match(core, /status: "Draft"/);
 assert.match(core, /approval_status: "Pending"/);
 assert.match(createRoute, /validatePurchaseOrderPurpose/);
 assert.match(createRoute, /validateRecoveryWorkOrder/);
-assert.match(createRoute, /recoveryWorkOrderId!, selectedVendorId/);
+assert.match(createRoute, /recoveryWorkOrderId!, recovery\.recoveryVendorId!/);
 assert.match(poRoute, /recoveryFields/);
 assert.match(poRoute, /recoveryWorkOrderId!, recoveryVendorId/);
 assert.match(poRoute, /action === "submit" \|\| action === "approve"/);
