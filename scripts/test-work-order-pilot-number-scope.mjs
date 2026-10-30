@@ -5,7 +5,7 @@ const suggestNumber = fs.readFileSync("app/api/work-orders/suggest-number/route.
 
 assert.match(suggestNumber, /requirePermission\(request, "work_orders", "add"\)/);
 assert.match(suggestNumber, /loadActorOrganizationScope/);
-assert.match(suggestNumber, /resolveWriteOrganizationId\(scope\)/);
+assert.match(suggestNumber, /resolveWriteOrganizationId\(scope, company\?\.organization_id\)/);
 assert.match(suggestNumber, /isInOrganizationScope\(scope, company\.organization_id\)/);
 assert.match(suggestNumber, /company\.organization_id !== activeOrganizationId/);
 assert.match(suggestNumber, /hasGlobalProcurementAccess\(auth\)/);
