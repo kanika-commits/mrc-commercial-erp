@@ -4,10 +4,34 @@ import { createClient } from "@supabase/supabase-js";
 import { requirePermission } from "@/lib/serverPermissions";
 import { applyOrganizationScope, loadActorOrganizationScope } from "@/lib/serverOrganizationScope";
 import { calculatePilotRaBill, validatePilotRaBill } from "@/lib/workOrderPilotRaBill";
-import { listDriveFolderFiles } from "@/src/lib/googleDrive";
 import { getPilotOverQuantityPolicy, pilotQuantityLimit, pilotQuantityUsage } from "@/lib/pilotRaBillOverQuantity.server";
 
 const db = () => createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+function normalizedRaNumber(value: unknown) {
+  return String(value || "").trim().toUpperCase();
+}
+function raNumberPart(value: unknown) {
+  const match = normalizedRaNumber(value).match(/^(?:RA-)?(\d{1,})$/);
+  return match ? Number(match[1]) : null;
+}
+function isRejected(status: unknown) {
+  return String(status || "").trim().toLowerCase() === "rejected";
+}
+async function loadDatabaseRaBills(admin: any, organizationId: string, workOrderId: string) {
+  const [legacy, pilot] = await Promise.all([
+    admin.from("ra_bills").select("ra_number,approval_status").eq("organization_id", organizationId).eq("work_order_id", workOrderId),
+    admin.from("work_order_pilot_ra_bills").select("bill_number,status,creation_request_id").eq("organization_id", organizationId).eq("work_order_id", workOrderId).is("deleted_at", null),
+  ]);
+  if (legacy.error) throw legacy.error;
+  if (pilot.error) throw pilot.error;
+  return { legacy: legacy.data || [], pilot: pilot.data || [] };
+}
+function databaseRaNumberParts(bills: { legacy: any[]; pilot: any[] }, creationRequestId?: string) {
+  return [
+    ...bills.legacy.filter((bill) => !isRejected(bill.approval_status)),
+    ...bills.pilot.filter((bill) => !isRejected(bill.status) && (!creationRequestId || bill.creation_request_id !== creationRequestId)),
+  ].map((bill) => raNumberPart(bill.ra_number || bill.bill_number)).filter((value): value is number => value !== null);
+}
 async function pilotAdjustments(admin: any, workOrderId: string, organizationId: string) {
   const [debit, credit] = await Promise.all([
     admin.from("debit_notes").select("total_amount,gross_amount").eq("organization_id", organizationId).eq("work_order_id", workOrderId).ilike("approval_status", "approved").ilike("status", "approved").eq("is_deleted", false),
@@ -53,15 +77,9 @@ export async function GET(request: Request) {
       const workOrderId = new URL(request.url).searchParams.get("work_order_id");
       const order = workOrderId ? await pilotOrder(admin, workOrderId, scope) : null;
       if (!order) return NextResponse.json({ error: "Only an approved Pilot Work Order may be numbered." }, { status: 404 });
-      const folder = await admin.from("work_order_drive_folders").select("ra_bills_folder_id").eq("work_order_id", order.id).eq("organization_id", order.organization_id).maybeSingle();
-      if (folder.error) throw folder.error; if (!folder.data?.ra_bills_folder_id) return NextResponse.json({ error: "This Work Order has no RA Bills Drive folder." }, { status: 409 });
-      const listed = await listDriveFolderFiles({ folderId: folder.data.ra_bills_folder_id });
-      const activeBills = await admin.from("work_order_pilot_ra_bills").select("bill_number").eq("organization_id", order.organization_id).eq("work_order_id", order.id).is("deleted_at", null).neq("status", "rejected");
-      if (activeBills.error) throw activeBills.error;
-      const numbers = [
-        ...listed.files.map((file) => String(file.file_name || "").match(/\bRA-(\d{3,})\b/i)?.[1]),
-        ...(activeBills.data || []).map((bill: any) => String(bill.bill_number || "").match(/^RA-(\d{3,})$/i)?.[1]),
-      ].filter(Boolean).map(Number); const next = Math.max(0, ...numbers) + 1; return NextResponse.json({ suggested_bill_number: `RA-${String(next).padStart(3, "0")}` });
+      const bills = await loadDatabaseRaBills(admin, order.organization_id, order.id);
+      const next = Math.max(0, ...databaseRaNumberParts(bills)) + 1;
+      return NextResponse.json({ suggested_bill_number: `RA-${String(next).padStart(3, "0")}` });
     }
     if (new URL(request.url).searchParams.get("lookup") === "sites") {
       let sites = admin.from("sites").select("id,site_name,site_code,company_id,organization_id,status").eq("status", "active").order("site_name");
@@ -182,15 +200,8 @@ export async function POST(request: Request) {
     const creationRequestId = String(body.creation_request_id || crypto.randomUUID());
     const billNumber = String(body.bill_number || "").trim().toUpperCase();
     if (!/^RA-\d{3,}$/.test(billNumber)) return NextResponse.json({ error: "RA Bill No. must use the format RA-###." }, { status: 422 });
-    const duplicate = await admin.from("work_order_pilot_ra_bills").select("id,status").eq("organization_id", order.organization_id).eq("work_order_id", order.id).eq("bill_number", billNumber).is("deleted_at", null).neq("status", "rejected").neq("creation_request_id", creationRequestId).maybeSingle();
-    if (duplicate.error) throw duplicate.error; if (duplicate.data) return NextResponse.json({ error: `RA Bill No. ${billNumber} is already used for this Work Order.` }, { status: 409 });
-    const folder = await admin.from("work_order_drive_folders").select("ra_bills_folder_id").eq("work_order_id", order.id).eq("organization_id", order.organization_id).maybeSingle();
-    if (folder.error) throw folder.error;
-    if (folder.data?.ra_bills_folder_id) {
-      const listed = await listDriveFolderFiles({ folderId: folder.data.ra_bills_folder_id });
-      const fileDuplicate = listed.files.some((file: any) => new RegExp(`\\b${billNumber.replace("-", "-")}\\b`, "i").test(String(file.file_name || "")));
-      if (fileDuplicate) return NextResponse.json({ error: `RA Bill No. ${billNumber} is already used by a file in this Work Order's RA Bills folder.` }, { status: 409 });
-    }
+    const bills = await loadDatabaseRaBills(admin, order.organization_id, order.id);
+    if (databaseRaNumberParts(bills, creationRequestId).includes(Number(billNumber.slice(3)))) return NextResponse.json({ error: `RA Bill No. ${billNumber} is already used for this Work Order.` }, { status: 409 });
     const existing = await admin.from("work_order_pilot_ra_bills").select("id,status").eq("organization_id", order.organization_id).eq("creation_request_id", creationRequestId).maybeSingle();
     if (existing.error) throw existing.error;
     if (existing.data && !["draft", "sent_back"].includes(existing.data.status)) return NextResponse.json({ error: "This Pilot RA Bill is already under review or approved." }, { status: 409 });

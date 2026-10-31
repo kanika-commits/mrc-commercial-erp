@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { listDriveFolderFiles, uploadDriveFile } from "@/src/lib/googleDrive";
+import { uploadDriveFile } from "@/src/lib/googleDrive";
 
 export async function deletePilotDriveFile(fileId: string) {
   const endpoint = process.env.GOOGLE_DRIVE_WORK_ORDER_WEB_APP_URL;
@@ -36,7 +36,6 @@ export async function filePilotRaBillCycleToDrive(admin: any, input: { bill: any
   if (folderResult.error) throw folderResult.error;
   const folderId = clean(folderResult.data?.ra_bills_folder_id);
   if (!folderId) throw new Error("The Pilot Work Order has no RA Bills Drive folder.");
-  const listed = await listDriveFolderFiles({ folderId });
   const vendor = clean(bill.work_order_snapshot?.vendor_name) || "Pilot Vendor";
   const stem = `${safeName(vendor)} ${safeName(bill.bill_number)} ${datePart(bill.bill_date)}`;
   const manifest = Array.isArray(cycle.attachment_manifest) ? cycle.attachment_manifest : [];
@@ -56,8 +55,6 @@ export async function filePilotRaBillCycleToDrive(admin: any, input: { bill: any
       if (saved.sha256 !== entry.sha256 || Number(saved.byte_length) !== entry.bytes.length) throw new Error(`Pilot Drive file ${entry.fileName} does not match the submitted cycle.`);
       continue;
     }
-    const collision = listed.files.find((file: any) => clean(file.file_name) === entry.fileName);
-    if (collision) throw new Error(`A different Drive file already uses ${entry.fileName}.`);
     const uploaded = await uploadDriveFile({ targetFolderId: folderId, fileName: entry.fileName, mimeType: entry.mimeType, base64: entry.bytes.toString("base64") });
     const inserted = await admin.from("work_order_pilot_ra_bill_drive_files").insert({ organization_id: bill.organization_id, ra_bill_id: bill.id, cycle_id: cycle.id, manifest_attachment_id: entry.manifest_attachment_id, kind: entry.kind, file_name: entry.fileName, drive_file_id: uploaded.file_id, drive_file_url: uploaded.file_url, sha256: entry.sha256, byte_length: entry.bytes.length }).select("*").single();
     if (inserted.error) throw inserted.error;

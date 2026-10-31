@@ -50,6 +50,8 @@ assert.match(structuredForm, /items: form\.wo_type === "Daily Wage" \? lines\.ma
 assert.match(structuredForm, /Description of item/);
 assert.match(structuredForm, /data-testid="daily-wage-items"/);
 assert.match(structuredForm, /\/work-orders\/new\/structured\/preview/);
+assert.match(structuredForm, /<Link href="\/forms\/work-orders"[^>]*>Back to Work Order Forms<\/Link>/);
+assert.doesNotMatch(structuredForm, /<Link href="\/work-orders"[^>]*>Back to Work Orders<\/Link>/);
 assert.match(previewRoute, /requirePermission\(request, "work_orders", "add"\)/);
 assert.match(createRoute, /WORK_ORDER_TYPES/);
 
