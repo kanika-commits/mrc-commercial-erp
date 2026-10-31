@@ -5,6 +5,10 @@ import {
 } from "@/lib/serverDeleteAudit";
 import { recordAuditEvent } from "@/lib/auditEvent";
 import { requirePermission } from "@/lib/serverPermissions";
+import {
+  isInOrganizationScope,
+  loadOrganizationScopeForUser,
+} from "@/lib/serverOrganizationScope";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { createWorkOrderDriveFolder } from "@/src/lib/googleDrive";
 import { insertNotificationOnce, resolveNotificationRecipients } from "@/lib/serverNotificationRecipients";
@@ -196,6 +200,47 @@ async function loadOptionalChildRows(
   }
 
   return data || [];
+}
+
+async function loadActorAssignments(
+  admin: ReturnType<typeof adminClient>,
+  userId: string,
+) {
+  const { data, error } = await admin
+    .from("user_access_assignments")
+    .select("company_id, site_id")
+    .eq("user_id", userId);
+
+  if (error) throw error;
+
+  return {
+    companyIds: Array.from(
+      new Set((data || []).map((row) => row.company_id).filter(Boolean)),
+    ) as string[],
+    siteIds: Array.from(
+      new Set((data || []).map((row) => row.site_id).filter(Boolean)),
+    ) as string[],
+  };
+}
+
+function isWorkOrderInActorScope(
+  workOrder: any,
+  organizationScope: string[] | null,
+  assignments: { companyIds: string[]; siteIds: string[] },
+) {
+  if (!isInOrganizationScope(organizationScope, workOrder?.organization_id)) {
+    return false;
+  }
+
+  if (assignments.siteIds.length > 0) {
+    return assignments.siteIds.includes(workOrder.site_id);
+  }
+
+  if (assignments.companyIds.length > 0) {
+    return assignments.companyIds.includes(workOrder.company_id);
+  }
+
+  return true;
 }
 
 async function generateWorkOrderNumber(
@@ -670,6 +715,25 @@ export async function DELETE(request: Request) {
       );
     }
 
+    const [organizationScope, assignments] = await Promise.all([
+      loadOrganizationScopeForUser(admin, auth.user.id),
+      loadActorAssignments(admin, auth.user.id),
+    ]);
+
+    if (!isWorkOrderInActorScope(workOrder, organizationScope, assignments)) {
+      return NextResponse.json(
+        { error: "You do not have access to this Work Order." },
+        { status: 403 }
+      );
+    }
+
+    if (String(workOrder.approval_status || "").toLowerCase() !== "draft") {
+      return NextResponse.json(
+        { error: "Only draft Work Orders can be deleted. Active or approved workflow records must be preserved." },
+        { status: 409 }
+      );
+    }
+
     const [
       raBillCount,
       debitNoteCount,
@@ -678,6 +742,10 @@ export async function DELETE(request: Request) {
       ledgerEntryCount,
       ledgerTransactionCount,
       accountLedgerCount,
+      pilotRaBillCount,
+      labourWageRateCount,
+      labourWorkGroupCount,
+      labourDailyLogCount,
     ] = await Promise.all([
       countDirectLinks(admin, "ra_bills", "work_order_id", workOrderId),
       countDirectLinks(admin, "debit_notes", "work_order_id", workOrderId),
@@ -686,6 +754,10 @@ export async function DELETE(request: Request) {
       countDirectLinks(admin, "ledger_entries", "work_order_id", workOrderId),
       countDirectLinks(admin, "ledger_transactions", "work_order_id", workOrderId),
       countDirectLinks(admin, "account_ledger", "work_order_id", workOrderId),
+      countDirectLinks(admin, "work_order_pilot_ra_bills", "work_order_id", workOrderId),
+      countDirectLinks(admin, "labour_wage_rates", "work_order_id", workOrderId),
+      countDirectLinks(admin, "labour_work_groups", "commercial_work_order_id", workOrderId),
+      countDirectLinks(admin, "labour_daily_work_logs", "commercial_work_order_id", workOrderId),
     ]);
 
     const ledgerCount =
@@ -696,7 +768,11 @@ export async function DELETE(request: Request) {
       debitNoteCount > 0 ||
       invoiceCount > 0 ||
       paymentCount > 0 ||
-      ledgerCount > 0
+      ledgerCount > 0 ||
+      pilotRaBillCount > 0 ||
+      labourWageRateCount > 0 ||
+      labourWorkGroupCount > 0 ||
+      labourDailyLogCount > 0
     ) {
       return NextResponse.json(
         {
@@ -714,56 +790,36 @@ export async function DELETE(request: Request) {
       );
     }
 
-    const [documents, vendorLinks, fileRows] = await Promise.all([
+    const [items, documents, vendorLinks, changes, driveFolders, fileRows] = await Promise.all([
+      loadOptionalChildRows(admin, "work_order_items", workOrderId),
       loadOptionalChildRows(admin, "work_order_documents", workOrderId),
       loadOptionalChildRows(admin, "work_order_vendors", workOrderId),
+      loadOptionalChildRows(admin, "work_order_changes", workOrderId),
+      loadOptionalChildRows(admin, "work_order_drive_folders", workOrderId),
       loadOptionalChildRows(admin, "work_order_files", workOrderId),
     ]);
 
+    const { data: deleted, error: deleteError } = await admin.rpc("delete_work_order_atomic", {
+      p_work_order_id: workOrderId,
+    });
+
+    if (deleteError) {
+      if (deleteError.code === "23503") {
+        return NextResponse.json(
+          { error: "This Work Order still has linked records and was not deleted." },
+          { status: 409 }
+        );
+      }
+      throw deleteError;
+    }
+
     const documentPaths = documents
-      .map((document: any) =>
-        normalizeStoragePath(document.file_path || document.file_url)
-      )
+      .map((document: any) => normalizeStoragePath(document.file_path || document.file_url))
       .filter(Boolean);
     const fileRowPaths = fileRows
       .map((file: any) => normalizeStoragePath(file.file_path || file.file_url))
       .filter(Boolean);
     const filePaths = Array.from(new Set([...documentPaths, ...fileRowPaths]));
-
-    if (filePaths.length > 0) {
-      const { error: storageError } = await admin.storage
-        .from(DOCUMENT_BUCKET)
-        .remove(filePaths);
-
-      if (storageError && !isMissingRelationError(storageError)) {
-        throw storageError;
-      }
-    }
-
-    const childDeletes = [
-      admin
-        .from("work_order_documents")
-        .delete()
-        .eq("work_order_id", workOrderId),
-      admin
-        .from("work_order_vendors")
-        .delete()
-        .eq("work_order_id", workOrderId),
-      admin.from("work_order_files").delete().eq("work_order_id", workOrderId),
-    ];
-
-    for (const result of await Promise.all(childDeletes)) {
-      if (result.error && !isMissingRelationError(result.error)) {
-        throw result.error;
-      }
-    }
-
-    const { error: deleteError } = await admin
-      .from("work_orders")
-      .delete()
-      .eq("id", workOrderId);
-
-    if (deleteError) throw deleteError;
 
     try {
       await recordAuditEvent(admin, auth.user, {
@@ -779,10 +835,13 @@ export async function DELETE(request: Request) {
         activityLabel: "Deleted Work Order",
         description: `Deleted Work Order ${workOrder.wo_number}.`,
         reason: deletionReason,
-        oldValues: workOrder,
+        oldValues: deleted || workOrder,
         relatedSnapshot: {
+          work_order_items: items,
           work_order_documents: documents,
           work_order_vendors: vendorLinks,
+          work_order_changes: changes,
+          work_order_drive_folders: driveFolders,
           work_order_files: fileRows,
         },
         fileSnapshot: {
@@ -794,10 +853,13 @@ export async function DELETE(request: Request) {
           documentId: workOrder.id,
           documentNumber: workOrder.wo_number,
           deletionReason,
-          recordSnapshot: workOrder,
+          recordSnapshot: deleted || workOrder,
           relatedSnapshot: {
+            work_order_items: items,
             work_order_documents: documents,
             work_order_vendors: vendorLinks,
+            work_order_changes: changes,
+            work_order_drive_folders: driveFolders,
             work_order_files: fileRows,
           },
           fileSnapshot: {
@@ -813,11 +875,17 @@ export async function DELETE(request: Request) {
     return NextResponse.json({
       deleted: true,
       audit_logged: true,
-      deleted_storage_files: filePaths.length,
+      preserved_storage_files: filePaths.length,
     });
   } catch (error: any) {
+    if (error?.code === "23503") {
+      return NextResponse.json(
+        { error: "This Work Order still has linked records and was not deleted." },
+        { status: 409 }
+      );
+    }
     return NextResponse.json(
-      { error: error.message || "Failed to delete Work Order." },
+      { error: "Failed to delete Work Order." },
       { status: 500 }
     );
   }
