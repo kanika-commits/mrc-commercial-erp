@@ -49,6 +49,14 @@ const adminModules = [
     className: "from-slate-50 to-white border-slate-200 text-slate-700",
   },
   {
+    title: "Tenant Branding",
+    description: "Customize organization branding.",
+    moduleCodes: ["tenant_branding"],
+    routes: ["/admin/branding"],
+    icon: Settings,
+    className: "from-sky-50 to-white border-sky-100 text-sky-700",
+  },
+  {
     title: "System Activity",
     description: "Review ERP activity, changes, approvals and audit history.",
     moduleCodes: ["system_activity"],
@@ -84,6 +92,7 @@ function isVisibleCard(
 export default function AdministrationPage() {
   const { access, moduleNavigation, loading } = useAccessContext();
   const permissions = access?.permissions || [];
+  const isPlatformOwner = access?.roleCodes?.includes("platform_owner") === true;
   const canViewSystemActivity = Boolean(access?.roleCodes?.includes("platform_owner") || access?.roleCodes?.includes("super_admin"));
   const modules = useMemo(
     () =>
@@ -104,6 +113,9 @@ export default function AdministrationPage() {
           if (module.module_code === "system_activity") {
             return canViewSystemActivity ? buildCard(item, module) : null;
           }
+          if (module.module_code === "tenant_branding") {
+            return isPlatformOwner ? buildCard(item, module) : null;
+          }
           if (!can(permissions, module.module_code, "view")) {
             return null;
           }
@@ -111,7 +123,7 @@ export default function AdministrationPage() {
           return buildCard(item, module);
         })
         .filter(isVisibleCard),
-    [modules, permissions, canViewSystemActivity],
+    [modules, permissions, canViewSystemActivity, isPlatformOwner],
   );
 
   if (loading) {

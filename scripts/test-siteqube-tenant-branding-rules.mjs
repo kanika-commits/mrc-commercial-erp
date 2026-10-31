@@ -7,6 +7,7 @@ const files = {
   adminApi: read("app/api/admin/branding/route.ts"),
   publicApi: read("app/api/branding/route.ts"),
   page: read("app/admin/branding/page.tsx"),
+  administrationPage: read("app/modules/administration/page.tsx"),
   login: read("app/login/page.tsx"),
   appShell: read("components/AppShell.tsx"),
   navigation: read("lib/defaultModuleNavigation.ts"),
@@ -21,9 +22,12 @@ must("publicApi", ["resolveCurrentOrganization", "createSignedReadUrl"]);
 must("page", ["Branding", "Customize how your organization appears in SiteQube.", "Organization Logo", "Organization Name", "Primary Color", "Secondary Color", "Save Branding", "Remove Logo", "Login Preview", "createObjectURL", "revokeObjectURL", "object-contain", "apiFetch", "Clear Selection", "color", "HEX"]);
 must("login", ["/api/branding", "signInWithPassword", "/api/admin/bootstrap", "router.push(\"/\")", "Powered by SiteQube", '"loading"', '"ready"', '"fallback"', "new Image()", "image.onload", "aria-busy", "animate-pulse"]);
 must("appShell", ["TenantBrandingContext", "brandingStatus", "new Image()", "tenant-primary-foreground", "aria-busy", "animate-pulse"]);
-must("appShell", ["Tenant Branding", 'navLeaf("Tenant Branding", "tenant_branding", "/admin/branding")']);
+must("appShell", ["Tenant Branding", 'moduleCode: "tenant_branding"', 'href: "/admin/branding"']);
 must("navigation", ['"/admin/branding": "administration"', 'module_name: "Tenant Branding"', 'route: "/admin/branding"']);
 must("modulePage", ["tenant_branding", "Customize organization branding."]);
+must("administrationPage", ["Tenant Branding", "tenant_branding", "/admin/branding", "isPlatformOwner", "Customize organization branding."]);
+if (!files.administrationPage.includes('if (module.module_code === "tenant_branding")')) throw new Error("Administration card must remain Platform Owner-gated");
+if (!files.appShell.includes('access?.roleCodes?.includes("platform_owner")')) throw new Error("Sidebar branding entry must remain Platform Owner-gated");
 if (!files.page.includes('roleCodes?.includes("platform_owner") === true')) throw new Error("Branding page must remain Platform Owner-only");
 if (files.appShell.indexOf("if (brandingStatus === \"loading\")") < files.appShell.indexOf("const moduleRouteByCode = useMemo")) throw new Error("AppShell branding loading return must remain below all hooks");
 if ((files.appShell.match(/fetch\(\"\/api\/branding\"/g) || []).length !== 1) throw new Error("AppShell must have one shared branding fetch");
