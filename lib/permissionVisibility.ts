@@ -97,7 +97,7 @@ const PERMISSION_PRESENTATION: Record<string, VisiblePermissionPresentation> = {
   procurement_gst_billing_delivery_master: { visible_group: "Settings", visible_name: "Masters - GST / Billing & Delivery", visible_sort_order: 60, visible_actions: ["view", "add", "edit"] },
   procurement_site_contact_master: { visible_group: "Settings", visible_name: "Masters - Site Contacts", visible_sort_order: 61, visible_actions: ["view", "add", "edit"] },
   procurement_letterhead_master: { visible_group: "Settings", visible_name: "Masters - Letterheads", visible_sort_order: 62, visible_actions: ["view", "add", "edit", "delete"] },
-  procurement_po_terms_master: { visible_group: "Settings", visible_name: "Masters - PO Terms & Conditions", visible_sort_order: 63, visible_actions: ["view", "add", "edit"] },
+  procurement_po_terms_master: { visible_group: "Settings", visible_name: "Masters - PO & WO Terms & Conditions", visible_sort_order: 63, visible_actions: ["view", "add", "edit"] },
   work_orders: { visible_group: "Purchase", visible_name: "Work Orders", visible_sort_order: 10 },
   wo_approval: { visible_group: "Purchase", visible_name: "Work Order Approval", visible_sort_order: 20 },
 
