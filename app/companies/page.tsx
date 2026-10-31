@@ -49,64 +49,20 @@ export default function CompaniesPage() {
     setLoading(true);
     setMessage("");
 
-    const allowedOrganizationIds = getAllowedOrganizationIds(access);
-
-    if (allowedOrganizationIds && allowedOrganizationIds.length === 0) {
-      setCompanies([]);
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      setMessage("Your session expired. Please log in again.");
       setLoading(false);
       return;
     }
-
-    let companyQuery = supabase
-      .from("companies")
-      .select("id, organization_id, company_name, company_code, status, created_at")
-      .neq("status", "deleted")
-      .order("created_at", { ascending: false });
-
-    if (allowedOrganizationIds) {
-      companyQuery = companyQuery.in("organization_id", allowedOrganizationIds);
-    }
-
-    const { data, error } = await companyQuery;
-
-    if (error) {
-      setMessage(error.message);
+    const response = await fetch("/api/companies", { headers: { Authorization: `Bearer ${session.access_token}` } });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setMessage(result.error || "Could not load companies.");
       setLoading(false);
       return;
     }
-
-    const organizationIds = Array.from(
-      new Set((data || []).map((company) => company.organization_id).filter(Boolean))
-    );
-
-    const { data: orgData, error: orgError } = organizationIds.length
-      ? await supabase
-          .from("organizations")
-          .select("id, name, code")
-          .in("id", organizationIds)
-      : { data: [], error: null };
-
-    if (orgError) {
-      setMessage(orgError.message);
-      setLoading(false);
-      return;
-    }
-
-    const organizationById = new Map(
-      (orgData || []).map((organization) => [organization.id, organization])
-    );
-
-    setCompanies(
-      sortCompanies((data || []).map((company) => {
-        const organization = organizationById.get(company.organization_id);
-
-        return {
-          ...company,
-          organization_name: organization?.name || "",
-          organization_code: organization?.code || "",
-        };
-      }))
-    );
+    setCompanies(sortCompanies((result.companies || []).map((company: Company) => ({ ...company }))));
     setLoading(false);
   }
 

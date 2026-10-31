@@ -12,5 +12,9 @@ assert.match(route, /not\("creation_request_id", "is", null\)/); assert.match(ro
 assert.match(route, /work_order_pilot_revisions/); assert.match(route, /effective_revision/);
 assert.match(route, /searchParams\.get\("lookup"\) === "sites"/); assert.match(route, /from\("sites"\)/); assert.match(route, /applyOrganizationScope/);
 assert.match(route, /searchParams\.get\("lookup"\) === "work_orders"/); assert.match(route, /eq\("site_id", siteId\)/); assert.match(route, /eq\("approval_status", "approved"\)/); assert.match(route, /work_order_pilot_revisions/);
-assert.doesNotMatch(page, /Select Company/); assert.doesNotMatch(route, /from\("ra_bills"\)|from\("ra_bill_items"\)/);
+assert.doesNotMatch(page, /Select Company/);
+// Pilot numbering intentionally reads legacy RA Bill history so numbers cannot
+// collide across workflows.  The query must remain Work Order + organization
+// scoped; rejecting the table read itself was an obsolete expectation.
+assert.match(route, /from\("ra_bills"\)\.select\("ra_number,approval_status"\)\.eq\("organization_id", organizationId\)\.eq\("work_order_id", workOrderId\)/);
 console.log("Pilot RA Bill Site -> approved Pilot Work Order filtering contract passed.");

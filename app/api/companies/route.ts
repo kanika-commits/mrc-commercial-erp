@@ -102,3 +102,39 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export async function GET(request: Request) {
+  try {
+    const auth = await requirePermission(request, "companies", "view");
+    if ("response" in auth) return auth.response;
+    const admin = adminClient();
+    const scope = await loadActorOrganizationScope(admin, auth);
+    let query = admin
+      .from("companies")
+      .select("id, organization_id, company_name, company_code, status, created_at")
+      .neq("status", "deleted")
+      .order("created_at", { ascending: false });
+    if (scope !== null) {
+      if (scope.length === 0) return NextResponse.json({ companies: [] });
+      query = query.in("organization_id", scope);
+    }
+    const { data, error } = await query;
+    if (error) throw error;
+    const rows = data || [];
+    const organizationIds = Array.from(new Set(rows.map((row: any) => row.organization_id).filter(Boolean)));
+    const organizations = organizationIds.length
+      ? await admin.from("organizations").select("id,name,code").in("id", organizationIds)
+      : { data: [], error: null };
+    if (organizations.error) throw organizations.error;
+    const organizationById = new Map((organizations.data || []).map((row: any) => [row.id, row]));
+    return NextResponse.json({
+      companies: rows.map((row: any) => ({
+        ...row,
+        organization_name: organizationById.get(row.organization_id)?.name || "",
+        organization_code: organizationById.get(row.organization_id)?.code || "",
+      })),
+    });
+  } catch {
+    return NextResponse.json({ error: "Could not load companies." }, { status: 500 });
+  }
+}

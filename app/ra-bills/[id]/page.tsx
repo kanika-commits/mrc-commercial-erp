@@ -69,82 +69,6 @@ export default function RABillDetailPage() {
       setLoading(true);
       setMessage("");
 
-      const { data: billData, error: billError } = await supabase
-        .from("ra_bills")
-        .select("*")
-        .eq("id", billId)
-        .single();
-
-      if (billError) throw billError;
-
-      setBill(billData);
-
-      if (billData.work_order_id) {
-        const { data: woData, error: woError } = await supabase
-          .from("work_orders")
-          .select("id, wo_number, wo_value, wo_date, company_id, site_id")
-          .eq("id", billData.work_order_id)
-          .maybeSingle();
-
-        if (woError) throw woError;
-
-        setWorkOrder(woData);
-
-        if (woData?.company_id) {
-          const { data: companyData } = await supabase
-            .from("companies")
-            .select("id, company_name, company_code")
-            .eq("id", woData.company_id)
-            .maybeSingle();
-
-          setCompany(companyData);
-        }
-
-        if (woData?.site_id) {
-          const { data: siteData } = await supabase
-            .from("sites")
-            .select("id, site_name, site_code")
-            .eq("id", woData.site_id)
-            .maybeSingle();
-
-          setSite(siteData);
-        }
-
-        const { data: previousData, error: previousError } = await supabase
-          .from("ra_bills")
-          .select(`
-            id,
-            ra_number,
-            ra_date,
-            gross_amount,
-            net_amount,
-            approval_status,
-            created_at,
-            ra_bill_rejections (
-              rejection_reason,
-              rejected_at
-            )
-          `)
-          .eq("work_order_id", billData.work_order_id)
-          .order("created_at", { ascending: true });
-
-        if (previousError) throw previousError;
-
-        setPreviousRABills(previousData || []);
-      }
-
-      if (billData.vendor_id) {
-        const { data: vendorData, error: vendorError } = await supabase
-          .from("vendors")
-          .select("id, vendor_name, pan, gstin")
-          .eq("id", billData.vendor_id)
-          .maybeSingle();
-
-        if (vendorError) throw vendorError;
-
-        setVendor(vendorData);
-      }
-
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -152,10 +76,18 @@ export default function RABillDetailPage() {
       const token = session?.access_token;
 
       if (!token) {
-        throw new Error(
-          "Unable to load RA Bill attachments: missing auth session."
-        );
+        throw new Error("Unable to load RA Bill: missing auth session.");
       }
+
+      const detailResponse = await fetch(`/api/ra-bills/${encodeURIComponent(billId)}`, { headers: { Authorization: `Bearer ${token}` } });
+      const detail = await detailResponse.json();
+      if (!detailResponse.ok) throw new Error(detail.error || "Failed to load RA Bill.");
+      setBill(detail.bill);
+      setWorkOrder(detail.work_order);
+      setCompany(detail.company);
+      setSite(detail.site);
+      setVendor(detail.vendor);
+      setPreviousRABills(detail.previous_ra_bills || []);
 
       const documentResponse = await fetch(
         `/api/ra-bills/documents?ra_bill_id=${encodeURIComponent(billId)}`,

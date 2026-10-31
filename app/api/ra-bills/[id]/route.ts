@@ -16,6 +16,7 @@ import {
   loadActorOrganizationScope,
   loadOrganizationScopeForUser,
 } from "@/lib/serverOrganizationScope";
+import { loadApprovalScope, loadAllowedWorkOrderIds } from "@/app/api/approvals/_shared";
 
 const DOCUMENT_BUCKET = "ra-bill-documents";
 const MODULE_CODE = "ra_bills";
@@ -76,6 +77,47 @@ function mimeTypeFromFileName(fileName: string) {
       return "application/msword";
     default:
       return "application/octet-stream";
+  }
+}
+
+export async function GET(
+  request: Request,
+  context: { params: Promise<{ id: string }> }
+) {
+  try {
+    const auth = await requirePermission(request, "ra_bills", "view");
+    if ("response" in auth) return auth.response;
+    const admin = createServiceRoleClient();
+    const billId = String((await context.params).id || "").trim();
+    if (!billId) return NextResponse.json({ error: "RA Bill id is required." }, { status: 400 });
+    const organizationScope = await loadActorOrganizationScope(admin, auth);
+    const { assignments } = await loadApprovalScope(admin, auth);
+    const allowedWorkOrderIds = await loadAllowedWorkOrderIds(admin, organizationScope, assignments);
+    let billQuery = admin.from("ra_bills").select("*").eq("id", billId);
+    if (organizationScope !== null) {
+      if (organizationScope.length === 0) return NextResponse.json({ error: "RA Bill was not found." }, { status: 404 });
+      billQuery = billQuery.in("organization_id", organizationScope);
+    }
+    const { data: bill, error } = await billQuery.maybeSingle();
+    if (error) throw error;
+    if (!bill) return NextResponse.json({ error: "RA Bill was not found." }, { status: 404 });
+    if (allowedWorkOrderIds !== null && bill.work_order_id && !allowedWorkOrderIds.includes(bill.work_order_id)) {
+      return NextResponse.json({ error: "You do not have access to this RA Bill." }, { status: 403 });
+    }
+    const [workOrderResult, vendorResult, previousResult] = await Promise.all([
+      bill.work_order_id ? admin.from("work_orders").select("id,wo_number,wo_value,wo_date,company_id,site_id,organization_id").eq("id", bill.work_order_id).eq("organization_id", bill.organization_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+      bill.vendor_id ? admin.from("vendors").select("id,vendor_name,pan,gstin").eq("id", bill.vendor_id).eq("organization_id", bill.organization_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+      bill.work_order_id ? admin.from("ra_bills").select("id,ra_number,ra_date,gross_amount,net_amount,approval_status,created_at,ra_bill_rejections(rejection_reason,rejected_at)").eq("work_order_id", bill.work_order_id).eq("organization_id", bill.organization_id).order("created_at", { ascending: true }) : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (workOrderResult.error || vendorResult.error || previousResult.error) throw workOrderResult.error || vendorResult.error || previousResult.error;
+    const [companyResult, siteResult] = await Promise.all([
+      workOrderResult.data?.company_id ? admin.from("companies").select("id,company_name,company_code").eq("id", workOrderResult.data.company_id).eq("organization_id", bill.organization_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+      workOrderResult.data?.site_id ? admin.from("sites").select("id,site_name,site_code").eq("id", workOrderResult.data.site_id).eq("organization_id", bill.organization_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    ]);
+    if (companyResult.error || siteResult.error) throw companyResult.error || siteResult.error;
+    return NextResponse.json({ bill, work_order: workOrderResult.data, company: companyResult.data, site: siteResult.data, vendor: vendorResult.data, previous_ra_bills: previousResult.data || [] });
+  } catch {
+    return NextResponse.json({ error: "Could not load RA Bill." }, { status: 500 });
   }
 }
 

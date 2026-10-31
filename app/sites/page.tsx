@@ -88,42 +88,20 @@ export default function SitesPage() {
     setLoading(true);
     setMessage("");
 
-    const allowedOrganizationIds = getAllowedOrganizationIds(access);
-
-    if (allowedOrganizationIds && allowedOrganizationIds.length === 0) {
-      setSites([]);
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      setMessage("Your session expired. Please log in again.");
       setLoading(false);
       return;
     }
-
-    let siteQuery = supabase
-      .from("sites")
-      .select(
-        `
-        id,
-        organization_id,
-        site_name,
-        site_code,
-        location,
-        state,
-        status,
-        created_at
-      `,
-      );
-
-    if (allowedOrganizationIds) {
-      siteQuery = siteQuery.in("organization_id", allowedOrganizationIds);
-    }
-
-    const { data, error } = await siteQuery.order("site_name", { ascending: true });
-
-    if (error) {
-      setMessage(error.message);
+    const response = await fetch("/api/sites", { headers: { Authorization: `Bearer ${session.access_token}` } });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setMessage(result.error || "Could not load sites.");
       setLoading(false);
       return;
     }
-
-    setSites((data || []) as Site[]);
+    setSites((result.sites || []) as Site[]);
     setLoading(false);
   }
 

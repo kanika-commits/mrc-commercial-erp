@@ -209,64 +209,29 @@ const [debitNotes, setDebitNotes] = useState<any[]>([]);
       setReviewedPackageUrl("");
       setWorkOrderChanges([]);
 
-      const { data: woData, error: woError } = await supabase
-        .from("work_orders")
-        .select(`
-          id,
-          organization_id,
-          company_id,
-          site_id,
-          wo_number,
-          wo_date,
-          wo_type,
-          description,
-          status,
-          created_at,
-          wo_value,
-          gst_percent,
-          approval_status,
-          department,
-          cost_code,
-          created_by_name,
-          created_by_email,
-          creation_request_id,
-          created_at_user,
-          approved_by_name,
-          approved_by_email,
-          approved_at
-        `)
-        .eq("id", workOrderId)
-        .single();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error("Unable to load Work Order: missing auth session.");
 
-      if (woError) throw woError;
-
+      const response = await fetch(`/api/work-orders/${encodeURIComponent(workOrderId)}/details`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const detail = await response.json();
+      if (!response.ok) throw new Error(detail.error || "Failed to load Work Order.");
+      const woData = detail.work_order;
       setWorkOrder(woData);
-
-      const [companyResult, siteResult] = await Promise.all([
-        woData.company_id
-          ? supabase
-              .from("companies")
-              .select("id, company_name, company_code")
-              .eq("id", woData.company_id)
-              .maybeSingle()
-          : Promise.resolve({ data: null, error: null }),
-        woData.site_id
-          ? supabase
-              .from("sites")
-              .select("id, site_name, site_code, location, state")
-              .eq("id", woData.site_id)
-              .maybeSingle()
-          : Promise.resolve({ data: null, error: null }),
-      ]);
-
-      if (companyResult.error) throw companyResult.error;
-      if (siteResult.error) throw siteResult.error;
-
-      setCompany(companyResult.data);
-      setSite(siteResult.data);
+      setCompany(detail.company);
+      setSite(detail.site);
 
       setLoading(false);
-      void loadRelatedData(woData);
+      setVendors(detail.vendors || []);
+      setRaBills(detail.ra_bills || []);
+      setInvoices(detail.invoices || []);
+      setPayments(detail.payments || []);
+      setDebitNotes(detail.debit_notes || []);
+      setWorkOrderChanges(detail.changes || []);
     } catch (error: any) {
       setMessage(error.message || "Failed to load work order.");
       setLoading(false);
@@ -289,130 +254,42 @@ const [debitNotes, setDebitNotes] = useState<any[]>([]);
         throw new Error("Unable to load Work Order related data: missing auth session.");
       }
 
-      const [
-        raResult,
-        invoiceResult,
-        paymentResult,
-        debitNoteResult,
-        vendorResponse,
-        changeResult,
-      ] = await Promise.all([
-        supabase
-          .from("ra_bills")
-          .select("id, ra_number, ra_date, gross_amount, net_amount, status, approval_status, created_at, created_by_name, created_by_email, approved_by_name, approved_by_email, approved_at, vendor_id")
-          .eq("work_order_id", workOrderId)
-          .not("approval_status", "ilike", "rejected")
-          .order("ra_date", { ascending: false }),
-        supabase
-          .from("invoices")
-          .select("id, invoice_number, invoice_date, taxable_amount, gst_amount, invoice_amount, status, approval_status, itc_status, vendor_id, created_at, created_by_name, created_by_email, itc_claimed_by_name, itc_claimed_by_email, itc_claimed_at, itc_rejected_by_name, itc_rejected_by_email, itc_rejected_at")
-          .eq("work_order_id", workOrderId)
-          .not("approval_status", "ilike", "rejected")
-          .order("invoice_date", { ascending: false }),
-        supabase
-          .from("payments")
-          .select(
-            "id, payment_number, payment_date, payment_amount, total_payment, transferred_amount, tds_amount, payment_mode, utr_number, reference_number, status, vendor_id, created_at, created_at_user, created_by_name, created_by_email"
-          )
-          .eq("work_order_id", workOrderId)
-          .order("payment_date", { ascending: false }),
-        supabase
-          .from("debit_notes")
-          .select(`
-            id,
-            debit_note_number,
-            debit_note_date,
-            debit_note_type,
-            total_amount,
-            reason,
-            status,
-            approval_status,
-            vendor_id,
-            created_at,
-            created_by_name,
-            created_by_email,
-            approved_by_name,
-            approved_by_email,
-            approved_at
-          `)
-          .eq("work_order_id", workOrderId)
-          .not("approval_status", "ilike", "rejected")
-          .order("debit_note_date", { ascending: false }),
-        fetch(
-          `/api/work-orders/vendors?work_order_id=${encodeURIComponent(workOrderId)}`,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          }
-        ),
-        fetch(`/api/work-orders/${workOrderId}/changes`, { headers: { Authorization: `Bearer ${token}` } }),
-      ]);
-
-      if (raResult.error) throw raResult.error;
-      if (invoiceResult.error) throw invoiceResult.error;
-      if (paymentResult.error) throw paymentResult.error;
-      if (debitNoteResult.error) throw debitNoteResult.error;
-
-      const vendorResult = await vendorResponse.json();
-
-      if (!vendorResponse.ok) {
-        throw new Error(vendorResult.error || "Failed to load Work Order vendors.");
-      }
-
-      const changeResponse = await changeResult.json();
-      if (!changeResult.ok) throw new Error(changeResponse.error || "Failed to load Work Order changes.");
-
-      const raData = raResult.data || [];
-      const invoiceData = invoiceResult.data || [];
-      const paymentData = paymentResult.data || [];
-      const debitNoteData = debitNoteResult.data || [];
-      let linkedVendors = normalizeLinkedVendorRows(
-        vendorResult.all_vendors?.[workOrderId] || []
-      );
-
-      const relatedVendorIds = Array.from(
-        new Set(
-          [
-            ...linkedVendors.map((row) => row.vendor_id || row.vendors?.id),
-            ...raData.map((row) => row.vendor_id),
-            ...invoiceData.map((row) => row.vendor_id),
-            ...paymentData.map((row) => row.vendor_id),
-            ...debitNoteData.map((row) => row.vendor_id),
-          ].filter(Boolean)
-        )
-      );
-
-      const { data: relatedVendors, error: relatedVendorsError } = relatedVendorIds.length
-        ? await supabase
-            .from("vendors")
-            .select("id, vendor_name")
-            .in("id", relatedVendorIds)
-        : { data: [], error: null };
-
-      if (relatedVendorsError) throw relatedVendorsError;
+      const response = await fetch(`/api/work-orders/${encodeURIComponent(workOrderId)}/details`, { headers: { Authorization: `Bearer ${token}` } });
+      const detail = await response.json();
+      if (!response.ok) throw new Error(detail.error || "Failed to load Work Order related data.");
+      const raData = detail.ra_bills || [];
+      const invoiceData = detail.invoices || [];
+      const paymentData = detail.payments || [];
+      const debitNoteData = detail.debit_notes || [];
+      const linkedVendors = normalizeLinkedVendorRows(detail.vendors || []);
 
       const vendorNameMap = new Map(
-        (relatedVendors || []).map((vendor) => [vendor.id, vendor.vendor_name || "-"])
+        [
+          ...linkedVendors.map((row) => [row.vendor_id || row.vendors?.id, row.vendors?.vendor_name || "-"]),
+          ...raData.map((row: any) => [row.vendor_id, row.vendor_name || "-"]),
+          ...invoiceData.map((row: any) => [row.vendor_id, row.vendor_name || "-"]),
+          ...paymentData.map((row: any) => [row.vendor_id, row.vendor_name || "-"]),
+          ...debitNoteData.map((row: any) => [row.vendor_id, row.vendor_name || "-"]),
+        ].filter(([id]) => Boolean(id)) as [string, string][]
       );
-      const enrichedRaBills = raData.map((row) => ({
+      const enrichedRaBills = raData.map((row: any) => ({
         ...row,
         vendor_name: row.vendor_id ? vendorNameMap.get(row.vendor_id) || "-" : "-",
       }));
-      const enrichedInvoices = invoiceData.map((row) => ({
+      const enrichedInvoices = invoiceData.map((row: any) => ({
         ...row,
         vendor_name: row.vendor_id ? vendorNameMap.get(row.vendor_id) || "-" : "-",
       }));
-      const enrichedPayments = paymentData.map((row) => ({
+      const enrichedPayments = paymentData.map((row: any) => ({
         ...row,
         vendor_name: row.vendor_id ? vendorNameMap.get(row.vendor_id) || "-" : "-",
       }));
-      const enrichedDebitNotes = debitNoteData.map((row) => ({
+      const enrichedDebitNotes = debitNoteData.map((row: any) => ({
         ...row,
         vendor_name: row.vendor_id ? vendorNameMap.get(row.vendor_id) || "-" : "-",
       }));
 
-      setWorkOrderChanges(changeResponse.changes || []);
+      setWorkOrderChanges(detail.changes || []);
       setVendors(linkedVendors);
       setRaBills(enrichedRaBills);
       setInvoices(enrichedInvoices);

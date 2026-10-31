@@ -43,101 +43,24 @@ export default function DebitNoteDetailPage() {
       setLoading(true);
       setMessage("");
 
-      const { data: noteData, error: noteError } = await supabase
-        .from("debit_notes")
-        .select(`
-          id,
-          organization_id,
-          source_purchase_order_id,
-          source_purchase_order_documents,
-          work_order_id,
-          ra_bill_id,
-          vendor_id,
-          debit_note_number,
-          debit_note_date,
-          debit_note_type,
-          reason,
-          gross_amount,
-          total_amount,
-          status,
-          approval_status,
-          created_by_name,
-          created_by_email,
-          approved_by_name,
-          approved_by_email,
-          approved_at,
-          rejected_by_name,
-          rejected_by_email,
-          rejected_at,
-          rejection_reason,
-          created_at
-        `)
-        .eq("id", debitNoteId)
-        .maybeSingle();
-
-      if (noteError) throw noteError;
-      if (!noteData) throw new Error("Debit Note was not found.");
-
-      setNote(noteData);
-
-      if (noteData.source_purchase_order_id) {
-        const { data: sourcePo, error: sourcePoError } = await supabase
-          .from("procurement_purchase_orders")
-          .select("id,po_number,po_date,purpose,recovery_work_order_id,vendor_name_snapshot,total_basic_amount,total_gst_amount,total_amount,status")
-          .eq("id", noteData.source_purchase_order_id)
-          .eq("organization_id", noteData.organization_id)
-          .maybeSingle();
-        if (sourcePoError) throw sourcePoError;
-        if (sourcePo) setNote((current: any) => ({ ...current, source_purchase_order: sourcePo }));
-      }
-
-      if (noteData.work_order_id) {
-        const { data: woData, error: woError } = await supabase
-          .from("work_orders")
-          .select("id, wo_number, wo_value, wo_date, company_id, site_id")
-          .eq("id", noteData.work_order_id)
-          .maybeSingle();
-
-        if (woError) throw woError;
-        setWorkOrder(woData);
-
-        if (woData?.company_id) {
-          const { data: companyData } = await supabase
-            .from("companies")
-            .select("id, company_name, company_code")
-            .eq("id", woData.company_id)
-            .maybeSingle();
-
-          setCompany(companyData);
-        }
-
-        if (woData?.site_id) {
-          const { data: siteData } = await supabase
-            .from("sites")
-            .select("id, site_name, site_code")
-            .eq("id", woData.site_id)
-            .maybeSingle();
-
-          setSite(siteData);
-        }
-      }
-
-      if (noteData.vendor_id) {
-        const { data: vendorData, error: vendorError } = await supabase
-          .from("vendors")
-          .select("id, vendor_name, pan, gstin")
-          .eq("id", noteData.vendor_id)
-          .maybeSingle();
-
-        if (vendorError) throw vendorError;
-        setVendor(vendorData);
-      }
-
       const {
         data: { session },
       } = await supabase.auth.getSession();
 
-      if (session?.access_token) {
+      if (!session?.access_token) throw new Error("Unable to load Debit Note: missing auth session.");
+      const response = await fetch(`/api/debit-notes/${encodeURIComponent(debitNoteId)}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const detail = await response.json();
+      if (!response.ok) throw new Error(detail.error || "Failed to load Debit Note.");
+      const noteData = { ...detail.note, source_purchase_order: detail.source_purchase_order };
+      setNote(noteData);
+      setWorkOrder(detail.work_order);
+      setCompany(detail.company);
+      setSite(detail.site);
+      setVendor(detail.vendor);
+
+      if (session.access_token) {
         const response = await fetch(
           `/api/debit-notes/documents?debit_note_id=${encodeURIComponent(debitNoteId)}`,
           {
