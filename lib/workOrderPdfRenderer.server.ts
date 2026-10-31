@@ -395,9 +395,9 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
   block(["Vendor Details", "Work Order Details"], [
     `Vendor Name: ${display(row.vendor_snapshot?.vendor_name || row.vendor_name_snapshot)}\nAddress: ${display(row.vendor_snapshot?.address)}\nContact Person: ${display(row.vendor_snapshot?.contact_person || row.vendor_snapshot?.contact_name)}\nMobile: ${display(row.vendor_snapshot?.phone || row.vendor_snapshot?.mobile)}\nEmail: ${display(row.vendor_snapshot?.email)}\nGSTIN: ${display(row.vendor_snapshot?.gstin)}`,
     revisionMeta
-      ? `Work Order No: ${display(row.po_number || row.wo_number)}\nOriginal Work Order Date: ${date(row.original_wo_date)}\nWO Revision Applicable Date: ${date(row.wo_date)}\nCompany: ${company}\nSite: ${display(row.site?.site_name || row.site_name)}`
-      : `Work Order No: ${display(row.po_number || row.wo_number)}\nDate: ${date(row.po_date || row.wo_date)}\nCompany: ${company}\nSite: ${display(row.site?.site_name || row.site_name)}`,
-  ], [{}, { "Work Order No": "wo_number", Date: "wo_date", "WO Revision Applicable Date": "wo_date", Company: "company_id", Site: "site_id" }]);
+      ? `Work Order No: ${display(row.po_number || row.wo_number)}\nOriginal Work Order Date: ${date(row.original_wo_date)}\nWO Revision Applicable Date: ${date(row.wo_date)}\nWork Order Type: ${display(row.wo_type)}\nDescription: ${display(row.description)}\nWork Order Value: ${money(row.wo_value)}\nGST %: ${display(row.gst_percent)}\nCompany: ${company}\nSite: ${display(row.site?.site_name || row.site_name)}`
+      : `Work Order No: ${display(row.po_number || row.wo_number)}\nDate: ${date(row.po_date || row.wo_date)}\nWork Order Type: ${display(row.wo_type)}\nDescription: ${display(row.description)}\nWork Order Value: ${money(row.wo_value)}\nGST %: ${display(row.gst_percent)}\nCompany: ${company}\nSite: ${display(row.site?.site_name || row.site_name)}`,
+  ], [{}, { "Work Order No": "wo_number", Date: "wo_date", "WO Revision Applicable Date": "wo_date", "Work Order Type": "wo_type", Description: "description", "Work Order Value": "wo_value", "GST %": "gst_percent", Company: "company_id", Site: "site_id" }]);
   const delivery = row.delivery_snapshot || {};
   const billing = { ...(row.billing_snapshot || {}), ...(delivery.gst_billing || {}), ...(delivery.billing_address || {}) };
   const shipping = delivery.delivery_location || row.delivery_snapshot || {};

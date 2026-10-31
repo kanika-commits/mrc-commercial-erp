@@ -54,6 +54,29 @@ try {
   const revision2Streams = decodeText(streams(await PDFDocument.load(revision2Bytes)));
   assert.match(revision2Streams, /08\/10\/2026/);
   assert.match(revision2Streams, /01\/12\/2026/);
+
+  // A chained revision must compare with the immediately preceding revision,
+  // not the original approved snapshot. This keeps redlines correct across
+  // more than one revision.
+  const secondRevision = {
+    ...current,
+    revision_number: 2,
+    applicable_date: "2026-12-01",
+    created_at: "2026-11-09T10:00:00.000Z",
+    snapshot: {
+      ...current.snapshot,
+      fields: { ...current.snapshot.fields, description: "Second revision description" },
+    },
+  };
+  const chainedRevisionBytes = await renderPilotRevisionPdf(secondRevision, current, context);
+  const chainedRevisionRawStreams = streams(await PDFDocument.load(chainedRevisionBytes));
+  const chainedRevisionStreams = decodeText(chainedRevisionRawStreams);
+  assert.match(chainedRevisionStreams, /Second revision description/);
+  assert.match(chainedRevisionStreams, /Revised description/);
+  assert.doesNotMatch(chainedRevisionStreams, /Original description/);
+  const chainedColorBefore = (text) => { const encoded = Buffer.from(text, "utf8").toString("hex").toUpperCase(); const at = chainedRevisionRawStreams.indexOf(`<${encoded}>`); assert.ok(at >= 0, `missing chained encoded ${text}`); return chainedRevisionRawStreams.slice(Math.max(0, at - 220), at); };
+  assert.match(chainedColorBefore("Revised description"), /0\.05 0\.05 0\.05 rg/);
+  assert.match(chainedColorBefore("Second revision description"), /0\.78 0\.05 0\.05 rg/);
   assert.doesNotMatch(revisionStreams, /company_id|site_id|description_snapshot|REVISION REDLINES|company-id|site-id/);
   assert.match(revisionStreams, /0\.78 0\.05 0\.05/);
   assert.match(revisionStreams, /0\.05 0\.05 0\.05 RG[\s\S]*\nS\n/);
