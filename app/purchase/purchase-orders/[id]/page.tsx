@@ -215,7 +215,9 @@ export default function PurchaseOrderDetailPage() {
   const revisionDisplay = row.superseded_by_revision_id ? "Superseded" : ["approved", "issued"].includes(row.status) ? "Current Effective Revision" : ["draft", "pending_approval", "sent_back"].includes(row.status) ? "Revision in Progress" : "";
   const canApprove = hasGlobalAccess(access) || can(access?.permissions || [], "procurement_purchase_orders", "approve");
   const canReject = hasGlobalAccess(access) || can(access?.permissions || [], "procurement_purchase_orders", "reject");
-  const sourceLabel = row.source_type === "indent" ? "Material Indent" : "Direct Purchase";
+  const sourceLabel = row.purpose === "Recover from contractor"
+    ? "Recover from contractor"
+    : row.source_type === "indent" ? "Material Indent" : "Direct Purchase";
   const vendor = row.vendor_snapshot || {};
   const delivery = row.delivery_snapshot || {};
   const billing = delivery.billing_address || {};

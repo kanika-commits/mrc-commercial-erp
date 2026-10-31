@@ -10,6 +10,8 @@ const allSource = [resolver, labour, notifications, workOrders].join("\n");
 assert.match(resolver, /user_permissions/);
 assert.match(resolver, /role_permissions/);
 assert.match(resolver, /organization_id/);
+assert.match(resolver, /from\("user_roles"\)\.select\("user_id,role_id"\)/);
+assert.doesNotMatch(resolver, /from\("user_roles"\)[\s\S]*?eq\("organization_id"/);
 assert.match(resolver, /company_id/);
 assert.match(resolver, /site_id/);
 assert.match(resolver, /platform_owner/);

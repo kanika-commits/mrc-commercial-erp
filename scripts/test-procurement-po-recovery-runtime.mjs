@@ -79,6 +79,26 @@ const conflictDeps = {
 const conflict = await core.ensureRecoveryDraft(conflictDeps, po, workOrder, documents, note, actor);
 assert.equal(conflict.id, "dn-conflict", "duplicate-key retry must reread the exact source PO");
 
+linked = null;
+insertAttempts = 0;
+const notificationFailureDeps = {
+  ...deps,
+  db: {
+    findBySourcePurchaseOrder: async () => ({ data: linked, error: null }),
+    insertDebitNote: async (payload) => {
+      insertAttempts += 1;
+      linked = { id: "dn-notification-failure", source_purchase_order_id: payload.source_purchase_order_id, status: "Draft" };
+      return { data: linked, error: null };
+    },
+  },
+  resolveRecipients: async () => { throw new Error("simulated notification lookup failure"); },
+};
+const completedDespiteNotificationFailure = await core.ensureRecoveryDraft(notificationFailureDeps, po, workOrder, documents, note, actor);
+assert.equal(completedDespiteNotificationFailure.id, "dn-notification-failure");
+assert.equal(insertAttempts, 1, "notification failure must not roll back Debit Note creation");
+await core.ensureRecoveryDraft(notificationFailureDeps, po, workOrder, documents, note, actor);
+assert.equal(insertAttempts, 1, "retry after notification failure must reuse the existing Debit Note");
+
 assert.throws(() => core.assertRecoveryApprovalAllowed({ source_purchase_order_id: po.id }, { id: po.id, status: "pending" }), /cannot be approved/);
 assert.equal(core.assertRecoveryApprovalAllowed({ source_purchase_order_id: po.id }, { id: po.id, status: "approved" }), true);
 assert.equal(core.assertRecoveryApprovalAllowed({ source_purchase_order_id: null }, null), true, "manual notes retain existing approval behavior");

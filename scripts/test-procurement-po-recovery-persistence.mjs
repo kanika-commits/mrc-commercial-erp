@@ -5,6 +5,7 @@ const createRoute = fs.readFileSync("app/api/procurement/purchase-orders/route.t
 const editPage = fs.readFileSync("app/purchase/purchase-orders/new/page.tsx", "utf8");
 const workflowRoute = fs.readFileSync("app/api/procurement/purchase-orders/[id]/route.ts", "utf8");
 const recoveryHelper = fs.readFileSync("lib/procurement/contractorRecoveryDebitNote.server.ts", "utf8");
+const detailPage = fs.readFileSync("app/purchase/purchase-orders/[id]/page.tsx", "utf8");
 
 assert.match(createRoute, /body\.commercial\?\.purpose/);
 assert.match(createRoute, /body\.commercial\?\.recovery_work_order_id/);
@@ -25,6 +26,8 @@ assert.match(workflowRoute, /action === "submit" \|\| action === "approve"/);
 assert.match(workflowRoute, /ensureContractorRecoveryDebitNote/);
 assert.match(recoveryHelper, /po\.purpose \|\| po\.commercial_snapshot\?\.purpose/);
 assert.match(recoveryHelper, /source_purchase_order_id/);
+assert.match(detailPage, /row\.purpose === "Recover from contractor"/);
+assert.doesNotMatch(detailPage, /const sourceLabel = row\.source_type === "indent" \? "Material Indent" : "Direct Purchase";/);
 
 const normalizePurpose = (purpose) => String(purpose || "General Purchase").trim() || "General Purchase";
 const payload = { commercial: { purpose: "Recover from contractor", recovery_vendor_id: "vendor-recovery", recovery_work_order_id: "wo-1" } };

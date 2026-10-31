@@ -29,8 +29,15 @@ export async function ensureRecoveryDraft(deps: any, po: any, workOrder: any, do
     draft = inserted.data || await find();
   }
   if (!draft) throw new Error("Unable to create or reuse the contractor-recovery Debit Note draft.");
-  const recipients = await deps.resolveRecipients({ organizationId: po.organization_id, companyId: workOrder.company_id, siteId: workOrder.site_id });
-  for (const recipientUserId of recipients) await deps.insertNotification({ recipientUserId, debitNoteId: draft.id, organizationId: po.organization_id });
+  try {
+    const recipients = await deps.resolveRecipients({ organizationId: po.organization_id, companyId: workOrder.company_id, siteId: workOrder.site_id });
+    for (const recipientUserId of recipients) await deps.insertNotification({ recipientUserId, debitNoteId: draft.id, organizationId: po.organization_id });
+  } catch {
+    // The PO transition and idempotent Debit Note are already durable. A
+    // notification lookup/delivery failure must not report that completed
+    // workflow as failed or cause a retry to create another Debit Note.
+    console.warn("contractor_recovery_notification_failed");
+  }
   return draft;
 }
 
