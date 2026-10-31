@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { requirePermission } from "@/lib/serverPermissions";
 import { renderPilotRevisionPdf } from "@/lib/workOrderPilotRevisionPdf.server";
 import { isRevisionSchemaUnavailable } from "@/lib/workOrderPilotRevisions.server";
+import { loadScopedPilotWorkOrder } from "@/lib/workOrderPilotRevisions.server";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string; revisionId: string }> }) {
   try {
@@ -10,6 +11,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if ("response" in auth) return auth.response;
     const { id, revisionId } = await params;
     const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    if (!await loadScopedPilotWorkOrder(admin, auth, id)) return NextResponse.json({ error: "Pilot revision not found." }, { status: 404 });
     const { data: revision, error } = await admin.from("work_order_pilot_revisions").select("*, work_orders!inner(creation_request_id,organization_id,company_id,site_id,wo_number,wo_date,created_by,created_by_name,created_by_email,created_at,work_order_key_terms,standard_terms_snapshot,total_basic_amount,total_gst_amount,total_amount,delivery_snapshot,company:companies(company_name),site:sites(site_name),letterhead_snapshot)").eq("id", revisionId).eq("work_order_id", id).maybeSingle();
     if (error) throw error;
     if (!revision || !revision.work_orders?.creation_request_id) return NextResponse.json({ error: "Pilot revision not found." }, { status: 404 });

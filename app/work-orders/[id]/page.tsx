@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { Download } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
@@ -128,7 +128,9 @@ function isMissingWorkOrderChangesTable(error: any) {
 export default function WorkOrderDetailPage() {
   const { access, loading: accessLoading } = useAccessContext();
   const params = useParams();
+  const searchParams = useSearchParams();
   const workOrderId = params.id as string;
+  const backHref = searchParams.get("from") === "forms-work-orders" ? "/forms/work-orders" : "/work-orders";
 
   const [workOrder, setWorkOrder] = useState<any>(null);
   const [company, setCompany] = useState<any>(null);
@@ -1209,7 +1211,7 @@ function downloadWOLedger(workOrderId: string) {
     </button>
   )}
 
-  <Link href="/work-orders" className="rounded-lg border px-4 py-2">
+  <Link href={backHref} className="rounded-lg border px-4 py-2">
     Back to Work Orders
   </Link>
 </div>

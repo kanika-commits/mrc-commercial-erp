@@ -4,7 +4,9 @@ import { loadActiveAccountContext } from "@/lib/serverAccountAccess";
 
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 50;
-const FETCH_LIMIT = 2000;
+const FETCH_LIMIT = 500;
+const DEFAULT_ACTIVITY_LOOKBACK_DAYS = 90;
+const MAX_ACTIVITY_RANGE_DAYS = 366;
 const ACTIVITY_LIMIT_PER_USER = 100;
 const ONLINE_THRESHOLD_MS = 5 * 60 * 1000;
 const SENSITIVE_KEY_PATTERN = /(password|token|access_token|refresh_token|secret|service_role|authorization|api_key)/i;
@@ -50,6 +52,21 @@ function startOfDayIso(value: string) {
 
 function endOfDayIso(value: string) {
   return `${value}T23:59:59.999Z`;
+}
+
+function activityWindow(dateFrom: string, dateTo: string) {
+  const now = new Date();
+  const end = dateTo ? new Date(endOfDayIso(dateTo)) : now;
+  const start = dateFrom
+    ? new Date(startOfDayIso(dateFrom))
+    : new Date(end.getTime() - DEFAULT_ACTIVITY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+    return { error: "The selected activity date range is invalid." } as const;
+  }
+  if (end.getTime() - start.getTime() > MAX_ACTIVITY_RANGE_DAYS * 24 * 60 * 60 * 1000) {
+    return { error: `Activity date ranges cannot exceed ${MAX_ACTIVITY_RANGE_DAYS} days.` } as const;
+  }
+  return { start: start.toISOString(), end: end.toISOString() } as const;
 }
 
 function readableLabel(key: string) {
@@ -992,10 +1009,15 @@ export async function GET(request: Request) {
       });
     }
 
+    const window = activityWindow(dateFrom, dateTo);
+    if (!("start" in window)) return jsonError(window.error, 400);
+
     let auditQuery = admin
       .from("erp_audit_logs")
       .select("id, organization_id, module_code, entity_type, record_id, parent_entity_type, parent_record_id, action, description, old_values, new_values, ip_address, browser, device_type, created_by, created_by_name, created_by_email, created_at")
       .order("created_at", { ascending: false })
+      .gte("created_at", window.start)
+      .lte("created_at", window.end)
       .limit(FETCH_LIMIT);
 
     if (!account.roleCodes.includes("platform_owner")) {
@@ -1005,23 +1027,36 @@ export async function GET(request: Request) {
       }
       auditQuery = auditQuery.in("organization_id", account.organizations);
     }
-    if (dateFrom) auditQuery = auditQuery.gte("created_at", startOfDayIso(dateFrom));
-    if (dateTo) auditQuery = auditQuery.lte("created_at", endOfDayIso(dateTo));
     if (userFilter) auditQuery = auditQuery.or(`created_by_name.ilike.%${userFilter}%,created_by_email.ilike.%${userFilter}%`);
 
     let deletedQuery = admin
       .from("deleted_records_audit")
       .select("id, organization_id, module_code, document_type, document_id, document_number, deleted_by_name, deleted_by_email, deleted_at, deletion_reason, record_snapshot, related_snapshot, file_snapshot, created_at")
       .order("deleted_at", { ascending: false })
+      .gte("deleted_at", window.start)
+      .lte("deleted_at", window.end)
       .limit(FETCH_LIMIT);
     if (!account.roleCodes.includes("platform_owner")) deletedQuery = deletedQuery.in("organization_id", account.organizations);
-    if (dateFrom) deletedQuery = deletedQuery.gte("deleted_at", startOfDayIso(dateFrom));
-    if (dateTo) deletedQuery = deletedQuery.lte("deleted_at", endOfDayIso(dateTo));
     if (userFilter) deletedQuery = deletedQuery.or(`deleted_by_name.ilike.%${userFilter}%,deleted_by_email.ilike.%${userFilter}%`);
 
     const [auditResult, deletedResult] = await Promise.all([auditQuery, deletedQuery]);
-    if (auditResult.error) throw auditResult.error;
-    if (deletedResult.error) throw deletedResult.error;
+    if (auditResult.error || deletedResult.error) {
+      const presence = await loadPresence(admin, account, [], userFilter);
+      return NextResponse.json({
+        users: [],
+        online_users: presence.onlineUsers,
+        selected_summary: null,
+        today_summary: null,
+        total_users: 0,
+        page,
+        page_size: pageSize,
+        has_more: false,
+        activity_available: false,
+        activity_error: "Activity records could not be loaded. Online-session data remains available.",
+        login_logout_tracking_enabled: true,
+        online_threshold_minutes: ONLINE_THRESHOLD_MS / 60000,
+      });
+    }
 
     const auditRows = auditResult.data || [];
     const deletedRows = (deletedResult.data || []) as any[];
@@ -1045,10 +1080,11 @@ export async function GET(request: Request) {
       page,
       page_size: pageSize,
       has_more: start + pageSize < users.length,
+      activity_available: true,
       login_logout_tracking_enabled: true,
       online_threshold_minutes: ONLINE_THRESHOLD_MS / 60000,
     });
   } catch (error: any) {
-    return jsonError(error.message || "Failed to load system activity.", 500);
+    return jsonError("Could not load system activity. Online-session data may still be available.", 500);
   }
 }

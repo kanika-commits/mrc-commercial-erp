@@ -918,7 +918,7 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
                     <td className="px-6 py-5 align-top">
                       <div className="max-w-[320px] text-base font-bold leading-6">
                         <Link
-                          href={`/work-orders/${wo.id}`}
+                          href={pilotOnly ? `/work-orders/${wo.id}?from=forms-work-orders` : `/work-orders/${wo.id}`}
                           onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "work_order", recordId: wo.id, source: "work_orders_register" })}
                           className="text-[#00658b] hover:underline"
                         >
@@ -1076,7 +1076,7 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
                     <td className="px-6 py-5 align-top">
                       <div className="flex justify-end gap-2">
                         <Link
-                          href={`/work-orders/${wo.id}`}
+                          href={pilotOnly ? `/work-orders/${wo.id}?from=forms-work-orders` : `/work-orders/${wo.id}`}
                           className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 text-slate-500 transition hover:bg-[#f6f3f5] hover:text-slate-950"
                           title="View"
                         >

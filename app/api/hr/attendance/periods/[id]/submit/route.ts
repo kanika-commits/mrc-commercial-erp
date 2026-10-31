@@ -26,8 +26,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!rows.length) return jsonError("Save attendance before submitting this date.", 400);
     const daily = await ensureDailySubmission(admin, auth, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, periodId: period.id, attendanceDate });
     const now = new Date().toISOString();
+    const approvalLevelCount = Math.max(0, Math.min(3, Number(policy.approval_level_count ?? 1)));
     const { data, error } = await admin.from("employee_attendance_daily_submissions").update({
-        status: "submitted",
+        status: approvalLevelCount === 0 ? "finalized" : "submitted",
         submitted_by: auth.user.id,
         submitted_by_name: actorName(auth.user),
         submitted_by_email: auth.user.email || null,

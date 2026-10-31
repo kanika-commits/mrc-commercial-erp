@@ -10,6 +10,7 @@ import {
   loadActorOrganizationScope,
   loadOrganizationScopeForUser,
 } from "@/lib/serverOrganizationScope";
+import { loadApprovalScope, loadAllowedWorkOrderIds, applyWorkOrderScope } from "@/app/api/approvals/_shared";
 
 const DOCUMENT_BUCKET = "debit-note-documents";
 const MODULE_CODE = "debit_notes";
@@ -218,6 +219,43 @@ async function cleanupDebitNote(
       .delete()
       .eq("debit_note_id", debitNoteId);
     await admin.from("debit_notes").delete().eq("id", debitNoteId);
+  }
+}
+
+export async function GET(request: Request) {
+  try {
+    const auth = await requirePermission(request, MODULE_CODE, "view");
+    if ("response" in auth) return auth.response;
+    const admin = adminClient();
+    const { organizationScope, assignments } = await loadApprovalScope(admin, auth);
+    const allowedWorkOrderIds = await loadAllowedWorkOrderIds(admin, organizationScope, assignments);
+    if (allowedWorkOrderIds !== null && allowedWorkOrderIds.length === 0) {
+      return NextResponse.json({ notes: [], work_orders: [], vendors: [] });
+    }
+
+    let notesQuery = admin
+      .from("debit_notes")
+      .select("id, organization_id, work_order_id, source_purchase_order_id, ra_bill_id, vendor_id, debit_note_number, debit_note_date, debit_note_type, reason, gross_amount, total_amount, status, approval_status, created_by_name, created_by_email, approved_by_name, approved_by_email, approved_at, created_at")
+      .order("created_at", { ascending: false })
+      .limit(500);
+    if (organizationScope !== null) notesQuery = notesQuery.in("organization_id", organizationScope);
+    const scopedNotesQuery = applyWorkOrderScope(notesQuery, allowedWorkOrderIds);
+    if (!scopedNotesQuery) return NextResponse.json({ notes: [], work_orders: [], vendors: [] });
+    const { data: notes, error: notesError } = await scopedNotesQuery;
+    if (notesError) throw notesError;
+
+    const loadedNotes = notes || [];
+    const workOrderIds = Array.from(new Set(loadedNotes.map((note: any) => note.work_order_id).filter(Boolean)));
+    const vendorIds = Array.from(new Set(loadedNotes.map((note: any) => note.vendor_id).filter(Boolean)));
+    const [{ data: workOrders, error: workOrdersError }, { data: vendors, error: vendorsError }] = await Promise.all([
+      workOrderIds.length ? admin.from("work_orders").select("id, wo_number, company_id, site_id").in("id", workOrderIds) : Promise.resolve({ data: [], error: null }),
+      vendorIds.length ? admin.from("vendors").select("id, vendor_name").in("id", vendorIds) : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (workOrdersError) throw workOrdersError;
+    if (vendorsError) throw vendorsError;
+    return NextResponse.json({ notes: loadedNotes, work_orders: workOrders || [], vendors: vendors || [] });
+  } catch {
+    return NextResponse.json({ error: "Could not load Debit Notes." }, { status: 500 });
   }
 }
 

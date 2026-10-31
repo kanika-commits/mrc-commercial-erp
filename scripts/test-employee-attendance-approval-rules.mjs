@@ -3,6 +3,7 @@ import fs from "node:fs";
 
 const approvalApi = fs.readFileSync("app/api/hr/attendance/approvals/route.ts", "utf8");
 const approvalPage = fs.readFileSync("app/hr/attendance-approval/page.tsx", "utf8");
+const attendancePeriodStatusOptionsBlock = approvalPage.match(/const attendancePeriodStatusOptions = \[[\s\S]*?\];/)?.[0] || "";
 const sharedApi = fs.readFileSync("app/api/hr/attendance/_shared.ts", "utf8");
 const policyPage = fs.readFileSync("app/settings/policies/employee-attendance/page.tsx", "utf8");
 const policyApi = fs.readFileSync("app/api/hr/attendance/policy/route.ts", "utf8");
@@ -12,6 +13,7 @@ const submitApi = fs.readFileSync("app/api/hr/attendance/periods/[id]/submit/rou
 const deleteApi = fs.readFileSync("app/api/hr/attendance/periods/[id]/route.ts", "utf8");
 const monthlyPage = fs.readFileSync("app/hr/attendance/monthly/page.tsx", "utf8");
 const appShell = fs.readFileSync("components/AppShell.tsx", "utf8");
+const notificationCenter = fs.readFileSync("components/NotificationCenter.tsx", "utf8");
 const notificationApi = fs.readFileSync("app/api/notifications/counts/route.ts", "utf8");
 const hrSectionNav = fs.readFileSync("components/hr/HrSectionNav.tsx", "utf8");
 const hrLauncher = fs.readFileSync("app/modules/hr/page.tsx", "utf8");
@@ -45,8 +47,9 @@ assert.match(sharedApi, /isAdminRecoveryRole\(auth\.roleCodes\)/, "Platform Owne
 assert.doesNotMatch(policyPage, /Approval Mode|Daily Attendance|Attendance Period \(Monthly\)/, "Policy page must not expose cancelled daily approval mode");
 assert.doesNotMatch(policyApi, /approval_mode|approvalMode/, "Policy API must not persist cancelled approval mode");
 
+assert.match(submitApi, /const approvalLevelCount = Math\.max\(0, Math\.min\(3, Number\(policy\.approval_level_count \?\? 1\)\)\)/, "Submit must resolve the configured approval level count");
 assert.match(submitApi, /approvalLevelCount === 0 \? "finalized" : "submitted"/, "Zero approval levels must finalize on submit and skip queue");
-assert.match(submitApi, /\["draft", "reopened"\]\.includes\(period\.status\)/, "Employee attendance submit must allow reopened periods to be resubmitted");
+assert.match(submitApi, /dailySubmission && !\["draft", "reopened"\]\.includes\(String\(dailySubmission\.status \|\| ""\)\.toLowerCase\(\)\)/, "Employee attendance submit must allow reopened daily submissions to be resubmitted");
 assert.match(finalizeApi, /requireAttendanceApprovalActor/, "Approve action must support configured approvers without broad permission");
 assert.match(finalizeApi, /period\.status !== expectedStatus/, "Approve action must reject wrong-level statuses");
 assert.match(finalizeApi, /nextApprovedStatusForLevel/, "Approve action must advance sequentially");
@@ -62,17 +65,17 @@ assert.match(deleteApi, /insertErpAuditLog/, "Employee attendance delete must wr
 assert.match(deleteApi, /\.from\("employee_attendance"\)\.delete\(\)[\s\S]+\.from\("employee_attendance_periods"\)\.delete\(\)/, "Employee attendance delete must remove rows before deleting the period");
 
 assert.match(approvalPage, /Attendance Approval/, "Approval page must exist with the expected title");
-assert.doesNotMatch(approvalPage, /Approval Mode|DailyQueue|DailyDetail|Daily Attendance|row_id|approval_status_label/, "Approval page must not expose cancelled daily approval mode");
+assert.doesNotMatch(approvalPage, /Approval Mode|DailyQueue|DailyDetail|row_id|approval_status_label/, "Approval page must not expose cancelled daily approval mode");
 assert.match(approvalPage, /MonthlyQueue/, "Approval page must preserve the monthly queue");
-assert.match(approvalPage, /Attendance Period Queue/, "Approval page must render the monthly attendance period queue");
-assert.match(approvalPage, /Attendance Period Status/, "Approval page must expose a queue-level Attendance Period Status filter");
+assert.match(approvalPage, /Daily Attendance Approval Queue/, "Approval page must render the daily attendance approval queue");
+assert.match(approvalPage, /Daily Attendance Status/, "Approval page must expose a queue-level Daily Attendance Status filter");
 assert.match(approvalPage, /attendancePeriodStatusOptions[\s\S]+"Pending Approval"[\s\S]+"Approved"[\s\S]+"Sent Back"[\s\S]+"All"/, "Attendance Period Status filter must expose the final workflow states");
-assert.doesNotMatch(approvalPage, /"Rejected"/, "Employee Attendance Approval must not show a Rejected status option");
-assert.match(approvalPage, /apiFetch\(`\/api\/hr\/attendance\/approvals\?period_status=/, "Approval page must load the approval queue API with period-status filtering");
-assert.match(approvalPage, /period_status=\$\{encodeURIComponent\(nextPeriodStatus\)\}/, "Approval page must send the period-status filter to the queue API");
-assert.match(approvalPage, /period_id/, "Approval page must load monthly detail through the approval API");
-assert.match(approvalPage, /\/api\/hr\/attendance\/periods\/\$\{selectedId\}/, "Approval page must call monthly approval actions");
-assert.match(approvalPage, /Enter send-back reason of at least 10 characters/, "Approval page must prompt for a meaningful send-back reason");
+assert.doesNotMatch(attendancePeriodStatusOptionsBlock, /"Rejected"/, "Employee Attendance Approval must not show a Rejected status option");
+assert.match(approvalPage, /apiFetch\(`\/api\/hr\/attendance\/approval-groups\?[^`]*period_status=/, "Approval page must load the approval queue API with period-status filtering");
+assert.match(approvalPage, /new URLSearchParams\(\{ period_status: nextPeriodStatus \}\)/, "Approval page must send the period-status filter to the queue API");
+assert.match(approvalPage, /attendance_date=\$\{encodeURIComponent\(group\.attendance_date\)\}/, "Approval page must load attendance detail through the approval API");
+assert.match(approvalPage, /\/api\/hr\/attendance\/approval-groups\/(send-back|approve)/, "Approval page must call the scoped approval actions");
+assert.match(approvalPage, /Enter a send-back reason of at least 10 characters/, "Approval page must prompt for a meaningful send-back reason");
 assert.match(approvalPage, /notifications\.refresh\(\)/, "Approval page must refresh notification counts after send-back");
 assert.match(approvalPage, /Review Filters/, "Approval page must allow date\/employee\/status review filters inside the selected period");
 assert.match(approvalPage, /Employee Attendance Status/, "Opened period must keep a separate employee attendance status filter");
@@ -81,31 +84,23 @@ assert.match(approvalPage, /Department/, "Approval review filters must include D
 assert.match(approvalPage, /Designation/, "Approval review filters must include Designation");
 assert.match(approvalPage, /Search Employee/, "Approval review filters must include employee search");
 assert.match(approvalPage, /Clear Filters/, "Approval review filters must include clear filters action");
-assert.match(approvalPage, /Employees[\s\S]+employee_count/, "Approval queue must show employee count");
-assert.match(approvalPage, /dailySummaryForRows/, "Approval detail must calculate selected-date summary cards from visible scoped rows");
-assert.match(approvalPage, /<Summary label="Total Employees" value=\{dailySummary\.total\}/, "Selected-date summary must show Total Employees");
-assert.match(approvalPage, /<Summary label="Present" value=\{dailySummary\.present\}/, "Selected-date summary must show Present");
-assert.match(approvalPage, /<Summary label="Absent" value=\{dailySummary\.absent\}/, "Selected-date summary must show Absent");
-assert.match(approvalPage, /<Summary label="Half Day" value=\{dailySummary\.halfDay\}/, "Selected-date summary must show Half Day");
-assert.match(approvalPage, /<Summary label="Leave" value=\{dailySummary\.leave\}/, "Selected-date summary must show Leave");
-assert.match(approvalPage, /<Summary label="Attendance Pending" value=\{dailySummary\.pending\}/, "Selected-date summary must show Attendance Pending");
-assert.match(approvalPage, /fromDate && toDate && fromDate === toDate/, "Attendance Pending must appear only for one selected attendance date");
+assert.match(approvalPage, /selectedRow\.total_employee_count[\s\S]+selectedRow\.company_count/, "Approval review must show scoped employee and company counts");
+assert.match(approvalPage, /selectedRow\.periods[\s\S]+period\.employee_count/, "Approval review must show per-company employee counts");
+assert.match(approvalPage, /Approval applies only to submitted attendance dates in the selected range\./, "Approval page must explain the approval scope");
 assert.doesNotMatch(approvalPage, /<th key=\{status\}[\s\S]+ATTENDANCE_STATUS_CODES\[status\]|row\.summary\?\.\[status\]|row\.summary\?\.missing/, "Monthly approval grid must not show employee-wise total columns");
-assert.match(approvalPage, /Approval Level/, "Summary tile must use clearer approval-level wording");
+assert.match(approvalPage, /status_label/, "Approval review must show the selected period status");
 assert.match(approvalPage, /View Approval History/, "Approval history must be behind a clear button");
 assert.match(approvalPage, /ATTENDANCE_STATUS_LABELS/, "Attendance grid must show a status legend using full labels");
-assert.match(approvalPage, /Filters only affect the displayed records\. Approval applies to the complete attendance period\./, "Approval page must explain that filters do not change approval scope");
-assert.match(approvalPage, /Final approval will become available after the attendance period ends/, "Approval page must disable final approval before month end with friendly text");
-assert.match(approvalPage, /title=\{finalApproveBlocked \? "Final approval becomes available after the attendance period ends\."/, "Disabled approval button must explain why final approval is unavailable");
+assert.match(approvalPage, /Filters affect only the displayed employee rows\./, "Approval page must explain that filters affect displayed rows only");
 assert.doesNotMatch(approvalPage, />\s*Reject\s*</, "Employee Attendance Approval must not introduce a separate Reject action");
 assert.match(approvalPage, /roleCodes\.includes\("platform_owner"\)[\s\S]+Delete this attendance permanently\?/, "Employee Attendance Approval must show Platform Owner delete with destructive confirmation");
 assert.doesNotMatch(approvalPage, /roleCodes\.includes\("super_admin"\)[\s\S]+Delete this attendance permanently\?/, "Employee Attendance Approval must not show delete for Super Admin");
 assert.match(monthlyPage, /roleCodes\.includes\("platform_owner"\)[\s\S]+Delete this attendance permanently\?/, "Employee Attendance Register monthly view must show Platform Owner delete");
 
 assert.match(appShell, /navLeaf\("Attendance Approval", "hr_attendance_approval", "\/hr\/attendance-approval"\)/, "Sidebar must expose Employee Attendance Approval");
-assert.match(appShell, /Employee Attendance Sent Back[\s\S]+employeeAttendanceSentBack/, "Notification bell must expose employee attendance sent-back count");
+assert.match(notificationCenter, /Employee Attendance Sent Back[\s\S]+employeeAttendanceSentBack/, "Notification bell must expose employee attendance sent-back count");
 assert.match(notificationApi, /employeeAttendanceSentBackQuery[\s\S]+employee_attendance_periods[\s\S]+\.eq\("status", "reopened"\)[\s\S]+\.eq\("submitted_by", auth\.user\.id\)/, "Notification count must find employee periods sent back to the original submitter");
-assert.match(hrSectionNav, /href="\/hr\/attendance-approval"[\s\S]+Attendance Approval/, "HR top nav must expose Employee Attendance Approval");
+assert.match(appShell, /navLeaf\("Attendance Approval", "hr_attendance_approval", "\/hr\/attendance-approval"\)/, "Sidebar must expose Employee Attendance Approval");
 assert.match(hrLauncher, /title: "Attendance Approval"[\s\S]+href: "\/hr\/attendance-approval"[\s\S]+moduleCode: "hr_attendance_approval"/, "HR launcher must expose Employee Attendance Approval");
 assert.match(authGuard, /pathname === "\/hr\/attendance-approval"[\s\S]+can\(access\.permissions, "hr_attendance_approval", "view"\)/, "Route guard must require Employee Attendance Approval view permission");
 

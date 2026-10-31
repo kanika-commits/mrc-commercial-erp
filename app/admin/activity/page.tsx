@@ -145,7 +145,8 @@ export default function SystemActivityPage() {
   const allowed = Boolean(access?.roleCodes?.includes("platform_owner") || access?.roleCodes?.includes("super_admin"));
   const [users, setUsers] = useState<ActivityUser[]>([]);
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
-  const [selectedSummary, setSelectedSummary] = useState<SelectedSummary>(EMPTY_SUMMARY);
+  const [selectedSummary, setSelectedSummary] = useState<SelectedSummary | null>(EMPTY_SUMMARY);
+  const [activityAvailable, setActivityAvailable] = useState(true);
   const [filters, setFilters] = useState({ date_from: "", date_to: "", user: "" });
   const [page, setPage] = useState(1);
   const [totalUsers, setTotalUsers] = useState(0);
@@ -193,13 +194,19 @@ export default function SystemActivityPage() {
       if (!response.ok) throw new Error(payload.error || "Could not load system activity.");
       setUsers(payload.users || []);
       setOnlineUsers(payload.online_users || []);
-      setSelectedSummary(payload.selected_summary || payload.today_summary || EMPTY_SUMMARY);
+      setActivityAvailable(payload.activity_available !== false);
+      setSelectedSummary(payload.activity_available === false ? null : (payload.selected_summary || payload.today_summary || EMPTY_SUMMARY));
+      if (payload.activity_available === false) {
+        setMessage(payload.activity_error || "Activity records could not be loaded. Online-session data remains available.");
+      }
       setTotalUsers(payload.total_users || 0);
       setHasMore(Boolean(payload.has_more));
       setPage(nextPage);
       setExpandedUsers({});
       setExpandedActivities({});
     } catch (error: any) {
+      setActivityAvailable(false);
+      setSelectedSummary(null);
       setMessage(error.message || "Could not load system activity.");
     } finally {
       setLoading(false);
@@ -272,7 +279,7 @@ export default function SystemActivityPage() {
         )}
       </div>
 
-      <div className="space-y-3">
+      {activityAvailable && selectedSummary && <div className="space-y-3">
         <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Selected Period Summary</h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
           <SummaryTile label="Activities" value={selectedSummary.activities} />
@@ -284,7 +291,7 @@ export default function SystemActivityPage() {
           <SummaryTile label="Suspended" value={selectedSummary.suspended} />
           <SummaryTile label="Sent Back" value={selectedSummary.sent_back} />
         </div>
-      </div>
+      </div>}
 
       <div className="rounded-lg border bg-white p-4 shadow-sm">
         <div className="grid gap-3 md:grid-cols-3">

@@ -8,6 +8,7 @@ import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { formatIstTimestamp } from "@/lib/dateTime";
 import { recordClientAuditEvent } from "@/lib/clientAudit";
+import { apiFetch } from "@/components/hr/hrClient";
 
 function money(value: any) {
   return `₹ ${Number(value || 0).toLocaleString("en-IN")}`;
@@ -54,58 +55,10 @@ export default function DebitNotesPage() {
       setLoading(true);
       setError("");
 
-      const { data: noteData, error: noteError } = await supabase
-        .from("debit_notes")
-        .select(`
-          id,
-          organization_id,
-          work_order_id,
-          source_purchase_order_id,
-          ra_bill_id,
-          vendor_id,
-          debit_note_number,
-          debit_note_date,
-          debit_note_type,
-          reason,
-          gross_amount,
-          total_amount,
-          status,
-          approval_status,
-          created_by_name,
-          created_by_email,
-          approved_by_name,
-          approved_by_email,
-          approved_at,
-          created_at
-        `)
-        .order("created_at", { ascending: false });
-
-      if (noteError) throw noteError;
-
-      const loadedNotes = noteData || [];
-      setNotes(loadedNotes);
-
-      const workOrderIds = Array.from(
-        new Set(loadedNotes.map((n: any) => n.work_order_id).filter(Boolean))
-      );
-      const vendorIds = Array.from(
-        new Set(loadedNotes.map((n: any) => n.vendor_id).filter(Boolean))
-      );
-
-      const [{ data: workOrderData }, { data: vendorData }] = await Promise.all([
-        workOrderIds.length
-          ? supabase
-              .from("work_orders")
-              .select("id, wo_number, company_id, site_id")
-              .in("id", workOrderIds)
-          : Promise.resolve({ data: [] }),
-        vendorIds.length
-          ? supabase.from("vendors").select("id, vendor_name").in("id", vendorIds)
-          : Promise.resolve({ data: [] }),
-      ]);
-
-      setWorkOrders(workOrderData || []);
-      setVendors(vendorData || []);
+      const result = await apiFetch("/api/debit-notes");
+      setNotes(result.notes || []);
+      setWorkOrders(result.work_orders || []);
+      setVendors(result.vendors || []);
     } catch (loadError: any) {
       setError(loadError.message || "Failed to load Debit Notes.");
     } finally {
