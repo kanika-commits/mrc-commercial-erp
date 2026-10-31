@@ -170,6 +170,15 @@ const approvedGroups = [
 
 const approvedNavigationFallbackModules = [
   {
+    id: "approved-tenant-branding",
+    module_group: "administration",
+    module_code: "tenant_branding",
+    module_name: "Tenant Branding",
+    route: "/admin/branding",
+    sort_order: 4.5,
+    status: "active",
+  },
+  {
     id: "approved-system-activity",
     module_group: "administration",
     module_code: "system_activity",

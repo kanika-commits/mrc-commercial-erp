@@ -23,7 +23,7 @@ must("page", ["Branding", "Customize how your organization appears in SiteQube."
 must("login", ["/api/branding", "signInWithPassword", "/api/admin/bootstrap", "router.push(\"/\")", "Powered by SiteQube", '"loading"', '"ready"', '"fallback"', "new Image()", "image.onload", "aria-busy", "animate-pulse"]);
 must("appShell", ["TenantBrandingContext", "brandingStatus", "new Image()", "tenant-primary-foreground", "aria-busy", "animate-pulse"]);
 must("appShell", ["Tenant Branding", 'moduleCode: "tenant_branding"', 'href: "/admin/branding"']);
-must("navigation", ['"/admin/branding": "administration"', 'module_name: "Tenant Branding"', 'route: "/admin/branding"']);
+must("navigation", ['"/admin/branding": "administration"', 'module_name: "Tenant Branding"', 'route: "/admin/branding"', 'id: "approved-tenant-branding"', 'const approvedNavigationFallbackModules']);
 must("modulePage", ["tenant_branding", "Customize organization branding."]);
 must("administrationPage", ["Tenant Branding", "tenant_branding", "/admin/branding", "isPlatformOwner", "Customize organization branding."]);
 if (!files.administrationPage.includes('if (module.module_code === "tenant_branding")')) throw new Error("Administration card must remain Platform Owner-gated");
