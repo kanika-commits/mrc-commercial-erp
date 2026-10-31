@@ -157,10 +157,6 @@ function lifecycleStatusValue(status: string | null | undefined) {
     : "yet_to_start";
 }
 
-function canDeleteWorkOrder(workOrder: WorkOrder) {
-  return String(workOrder.approval_status || "").toLowerCase() === "draft";
-}
-
 function selectAll(values: string[]) {
   return values.reduce<SelectionMap>((next, value) => {
     next[value] = true;
@@ -1087,7 +1083,7 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
                           <Eye className="h-4 w-4" />
                         </Link>
 
-                        {canDelete && canDeleteWorkOrder(wo) && (
+                        {canDelete && (
                           <button
                             type="button"
                             onClick={() => {

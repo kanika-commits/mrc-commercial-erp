@@ -6,8 +6,8 @@ const page = fs.readFileSync("app/work-orders/page.tsx", "utf8");
 const deleteHandler = route.slice(route.indexOf("export async function DELETE"));
 
 assert.match(route, /deletionReason\.length < 10/);
-assert.match(route, /approval_status.*draft/);
-assert.match(route, /Only draft Work Orders can be deleted/);
+assert.match(route, /requireDeletePermission/);
+assert.doesNotMatch(route, /Only draft Work Orders can be deleted/);
 assert.match(route, /countDirectLinks\(admin, "ra_bills"/);
 assert.match(route, /countDirectLinks\(admin, "payments"/);
 assert.match(route, /countDirectLinks\(admin, "work_order_pilot_ra_bills"/);
@@ -25,7 +25,7 @@ assert.match(route, /work_order_items: items/);
 assert.match(route, /recordSnapshot: deleted \|\| workOrder/);
 assert.match(route, /preserved_storage_files/);
 assert.doesNotMatch(deleteHandler, /\.from\("work_orders"\)\s*\.delete\(\)/);
-assert.match(page, /canDeleteWorkOrder/);
-assert.match(page, /approval_status \|\| ""\)\.toLowerCase\(\) === "draft"/);
+assert.doesNotMatch(page, /canDeleteWorkOrder/);
+assert.match(page, /\{canDelete && \(/);
 
 console.log("Work Order delete safety contract passed.");

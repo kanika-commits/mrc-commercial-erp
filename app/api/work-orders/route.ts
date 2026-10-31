@@ -727,13 +727,6 @@ export async function DELETE(request: Request) {
       );
     }
 
-    if (String(workOrder.approval_status || "").toLowerCase() !== "draft") {
-      return NextResponse.json(
-        { error: "Only draft Work Orders can be deleted. Active or approved workflow records must be preserved." },
-        { status: 409 }
-      );
-    }
-
     const [
       raBillCount,
       debitNoteCount,
