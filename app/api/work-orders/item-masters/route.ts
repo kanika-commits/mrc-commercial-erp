@@ -9,8 +9,12 @@ export async function GET(request: Request) {
     const admin = adminClient();
     const scope = await loadActorOrganizationScope(admin, auth);
     let query = admin.from("work_order_item_masters").select("id,organization_id,item_header,description,unit,mode_of_measurement,status,created_at,updated_at").neq("status", "deleted").order("item_header");
-    if (scope === null) query = query.limit(0);
-    else query = query.in("organization_id", scope);
+    const organizationId = resolveWriteOrganizationId(scope);
+    if (scope === null) {
+      query = organizationId ? query.eq("organization_id", organizationId) : query.limit(0);
+    } else {
+      query = query.in("organization_id", scope);
+    }
     const { data, error } = await query;
     if (error) throw error;
     return NextResponse.json({ items: data || [] });
