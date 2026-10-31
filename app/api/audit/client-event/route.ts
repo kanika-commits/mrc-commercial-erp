@@ -27,6 +27,12 @@ const PAGE_EVENTS: Record<string, { label: string; permission?: { module: string
   roles: { label: "Opened Roles", permission: { module: "admin_roles", action: "view" } },
   reports: { label: "Opened Reports", permission: { module: "reports", action: "view" } },
   settings: { label: "Opened Settings", permission: { module: "settings", action: "view" } },
+  pilot_work_orders_register: { label: "Opened Pilot Work Order Forms", permission: { module: "work_orders", action: "view" } },
+  pilot_ra_bills_register: { label: "Opened Pilot RA Bills", permission: { module: "ra_bills", action: "view" } },
+  pilot_ra_bill_create: { label: "Opened Pilot RA Bill Form", permission: { module: "ra_bills", action: "view" } },
+  pilot_ra_bill_detail: { label: "Opened Pilot RA Bill", permission: { module: "ra_bills", action: "view" } },
+  work_order_detail: { label: "Opened Work Order", permission: { module: "work_orders", action: "view" } },
+  ra_bill_detail: { label: "Opened RA Bill", permission: { module: "ra_bills", action: "view" } },
 };
 
 const ENTITIES: Record<string, { table: string; module: string; label: (row: any) => string; scope?: (row: any) => Record<string, string | null> }> = {
@@ -88,6 +94,7 @@ export async function POST(request: Request) {
         return jsonError("You do not have permission to record this activity.", 403);
       }
       await recordAuditEvent(admin, context.user, {
+        organizationId: context.organizations?.length === 1 ? context.organizations[0] : null,
         moduleCode: "navigation",
         entityType: "page",
         action: "view_page",

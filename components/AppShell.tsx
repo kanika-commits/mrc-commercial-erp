@@ -649,8 +649,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       "/admin/roles": "roles",
       "/reports": "reports",
       "/settings": "settings",
+      "/forms/work-orders": "pilot_work_orders_register",
+      "/forms/pilot/ra-bills": "pilot_ra_bills_register",
+      "/forms/pilot/ra-bills/new": "pilot_ra_bill_create",
     };
-    const pageKey = pageKeyByPath[pathname];
+    const pageKey = pageKeyByPath[pathname] ||
+      (pathname.startsWith("/forms/pilot/ra-bills/") ? "pilot_ra_bill_detail" :
+          pathname.startsWith("/work-orders/") || pathname.startsWith("/forms/work-orders/") ? "work_order_detail" :
+            pathname.startsWith("/ra-bills/") ? "ra_bill_detail" :
+              pathname.startsWith("/forms/pilot/ra-bills/") ? "pilot_ra_bill_detail" : null);
     if (pageKey) recordClientAuditEvent({ eventType: "view_page", entityType: "page", pageKey, source: "app_shell" });
   }, [pathname]);
 

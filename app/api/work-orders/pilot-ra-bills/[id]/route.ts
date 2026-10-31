@@ -6,6 +6,7 @@ import { applyOrganizationScope, loadActorOrganizationScope } from "@/lib/server
 import { calculatePilotRaBill } from "@/lib/workOrderPilotRaBill";
 import { pilotRaBillReviewBindingHash } from "@/lib/workOrderPilotRaBillReviewBinding";
 import { notifyPilotOverQuantityException } from "@/lib/pilotRaBillOverQuantityNotifications.server";
+import { recordAuditEvent } from "@/lib/auditEvent";
 
 const db = () => createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -100,6 +101,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       const notificationBill = { id, organization_id: current.data.organization_id, work_order_id: current.data.work_order_id, bill_number: current.data.id };
       await notifyPilotOverQuantityException(admin, notificationBill);
     }
+    await recordAuditEvent(admin, auth.user, { organizationId: current.data.organization_id, moduleCode: "ra_bills", entityType: "pilot_ra_bill", recordId: id, action: "submit", actionCategory: "workflow", activityLabel: "Submitted Pilot RA Bill", description: "Submitted Pilot RA Bill for approval." }, request).catch(() => undefined);
     return NextResponse.json({ bill: submitted.data });
   } catch (error: any) { return NextResponse.json({ error: error.message || "Could not update bill." }, { status: 400 }); }
 }
@@ -159,6 +161,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     if (!audit.data) throw new Error("Pilot hard-delete cleanup state is missing; the bill was preserved and retry is safe.");
     const finalized = await admin.rpc("finalize_database_delete_pending_work_order_pilot_ra_bill", { p_id: id, p_audit_id: auditId });
     if (finalized.error) throw new Error(`Pilot hard-delete finalize failed: ${finalized.error.message}`);
+    await recordAuditEvent(admin, auth.user, { organizationId: bill.data.organization_id, moduleCode: "ra_bills", entityType: "pilot_ra_bill", recordId: id, action: "delete", actionCategory: "delete", activityLabel: "Deleted Pilot RA Bill", description: reason }, request).catch(() => undefined);
     return NextResponse.json({ ...finalized.data, id, message: "Pilot RA Bill database record was deleted. Drive and Storage files may still need manual removal." });
   } catch (error: any) { return NextResponse.json({ error: error.message || "Could not delete Pilot RA Bill." }, { status: 400 }); }
 }

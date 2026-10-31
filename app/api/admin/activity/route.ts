@@ -1039,7 +1039,18 @@ export async function GET(request: Request) {
     if (!account.roleCodes.includes("platform_owner")) deletedQuery = deletedQuery.in("organization_id", account.organizations);
     if (userFilter) deletedQuery = deletedQuery.or(`deleted_by_name.ilike.%${userFilter}%,deleted_by_email.ilike.%${userFilter}%`);
 
-    const [auditResult, deletedResult] = await Promise.all([auditQuery, deletedQuery]);
+    // Pilot approval decisions are recorded in the immutable review-audit table.
+    // Read them into the same activity stream without duplicating them into erp_audit_logs.
+    let pilotReviewQuery = admin
+      .from("work_order_pilot_ra_bill_review_audit")
+      .select("id, organization_id, ra_bill_id, action, actor_id, reason, created_at")
+      .gte("created_at", window.start)
+      .lte("created_at", window.end)
+      .order("created_at", { ascending: false })
+      .limit(FETCH_LIMIT);
+    if (!account.roleCodes.includes("platform_owner")) pilotReviewQuery = pilotReviewQuery.in("organization_id", account.organizations);
+
+    const [auditResult, deletedResult, pilotReviewResult] = await Promise.all([auditQuery, deletedQuery, pilotReviewQuery]);
     if (auditResult.error || deletedResult.error) {
       const presence = await loadPresence(admin, account, [], userFilter);
       return NextResponse.json({
@@ -1060,9 +1071,34 @@ export async function GET(request: Request) {
 
     const auditRows = auditResult.data || [];
     const deletedRows = (deletedResult.data || []) as any[];
-    const resolveActor = await loadActorResolver(admin, auditRows, deletedRows);
+    // This table is part of the Pilot workflow package; older deployments may not have
+    // it yet, so absence is treated as no Pilot activity rather than breaking the page.
+    const pilotReviewRows = pilotReviewResult.error ? [] : (pilotReviewResult.data || []).map((row: any) => ({
+      id: `pilot-review-${row.id}`,
+      organization_id: row.organization_id,
+      module_code: "ra_bills",
+      entity_type: "pilot_ra_bill",
+      record_id: row.ra_bill_id,
+      action:
+        row.action === "approved"
+          ? "approve"
+          : row.action === "sent_back"
+            ? "send_back"
+            : row.action === "rejected"
+              ? "reject"
+              : row.action,
+      description: row.reason || `Pilot RA Bill ${row.action}.`,
+      old_values: null,
+      new_values: null,
+      created_by: row.actor_id,
+      created_by_name: null,
+      created_by_email: null,
+      created_at: row.created_at,
+    }));
+    const resolveActor = await loadActorResolver(admin, [...auditRows, ...pilotReviewRows], deletedRows);
     const activities = [
       ...auditRows.map((row: any) => mapAuditRow(row, resolveActor)),
+      ...pilotReviewRows.map((row: any) => mapAuditRow(row, resolveActor)),
       ...deletedRows.map((row: any) => mapDeletedRow(row, resolveActor)),
     ].sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
     const groupedUsers = groupByUser(activities);

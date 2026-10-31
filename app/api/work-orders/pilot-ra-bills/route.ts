@@ -5,6 +5,7 @@ import { requirePermission } from "@/lib/serverPermissions";
 import { applyOrganizationScope, loadActorOrganizationScope } from "@/lib/serverOrganizationScope";
 import { calculatePilotRaBill, validatePilotRaBill } from "@/lib/workOrderPilotRaBill";
 import { getPilotOverQuantityPolicy, pilotQuantityLimit, pilotQuantityUsage } from "@/lib/pilotRaBillOverQuantity.server";
+import { recordAuditEvent } from "@/lib/auditEvent";
 
 const db = () => createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 function normalizedRaNumber(value: unknown) {
@@ -210,6 +211,7 @@ export async function POST(request: Request) {
     const lineRows = calculation.items.map((item: any) => ({ ra_bill_id: data.id, parent_serial: item.serial, description: item.description, wo_qty: item.wo_qty, unit: item.unit, rate: item.rate, bill_qty: item.bill_qty, cumulative_qty: item.cumulative_qty, current_amount: item.current_amount, breakdowns: item.breakdowns || [], remarks: item.remarks || null }));
     const { error: lineError } = await admin.from("work_order_pilot_ra_bill_items").delete().eq("ra_bill_id", data.id); if (lineError) throw lineError;
     if (lineRows.length) { const { error: insertError } = await admin.from("work_order_pilot_ra_bill_items").insert(lineRows); if (insertError) throw insertError; }
+    await recordAuditEvent(admin, auth.user, { organizationId: order.organization_id, companyId: order.company_id, siteId: order.site_id, moduleCode: "ra_bills", entityType: "pilot_ra_bill", recordId: data.id, recordNumber: billNumber, parentEntityType: "work_order", parentRecordId: order.id, action: "create", actionCategory: "create", activityLabel: "Saved Pilot RA Bill Draft", description: `Saved Pilot RA Bill draft ${billNumber}.` }, request).catch(() => undefined);
     return NextResponse.json({ bill: data, warnings });
   } catch (error: any) { return NextResponse.json({ error: error.message || "Could not save Pilot RA Bill draft." }, { status: 500 }); }
 }
