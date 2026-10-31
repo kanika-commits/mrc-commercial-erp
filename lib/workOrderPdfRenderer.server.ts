@@ -336,7 +336,11 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
         const lines = part.normal;
         if (part.styled) {
           let styledY = y - 9;
-          for (const line of part.styled) { const count = drawRevisionLines(line.diff, x + 7, styledY, widths[index] - 14, fontSize, isHeader); styledY -= count * LEADING; }
+          for (const line of part.styled) {
+            if (line.diff) drawRevisionLines(line.diff, x + 7, styledY, widths[index] - 14, fontSize, isHeader);
+            else draw(line.text, x + 7, styledY, fontSize, isHeader);
+            styledY -= LEADING;
+          }
           if (part.mode) {
             const modeDiff = part.source && typeof part.source === "object" && "itemFields" in part.source ? (part.source as any).itemFields?.make_snapshot : undefined;
             if (modeDiff && modeDiff.kind !== "unchanged") {
