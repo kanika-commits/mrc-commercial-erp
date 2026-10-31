@@ -1,0 +1,10 @@
+import fs from "node:fs";
+const submit = fs.readFileSync("app/api/work-orders/pilot-ra-bills/[id]/route.ts", "utf8");
+const upload = fs.readFileSync("app/api/work-orders/pilot-ra-bills/[id]/attachments/route.ts", "utf8");
+const migration = fs.readFileSync("supabase/migrations/202610100002_work_order_pilot_ra_bill_attachments.sql", "utf8");
+const approval = fs.readFileSync("app/api/work-orders/pilot-ra-bills/approvals/[id]/route.ts", "utf8");
+for (const token of ["work_order_pilot_ra_bill_attachments", "sha256", "byte_length", "storage_key", "submit_work_order_pilot_ra_bill_with_attachments", "attachments_snapshot"]) if (!submit.includes(token) && !migration.includes(token)) throw new Error(`Missing attachment submission safeguard: ${token}`);
+for (const token of ["MAX_BYTES", "ALLOWED", "storage_key", "organization_id", "creation_request_id"]) if (!upload.includes(token) && !migration.includes(token)) throw new Error(`Missing attachment isolation/validation: ${token}`);
+if (!migration.includes("status='submitted'") || !migration.includes("where ra_bill_id=p_id")) throw new Error("Attachment submission is not immutable/atomic in the Pilot migration");
+for (const token of ["attachments_snapshot", "createSignedUrl", "applyOrganizationScope"]) if (!approval.includes(token)) throw new Error(`Missing reviewer attachment access: ${token}`);
+console.log("Pilot RA Bill attachment submission contract passed");

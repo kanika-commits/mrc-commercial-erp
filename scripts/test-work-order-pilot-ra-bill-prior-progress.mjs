@@ -1,0 +1,32 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import { calculatePilotRaBill } from "../lib/workOrderPilotRaBill.ts";
+
+const route = fs.readFileSync("app/api/work-orders/pilot-ra-bills/route.ts", "utf8");
+const form = fs.readFileSync("app/forms/pilot/ra-bills/new/page.tsx", "utf8");
+assert.match(route, /eq\("status", "approved"\)/);
+assert.match(route, /prior_approved/);
+assert.match(route, /eq\("status", "approved"\)\.is\("deleted_at", null\)/);
+assert.match(form, /prior_approved\?\.calculation_snapshot\?\.items/);
+assert.match(form, /priorLines\.find/);
+assert.match(form, /id: String\(child\.id \|\| crypto\.randomUUID\(\)\)/);
+
+const prior = calculatePilotRaBill({ gst_percent: 18, security_cumulative: 0, items: [{ serial: "1", description: "Parent", wo_qty: 10, unit: "sqm", rate: 100, breakdowns: [{ id: "child-a", serial: "1.1", description: "Child", cumulative_qty: 4, release_percent: 100 }] }] });
+const next = calculatePilotRaBill({ gst_percent: 18, security_cumulative: 0, previous_basic: prior.cumulative_basic, previous_gst: prior.cumulative_gst, items: [{ serial: "1", description: "Parent", wo_qty: 10, unit: "sqm", rate: 100, breakdowns: [{ id: "child-a", serial: "1.1", description: "Child", cumulative_qty: 6, release_percent: 100, previous_amount: prior.items[0].breakdowns[0].cumulative_amount }] }] });
+assert.equal(prior.cumulative_basic, 400);
+assert.equal(next.cumulative_basic, 600);
+assert.equal(next.current_basic, 200);
+assert.equal(next.items[0].breakdowns[0].id, "child-a");
+assert.equal(next.items[0].current_amount, 200);
+assert.match(route, /work_order_pilot_ra_bill_deletion_audit/);
+assert.match(route, /cleanup_status/);
+assert.match(route, /deletion_pending_message/);
+assert.match(route, /prior_approved: null/);
+assert.match(route, /deleted_at/);
+assert.match(form, /deletion_pending/);
+assert.match(form, /const priorCalculation = order\?\.prior_approved\?\.calculation_snapshot/);
+assert.match(form, /if \(!active\) return/);
+assert.match(form, /setRows\(\[\]\)/);
+assert.match(form, /New bills are blocked until deletion is finalized/);
+assert.match(form, /get\("bill"\)/);
+console.log("Pilot RA Bill prior-progress fixture passed.");

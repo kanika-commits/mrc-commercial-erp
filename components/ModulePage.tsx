@@ -280,7 +280,11 @@ export default function ModulePage({
       moduleRows.sort((first, second) => first.sort_order - second.sort_order);
     }
     if (groupCode === "project_management" && (globalAccess || can(permissions, "ra_bills", "add")) && !moduleRows.some((page) => page.route === "/ra-bills/new")) {
-      moduleRows.push({ id: "project-ra-bill-create", module_group: "project_management", module_code: "ra_bills", module_name: "RA Bill Forms", route: "/ra-bills/new", sort_order: 3.5 });
+      moduleRows.push({ id: "project-ra-bill-create", module_group: "project_management", module_code: "ra_bills", module_name: "RA Bill Forms", route: "/forms/pilot/ra-bills/new", sort_order: 3.5 });
+      moduleRows.sort((first, second) => first.sort_order - second.sort_order);
+    }
+    if (groupCode === "project_management" && (globalAccess || can(permissions, "ra_bills", "view")) && !moduleRows.some((page) => page.route === "/forms/pilot/ra-bills")) {
+      moduleRows.push({ id: "project-pilot-ra-bills", module_group: "project_management", module_code: "ra_bills", module_name: "RA Bills (Pilot)", route: "/forms/pilot/ra-bills", sort_order: 3.6 });
       moduleRows.sort((first, second) => first.sort_order - second.sort_order);
     }
     if (groupCode === "project_management" && (globalAccess || can(permissions, "credit_notes", "view")) && !moduleRows.some((page) => page.route === "/credit-notes")) {
