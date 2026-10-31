@@ -89,6 +89,7 @@ const approvedNavigationRoutes: Record<string, string> = {
   "/admin/users": "administration",
   "/admin/roles": "administration",
   "/admin/permissions": "administration",
+  "/admin/branding": "administration",
   "/admin/activity": "administration",
 };
 
@@ -478,6 +479,15 @@ export const DEFAULT_MODULE_NAVIGATION = filterVisibleModuleNavigation({
       module_name: "Permissions",
       route: "/admin/permissions",
       sort_order: 4,
+      status: "active",
+    },
+    {
+      id: "default-tenant-branding",
+      module_group: "administration",
+      module_code: "tenant_branding",
+      module_name: "Tenant Branding",
+      route: "/admin/branding",
+      sort_order: 4.5,
       status: "active",
     },
     {

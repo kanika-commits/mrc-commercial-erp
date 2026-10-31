@@ -64,6 +64,11 @@ const pageMeta: Record<
     className: "from-slate-50 to-white border-slate-200 text-slate-700",
     description: "Configure access permissions.",
   },
+  tenant_branding: {
+    icon: Settings,
+    className: "from-sky-50 to-white border-sky-100 text-sky-700",
+    description: "Customize organization branding.",
+  },
   companies: {
     icon: Building2,
     className: "from-emerald-50 to-white border-emerald-100 text-emerald-700",

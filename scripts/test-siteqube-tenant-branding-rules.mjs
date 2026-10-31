@@ -9,6 +9,8 @@ const files = {
   page: read("app/admin/branding/page.tsx"),
   login: read("app/login/page.tsx"),
   appShell: read("components/AppShell.tsx"),
+  navigation: read("lib/defaultModuleNavigation.ts"),
+  modulePage: read("components/ModulePage.tsx"),
 };
 const must = (file, patterns) => patterns.forEach((pattern) => {
   if (!files[file].includes(pattern)) throw new Error(`${file} missing ${pattern}`);
@@ -19,6 +21,10 @@ must("publicApi", ["resolveCurrentOrganization", "createSignedReadUrl"]);
 must("page", ["Branding", "Customize how your organization appears in SiteQube.", "Organization Logo", "Organization Name", "Primary Color", "Secondary Color", "Save Branding", "Remove Logo", "Login Preview", "createObjectURL", "revokeObjectURL", "object-contain", "apiFetch", "Clear Selection", "color", "HEX"]);
 must("login", ["/api/branding", "signInWithPassword", "/api/admin/bootstrap", "router.push(\"/\")", "Powered by SiteQube", '"loading"', '"ready"', '"fallback"', "new Image()", "image.onload", "aria-busy", "animate-pulse"]);
 must("appShell", ["TenantBrandingContext", "brandingStatus", "new Image()", "tenant-primary-foreground", "aria-busy", "animate-pulse"]);
+must("appShell", ["Tenant Branding", 'navLeaf("Tenant Branding", "tenant_branding", "/admin/branding")']);
+must("navigation", ['"/admin/branding": "administration"', 'module_name: "Tenant Branding"', 'route: "/admin/branding"']);
+must("modulePage", ["tenant_branding", "Customize organization branding."]);
+if (!files.page.includes('roleCodes?.includes("platform_owner") === true')) throw new Error("Branding page must remain Platform Owner-only");
 if (files.appShell.indexOf("if (brandingStatus === \"loading\")") < files.appShell.indexOf("const moduleRouteByCode = useMemo")) throw new Error("AppShell branding loading return must remain below all hooks");
 if ((files.appShell.match(/fetch\(\"\/api\/branding\"/g) || []).length !== 1) throw new Error("AppShell must have one shared branding fetch");
 if (files.appShell.includes('>SQ</span>')) throw new Error("Collapsed AppShell must not render an SQ initials badge");

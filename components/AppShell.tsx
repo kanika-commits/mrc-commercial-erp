@@ -337,6 +337,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       navLeaf("Users", "users", "/admin/users"),
       navLeaf("Roles", "roles", "/admin/roles"),
       navLeaf("Permissions", "permissions", "/admin/permissions"),
+      navLeaf("Tenant Branding", "tenant_branding", "/admin/branding"),
       canViewSystemActivity ? { type: "leaf", label: "System Activity", moduleCode: "system_activity", href: "/admin/activity" } : null,
     ]);
 
