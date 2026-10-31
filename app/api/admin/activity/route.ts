@@ -1051,7 +1051,13 @@ export async function GET(request: Request) {
     if (!account.roleCodes.includes("platform_owner")) pilotReviewQuery = pilotReviewQuery.in("organization_id", account.organizations);
 
     const [auditResult, deletedResult, pilotReviewResult] = await Promise.all([auditQuery, deletedQuery, pilotReviewQuery]);
-    if (auditResult.error || deletedResult.error) {
+    const failedSources = [
+      auditResult.error ? "audit records" : null,
+      deletedResult.error ? "deleted-record activity" : null,
+      pilotReviewResult.error ? "Pilot RA Bill review activity" : null,
+    ].filter(Boolean) as string[];
+    const coreSourceFailure = Boolean(auditResult.error && deletedResult.error);
+    if (coreSourceFailure) {
       const presence = await loadPresence(admin, account, [], userFilter);
       return NextResponse.json({
         users: [],
@@ -1063,14 +1069,14 @@ export async function GET(request: Request) {
         page_size: pageSize,
         has_more: false,
         activity_available: false,
-        activity_error: "Activity records could not be loaded. Online-session data remains available.",
+        activity_error: `Activity records could not be loaded (${failedSources.join(", ")}). Online-session data remains available.`,
         login_logout_tracking_enabled: true,
         online_threshold_minutes: ONLINE_THRESHOLD_MS / 60000,
       });
     }
 
-    const auditRows = auditResult.data || [];
-    const deletedRows = (deletedResult.data || []) as any[];
+    const auditRows = auditResult.error ? [] : (auditResult.data || []);
+    const deletedRows = (deletedResult.error ? [] : deletedResult.data || []) as any[];
     // This table is part of the Pilot workflow package; older deployments may not have
     // it yet, so absence is treated as no Pilot activity rather than breaking the page.
     const pilotReviewRows = pilotReviewResult.error ? [] : (pilotReviewResult.data || []).map((row: any) => ({
@@ -1117,6 +1123,9 @@ export async function GET(request: Request) {
       page_size: pageSize,
       has_more: start + pageSize < users.length,
       activity_available: true,
+      activity_warning: failedSources.length
+        ? `Some activity sources were unavailable: ${failedSources.join(", ")}.`
+        : null,
       login_logout_tracking_enabled: true,
       online_threshold_minutes: ONLINE_THRESHOLD_MS / 60000,
     });

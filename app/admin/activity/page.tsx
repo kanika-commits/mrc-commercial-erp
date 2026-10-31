@@ -153,6 +153,7 @@ export default function SystemActivityPage() {
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [warning, setWarning] = useState("");
   const [expandedUsers, setExpandedUsers] = useState<Record<string, boolean>>({});
   const [expandedActivities, setExpandedActivities] = useState<Record<string, boolean>>({});
 
@@ -184,6 +185,7 @@ export default function SystemActivityPage() {
   const loadActivity = useCallback(async (nextPage = page, overrideFilters = filters) => {
     setLoading(true);
     setMessage("");
+    setWarning("");
     try {
       const accessToken = await token();
       if (!accessToken) throw new Error("Your session expired. Please log in again.");
@@ -195,6 +197,7 @@ export default function SystemActivityPage() {
       setUsers(payload.users || []);
       setOnlineUsers(payload.online_users || []);
       setActivityAvailable(payload.activity_available !== false);
+      setWarning(payload.activity_warning || "");
       setSelectedSummary(payload.activity_available === false ? null : (payload.selected_summary || payload.today_summary || EMPTY_SUMMARY));
       if (payload.activity_available === false) {
         setMessage(payload.activity_error || "Activity records could not be loaded. Online-session data remains available.");
@@ -208,6 +211,7 @@ export default function SystemActivityPage() {
       setActivityAvailable(false);
       setSelectedSummary(null);
       setMessage(error.message || "Could not load system activity.");
+      setWarning("");
     } finally {
       setLoading(false);
     }
@@ -249,6 +253,7 @@ export default function SystemActivityPage() {
       </div>
 
       {message && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{message}</div>}
+      {warning && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800">{warning}</div>}
 
       <div className="rounded-lg border bg-white p-4 shadow-sm">
         <div className="mb-3 flex items-center justify-between gap-3">
