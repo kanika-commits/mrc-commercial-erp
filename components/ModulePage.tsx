@@ -245,7 +245,7 @@ export default function ModulePage({
         ? DEFAULT_MODULE_NAVIGATION
         : moduleNavigation;
 
-    const moduleRows = ((effectiveNavigation.modules || []) as ModuleRow[])
+    let moduleRows = ((effectiveNavigation.modules || []) as ModuleRow[])
       .filter((module: ModuleRow) => module.module_group === groupCode)
       .filter((module: ModuleRow) => !(groupCode === "purchase" && module.module_code === "purchase_requisition_approval_configuration"))
       .filter(
@@ -286,14 +286,16 @@ export default function ModulePage({
     }
     if (groupCode === "project_management" && (globalAccess || can(permissions, "ra_bills", "add"))) {
       const legacyRaBillForm = moduleRows.find((page) => page.module_name === "RA Bill Forms" || page.route === "/ra-bills/new");
-      if (legacyRaBillForm) legacyRaBillForm.route = "/forms/pilot/ra-bills/new";
+      if (legacyRaBillForm) {
+        legacyRaBillForm.module_name = "RA Bills Form";
+        legacyRaBillForm.route = "/forms/pilot/ra-bills/new";
+      }
+    }
+    if (groupCode === "project_management") {
+      moduleRows = moduleRows.filter((page) => page.route !== "/forms/pilot/ra-bills" && page.module_name !== "RA Bills (Pilot)");
     }
     if (groupCode === "project_management" && (globalAccess || can(permissions, "ra_bills", "add")) && !moduleRows.some((page) => page.route === "/forms/pilot/ra-bills/new")) {
-      moduleRows.push({ id: "project-ra-bill-create", module_group: "project_management", module_code: "ra_bills", module_name: "RA Bill Forms", route: "/forms/pilot/ra-bills/new", sort_order: 3.5 });
-      moduleRows.sort((first, second) => first.sort_order - second.sort_order);
-    }
-    if (groupCode === "project_management" && (globalAccess || can(permissions, "ra_bills", "view")) && !moduleRows.some((page) => page.route === "/forms/pilot/ra-bills")) {
-      moduleRows.push({ id: "project-pilot-ra-bills", module_group: "project_management", module_code: "ra_bills", module_name: "RA Bills (Pilot)", route: "/forms/pilot/ra-bills", sort_order: 3.6 });
+      moduleRows.push({ id: "project-ra-bill-create", module_group: "project_management", module_code: "ra_bills", module_name: "RA Bills Form", route: "/forms/pilot/ra-bills/new", sort_order: 3.5 });
       moduleRows.sort((first, second) => first.sort_order - second.sort_order);
     }
     if (groupCode === "project_management" && (globalAccess || can(permissions, "credit_notes", "view")) && !moduleRows.some((page) => page.route === "/credit-notes")) {

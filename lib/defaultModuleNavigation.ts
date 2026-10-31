@@ -428,15 +428,6 @@ export const DEFAULT_MODULE_NAVIGATION = filterVisibleModuleNavigation({
       status: "active",
     },
     {
-      id: "default-pilot-ra-bills",
-      module_group: "project_management",
-      module_code: "ra_bills",
-      module_name: "RA Bills (Pilot)",
-      route: "/forms/pilot/ra-bills",
-      sort_order: 3.6,
-      status: "active",
-    },
-    {
       id: "default-vendors",
       module_group: "settings",
       module_code: "vendors",
