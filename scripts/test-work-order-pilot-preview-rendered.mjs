@@ -24,7 +24,7 @@ try {
     site: { site_name: "Example Site" },
     vendor_snapshot: { vendor_name: "Example Vendor", address: "Long vendor address" },
     items: [
-      { item_header_snapshot: "Concrete placement and finishing", description_snapshot: "Multi-line specification that must wrap inside the item cell without replacing the content with placeholders", additional_description_snapshot: "Additional item note", unit_snapshot: "Cubic metre", mode_of_measurement_snapshot: "Measured work", quantity: 12, unit_rate: 1250, gst_rate: 18, total_amount: 17700 },
+      { item_header_snapshot: "Concrete placement and finishing", description_snapshot: "Multi-line specification that must wrap inside the item cell without replacing the content with placeholders", additional_description_snapshot: "Additional item note", unit_snapshot: "Cubic metre", mode_of_measurement_snapshot: "Measured work with a long verification note", quantity: 12, unit_rate: 1250, gst_rate: 18, total_amount: 17700 },
       { item_header_snapshot: "Second item", description_snapshot: "Second item description", unit_snapshot: "Each", quantity: 2, unit_rate: 400, gst_rate: 18, total_amount: 944 },
     ],
     total_basic_amount: 15800,
@@ -42,7 +42,7 @@ try {
     return inflateSync(Buffer.from(stream.getContents())).toString("latin1");
   })).join("\n");
   const text = raw.replace(/<([0-9A-Fa-f]+)> Tj/g, (_, hex) => Buffer.from(hex, "hex").toString("utf8"));
-  for (const expected of ["Concrete placement and finishing", "Multi-line specification", "Additional item note", "Second item", "Cubic", "metre", "Total Basic Amount", "Rs. 15,800.00", "Rs. 18,644.00"]) {
+  for (const expected of ["Concrete placement and finishing", "Multi-line specification", "Additional item note", "Second item", "Cubic", "metre", "Measured work", "verification", "note", "Total Basic Amount", "Rs. 15,800.00", "Rs. 18,644.00"]) {
     assert.match(text, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `missing rendered PDF text: ${expected}`);
   }
   console.log(`Work Order preview PDF rendering passed (${pdf.getPageCount()} page(s))`);

@@ -320,12 +320,20 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
           const item = itemLines(cellValue);
           const itemFields = cell && typeof cell === "object" && "itemFields" in cell ? (cell as any).itemFields : undefined;
           const keys = ["item_header_snapshot", "description_snapshot", "additional_description_snapshot"];
-          const styled = item.lines.flatMap((line, lineIndex) => wrap(line, widths[i] - 10, fontSize).map((wrappedLine) => ({ text: wrappedLine, diff: itemFields?.[keys[lineIndex]] })));
+          const styled = item.lines.flatMap((line, lineIndex) => wrap(line, widths[i] - 14, fontSize).map((wrappedLine) => ({ text: wrappedLine, diff: itemFields?.[keys[lineIndex]] })));
           return { normal: styled.map((line) => line.text), styled, mode: item.mode, diff: cellDiff, source: cell };
         }
         return { normal: wrap(cellValue, widths[i] - 10, fontSize), diff: cellDiff, source: cell };
       });
-      const heights = rowParts.map((part) => part.styled ? part.styled.reduce((sum, line) => sum + revisionLineCount(line.diff, widths[rowParts.indexOf(part)] - 14, fontSize), 0) + (part.mode ? 1 : 0) : part.diff && part.diff.kind !== "unchanged" ? revisionLineCount(part.diff, widths[rowParts.indexOf(part)] - 14, fontSize) : part.normal.length + (part.mode ? 1 : 0));
+      const heights = rowParts.map((part) => {
+        const width = widths[rowParts.indexOf(part)] - 14;
+        if (part.styled) {
+          const contentLines = part.styled.reduce((sum, line) => sum + (line.diff ? revisionLineCount(line.diff, width, fontSize) : 1), 0);
+          const modeLines = part.mode ? (bold.widthOfTextAtSize(`Mode of Measurement: `, fontSize) + regular.widthOfTextAtSize(part.mode, fontSize) <= width ? 1 : wrap("Mode of Measurement:", width, fontSize).length + wrap(part.mode, width, fontSize).length) : 0;
+          return contentLines + modeLines;
+        }
+        return part.diff && part.diff.kind !== "unchanged" ? revisionLineCount(part.diff, width, fontSize) : part.normal.length;
+      });
       const height = Math.max(24, Math.max(...heights) * LEADING + 12);
       const pageCountBeforeEnsure = pages.length;
       ensure(height);

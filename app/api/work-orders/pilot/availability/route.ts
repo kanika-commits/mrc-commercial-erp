@@ -45,20 +45,22 @@ export async function GET(request: Request) {
     if (siteError) throw siteError;
     if (!company || !site || company.organization_id !== vendor.organization_id || site.organization_id !== vendor.organization_id || site.company_id !== company.id) return NextResponse.json({ available: false, error: "Availability could not be verified." }, { status: 403 });
 
-    stage = "work_order_query";
-    const { data: rows, error } = await admin.from("work_orders")
-      .select("id,wo_number,wo_type,pilot_work_order_type,creation_request_id,status,approval_status,created_at")
-      .eq("organization_id", vendor.organization_id)
-      .eq("company_id", company.id)
-      .eq("site_id", site.id)
-      .eq("pilot_vendor_id", vendorId)
-      .not("creation_request_id", "is", null)
-      .order("created_at", { ascending: true });
-    if (error) throw error;
-    const nonBlocking = new Set(["rejected", "cancelled", "canceled", "voided"]);
-    const existing = (rows || []).find((row: any) => canonicalType(row.pilot_work_order_type || row.wo_type) === workOrderType && !nonBlocking.has(text(row.status).toLowerCase()) && !nonBlocking.has(text(row.approval_status).toLowerCase()));
-    if (!existing) return NextResponse.json({ available: true, normalized_type: workOrderType });
-    return NextResponse.json({ available: false, normalized_type: workOrderType, existing_work_order: { id: existing.id, wo_number: existing.wo_number, wo_type: workOrderType }, message: `This vendor already has a Daily Wage Work Order (${existing.wo_number || existing.id}). Create a revision of that Work Order instead.` });
+    stage = "work_order_validation_rpc";
+    const { data: duplicate, error: duplicateError } = await admin.rpc("validate_work_order_pilot_creation", {
+      p_organization_id: company.organization_id,
+      p_company_id: company.id,
+      p_site_id: site.id,
+      p_vendor_id: vendor.id,
+      p_work_order_type: workOrderType,
+    });
+    if (duplicateError) throw duplicateError;
+    if (!duplicate?.existing_work_order_id) return NextResponse.json({ available: true, normalized_type: workOrderType });
+    return NextResponse.json({
+      available: false,
+      normalized_type: workOrderType,
+      existing_work_order: { id: duplicate.existing_work_order_id, wo_number: duplicate.existing_wo_number, wo_type: workOrderType },
+      message: `This vendor already has a Daily Wage Work Order (${duplicate.existing_wo_number || duplicate.existing_work_order_id}). Create a revision of that Work Order instead.`,
+    });
   } catch {
     console.error("work_order_pilot_availability_failed", { stage });
     return NextResponse.json({ available: false, error: "Availability could not be verified." }, { status: 500 });
