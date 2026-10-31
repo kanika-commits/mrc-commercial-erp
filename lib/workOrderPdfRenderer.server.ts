@@ -119,7 +119,7 @@ function normalizeKeyTerms(input: any) {
     const term = value(entry?.value || entry?.terms);
     if (label || term) rows.push({ label, value: term });
   }
-  return rows.length ? rows : [{ label: "Inclusions", value: "" }, { label: "Exclusions", value: "" }];
+  return rows;
 }
 
 function itemLines(item: any) {
@@ -458,7 +458,8 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
     ["GST", money(row.total_gst_amount)],
     ["Total Amount", money(row.total_amount)],
   ], BODY_SIZE, isDailyWage ? "Labour rate for 8 hours of work." : "");
-  if (!isDailyWage) {
+  const keyTermRowsForPdf = normalizeKeyTerms(row.work_order_key_terms);
+  if (!isDailyWage || keyTermRowsForPdf.length) {
     heading("KEY TERMS", 58, 11);
     const keyTermDiffs: Array<{ label?: WorkOrderRedline; value?: WorkOrderRedline }> = revisionMeta?.redlines?.keyTerms || [];
     const currentKeyTermRows = normalizeKeyTerms(row.work_order_key_terms);

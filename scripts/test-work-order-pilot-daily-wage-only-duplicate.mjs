@@ -16,8 +16,9 @@ assert.match(create, /p_company_id: company\.id/);
 assert.match(create, /p_site_id: site\.id/);
 assert.match(create, /if \(woType === "Daily Wage"\)[\s\S]+duplicate\?\.existing_work_order_id/);
 assert.match(availability, /workOrderType !== "Daily Wage"/);
-assert.match(availability, /\.eq\("company_id", company\.id\)/);
-assert.match(availability, /\.eq\("site_id", site\.id\)/);
+assert.match(availability, /p_company_id: company\.id/);
+assert.match(availability, /p_site_id: site\.id/);
+assert.match(availability, /validate_work_order_pilot_creation/);
 assert.match(availability, /already has a Daily Wage Work Order/);
 
 console.log("Pilot Daily Wage-only duplicate contract passed");

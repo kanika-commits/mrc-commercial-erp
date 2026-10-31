@@ -105,7 +105,7 @@ export async function POST(request: Request) {
       const gstAmount = basic * Number(item.gst_percent || 0) / 100;
       return { item_name_snapshot: master.item_header, item_code_snapshot: "", specification_snapshot: master.description || "", additional_description_snapshot: item.additional_description || "", make_snapshot: master.mode_of_measurement || "", quantity: item.quantity, uom_snapshot: master.unit || "", unit_rate: item.unit_rate, gst_rate: item.gst_percent, gst_amount: gstAmount, total_amount: basic + gstAmount, serial_no: index + 1 };
     });
-    const keyTerms = text(body.wo_type, "") === "Daily Wage" ? [] : [
+    const keyTerms = [
       ...(body.work_order_key_terms?.inclusions || []).filter(Boolean).map((value: string) => ({ description: "Inclusion", value })),
       ...(body.work_order_key_terms?.exclusions || []).filter(Boolean).map((value: string) => ({ description: "Exclusion", value })),
     ];
