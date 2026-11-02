@@ -710,6 +710,7 @@ const WORK_ORDER_COLUMNS = `
   approved_at,
   created_by_name,
   created_by_email,
+  creation_request_id,
   company_id,
   site_id,
   organization_id,
