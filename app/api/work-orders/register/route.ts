@@ -229,10 +229,12 @@ function applyWorkOrderScope(
   query: any,
   restrictedSiteIds: string[],
   organizationScope: OrganizationScope,
+  pilotOnly = false,
 ) {
-  let next = query.or(
-    "and(approval_status.ilike.approved,status.eq.active),status.ilike.suspended,status.ilike.cancelled,approval_status.ilike.suspended,approval_status.ilike.cancelled"
-  );
+  const lifecycleFilter = pilotOnly
+    ? "and(approval_status.in.(draft,pending,approved),status.eq.active),status.ilike.suspended,status.ilike.cancelled,approval_status.ilike.suspended,approval_status.ilike.cancelled"
+    : "and(approval_status.ilike.approved,status.eq.active),status.ilike.suspended,status.ilike.cancelled,approval_status.ilike.suspended,approval_status.ilike.cancelled";
+  let next = query.or(lifecycleFilter);
   next = applyOrganizationScope(next, organizationScope);
 
   if (!next) return null;
@@ -447,6 +449,7 @@ async function loadVendorsForWorkOrders(
 function filterMetadataCacheKey(
   restrictedSiteIds: string[],
   organizationScope: OrganizationScope,
+  pilotOnly: boolean,
 ) {
   const orgKey =
     organizationScope === null ? "orgs:all" : `orgs:${[...organizationScope].sort().join(",")}`;
@@ -454,18 +457,20 @@ function filterMetadataCacheKey(
     ? `sites:${[...restrictedSiteIds].sort().join(",")}`
     : "sites:all";
 
-  return `${orgKey}|${siteKey}`;
+  return `${orgKey}|${siteKey}|pilot:${pilotOnly ? "yes" : "no"}`;
 }
 
 async function loadFilterMetadataUncached(
   admin: ReturnType<typeof adminClient>,
   restrictedSiteIds: string[],
   organizationScope: OrganizationScope,
+  pilotOnly: boolean,
 ) {
   const scopedQuery = applyWorkOrderScope(
     admin.from("work_orders").select("company_id, site_id, status, wo_type"),
     restrictedSiteIds,
     organizationScope,
+    pilotOnly,
   );
 
   if (!scopedQuery) {
@@ -546,8 +551,9 @@ async function loadFilterMetadata(
   admin: ReturnType<typeof adminClient>,
   restrictedSiteIds: string[],
   organizationScope: OrganizationScope,
+  pilotOnly: boolean,
 ) {
-  const cacheKey = filterMetadataCacheKey(restrictedSiteIds, organizationScope);
+  const cacheKey = filterMetadataCacheKey(restrictedSiteIds, organizationScope, pilotOnly);
   const cached = filterMetadataCache.get(cacheKey);
 
   if (cached && cached.expiresAt > Date.now()) {
@@ -558,6 +564,7 @@ async function loadFilterMetadata(
     admin,
     restrictedSiteIds,
     organizationScope,
+    pilotOnly,
   );
   filterMetadataCache.set(cacheKey, {
     expiresAt: Date.now() + FILTER_METADATA_TTL_MS,
@@ -743,6 +750,7 @@ async function loadPageRows({
         admin.from("work_orders").select(WORK_ORDER_COLUMNS),
         restrictedSiteIds,
         organizationScope,
+        commonFilters.pilotOnly,
       ),
       commonFilters,
     );
@@ -768,6 +776,7 @@ async function loadPageRows({
         }),
         restrictedSiteIds,
         organizationScope,
+        commonFilters.pilotOnly,
       ),
       commonFilters,
     );
@@ -826,6 +835,7 @@ export async function GET(request: Request) {
       admin,
       restrictedSiteIds,
       organizationScope,
+      pilotOnly,
     );
     const needsMetadataForFilters =
       (selectedCompanyLabels.length > 0 && explicitCompanyIds.length === 0) ||
