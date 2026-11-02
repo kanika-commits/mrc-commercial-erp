@@ -34,6 +34,7 @@ export async function POST(request: Request) {
       body = await request.json().catch(() => ({}));
     }
     validateWorkOrderSupportingFiles(supportingFiles);
+    const draftOnly = body.draft_only === true || String(body.draft_only || "").toLowerCase() === "true";
     const companyId = text(body.company_id), siteId = text(body.site_id), vendorId = text(body.vendor_id);
     const lines = Array.isArray(body.items) ? body.items : [];
     const woNumber = text(body.wo_number);
@@ -48,11 +49,11 @@ export async function POST(request: Request) {
       if (existing) {
         const { data: reviewedDocument, error: reviewedDocumentError } = await admin.from("work_order_documents").select("id").eq("work_order_id", existing.id).eq("drive_sync_key", REVIEWED_PDF_KEY).maybeSingle();
         if (reviewedDocumentError) throw reviewedDocumentError;
-        if (!reviewedDocument) return NextResponse.json({ error: "This submission already exists but has no stored reviewed PDF artifact. It cannot be safely retried." }, { status: 409 });
+        if (!draftOnly && !reviewedDocument) return NextResponse.json({ error: "This submission already exists but has no stored reviewed PDF artifact. It cannot be safely retried." }, { status: 409 });
         return NextResponse.json({ workOrder: existing, idempotent: true });
       }
     }
-    if (request.headers.get("content-type")?.includes("multipart/form-data") && !reviewedPdfBase64) return NextResponse.json({ error: "The reviewed Work Order PDF artifact is required. Generate the preview again before submitting." }, { status: 400 });
+    if (!draftOnly && request.headers.get("content-type")?.includes("multipart/form-data") && !reviewedPdfBase64) return NextResponse.json({ error: "The reviewed Work Order PDF artifact is required. Generate the preview again before submitting." }, { status: 400 });
     let reviewedPdfBytes: Buffer | null = null;
     if (reviewedPdfBase64) {
       try {
