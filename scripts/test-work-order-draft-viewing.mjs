@@ -8,7 +8,8 @@ const previewApi = fs.readFileSync("app/api/work-orders/drafts/[id]/preview/rout
 const draftHelper = fs.readFileSync("lib/serverWorkOrderDraft.ts", "utf8");
 
 assert.match(register, /function workOrderViewHref\(wo[^\n]*pilotOnly[^\n]*\)/);
-assert.match(register, /if \(wo\.approval_status === "draft" && wo\.creation_request_id\) return `\/work-orders\/drafts\/\$\{wo\.id\}`/);
+assert.match(register, /const approvalStatus = String\(wo\.approval_status \|\| ""\)\.trim\(\)\.toLowerCase\(\)/);
+assert.match(register, /if \(approvalStatus === "draft" && wo\.creation_request_id\) return `\/work-orders\/drafts\/\$\{wo\.id\}`/);
 assert.match(register, /return pilotOnly \? `\/work-orders\/\$\{wo\.id\}\?from=forms-work-orders` : `\/work-orders\/\$\{wo\.id\}`/);
 assert.equal((register.match(/href=\{workOrderViewHref\(wo, pilotOnly\)\}/g) || []).length, 2, "number and eye links must share draft routing");
 assert.match(page, /data-testid="work-order-draft-detail"/);

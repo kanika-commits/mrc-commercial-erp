@@ -90,7 +90,8 @@ type SelectionMap = Record<string, boolean>;
 type SortField = "wo_number" | "vendor_name" | "wo_value" | "status" | "approval_status" | "wo_date";
 
 function workOrderViewHref(wo: Pick<WorkOrder, "id" | "approval_status" | "creation_request_id">, pilotOnly: boolean) {
-  if (wo.approval_status === "draft" && wo.creation_request_id) return `/work-orders/drafts/${wo.id}`;
+  const approvalStatus = String(wo.approval_status || "").trim().toLowerCase();
+  if (approvalStatus === "draft" && wo.creation_request_id) return `/work-orders/drafts/${wo.id}`;
   return pilotOnly ? `/work-orders/${wo.id}?from=forms-work-orders` : `/work-orders/${wo.id}`;
 }
 type SortDirection = "asc" | "desc";
