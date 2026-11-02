@@ -8,6 +8,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch } from "@/components/hr/hrClient";
 import { supabase } from "@/lib/supabase";
 import { clearWorkOrderPilotDraft, getWorkOrderPilotDraft, setWorkOrderPilotDraft } from "@/lib/workOrderPilotDraft.client";
+import { matchSavedTermsTemplateId, mergeWorkOrderDraftLookupOptions } from "@/lib/workOrderDraftSelections";
 
 type Line = { item_master_id: string; description: string; unit: string; additional_description: string; quantity: string; unit_rate: string; gst_percent: string };
 type KeyTerms = { inclusions: string[]; exclusions: string[]; additional: Array<{ label: string; value: string }> };
@@ -68,12 +69,23 @@ export default function NewWorkOrderPage() {
 
   useEffect(() => {
     setLookupLoading(true);
-    apiFetch("/api/work-orders/create-lookups").then((result: any) => {
-      setLookups({ companies: [], sites: [], vendors: [], items: [], letterheads: [], terms_templates: [], gst_billing_masters: [], billing_addresses: [], delivery_locations: [], site_contacts: [], ...result });
+    apiFetch("/api/work-orders/create-lookups").then(async (result: any) => {
+      let nextLookups = { companies: [], sites: [], vendors: [], items: [], letterheads: [], terms_templates: [], gst_billing_masters: [], billing_addresses: [], delivery_locations: [], site_contacts: [], ...result };
+      if (draftId) {
+        const draft = await apiFetch(`/api/work-orders/drafts/${draftId}`);
+        nextLookups = mergeWorkOrderDraftLookupOptions(nextLookups, draft);
+      }
+      setLookups(nextLookups);
       const failures = (result.lookup_errors || []).map((entry: any) => entry.message).join(" ");
       setMessage(failures);
     }).catch((e: any) => setMessage(e.message)).finally(() => setLookupLoading(false));
   }, [lookupRetry]);
+
+  useEffect(() => {
+    if (!draftId || !form.standard_terms_snapshot || !lookups.terms_templates.length) return;
+    const matchedId = matchSavedTermsTemplateId(form.standard_terms_snapshot, lookups.terms_templates);
+    if (matchedId && form.terms_template_id !== matchedId) setForm((current: any) => current.terms_template_id === matchedId ? current : { ...current, terms_template_id: matchedId });
+  }, [draftId, form.standard_terms_snapshot, form.terms_template_id, lookups.terms_templates]);
 
   useEffect(() => {
     if (!draftId) return;
