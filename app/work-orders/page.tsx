@@ -97,6 +97,7 @@ function workOrderViewHref(wo: Pick<WorkOrder, "id" | "approval_status" | "creat
 type SortDirection = "asc" | "desc";
 
 const LIFECYCLE_STATUS_OPTIONS = [
+  { value: "draft", label: "Draft — Not submitted" },
   { value: "yet_to_start", label: "Yet to Start" },
   { value: "active", label: "Active" },
   { value: "completed", label: "Completed" },
@@ -158,6 +159,7 @@ function getStatusFilterValue(wo: WorkOrder) {
 
 function lifecycleStatusValue(status: string | null | undefined) {
   const normalized = String(status || "").trim().toLowerCase();
+  if (normalized === "draft — not submitted" || normalized === "draft - not submitted") return "draft";
   return LIFECYCLE_STATUS_OPTIONS.some((option) => option.value === normalized)
     ? normalized
     : "yet_to_start";
@@ -1047,7 +1049,7 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
                           wo.approval_status,
                         )}`}
                       >
-                        {titleCase(wo.approval_status)}
+                        {String(wo.approval_status || "").toLowerCase() === "draft" ? "Draft — Not submitted" : titleCase(wo.approval_status)}
                       </span>
                     </td>
                     <td className="px-6 py-5 align-top">

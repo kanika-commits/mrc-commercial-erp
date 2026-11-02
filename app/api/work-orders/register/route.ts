@@ -187,10 +187,11 @@ function titleCase(value: string | null | undefined) {
 }
 
 function lifecycleStatusValue(status: string | null | undefined) {
-  const normalized = String(status || "").trim().toLowerCase();
-  return ["yet_to_start", "active", "completed", "suspended", "terminated"].includes(
-    normalized,
-  )
+  const raw = String(status || "").trim().toLowerCase();
+  const normalized = raw.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+  if (normalized === "draft" || normalized === "draft — not submitted" || normalized === "draft - not submitted") return "draft";
+  if (normalized === "yet to start") return "yet_to_start";
+  return ["active", "completed", "suspended", "terminated"].includes(normalized)
     ? normalized
     : "yet_to_start";
 }
@@ -478,7 +479,7 @@ async function loadFilterMetadataUncached(
       filters: {
         companies: [],
         sites: [],
-        statuses: ["Yet to Start", "Active", "Completed", "Suspended", "Terminated"],
+        statuses: ["Draft — Not submitted", "Yet to Start", "Active", "Completed", "Suspended", "Terminated"],
         wo_types: [],
       },
       companyLabelMap: new Map<string, string[]>(),
@@ -518,7 +519,7 @@ async function loadFilterMetadataUncached(
   const siteMap = new Map((sitesResult.data || []).map((row) => [row.id, row]));
   const companyRows = companiesResult.data || [];
   const siteRows = sitesResult.data || [];
-  const statusValues = ["Yet to Start", "Active", "Completed", "Suspended", "Terminated"];
+  const statusValues = ["Draft — Not submitted", "Yet to Start", "Active", "Completed", "Suspended", "Terminated"];
   const typeLabels = sortLabels(
     filterRows.map((row) => titleCase(row.wo_type)),
   );
@@ -593,10 +594,14 @@ function applyCommonFilters(query: any, filters: any) {
   }
 
   if (filters.statuses?.length) {
-    const typed = filters.statuses.filter((value: string) => value !== "yet_to_start");
+    const includeDraft = filters.statuses.includes("draft");
+    const typed = filters.statuses.filter((value: string) => value !== "yet_to_start" && value !== "draft");
     const includeYetToStart = filters.statuses.includes("yet_to_start");
 
-    if (typed.length > 0 && includeYetToStart) {
+    if (includeDraft) {
+      const statusClause = typed.length > 0 ? `status.in.(${typed.join(",")})` : includeYetToStart ? "status.eq.yet_to_start,status.is.null" : "status.is.null";
+      next = next.or(`${statusClause},approval_status.eq.draft`);
+    } else if (typed.length > 0 && includeYetToStart) {
       next = next.or(`status.in.(${typed.join(",")}),status.eq.yet_to_start,status.is.null`);
     } else if (typed.length > 0) {
       next = next.in("status", typed);
