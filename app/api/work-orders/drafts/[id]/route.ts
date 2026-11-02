@@ -1,42 +1,15 @@
 import { NextResponse } from "next/server";
 import { PDFDocument } from "pdf-lib";
-import { requirePermission } from "@/lib/serverPermissions";
-import { adminClient } from "@/lib/serverProcurementAccess";
-import { applyOrganizationScope, isInOrganizationScope, loadActorOrganizationScope } from "@/lib/serverOrganizationScope";
 import { readWorkOrderDraftSelections } from "@/lib/workOrderDraftSelections";
+import { loadAuthorizedWorkOrderDraft } from "@/lib/serverWorkOrderDraft";
+import { isInOrganizationScope } from "@/lib/serverOrganizationScope";
 
 const text = (value: unknown) => String(value ?? "").trim();
 const types = new Set(["Consultant", "Contractor (Labour)", "Contractor (SITC)", "Daily Wage", "Rental"]);
 
-export async function loadDraft(request: Request, id: string) {
-  const auth = await requirePermission(request, "work_orders", "edit");
-  if ("response" in auth) return { response: auth.response } as const;
-  const admin = adminClient();
-  const scope = await loadActorOrganizationScope(admin, auth);
-  let query: any = admin.from("work_orders").select("*").eq("id", id).eq("approval_status", "draft").not("creation_request_id", "is", null);
-  query = applyOrganizationScope(query, scope);
-  if (!query) return { response: NextResponse.json({ error: "Work Order draft was not found." }, { status: 404 }) } as const;
-  const { data, error } = await query.maybeSingle();
-  if (error) throw error;
-  if (!data || !isInOrganizationScope(scope, data.organization_id)) return { response: NextResponse.json({ error: "Work Order draft was not found." }, { status: 404 }) } as const;
-  // Keep company/site access aligned with the organization scope used to load
-  // the draft.  Assignments from another organization must not affect the
-  // site-vs-company fallback for this already authorized draft.
-  let assignmentsQuery: any = admin.from("user_access_assignments").select("organization_id,company_id,site_id").eq("user_id", auth.user.id);
-  if (scope !== null) assignmentsQuery = assignmentsQuery.in("organization_id", scope);
-  const assignments = await assignmentsQuery;
-  if (assignments.error) throw assignments.error;
-  const siteIds = new Set((assignments.data || []).map((row: any) => row.site_id).filter(Boolean));
-  const companyIds = new Set((assignments.data || []).map((row: any) => row.company_id).filter(Boolean));
-  const inCompanySiteScope = scope === null
-    || (siteIds.size > 0 ? siteIds.has(data.site_id) : companyIds.size > 0 && companyIds.has(data.company_id));
-  if (!inCompanySiteScope) return { response: NextResponse.json({ error: "You do not have access to this Work Order draft." }, { status: 403 }) } as const;
-  return { auth, admin, data, scope } as const;
-}
-
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const result = await loadDraft(request, (await params).id);
+    const result = await loadAuthorizedWorkOrderDraft(request, (await params).id);
     if ("response" in result) return result.response;
     const [vendorResult, itemsResult] = await Promise.all([
       result.admin.from("work_order_vendors").select("vendor_id,vendor_role").eq("work_order_id", result.data.id).eq("is_primary", true).maybeSingle(),
@@ -75,7 +48,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const result = await loadDraft(request, (await params).id);
+  const result = await loadAuthorizedWorkOrderDraft(request, (await params).id);
   if ("response" in result) return result.response;
   const body = await request.json().catch(() => ({}));
   const payload = body.payload || body;

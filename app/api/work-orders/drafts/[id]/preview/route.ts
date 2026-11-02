@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { addWorkOrderDraftWatermark, addWorkOrderPackagePageNumbers } from "@/lib/workOrderPdfPackage.server";
 import { loadWorkOrderLetterheadAssets, renderWorkOrderPdf } from "@/lib/workOrderPdfRenderer.server";
-import { loadDraft } from "@/app/api/work-orders/drafts/[id]/route";
+import { loadAuthorizedWorkOrderDraft } from "@/lib/serverWorkOrderDraft";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const result = await loadDraft(request, (await params).id);
+    const result = await loadAuthorizedWorkOrderDraft(request, (await params).id);
     if ("response" in result) return result.response;
     const [companyResult, siteResult, vendorResult, itemsResult] = await Promise.all([
       result.admin.from("companies").select("company_name").eq("id", result.data.company_id).maybeSingle(),

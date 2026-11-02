@@ -202,8 +202,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       .select("id, effective_from, effective_to")
       .eq("labour_worker_id", id)
       .eq("organization_id", worker.organization_id)
-      .lte("effective_from", effectiveFromValue)
-      .or(`effective_to.is.null,effective_to.gte.${effectiveFromValue}`)
+      .lte("effective_from", effectiveFrom)
+      .or(`effective_to.is.null,effective_to.gte.${effectiveFrom}`)
       .limit(1);
     if (openDeployment?.id) overlapQuery = overlapQuery.neq("id", openDeployment.id);
     const { data: overlapping, error: overlapError } = await overlapQuery.maybeSingle();
