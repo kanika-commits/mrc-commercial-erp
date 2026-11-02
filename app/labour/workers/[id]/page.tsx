@@ -413,6 +413,9 @@ export default function LabourWorkerDetailPage() {
     setCommercialWorkOrdersError("");
     setDeploymentOperation(canChangeDeployment ? "deployment" : "rate");
     setRateForm(emptyRateForm);
+    // After reactivation, load() replaces data with the latest worker and
+    // deployment rows. Active transfers must initialize from that current row,
+    // not the pre-reactivation historical assignment.
     const latestDeployment = worker.status === "inactive" ? previousDeployment : currentDeployment;
     setDeploymentForm({
       ...emptyDeploymentForm,

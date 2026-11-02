@@ -8,6 +8,7 @@ export type WorkOrderPilotDraft = {
   payload: any;
   previewUrl: string;
   creationRequestId: string;
+  draftId?: string;
 };
 
 let draft: WorkOrderPilotDraft | null = null;

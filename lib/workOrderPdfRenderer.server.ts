@@ -45,6 +45,15 @@ export async function loadWorkOrderLetterheadAssets(snapshot: any, letterheadId?
 }
 
 const value = (input: unknown) => String(input ?? "").trim();
+const workOrderTermText = (input: unknown) => pdfText(input)
+  .replace(/Purchase Order/g, "Work Order")
+  .replace(/purchase order/g, "work order")
+  .replace(/\bPO\b/g, "WO")
+  .replace(/\bpo\b/g, "wo");
+// The built-in pdf-lib Helvetica fonts use WinAnsi encoding. Keep the UI's
+// currency formatting unchanged, but use an encodable PDF-only representation
+// for dynamic text that may contain the rupee symbol.
+const pdfText = (input: unknown) => value(input).replace(/₹/g, "INR");
 export type WorkOrderRedline = { kind: "unchanged" | "changed" | "added" | "deleted"; value: unknown; previous?: unknown; runs?: Array<{ text: string; color: "black" | "red"; strike?: boolean }> };
 
 export function structuredTermsFromSnapshot(input: unknown): any[] | null {
@@ -68,7 +77,7 @@ export function structuredTermsFromSnapshot(input: unknown): any[] | null {
 function normalizeStructuredTerms(input: unknown): Array<{ heading: string; clause_body: string; sort_order: number; identity: string }> | null {
   const clauses = structuredTermsFromSnapshot(input);
   if (!clauses) return null;
-  return clauses
+  const normalized = clauses
     .filter((clause: any) => clause && (value(clause.heading ?? clause.title ?? clause.name ?? clause.clause_heading ?? clause.section_heading ?? clause.heading_text) || value(clause.clause_body ?? clause.body_text ?? clause.bodyText ?? (typeof clause.body === "string" ? clause.body : clause.body?.text ?? clause.body?.content) ?? clause.text ?? clause.content ?? clause.description ?? clause.terms)))
     .map((clause: any, index: number) => ({
       heading: value(clause.heading ?? clause.title ?? clause.name ?? clause.clause_heading ?? clause.section_heading ?? clause.heading_text),
@@ -77,12 +86,45 @@ function normalizeStructuredTerms(input: unknown): Array<{ heading: string; clau
       identity: String(clause.id || clause.clause_id || clause.standard_term_id || clause.sort_order || clause.heading || index),
     }))
     .sort((a, b) => a.sort_order - b.sort_order);
+  if (normalized.length === 1 && /^saved terms(?: &| and) conditions$/i.test(normalized[0].heading)) {
+    const rawBody = normalized[0].clause_body.replace(/^saved terms(?: &| and) conditions\s*/i, "").trim();
+    const blocks = rawBody.split(/\r?\n\s*\r?\n/).map((block) => block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)).filter((block) => block.length > 1);
+    if (blocks.length > 1) return blocks.map((block, index) => ({ heading: block[0], clause_body: block.slice(1).join("\n"), sort_order: index, identity: `wrapped-${index}` }));
+    const lines = rawBody.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const parsed: Array<{ heading: string; clause_body: string; sort_order: number; identity: string }> = [];
+    let current: (typeof parsed)[number] | null = null;
+    for (const line of lines) {
+      const numbered = line.match(/^(\d+)\.\s+(.+)$/);
+      if (numbered) {
+        current = { heading: numbered[2].trim(), clause_body: "", sort_order: Number(numbered[1]) - 1, identity: `legacy-${numbered[1]}` };
+        parsed.push(current);
+      } else if (current) {
+        current.clause_body = `${current.clause_body}${current.clause_body ? "\n" : ""}${line}`;
+      }
+    }
+    if (parsed.length) return parsed.filter((clause) => !/^saved terms(?: &| and) conditions$/i.test(clause.heading));
+  }
+  if (normalized.length === 1 && normalized[0].clause_body.includes("\n")) {
+    const blocks = normalized[0].clause_body.split(/\r?\n\s*\r?\n/).map((block) => block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)).filter((block) => block.length > 1);
+    if (blocks.length > 1) return blocks.map((block, index) => ({ heading: block[0], clause_body: block.slice(1).join("\n"), sort_order: index, identity: `combined-${index}` }));
+  }
+  const clausesWithoutMetadata = normalized.filter((clause) => !/^saved terms(?: &| and) conditions$/i.test(clause.heading));
+  // This label identifies the saved snapshot wrapper; it is not a clause.
+  // Older snapshots may also repeat it as the first line of the first body.
+  if (clausesWithoutMetadata.length) {
+    const first = clausesWithoutMetadata[0];
+    const bodyLines = first.clause_body.split(/\r?\n/);
+    if (/^saved terms(?: &| and) conditions$/i.test(bodyLines[0]?.trim() || "")) {
+      first.clause_body = bodyLines.slice(1).join("\n").trim();
+    }
+  }
+  return clausesWithoutMetadata;
 }
 const display = (input: unknown) => value(input) || "-";
 const money = (input: unknown) => `Rs. ${Number(input || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const date = (input: unknown) => { const parts = value(input).slice(0, 10).split("-"); return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : display(input); };
 const textWidth = (input: string, size: number) => input.length * size * 0.48;
-const wrap = (input: unknown, maxWidth: number, size = BODY_SIZE) => value(input).split(/\r?\n/).flatMap((raw) => {
+const wrap = (input: unknown, maxWidth: number, size = BODY_SIZE) => pdfText(input).split(/\r?\n/).flatMap((raw) => {
   const words = raw.split(/\s+/).filter(Boolean).flatMap((word) => {
     if (textWidth(word, size) <= maxWidth) return [word];
     const parts: string[] = [];
@@ -119,28 +161,36 @@ function normalizeKeyTerms(input: any) {
     const term = value(entry?.value || entry?.terms);
     if (label || term) rows.push({ label, value: term });
   }
-  return rows;
+  return rows.length ? rows : [{ label: "Inclusions", value: "" }, { label: "Exclusions", value: "" }];
+}
+
+function normalizeAdditionalKeyTerms(input: any): Array<{ label: string; value: string }> {
+  if (!Array.isArray(input?.additional)) return [];
+  return input.additional
+    .map((entry: any) => ({ label: value(entry?.label || entry?.description) || "Additional Term", value: value(entry?.value || entry?.terms) }))
+    .filter((entry: { label: string; value: string }) => entry.label || entry.value);
 }
 
 function itemLines(item: any) {
-  const lines = [item.item_name_snapshot, item.specification_snapshot, item.additional_description_snapshot].filter((entry) => value(entry));
+  const lines = [item.item_name_snapshot, item.description_snapshot, item.additional_description_snapshot].filter((entry) => value(entry));
   return { lines, mode: value(item.make_snapshot) };
 }
 
 function drawInline(page: PDFPage, regular: PDFFont, bold: PDFFont, x: number, y: number, maxWidth: number, label: string, text: string) {
-  const labelText = `${label} `;
+  const labelText = pdfText(`${label} `);
+  const safeText = pdfText(text);
   const labelWidth = bold.widthOfTextAtSize(labelText, BODY_SIZE);
-  const valueWidth = regular.widthOfTextAtSize(text, BODY_SIZE);
+  const valueWidth = regular.widthOfTextAtSize(safeText, BODY_SIZE);
   if (labelWidth + valueWidth <= maxWidth) {
     page.drawText(labelText, { x, y, size: BODY_SIZE, font: bold, color: rgb(0.05, 0.08, 0.12) });
-    page.drawText(text, { x: x + labelWidth, y, size: BODY_SIZE, font: regular, color: rgb(0.05, 0.08, 0.12) });
+    page.drawText(safeText, { x: x + labelWidth, y, size: BODY_SIZE, font: regular, color: rgb(0.05, 0.08, 0.12) });
     return 1;
   }
   const labelLines = wrap(label, maxWidth, BODY_SIZE);
   const valueLines = wrap(text, maxWidth, BODY_SIZE);
-  labelLines.forEach((line, index) => page.drawText(line, { x, y: y - index * LEADING, size: BODY_SIZE, font: bold, color: rgb(0.05, 0.08, 0.12) }));
+  labelLines.forEach((line, index) => page.drawText(pdfText(line), { x, y: y - index * LEADING, size: BODY_SIZE, font: bold, color: rgb(0.05, 0.08, 0.12) }));
   const valueStart = labelLines.length;
-  valueLines.forEach((line, index) => page.drawText(line, { x, y: y - (valueStart + index) * LEADING, size: BODY_SIZE, font: regular, color: rgb(0.05, 0.08, 0.12) }));
+  valueLines.forEach((line, index) => page.drawText(pdfText(line), { x, y: y - (valueStart + index) * LEADING, size: BODY_SIZE, font: regular, color: rgb(0.05, 0.08, 0.12) }));
   return labelLines.length + valueLines.length;
 }
 
@@ -172,10 +222,10 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
   };
   const newPage = () => { page = pdf.addPage([PAGE_W, PAGE_H]); pages.push(page); drawPageFrame(); };
   const ensure = (height: number) => { if (y - height < Math.max(BODY_BOTTOM, footerHeight + 22)) newPage(); };
-  const draw = (text: string, x: number, yy: number, size = BODY_SIZE, strong = false) => page.drawText(text, { x, y: yy, size, font: strong ? bold : regular, color: rgb(0.05, 0.08, 0.12) });
-  const drawRight = (text: string, x: number, yy: number, width: number, size = BODY_SIZE) => draw(text, x + width - 7 - regular.widthOfTextAtSize(text, size), yy, size);
+  const draw = (text: string, x: number, yy: number, size = BODY_SIZE, strong = false) => page.drawText(pdfText(text), { x, y: yy, size, font: strong ? bold : regular, color: rgb(0.05, 0.08, 0.12) });
+  const drawRight = (text: string, x: number, yy: number, width: number, size = BODY_SIZE) => { const safe = pdfText(text); draw(safe, x + width - 7 - regular.widthOfTextAtSize(safe, size), yy, size); };
   const rect = (x: number, topY: number, width: number, height: number, fill = false) => page.drawRectangle({ x, y: topY - height, width, height, borderWidth: 0.6, borderColor: BORDER, color: fill ? HEADER_FILL : undefined, opacity: fill ? 1 : 0 });
-  const wrapCell = (input: unknown, maxWidth: number, size = BODY_SIZE) => value(input).split(/\r?\n/).flatMap((raw) => {
+  const wrapCell = (input: unknown, maxWidth: number, size = BODY_SIZE) => pdfText(input).split(/\r?\n/).flatMap((raw) => {
     const words = raw.split(/\s+/).filter(Boolean).flatMap((word) => {
       if (regular.widthOfTextAtSize(word, size) <= maxWidth) return [word];
       const parts: string[] = [];
@@ -197,7 +247,7 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
     if (line) lines.push(line);
     return lines;
   });
-  const detailLines = (input: unknown, maxWidth: number) => value(input).split(/\r?\n/).flatMap((raw) => {
+  const detailLines = (input: unknown, maxWidth: number) => pdfText(input).split(/\r?\n/).flatMap((raw) => {
     const separator = raw.indexOf(":");
     if (separator < 0) return wrapCell(raw, maxWidth, DETAIL_SIZE).map((line) => ({ label: "", value: line }));
     const label = `${raw.slice(0, separator + 1)} `;
@@ -213,7 +263,7 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
       const lines = wrapCell(display(input), maxWidth, size);
       lines.forEach((line) => {
         ensure(10);
-        page.drawText(line, { x, y: y - 4, size, font: strong ? bold : regular, color });
+        page.drawText(pdfText(line), { x, y: y - 4, size, font: strong ? bold : regular, color });
         if (strike) page.drawLine({ start: { x, y: y - 1 }, end: { x: x + (strong ? bold : regular).widthOfTextAtSize(line, size), y: y - 1 }, thickness: 0.8, color: BLACK });
         y -= 9;
       });
@@ -244,7 +294,7 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
         let currentX = x;
         for (const run of mergedRuns) {
           const runWidth = font.widthOfTextAtSize(run.text, size);
-          page.drawText(run.text, { x: currentX, y: topY - offset * LEADING, size, font, color: run.color === "red" ? RED : BLACK });
+          page.drawText(pdfText(run.text), { x: currentX, y: topY - offset * LEADING, size, font, color: run.color === "red" ? RED : BLACK });
           if (allowStrike && run.strike) page.drawLine({ start: { x: currentX, y: topY - offset * LEADING + size / 3 }, end: { x: currentX + runWidth, y: topY - offset * LEADING + size / 3 }, thickness: 0.8, color: BLACK });
           currentX += runWidth;
         }
@@ -252,10 +302,11 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
         lineRuns = [];
       };
       for (const run of diff.runs) {
-        for (const word of run.text.split(/(\s+)/).filter(Boolean).map((part) => /\s/.test(part) ? " " : part)) {
+        const safeRun = { ...run, text: pdfText(run.text) };
+        for (const word of safeRun.text.split(/(\s+)/).filter(Boolean).map((part) => /\s/.test(part) ? " " : part)) {
           const candidate = lineRuns.map((entry) => entry.text).join("") + word;
           if (lineRuns.length && font.widthOfTextAtSize(candidate, size) > maxWidth) flush();
-          lineRuns.push({ ...run, text: word });
+          lineRuns.push({ ...safeRun, text: word });
         }
       }
       flush();
@@ -263,7 +314,7 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
     }
     const paint = (input: unknown, color: any, strike: boolean) => {
       for (const line of wrapCell(display(input), maxWidth, size)) {
-        page.drawText(line, { x, y: topY - offset * LEADING, size, font, color });
+        page.drawText(pdfText(line), { x, y: topY - offset * LEADING, size, font, color });
         if (allowStrike && strike) page.drawLine({ start: { x, y: topY - offset * LEADING + size / 3 }, end: { x: x + font.widthOfTextAtSize(line, size), y: topY - offset * LEADING + size / 3 }, thickness: 0.8, color: BLACK });
         offset += 1;
       }
@@ -310,30 +361,37 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
     });
     page.drawLine({ start: { x: LEFT + widths[0], y }, end: { x: LEFT + widths[0], y: y - bodyHeight }, thickness: 0.6, color: BORDER }); y -= bodyHeight + 8;
   };
-  const table = (headers: string[], rows: any[][], widths: number[], richDescription = false, footerRows: Array<[string, string]> = [], fontSize = BODY_SIZE, note = "") => {
+  const table = (headers: string[], rows: any[][], widths: number[], richDescription = false, footerRows: Array<[string, string]> = [], fontSize = BODY_SIZE, note = "", layoutName = "table") => {
+    const assertFiniteLayout = (label: string, input: number) => {
+      if (!Number.isFinite(input)) throw new Error(`${layoutName} PDF layout ${label} is not finite.`);
+      return input;
+    };
+    widths.forEach((width, index) => assertFiniteLayout(`column width ${index}`, width));
     const tableWidth = widths.reduce((sum, width) => sum + width, 0);
+    assertFiniteLayout("table width", tableWidth);
     const drawRow = (cells: any[], isHeader = false) => {
       const rowParts = cells.map((cell, i) => {
         const cellValue = cell && typeof cell === "object" && "text" in cell ? (cell as any).text : cell;
         const cellDiff = cell && typeof cell === "object" && "diff" in cell ? (cell as any).diff : undefined;
         if (richDescription && i === 1 && !isHeader) {
-          const item = itemLines(cellValue);
+          const item = itemLines(cell && typeof cell === "object" && "itemSource" in cell ? (cell as any).itemSource : cellValue);
           const itemFields = cell && typeof cell === "object" && "itemFields" in cell ? (cell as any).itemFields : undefined;
           const keys = ["item_header_snapshot", "description_snapshot", "additional_description_snapshot"];
-          const styled = item.lines.flatMap((line, lineIndex) => wrap(line, widths[i] - 14, fontSize).map((wrappedLine) => ({ text: wrappedLine, diff: itemFields?.[keys[lineIndex]] })));
+          const styled = item.lines.flatMap((line, lineIndex) => wrapCell(line, widths[i] - 14, fontSize).map((wrappedLine) => ({ text: wrappedLine, diff: itemFields?.[keys[lineIndex]] })));
           return { normal: styled.map((line) => line.text), styled, mode: item.mode, diff: cellDiff, source: cell };
         }
         return { normal: wrap(cellValue, widths[i] - 10, fontSize), diff: cellDiff, source: cell };
       });
-      const heights = rowParts.map((part) => {
-        const width = widths[rowParts.indexOf(part)] - 14;
-        if (part.styled) {
-          const contentLines = part.styled.reduce((sum, line) => sum + (line.diff ? revisionLineCount(line.diff, width, fontSize) : 1), 0);
-          const modeLines = part.mode ? (bold.widthOfTextAtSize(`Mode of Measurement: `, fontSize) + regular.widthOfTextAtSize(part.mode, fontSize) <= width ? 1 : wrap("Mode of Measurement:", width, fontSize).length + wrap(part.mode, width, fontSize).length) : 0;
-          return contentLines + modeLines;
-        }
-        return part.diff && part.diff.kind !== "unchanged" ? revisionLineCount(part.diff, width, fontSize) : part.normal.length;
-      });
+      const modeLineCount = (part: any, width: number) => {
+        if (!part.mode) return 0;
+        const modeDiff = part.source && typeof part.source === "object" && "itemFields" in part.source ? (part.source as any).itemFields?.make_snapshot : undefined;
+        const label = "Mode of Measurement: ";
+        const labelWidth = bold.widthOfTextAtSize(label, fontSize);
+        return modeDiff && modeDiff.kind !== "unchanged"
+          ? 1 + revisionLineCount(modeDiff, Math.max(16, width - labelWidth), fontSize)
+          : wrapCell(`${label}${part.mode}`, width, fontSize).length;
+      };
+      const heights = rowParts.map((part, index) => part.styled ? part.styled.reduce((sum, line) => sum + revisionLineCount(line.diff, widths[index] - 14, fontSize), 0) + modeLineCount(part, widths[index] - 14) : part.diff && part.diff.kind !== "unchanged" ? revisionLineCount(part.diff, widths[index] - 14, fontSize) : part.normal.length + modeLineCount(part, widths[index] - 14));
       const height = Math.max(24, Math.max(...heights) * LEADING + 12);
       const pageCountBeforeEnsure = pages.length;
       ensure(height);
@@ -341,25 +399,41 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
       rect(LEFT, y, tableWidth, height, isHeader);
       let x = LEFT;
       rowParts.forEach((part, index) => {
+        if (index >= widths.length) throw new Error(`${layoutName} PDF layout has more cells than column widths.`);
+        assertFiniteLayout(`cell x ${index}`, x);
+        page.pushOperators(pushGraphicsState(), rectangle(x + 1, y - height + 1, widths[index] - 2, height - 2), clip(), endPath());
         const lines = part.normal;
         if (part.styled) {
           let styledY = y - 9;
           for (const line of part.styled) {
-            if (line.diff) drawRevisionLines(line.diff, x + 7, styledY, widths[index] - 14, fontSize, isHeader);
-            else draw(line.text, x + 7, styledY, fontSize, isHeader);
-            styledY -= LEADING;
+            const count = line.diff
+              ? drawRevisionLines(line.diff, x + 7, styledY, widths[index] - 14, fontSize, isHeader)
+              : (draw(line.text, x + 7, styledY, fontSize, isHeader), 1);
+            styledY -= count * LEADING;
           }
           if (part.mode) {
             const modeDiff = part.source && typeof part.source === "object" && "itemFields" in part.source ? (part.source as any).itemFields?.make_snapshot : undefined;
             if (modeDiff && modeDiff.kind !== "unchanged") {
               const label = "Mode of Measurement: ";
-              page.drawText(label, { x: x + 7, y: styledY, size: fontSize, font: bold, color: modeDiff.kind === "added" ? RED : BLACK });
-              drawRevisionLines(modeDiff, x + 7 + bold.widthOfTextAtSize(label, fontSize), styledY, widths[index] - 14 - bold.widthOfTextAtSize(label, fontSize), fontSize, false);
-            } else drawInline(page, regular, bold, x + 7, styledY, widths[index] - 14, "Mode of Measurement:", part.mode);
+              const safeLabel = pdfText(label);
+              page.drawText(safeLabel, { x: x + 7, y: styledY, size: fontSize, font: bold, color: modeDiff.kind === "added" ? RED : BLACK });
+              drawRevisionLines(modeDiff, x + 7 + bold.widthOfTextAtSize(safeLabel, fontSize), styledY, widths[index] - 14 - bold.widthOfTextAtSize(safeLabel, fontSize), fontSize, false);
+            } else {
+              const label = "Mode of Measurement: ";
+              const labelWidth = bold.widthOfTextAtSize(label, fontSize);
+              const modeLines = wrapCell(`${label}${part.mode}`, widths[index] - 14, fontSize);
+              if (modeLines.length === 1) {
+                draw(label, x + 7, styledY, fontSize, true);
+                draw(part.mode, x + 7 + labelWidth, styledY, fontSize);
+              } else {
+                modeLines.forEach((line, lineIndex) => draw(line, x + 7, styledY - lineIndex * LEADING, fontSize, lineIndex === 0));
+              }
+            }
           }
         } else if (part.diff && part.diff.kind !== "unchanged") drawRevisionLines(part.diff, x + 7, y - 9, widths[index] - 14, fontSize, isHeader);
         else lines.forEach((line, lineIndex) => draw(line, x + 7, y - 9 - lineIndex * LEADING, fontSize, isHeader));
-        x += widths[index];
+        page.pushOperators(popGraphicsState());
+        x = assertFiniteLayout(`cell x ${index + 1}`, x + widths[index]);
       });
       x = LEFT;
       widths.forEach((width) => { page.drawLine({ start: { x, y }, end: { x, y: y - height }, thickness: 0.6, color: BORDER }); x += width; });
@@ -391,12 +465,12 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
       y -= height;
     };
     drawRow(headers, true);
+    if (note) { ensure(20); rect(LEFT, y, tableWidth, 20); draw(note, LEFT + 7, y - 13, fontSize, true); y -= 20; }
     rows.forEach((row) => drawRow(row));
     footerRows.forEach((footer, index) => {
       const totalKey = ["total_basic_amount", "total_gst_amount", "total_amount"][index];
       drawFooter(footer, index === footerRows.length - 1, revisionMeta?.redlines?.totals?.[totalKey]);
     });
-    if (note) { ensure(LEADING + 4); draw(note, LEFT, y, Math.min(fontSize, 8), false); y -= LEADING + 4; }
     y -= 8;
   };
 
@@ -436,37 +510,37 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
     serial_no: itemRows.length + index + 1,
   }));
   const allItemRows = [...itemRows, ...deletedItemRows];
-  const isDailyWage = row.wo_type === "Daily Wage";
-  const itemWidths = isDailyWage ? [42, 260, 70, 86] : [32, 168, 30, 45, 55, 65, 50, 66];
+  const itemWidths = row.wo_type === "Daily Wage" ? [42, 260, 70, 86] : [32, 168, 30, 45, 55, 65, 50, 66];
   const renderedItemRows = allItemRows.map((item: any) => {
-    if (isDailyWage) return [String(item.serial_no), { text: item.description || item.description_snapshot || item.item_header_snapshot || item.item_name_snapshot || "—" }, display(item.unit || item.unit_snapshot || item.uom_snapshot), money(item.unit_rate)];
+    if (row.wo_type === "Daily Wage") return [String(item.serial_no), { text: item.description || item.description_snapshot || item.item_header_snapshot || item.item_name_snapshot || "—" }, display(item.unit || item.unit_snapshot || item.uom_snapshot), money(item.unit_rate)];
     const basicAmount = Number(item.quantity || 0) * Number(item.unit_rate || 0);
     const gstAmount = basicAmount * Number(item.gst_rate ?? item.gst_percent ?? 0) / 100;
     return [String(item.serial_no), item, display(item.quantity), display(item.uom_snapshot || item.unit_snapshot), money(item.unit_rate), money(basicAmount), display(item.gst_rate ?? item.gst_percent) + "%\n" + money(gstAmount), money(item.total_amount ?? item.line_total)];
   }).map((item: any[]) => {
-    if (isDailyWage) return item;
+    if (row.wo_type === "Daily Wage") return item;
     const source = item[1];
     const diff = source.__revision?.fields || {};
     const cell = (text: any, key: string, format: (input: unknown) => string = display) => {
       const currentDiff = diff[key];
-      return { text, diff: currentDiff ? { ...currentDiff, value: format(currentDiff.value), previous: currentDiff.previous === undefined ? undefined : format(currentDiff.previous) } : undefined, itemFields: key === "description_snapshot" ? diff : undefined };
+      return { text, diff: currentDiff ? { ...currentDiff, value: format(currentDiff.value), previous: currentDiff.previous === undefined ? undefined : format(currentDiff.previous) } : undefined, itemFields: key === "description_snapshot" && Object.keys(diff).length ? diff : undefined, itemSource: key === "description_snapshot" ? source : undefined };
     };
-    return [item[0], cell(source, "description_snapshot"), cell(item[2], "quantity"), cell(item[3], "unit_snapshot"), cell(item[4], "unit_rate", money), cell(item[5], "basic_amount", money), cell(item[6], "gst_amount"), cell(item[7], "total_amount", money)];
+    const description = source.description_snapshot || source.specification_snapshot || source.description || source.item_header_snapshot || "—";
+    return [item[0], cell(description, "description_snapshot"), cell(item[2], "quantity"), cell(item[3], "unit_snapshot"), cell(item[4], "unit_rate", money), cell(item[5], "basic_amount", money), cell(item[6], "gst_amount"), cell(item[7], "total_amount", money)];
   });
-  table(isDailyWage ? ["Sr. No.", "Description of item", "Unit", "Labour Rate (INR)"] : ["S.No.", "Work Description", "Qty", "Unit", "Unit Rate", "Basic Amount", "GST", "Amount"], renderedItemRows, itemWidths, !isDailyWage, isDailyWage ? [] : [
+  table(row.wo_type === "Daily Wage" ? ["Sr. No.", "Description of item", "Unit", "Labour Rate (INR)"] : ["S.No.", "Work Description", "Qty", "Unit", "Unit Rate", "Basic Amount", "GST", "Amount"], renderedItemRows, itemWidths, row.wo_type !== "Daily Wage", row.wo_type === "Daily Wage" ? [] : [
     ["Total Basic Amount", money(row.total_basic_amount)],
     ["GST", money(row.total_gst_amount)],
     ["Total Amount", money(row.total_amount)],
-  ], BODY_SIZE, isDailyWage ? "Labour rate for 8 hours of work." : "");
-  const keyTermRowsForPdf = normalizeKeyTerms(row.work_order_key_terms);
-  if (!isDailyWage || keyTermRowsForPdf.length) {
+  ], BODY_SIZE, row.wo_type === "Daily Wage" ? "Labour rate for 8 hours of work." : "", row.wo_type === "Daily Wage" ? "Daily Wage" : "Work Order");
+  const isDailyWage = row.wo_type === "Daily Wage";
+  const keyTermDiffs: Array<{ label?: WorkOrderRedline; value?: WorkOrderRedline }> = isDailyWage ? [] : revisionMeta?.redlines?.keyTerms || [];
+  const currentKeyTermRows = isDailyWage ? normalizeAdditionalKeyTerms(row.work_order_key_terms) : normalizeKeyTerms(row.work_order_key_terms);
+  const keyTermDiffFor = (term: { label: string }, index: number) => keyTermDiffs.find((candidate: any) => String(candidate.identity || candidate.label?.value || "").toLowerCase() === term.label.toLowerCase()) || keyTermDiffs[index];
+  const keyTermRows = currentKeyTermRows.map((term, index) => { const termDiff = keyTermDiffFor(term, index); return [String(index + 1), { text: term.label, diff: termDiff?.label }, { text: term.value, diff: termDiff?.value }]; });
+  keyTermDiffs.slice(currentKeyTermRows.length).forEach((term, index) => keyTermRows.push([String(currentKeyTermRows.length + index + 1), { text: String(term.label?.previous ?? term.label?.value ?? ""), diff: term.label }, { text: String(term.value?.previous ?? term.value?.value ?? ""), diff: term.value }]));
+  if (!isDailyWage || keyTermRows.length) {
     heading("KEY TERMS", 58, 11);
-    const keyTermDiffs: Array<{ label?: WorkOrderRedline; value?: WorkOrderRedline }> = revisionMeta?.redlines?.keyTerms || [];
-    const currentKeyTermRows = normalizeKeyTerms(row.work_order_key_terms);
-    const keyTermDiffFor = (term: { label: string }, index: number) => keyTermDiffs.find((candidate: any) => String(candidate.identity || candidate.label?.value || "").toLowerCase() === term.label.toLowerCase()) || keyTermDiffs[index];
-    const keyTermRows = currentKeyTermRows.map((term, index) => { const termDiff = keyTermDiffFor(term, index); return [String(index + 1), { text: term.label, diff: termDiff?.label }, { text: term.value, diff: termDiff?.value }]; });
-    keyTermDiffs.slice(currentKeyTermRows.length).forEach((term, index) => keyTermRows.push([String(currentKeyTermRows.length + index + 1), { text: String(term.label?.previous ?? term.label?.value ?? ""), diff: term.label }, { text: String(term.value?.previous ?? term.value?.value ?? ""), diff: term.value }]));
-    table(["S.No.", "Key Term", "Terms"], keyTermRows, [32, 120, CONTENT - 152], false, [], 8.5);
+    table(["S.No.", "Key Term", "Terms"], keyTermRows, [32, 120, CONTENT - 152], false, [], 8.5, "", isDailyWage ? "Daily Wage" : "Work Order");
   }
   heading("TERMS & CONDITIONS", 70);
   const structuredTerms = normalizeStructuredTerms(Array.isArray(row.standard_terms_clauses) ? row.standard_terms_clauses : row.standard_terms_snapshot);
@@ -486,8 +560,8 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
     }
   });
   clauseBlocks.forEach((clause, clauseIndex) => {
-    const headingLines = clause.heading ? wrap(clause.heading, CONTENT - 22, TERMS_SIZE) : [];
-    const bodyLines = clause.body.flatMap((line) => wrap(line, CONTENT - 22, TERMS_SIZE));
+    const headingLines = clause.heading ? wrap(workOrderTermText(clause.heading), CONTENT - 22, TERMS_SIZE) : [];
+    const bodyLines = clause.body.flatMap((line) => wrap(workOrderTermText(line), CONTENT - 22, TERMS_SIZE));
     const totalLines = headingLines.length + bodyLines.length;
     const clauseGap = 5;
     if (headingLines.length) ensure(Math.min(Math.max(1, totalLines), 8) * termsLeading + clauseGap);
@@ -500,7 +574,7 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
       const lines = wrapCell(text, CONTENT - 18, TERMS_SIZE);
       for (const line of lines) {
         ensure(termsLeading);
-        page.drawText(line, { x: LEFT + 18, y: y - 4, size: TERMS_SIZE, font, color: BLACK });
+        page.drawText(pdfText(line), { x: LEFT + 18, y: y - 4, size: TERMS_SIZE, font, color: BLACK });
         y -= termsLeading;
       }
       return lines.length;
