@@ -45,6 +45,16 @@ try {
   for (const expected of ["Concrete placement and finishing", "Multi-line specification", "Additional item note", "Second item", "Cubic", "metre", "Measured work", "verification", "note", "Total Basic Amount", "Rs. 15,800.00", "Rs. 18,644.00"]) {
     assert.match(text, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `missing rendered PDF text: ${expected}`);
   }
+  const detailsStart = text.indexOf("Work Order Details");
+  const detailsEnd = text.indexOf("Billing Address", detailsStart);
+  assert.ok(detailsStart >= 0 && detailsEnd > detailsStart, "Work Order Details box must be rendered");
+  const detailsText = text.slice(detailsStart, detailsEnd);
+  for (const omitted of ["Work Order Type", "Description", "Work Order Value", "GST %"]) {
+    assert.doesNotMatch(detailsText, new RegExp(omitted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `Work Order Details must omit ${omitted}`);
+  }
+  for (const retained of ["Work Order No:", "SITE/WO/101", "Date:", "Example Company", "Example Site"]) {
+    assert.match(detailsText, new RegExp(retained.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `Work Order Details must retain ${retained}`);
+  }
   console.log(`Work Order preview PDF rendering passed (${pdf.getPageCount()} page(s))`);
 } finally {
   if (fs.existsSync(rendererPath)) fs.unlinkSync(rendererPath);
