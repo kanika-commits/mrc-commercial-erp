@@ -195,6 +195,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       .from("labour_deployments")
       .select("id, effective_from, company_id, site_id, contractor_profile_id, work_order_id, manpower_work_order_id, commercial_model, labour_trade_id, wage_rate")
       .eq("labour_worker_id", id)
+      .eq("organization_id", worker.organization_id)
       .eq("status", "active")
       .is("effective_to", null)
       .maybeSingle();
@@ -207,6 +208,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       .from("labour_deployments")
       .select("id, effective_from, effective_to")
       .eq("labour_worker_id", id)
+      .eq("organization_id", worker.organization_id)
       .lte("effective_from", effectiveFromValue)
       .or(`effective_to.is.null,effective_to.gte.${effectiveFromValue}`)
       .limit(1);

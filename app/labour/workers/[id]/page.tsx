@@ -418,16 +418,17 @@ export default function LabourWorkerDetailPage() {
     setCommercialWorkOrdersError("");
     setDeploymentOperation(canChangeDeployment ? "deployment" : "rate");
     setRateForm(emptyRateForm);
+    const latestDeployment = worker.status === "inactive" ? previousDeployment : currentDeployment;
     setDeploymentForm({
       ...emptyDeploymentForm,
-      contractor_profile_id: worker.current_contractor_profile_id || previousDeployment?.contractor_profile_id || "",
-      company_id: previousDeployment?.company_id || "",
-      site_id: previousDeployment?.site_id || "",
-      work_order_id: worker.status === "inactive" ? previousDeployment?.work_order_id || "" : "",
-      labour_trade_id: previousDeployment?.labour_trade_id || worker.labour_trade_id || "",
-      skill_level: previousDeployment?.skill_level || worker.skill_level || "",
-      commercial_model: worker.status === "inactive" ? "daily_wage" : currentDeployment?.commercial_model || "contract_basis",
-      wage_rate: worker.status === "inactive" && previousDeployment?.wage_rate ? String(previousDeployment.wage_rate) : "",
+      contractor_profile_id: worker.current_contractor_profile_id || latestDeployment?.contractor_profile_id || "",
+      company_id: latestDeployment?.company_id || "",
+      site_id: latestDeployment?.site_id || "",
+      work_order_id: worker.status === "inactive" ? latestDeployment?.work_order_id || "" : "",
+      labour_trade_id: latestDeployment?.labour_trade_id || worker.labour_trade_id || "",
+      skill_level: latestDeployment?.skill_level || worker.skill_level || "",
+      commercial_model: worker.status === "inactive" ? "daily_wage" : latestDeployment?.commercial_model || "contract_basis",
+      wage_rate: worker.status === "inactive" && latestDeployment?.wage_rate ? String(latestDeployment.wage_rate) : "",
       effective_from: "",
       deployment_reason: "",
     });
