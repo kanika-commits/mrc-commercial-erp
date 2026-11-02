@@ -145,6 +145,8 @@ const [documents, setDocuments] = useState<any[]>([]);
   const [loadingDocuments, setLoadingDocuments] = useState(false);
   const [documentsLoaded, setDocumentsLoaded] = useState(false);
   const [loadingReviewPdf, setLoadingReviewPdf] = useState(false);
+  const [draftPreviewUrl, setDraftPreviewUrl] = useState("");
+  const [draftPreviewMessage, setDraftPreviewMessage] = useState("");
   const [message, setMessage] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const permissions = access?.permissions || [];
@@ -235,7 +237,16 @@ const [documents, setDocuments] = useState<any[]>([]);
 
       if (woError) throw woError;
 
-      setWorkOrder(woData);
+      let displayWorkOrder = woData;
+      if (woData.approval_status === "draft" && woData.creation_request_id) {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+          const draftResponse = await fetch(`/api/work-orders/drafts/${workOrderId}`, { headers: { Authorization: `Bearer ${session.access_token}` } });
+          const draftResult = await draftResponse.json().catch(() => ({}));
+          if (draftResponse.ok) displayWorkOrder = { ...woData, ...draftResult };
+        }
+      }
+      setWorkOrder(displayWorkOrder);
 
       const [companyResult, siteResult] = await Promise.all([
         woData.company_id
@@ -261,10 +272,31 @@ const [documents, setDocuments] = useState<any[]>([]);
       setSite(siteResult.data);
 
       setLoading(false);
-      void loadRelatedData(woData);
+      void loadRelatedData(displayWorkOrder);
+      if (displayWorkOrder.approval_status === "draft" && displayWorkOrder.creation_request_id) void loadDraftPreview(displayWorkOrder);
     } catch (error: any) {
       setMessage(error.message || "Failed to load work order.");
       setLoading(false);
+    }
+  }
+
+  async function loadDraftPreview(draft: any) {
+    try {
+      setDraftPreviewMessage("");
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Unable to preview Work Order PDF: missing auth session.");
+      const response = await fetch("/api/work-orders/preview", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(draft),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.pdf_base64) throw new Error(result.error || "Saved draft PDF preview is unavailable.");
+      const bytes = Uint8Array.from(atob(result.pdf_base64), (character) => character.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+      setDraftPreviewUrl((previous) => { if (previous) URL.revokeObjectURL(previous); return url; });
+    } catch (error: any) {
+      setDraftPreviewMessage(error.message || "Saved draft PDF preview is unavailable.");
     }
   }
 
@@ -1123,6 +1155,7 @@ function downloadWOLedger(workOrderId: string) {
     String(workOrder.approval_status || "").toLowerCase() === "approved";
   const workOrderStatusKey = String(workOrder.status || "").toLowerCase();
   const workOrderApprovalStatusKey = String(workOrder.approval_status || "").toLowerCase();
+  const isDraftWorkOrder = workOrderApprovalStatusKey === "draft" && Boolean(workOrder.creation_request_id);
   const isSuspendedWorkOrder =
     ["suspended", "cancelled"].includes(workOrderStatusKey) ||
     ["suspended", "cancelled"].includes(workOrderApprovalStatusKey);
@@ -1160,6 +1193,34 @@ function downloadWOLedger(workOrderId: string) {
     100;
   const liveUpdatedGstAmount = totals.woGstAmount + liveAdditionalGstAmount;
   const liveUpdatedWoTotalValue = liveUpdatedWoBasicValue + liveUpdatedGstAmount;
+
+  if (isDraftWorkOrder) {
+    return (
+      <div className="space-y-6" data-testid="work-order-draft-detail">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-sky-700">Work Order Draft</p>
+            <h1 className="mt-2 text-3xl font-bold">{workOrderTitle}</h1>
+            <p className="mt-2 text-sm text-slate-500">Draft — Not submitted</p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            {canEditWorkOrder && <Link href={`/work-orders/new/structured?draft=${encodeURIComponent(workOrder.id)}`} className="rounded-lg bg-slate-950 px-4 py-2 font-medium text-white hover:bg-slate-800">Edit Draft</Link>}
+            {canEditWorkOrder && <Link href={`/work-orders/new/structured?draft=${encodeURIComponent(workOrder.id)}`} className="rounded-lg bg-slate-950 px-4 py-2 font-medium text-white hover:bg-slate-800">Submit for Approval</Link>}
+            <button type="button" onClick={() => void loadDraftPreview(workOrder)} disabled={loadingReviewPdf} className="rounded-lg border border-slate-300 px-4 py-2 font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-60">{loadingReviewPdf ? "Loading PDF..." : "View / Download Work Order PDF"}</button>
+          </div>
+        </div>
+        <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm" data-testid="work-order-draft-pdf-package">
+          <h2 className="text-xl font-semibold">Work Order Package</h2>
+          <p className="mt-1 text-sm text-slate-500">Generated Work Order PDF and supporting documents.</p>
+          {draftPreviewUrl ? <div className="mt-4 space-y-3"><iframe title="Work Order PDF package" src={draftPreviewUrl} className="h-[70vh] min-h-[560px] w-full rounded-lg border" /><a href={draftPreviewUrl} target="_blank" rel="noreferrer" className="inline-flex text-sm font-semibold text-sky-700 hover:underline">View / download Work Order PDF package</a><p className="text-sm text-slate-500">This PDF is generated from the saved draft for preview only. The draft has not been submitted or changed.</p></div> : <p className="mt-4 text-sm text-slate-500">{draftPreviewMessage || "Loading saved draft PDF preview..."}</p>}
+          <div className="mt-4 border-t border-slate-200 pt-4">
+            <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-semibold">Supporting Documents</h3><button type="button" onClick={loadDocuments} disabled={loadingDocuments} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold disabled:opacity-60">{loadingDocuments ? "Loading documents..." : "Load supporting documents"}</button></div>
+            {documentsLoaded && (documents.length ? <div className="mt-3 space-y-2">{documents.map((doc) => <div key={doc.id} className="flex items-center justify-between rounded border px-3 py-2 text-sm"><span>{doc.file_name || "Supporting document"}</span><button type="button" onClick={() => openDocument(doc)} className="font-semibold text-sky-700">Open</button></div>)}</div> : <p className="mt-2 text-sm text-slate-500">No supporting documents are attached.</p>)}
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -1304,6 +1365,26 @@ function downloadWOLedger(workOrderId: string) {
   <h3 className="mb-3 font-semibold">
     Work Order Files
   </h3>
+
+  {workOrder.approval_status === "draft" && workOrder.creation_request_id && (
+    <div className="mb-4 rounded-lg border bg-slate-50 p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <p className="font-semibold">Work Order PDF preview</p>
+          <p className="text-sm text-slate-500">Generated from the saved draft; previewing does not change the draft.</p>
+        </div>
+        <button type="button" onClick={() => loadDraftPreview(workOrder)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-white">
+          Retry preview
+        </button>
+      </div>
+      {draftPreviewMessage && <p className="mb-3 text-sm text-red-700">{draftPreviewMessage}</p>}
+      {draftPreviewUrl ? (
+        <iframe title="Work Order PDF preview" src={draftPreviewUrl} className="h-[760px] w-full rounded-lg border bg-slate-900" />
+      ) : !draftPreviewMessage ? (
+        <p className="text-sm text-slate-500">Loading saved draft PDF preview...</p>
+      ) : null}
+    </div>
+  )}
 
   {workOrder.creation_request_id && (
     <button

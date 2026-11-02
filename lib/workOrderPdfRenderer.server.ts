@@ -70,6 +70,26 @@ const wrap = (input: unknown, maxWidth: number, size = BODY_SIZE) => value(input
   return lines;
 });
 
+const pdfText = (input: unknown) => value(input).replace(/₹/g, "INR");
+const workOrderTermText = (input: unknown) => pdfText(input).replace(/Purchase Order/g, "Work Order").replace(/purchase order/g, "work order").replace(/\bPO\b/g, "WO").replace(/\bpo\b/g, "wo");
+
+function normalizeStructuredTerms(input: unknown): Array<{ heading: string; clause_body: string; sort_order: number }> | null {
+  let clauses: any[] | null = null;
+  if (Array.isArray(input)) clauses = input;
+  else if (typeof input === "string") { try { return normalizeStructuredTerms(JSON.parse(input)); } catch { return null; } }
+  else if (input && typeof input === "object") { const record: any = input; clauses = record.clauses || record.sections || record.standard_terms_clauses || record.terms || record.standard_terms || null; }
+  if (!clauses) return null;
+  const normalized = clauses.map((clause: any, index) => ({ heading: value(clause.heading ?? clause.title ?? clause.name ?? clause.clause_heading), clause_body: String(clause.clause_body ?? clause.body_text ?? clause.body ?? clause.text ?? clause.content ?? ""), sort_order: Number.isFinite(Number(clause.sort_order)) ? Number(clause.sort_order) : index })).filter((clause) => clause.heading || clause.clause_body).sort((a, b) => a.sort_order - b.sort_order);
+  if (normalized.length === 1 && /^saved terms(?: &| and) conditions$/i.test(normalized[0].heading)) {
+    const rawBody = normalized[0].clause_body.replace(/^saved terms(?: &| and) conditions\s*/i, "").trim();
+    const blocks = rawBody.split(/\r?\n\s*\r?\n/).map((block) => block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)).filter((block) => block.length > 1);
+    if (blocks.length > 1) return blocks.map((block, index) => ({ heading: block[0], clause_body: block.slice(1).join("\n"), sort_order: index }));
+  }
+  const withoutMetadata = normalized.filter((clause) => !/^saved terms(?: &| and) conditions$/i.test(clause.heading));
+  if (withoutMetadata.length && /^saved terms(?: &| and) conditions$/i.test(withoutMetadata[0].clause_body.split(/\r?\n/)[0]?.trim() || "")) withoutMetadata[0].clause_body = withoutMetadata[0].clause_body.split(/\r?\n/).slice(1).join("\n").trim();
+  return withoutMetadata;
+}
+
 function normalizeKeyTerms(input: any) {
   const rows: Array<{ label: string; value: string }> = [];
   const inclusions = Array.isArray(input?.inclusions) ? input.inclusions : [];
@@ -291,11 +311,13 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
   heading("KEY TERMS", 58, 11);
   table(["S.No.", "Key Term", "Terms"], normalizeKeyTerms(row.work_order_key_terms).map((term, index) => [String(index + 1), term.label, term.value]), [32, 120, CONTENT - 152], false, [], 8.5);
   heading("TERMS & CONDITIONS", 70);
+  const structuredTerms = normalizeStructuredTerms(row.standard_terms_clauses || row.standard_terms_snapshot);
   const termsLines = value(row.standard_terms_snapshot || "-").split(/\r?\n/).filter((line) => line.trim());
   const termsLeading = 9;
   const clauseBlocks: Array<{ heading: string; body: string[] }> = [];
   let currentClause: { heading: string; body: string[] } | null = null;
-  termsLines.forEach((line) => {
+  if (structuredTerms) structuredTerms.forEach((clause) => clauseBlocks.push({ heading: clause.heading, body: [clause.clause_body] }));
+  else termsLines.forEach((line) => {
     if (/^\s*\d+\.\s+\S/.test(line)) {
       currentClause = { heading: line, body: [] };
       clauseBlocks.push(currentClause);
@@ -305,15 +327,17 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
       clauseBlocks.push({ heading: "", body: [line] });
     }
   });
-  clauseBlocks.forEach((clause) => {
-    const headingLines = clause.heading ? wrap(clause.heading, CONTENT, TERMS_SIZE) : [];
-    const bodyLines = clause.body.flatMap((line) => wrap(line, CONTENT, TERMS_SIZE));
+  clauseBlocks.forEach((clause, clauseIndex) => {
+    const headingLines = clause.heading ? wrap(workOrderTermText(clause.heading), CONTENT - 22, TERMS_SIZE) : [];
+    const bodyLines = clause.body.flatMap((line) => wrap(workOrderTermText(line), CONTENT - 22, TERMS_SIZE));
     const totalLines = headingLines.length + bodyLines.length;
     const availableLines = Math.max(1, Math.floor((y - Math.max(BODY_BOTTOM, footerHeight + 22)) / termsLeading));
     if (headingLines.length && totalLines <= availableLines) ensure(totalLines * termsLeading);
     else if (headingLines.length) ensure((headingLines.length + Math.min(1, bodyLines.length)) * termsLeading);
-    headingLines.forEach((line) => { draw(line, LEFT, y - 4, TERMS_SIZE, true); y -= termsLeading; });
-    bodyLines.forEach((line) => { ensure(termsLeading); draw(line, LEFT, y - 4, TERMS_SIZE, false); y -= termsLeading; });
+    draw(`${clauseIndex + 1}.`, LEFT, y - 4, TERMS_SIZE, true);
+    headingLines.forEach((line) => { draw(line, LEFT + 18, y - 4, TERMS_SIZE, true); y -= termsLeading; });
+    bodyLines.forEach((line) => { ensure(termsLeading); draw(line, LEFT + 18, y - 4, TERMS_SIZE, false); y -= termsLeading; });
+    y -= 5;
   });
 
   const approved = ["approved", "issued"].includes(String(row.approval_status || row.status || "").toLowerCase());

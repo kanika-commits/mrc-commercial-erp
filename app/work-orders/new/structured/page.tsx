@@ -2,11 +2,12 @@
 
 // Structured Work Order form route.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch } from "@/components/hr/hrClient";
 import { getWorkOrderPilotDraft, setWorkOrderPilotDraft } from "@/lib/workOrderPilotDraft.client";
+import { matchSavedTermsTemplateId, mergeWorkOrderDraftLookupOptions, readSavedTermsClauses, readWorkOrderDraftSelections } from "@/lib/workOrderDraftSelections";
 
 type Line = { item_master_id: string; additional_description: string; quantity: string; unit_rate: string; gst_percent: string };
 type KeyTerms = { inclusions: string[]; exclusions: string[]; additional: Array<{ label: string; value: string }> };
@@ -32,11 +33,16 @@ export default function NewWorkOrderPage() {
   const [lookupRetry, setLookupRetry] = useState(0);
   const [lookupLoading, setLookupLoading] = useState(true);
   const [supportingDocuments, setSupportingDocuments] = useState<File[]>(() => preservedPreviewDraft?.supportingDocuments || []);
+  const [termsEditorText, setTermsEditorText] = useState("");
+  const [savedTermsMatchWarning, setSavedTermsMatchWarning] = useState("");
+  const draftLookupRef = useRef<any | null>(null);
+  const termsHydrationRef = useRef(false);
 
   useEffect(() => {
     setLookupLoading(true);
     apiFetch("/api/work-orders/create-lookups").then((result: any) => {
-      setLookups({ companies: [], sites: [], vendors: [], items: [], letterheads: [], terms_templates: [], gst_billing_masters: [], billing_addresses: [], delivery_locations: [], site_contacts: [], ...result });
+      const nextLookups = { companies: [], sites: [], vendors: [], items: [], letterheads: [], terms_templates: [], gst_billing_masters: [], billing_addresses: [], delivery_locations: [], site_contacts: [], ...result };
+      setLookups(draftLookupRef.current ? mergeWorkOrderDraftLookupOptions(nextLookups, draftLookupRef.current) : nextLookups);
       const failures = (result.lookup_errors || []).map((entry: any) => entry.message).join(" ");
       setMessage(failures);
     }).catch((e: any) => setMessage(e.message)).finally(() => setLookupLoading(false));
@@ -44,15 +50,35 @@ export default function NewWorkOrderPage() {
 
   useEffect(() => {
     if (!draftId) return;
-    apiFetch(`/api/work-orders/drafts/${draftId}`).then((draft: any) => {
-      const selection = draft.delivery_snapshot?.master_selection || {};
-      setForm({ company_id: draft.company_id || "", site_id: draft.site_id || "", vendor_id: draft.vendor_id || "", vendor_role: draft.vendor_role || "Main Contractor", wo_number: draft.wo_number || "", wo_date: draft.wo_date || "", wo_type: draft.wo_type || "", description: draft.description || "", letterhead_id: draft.letterhead_id || "", terms_template_id: draft.terms_template_id || "", standard_terms_snapshot: draft.standard_terms_snapshot || "", gst_registration_id: selection.gst_registration_id || "", billing_address_id: selection.billing_address_id || "", delivery_location_id: selection.delivery_location_id || "", billing_contact_id: selection.billing_contact_id || "", delivery_contact_id: selection.delivery_contact_id || "" });
+    apiFetch(`/api/work-orders/drafts/${encodeURIComponent(draftId)}`).then((draft: any) => {
+      draftLookupRef.current = draft;
+      const selection = readWorkOrderDraftSelections(draft);
+      termsHydrationRef.current = true;
+      const savedTermsSnapshot = draft.standard_terms_snapshot || "";
+      setForm({ company_id: draft.company_id || "", site_id: draft.site_id || "", vendor_id: draft.vendor_id || "", vendor_role: draft.vendor_role || "Main Contractor", wo_number: draft.wo_number || "", wo_date: draft.wo_date || "", wo_type: draft.wo_type || "", description: draft.description || "", letterhead_id: selection.letterhead_id, terms_template_id: selection.terms_template_id, standard_terms_snapshot: savedTermsSnapshot, gst_registration_id: selection.gst_registration_id, billing_address_id: selection.billing_address_id, delivery_location_id: selection.delivery_location_id, billing_contact_id: selection.billing_contact_id, delivery_contact_id: selection.delivery_contact_id });
+      setTermsEditorText(readSavedTermsClauses(savedTermsSnapshot).map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n"));
+      setLookups((current: any) => mergeWorkOrderDraftLookupOptions(current, draft));
       const savedTerms = draft.work_order_key_terms || {};
       setKeyTerms({ inclusions: Array.isArray(savedTerms.inclusions) && savedTerms.inclusions.length ? savedTerms.inclusions : [""], exclusions: Array.isArray(savedTerms.exclusions) && savedTerms.exclusions.length ? savedTerms.exclusions : [""], additional: Array.isArray(savedTerms.additional) ? savedTerms.additional : [] });
       setLines((draft.items || []).map((item: any) => ({ item_master_id: item.item_master_id || "", additional_description: item.additional_description_snapshot || "", quantity: String(item.quantity ?? ""), unit_rate: String(item.unit_rate ?? ""), gst_percent: String(item.gst_percent ?? "0") })));
       setNumberEdited(true);
     }).catch((e: any) => setMessage(e.message));
   }, [draftId]);
+
+  useEffect(() => {
+    if (!draftId || !termsHydrationRef.current || !form.standard_terms_snapshot) return;
+    termsHydrationRef.current = false;
+    const authorizedTerms = lookups.terms_templates.filter((row: any) => row.company_id === form.company_id && row.status === "active");
+    const savedMasterSnapshot = draftLookupRef.current?.terms_template_snapshot || draftLookupRef.current?.delivery_snapshot?.terms_template_snapshot;
+    const matchedId = matchSavedTermsTemplateId(savedMasterSnapshot || form.standard_terms_snapshot, authorizedTerms)
+      || matchSavedTermsTemplateId(form.standard_terms_snapshot, authorizedTerms);
+    if (matchedId) {
+      setForm((current: any) => current.terms_template_id === matchedId ? current : { ...current, terms_template_id: matchedId });
+      setSavedTermsMatchWarning("");
+    } else {
+      setSavedTermsMatchWarning("The saved Terms & Conditions master is unavailable; the saved clauses remain unchanged.");
+    }
+  }, [draftId, form.company_id, form.standard_terms_snapshot, lookups.terms_templates]);
 
   useEffect(() => {
     if (!form.company_id || !form.site_id || numberEdited) return;
@@ -77,6 +103,7 @@ export default function NewWorkOrderPage() {
 
   const sites = lookups.sites;
   const terms = useMemo(() => lookups.terms_templates.filter((t: any) => t.company_id === form.company_id && t.status === "active"), [lookups.terms_templates, form.company_id]);
+  const savedTermsClauses = useMemo(() => readSavedTermsClauses(form.standard_terms_snapshot), [form.standard_terms_snapshot]);
   const letterhead = lookups.letterheads.find((l: any) => l.company_id === form.company_id && l.is_default);
   const selectedLetterhead = lookups.letterheads.find((l: any) => l.id === form.letterhead_id) || letterhead;
   const gstMasters = useMemo(() => lookups.gst_billing_masters.filter((row: any) => row.company_id === form.company_id), [lookups.gst_billing_masters, form.company_id]);
@@ -196,8 +223,8 @@ export default function NewWorkOrderPage() {
       <section className="overflow-x-auto rounded-2xl border bg-white p-5"><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-bold">Work Order Items</h2><p className="text-sm text-slate-500">Amounts are recalculated on the server.</p></div><button type="button" className="rounded-lg border px-3 py-2 text-sm font-semibold" onClick={() => setLines([...lines, emptyLine()])}>Add Line</button></div><table className="min-w-[1350px] w-full text-left text-sm"><thead className="bg-slate-50"><tr>{['Sr. No.', 'Item Header', 'Description', 'Unit', 'Mode of Measurement', 'Additional Description', 'Quantity', 'Unit Rate', 'GST %', 'Basic Amount', 'GST Amount', 'Line Total', ''].map((h) => <th className="p-2" key={h}>{h}</th>)}</tr></thead><tbody>{lines.map((line, index) => { const item = lookups.items.find((i: any) => i.id === line.item_master_id); const basic = Number(line.quantity || 0) * Number(line.unit_rate || 0); const gst = basic * Number(line.gst_percent || 0) / 100; return <tr key={index} className="border-t align-top"><td className="p-2">{index + 1}</td><td className="p-2"><select required className="w-44 rounded border p-2" value={line.item_master_id} onChange={(e) => updateLine(index, 'item_master_id', e.target.value)}><option value="">Select item</option>{lookups.items.map((i: any) => <option key={i.id} value={i.id}>{i.item_header}</option>)}</select></td><td className="p-2">{item?.description || '—'}</td><td className="p-2">{item?.unit || '—'}</td><td className="p-2">{item?.mode_of_measurement || '—'}</td><td className="p-2"><input type="text" className="w-48 rounded border p-2" value={line.additional_description} onChange={(e) => updateLine(index, 'additional_description', e.target.value)} placeholder="Optional" /></td>{(['quantity', 'unit_rate', 'gst_percent'] as const).map((field) => <td className="p-2" key={field}><input required type="number" min={field === 'quantity' ? '0.001' : '0'} step="any" className="w-24 rounded border p-2" value={line[field]} onChange={(e) => updateLine(index, field, e.target.value)} /></td>)}<td className="p-2 font-semibold">{money(basic)}</td><td className="p-2">{money(gst)}</td><td className="p-2 font-semibold">{money(basic + gst)}</td><td className="p-2"><button type="button" className="text-red-700" disabled={lines.length === 1} onClick={() => setLines(lines.filter((_, i) => i !== index))}>Remove</button></td></tr>; })}</tbody></table><div className="mt-4 flex justify-end gap-6 border-t pt-4 text-sm"><span>Basic <b>{money(totals.basic)}</b></span><span>GST <b>{money(totals.gst)}</b></span><span className="text-base">Grand Total <b>{money(totals.total)}</b></span></div></section>
       <section className="grid gap-4 rounded-2xl border bg-white p-5 md:grid-cols-2">
         <label className="text-sm font-semibold">Letterhead<select className="mt-1 w-full rounded-lg border p-2" value={form.letterhead_id} onChange={(e) => setForm({ ...form, letterhead_id: e.target.value })}><option value="">Select letterhead</option>{lookups.letterheads.filter((row: any) => row.company_id === form.company_id).map((row: any) => <option key={row.id} value={row.id}>{row.letterhead_name}</option>)}</select></label>
-        <label className="text-sm font-semibold">Terms &amp; Conditions<select className="mt-1 w-full rounded-lg border p-2" value={form.terms_template_id} onChange={(e) => selectTerms(e.target.value)}><option value="">Select terms master</option>{terms.map((t: any) => <option key={t.id} value={t.id}>{t.template_name}</option>)}</select></label>
-        <label className="text-sm font-semibold md:col-span-2">Terms &amp; Conditions snapshot<textarea className="mt-1 w-full rounded-lg border p-2" rows={6} value={form.standard_terms_snapshot} onChange={(e) => setForm({ ...form, standard_terms_snapshot: e.target.value })} /></label>
+        <label className="text-sm font-semibold">Terms &amp; Conditions<select className="mt-1 w-full rounded-lg border p-2" value={form.terms_template_id} onChange={(e) => selectTerms(e.target.value)}><option value="">Select terms master</option>{terms.map((t: any) => <option key={t.id} value={t.id}>{t.template_name}</option>)}</select>{savedTermsMatchWarning && <span className="mt-1 block text-xs font-normal text-amber-700">{savedTermsMatchWarning}</span>}</label>
+        <label className="text-sm font-semibold md:col-span-2">Terms &amp; Conditions snapshot<textarea aria-label="Saved Terms & Conditions snapshot" className="mt-1 w-full rounded-lg border p-2" rows={6} value={termsEditorText || savedTermsClauses.map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n")} onChange={(e) => { const value = e.target.value; setTermsEditorText(value); setForm((current: any) => ({ ...current, standard_terms_snapshot: value })); }} /></label>
       </section>
       <section className="rounded-2xl border bg-white p-5"><div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-bold">Key Terms</h2><button type="button" className="rounded-lg border px-3 py-2 text-sm font-semibold" onClick={addKeyTerm}>+ Add Additional Term</button></div><div className="overflow-x-auto"><table className="min-w-[520px] w-full border-collapse text-sm"><thead className="bg-slate-50"><tr><th className="w-56 border p-3 text-left">Key Term</th><th className="border p-3 text-left">Terms</th></tr></thead><tbody><tr><td className="border p-3 font-semibold">Inclusions *</td><td className="border p-3"><textarea required rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={keyTerms.inclusions[0] || ""} onChange={(e) => updateKeyTerm('inclusions', 0, e.target.value)} /></td></tr><tr><td className="border p-3 font-semibold">Exclusions *</td><td className="border p-3"><textarea required rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={keyTerms.exclusions[0] || ""} onChange={(e) => updateKeyTerm('exclusions', 0, e.target.value)} /></td></tr>{keyTerms.inclusions.slice(1).map((entry, index) => <tr key={`inclusion-${index + 1}`}><td className="border p-3 font-semibold"><div className="flex items-center justify-between gap-2"><span>Inclusions {index + 2}</span><button type="button" className="text-xs font-semibold text-red-700" onClick={() => setKeyTerms((current) => ({ ...current, inclusions: current.inclusions.filter((_, i) => i !== index + 1) }))}>Remove</button></div></td><td className="border p-3"><textarea rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={entry} onChange={(e) => updateKeyTerm('inclusions', index + 1, e.target.value)} /></td></tr>)}{keyTerms.exclusions.slice(1).map((entry, index) => <tr key={`exclusion-${index + 1}`}><td className="border p-3 font-semibold"><div className="flex items-center justify-between gap-2"><span>Exclusions {index + 2}</span><button type="button" className="text-xs font-semibold text-red-700" onClick={() => setKeyTerms((current) => ({ ...current, exclusions: current.exclusions.filter((_, i) => i !== index + 1) }))}>Remove</button></div></td><td className="border p-3"><textarea rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={entry} onChange={(e) => updateKeyTerm('exclusions', index + 1, e.target.value)} /></td></tr>)}{keyTerms.additional.map((term, index) => <tr key={`additional-${index}`}><td className="border p-3"><div className="flex items-center gap-2"><input className="min-w-0 flex-1 rounded-lg border p-2" placeholder="Description" value={term.label} onChange={(e) => setKeyTerms((current) => ({ ...current, additional: current.additional.map((row, i) => i === index ? { ...row, label: e.target.value } : row) }))} /><button type="button" className="shrink-0 text-xs font-semibold text-red-700" onClick={() => setKeyTerms((current) => ({ ...current, additional: current.additional.filter((_, i) => i !== index) }))}>Remove</button></div></td><td className="border p-3"><textarea rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" placeholder="Terms" value={term.value} onChange={(e) => setKeyTerms((current) => ({ ...current, additional: current.additional.map((row, i) => i === index ? { ...row, value: e.target.value } : row) }))} /></td></tr>)}</tbody></table></div></section>
       <section className="space-y-4 rounded-2xl border bg-white p-5"><div><h2 className="text-lg font-bold">Supporting Documents</h2><p className="text-sm text-slate-500">Any file type is accepted. PDFs and common images are shown in the preview; other files are listed there and remain attached after submission.</p></div><input type="file" multiple onChange={(event) => { const files = Array.from(event.target.files || []); setSupportingDocuments((current) => [...current, ...files]); event.currentTarget.value = ""; setMessage(""); }} className="block w-full rounded-lg border p-2 text-sm" />{supportingDocuments.length > 0 && <ul className="space-y-2 text-sm">{supportingDocuments.map((file, index) => <li key={`${file.name}-${index}`} className="flex items-center justify-between gap-3 rounded-lg border bg-slate-50 px-3 py-2"><span className="truncate">{file.name}</span><button type="button" className="shrink-0 font-semibold text-red-700" onClick={() => setSupportingDocuments((current) => current.filter((_, fileIndex) => fileIndex !== index))}>Remove</button></li>)}</ul>}</section>
