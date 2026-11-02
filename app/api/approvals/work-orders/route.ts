@@ -57,7 +57,9 @@ export async function GET(request: Request) {
             creation_request_id
           `,
         )
-        .or("approval_status.is.null,approval_status.ilike.pending,approval_status.ilike.draft")
+        // Drafts remain editable and enter this queue only after submission.
+        // Keep legacy null statuses and case-insensitive submitted/pending rows.
+        .or("approval_status.is.null,approval_status.ilike.pending")
         .order("created_at", { ascending: false }),
       organizationScope,
     );
