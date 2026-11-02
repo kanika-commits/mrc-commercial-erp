@@ -15,7 +15,7 @@ assert.equal((register.match(/href=\{workOrderViewHref\(wo, pilotOnly\)\}/g) || 
 assert.match(page, /data-testid="work-order-draft-detail"/);
 assert.match(page, /Edit Draft/);
 assert.match(page, /Submit for Approval/);
-assert.match(page, /\/api\/work-orders\/drafts\/\$\{params\.id\}\/preview/);
+assert.match(page, /\/api\/work-orders\/drafts\/\$\{encodeURIComponent\(draftId\)\}\/preview/);
 assert.match(page, /data-testid="work-order-draft-pdf"/);
 assert.match(draftApi, /approval_status", "draft"/);
 assert.match(draftHelper, /requirePermission\(request, "work_orders", "edit"\)/);

@@ -11,7 +11,7 @@ assert.match(detail, /Draft — Not submitted/);
 assert.match(detail, /Edit Draft/);
 assert.match(detail, /Submit for Approval/);
 assert.match(detail, /data-testid="work-order-draft-pdf"/);
-assert.match(detail, /\/api\/work-orders\/drafts\/\$\{params\.id\}\/preview/);
+assert.match(detail, /\/api\/work-orders\/drafts\/\$\{encodeURIComponent\(draftId\)\}\/preview/);
 assert.match(pdfRoute, /standard_terms_clauses: result\.data\.standard_terms_snapshot/);
 assert.match(pdfRoute, /Content-Disposition.*inline/);
 
