@@ -88,6 +88,11 @@ type WorkOrderDocument = {
 
 type SelectionMap = Record<string, boolean>;
 type SortField = "wo_number" | "vendor_name" | "wo_value" | "status" | "approval_status" | "wo_date";
+
+function workOrderViewHref(wo: Pick<WorkOrder, "id" | "approval_status" | "creation_request_id">, pilotOnly: boolean) {
+  if (wo.approval_status === "draft" && wo.creation_request_id) return `/work-orders/drafts/${wo.id}`;
+  return pilotOnly ? `/work-orders/${wo.id}?from=forms-work-orders` : `/work-orders/${wo.id}`;
+}
 type SortDirection = "asc" | "desc";
 
 const LIFECYCLE_STATUS_OPTIONS = [
@@ -918,7 +923,7 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
                     <td className="px-6 py-5 align-top">
                       <div className="max-w-[320px] text-base font-bold leading-6">
                         <Link
-                          href={wo.approval_status === "draft" && wo.creation_request_id ? `/work-orders/drafts/${wo.id}` : (pilotOnly ? `/work-orders/${wo.id}?from=forms-work-orders` : `/work-orders/${wo.id}`)}
+                          href={workOrderViewHref(wo, pilotOnly)}
                           onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "work_order", recordId: wo.id, source: "work_orders_register" })}
                           className="text-[#00658b] hover:underline"
                         >
@@ -1076,7 +1081,7 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
                     <td className="px-6 py-5 align-top">
                       <div className="flex justify-end gap-2">
                         <Link
-                          href={wo.approval_status === "draft" && wo.creation_request_id ? `/work-orders/drafts/${wo.id}` : (pilotOnly ? `/work-orders/${wo.id}?from=forms-work-orders` : `/work-orders/${wo.id}`)}
+                          href={workOrderViewHref(wo, pilotOnly)}
                           className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 text-slate-500 transition hover:bg-[#f6f3f5] hover:text-slate-950"
                           title="View"
                         >

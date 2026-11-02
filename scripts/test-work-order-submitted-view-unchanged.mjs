@@ -4,7 +4,8 @@ import fs from "node:fs";
 const register = fs.readFileSync("app/work-orders/page.tsx", "utf8");
 const detail = fs.readFileSync("app/work-orders/[id]/page.tsx", "utf8");
 
-assert.match(register, /: \(pilotOnly \? `\/work-orders\/\$\{wo\.id\}\?from=forms-work-orders` : `\/work-orders\/\$\{wo\.id\}`\)/);
+assert.match(register, /return pilotOnly \? `\/work-orders\/\$\{wo\.id\}\?from=forms-work-orders` : `\/work-orders\/\$\{wo\.id\}`/);
+assert.match(register, /function workOrderViewHref\(wo[^\n]*pilotOnly[^\n]*\)/);
 assert.doesNotMatch(detail, /api\/work-orders\/drafts/);
 assert.match(detail, /api\/work-orders\/\$\{encodeURIComponent\(workOrderId\)\}\/details/);
 assert.match(detail, /api\/work-orders\/\$\{workOrderId\}\/generated-pdf/);
