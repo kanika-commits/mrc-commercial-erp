@@ -54,6 +54,21 @@ const workOrderTermText = (input: unknown) => pdfText(input)
 // currency formatting unchanged, but use an encodable PDF-only representation
 // for dynamic text that may contain the rupee symbol.
 const pdfText = (input: unknown) => value(input).replace(/₹/g, "INR");
+const formatPdfTimestamp = (input: unknown) => {
+  const raw = value(input);
+  if (!raw) return "—";
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  return parsed.toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+};
 export type WorkOrderRedline = { kind: "unchanged" | "changed" | "added" | "deleted"; value: unknown; previous?: unknown; runs?: Array<{ text: string; color: "black" | "red"; strike?: boolean }> };
 
 export function structuredTermsFromSnapshot(input: unknown): any[] | null {
@@ -606,10 +621,10 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
   const signatureText = (input: unknown) => value(input) || "—";
   const creatorName = signatureText(row.created_by_name || row.created_by_email);
   const creatorEmail = signatureText(row.created_by_email);
-  const creatorAt = row.created_at ? new Date(row.created_at).toLocaleString("en-IN") : signatureText(row.created_at_display);
+  const creatorAt = row.created_at ? formatPdfTimestamp(row.created_at) : signatureText(row.created_at_display);
   const approverName = signatureText(row.approved_by_name || row.approved_by_email || row.approval_signature_block?.employeeName);
   const approverEmail = signatureText(row.approved_by_email);
-  const approverAt = row.approved_at ? new Date(row.approved_at).toLocaleString("en-IN") : "—";
+  const approverAt = row.approved_at ? formatPdfTimestamp(row.approved_at) : "—";
   const vendorLines = [
     ["Vendor Acceptance", true, 9],
     ["I hereby accept the terms and conditions of this Work Order and confirm acceptance on behalf of the Vendor.", false, 8],
