@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Download } from "lucide-react";
+import { Download, Eye } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAccessContext } from "@/components/AccessContext";
 import { can, hasGlobalAccess } from "@/lib/accessControl";
@@ -138,6 +138,12 @@ export default function WorkOrderDetailPage() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
 const [debitNotes, setDebitNotes] = useState<any[]>([]);
+  const [documents, setDocuments] = useState<any[]>([]);
+  const [documentsLoaded, setDocumentsLoaded] = useState(false);
+  const [loadingDocuments, setLoadingDocuments] = useState(false);
+  const [documentError, setDocumentError] = useState("");
+  const [reviewedPackageUrl, setReviewedPackageUrl] = useState("");
+  const draftPackageAttemptedRef = useRef(false);
   const [workOrderChanges, setWorkOrderChanges] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingRelated, setLoadingRelated] = useState(false);
@@ -149,6 +155,11 @@ const [debitNotes, setDebitNotes] = useState<any[]>([]);
   const canEditWorkOrder = canUpdateStatus;
   const canRemoveLinkedVendor = can(permissions, "work_orders", "delete");
   const canExportWorkOrders = can(permissions, "work_orders", "export");
+
+  async function previewWorkOrderPdf() {
+    if (!reviewedPackageUrl) await loadReviewedPackage();
+    document.getElementById("work-order-pdf-package")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
   const [showEditModal, setShowEditModal] = useState(false);
   const [editForm, setEditForm] = useState({
     description: "",
@@ -196,6 +207,11 @@ const [debitNotes, setDebitNotes] = useState<any[]>([]);
       setInvoices([]);
       setPayments([]);
       setDebitNotes([]);
+      setDocuments([]);
+      setDocumentsLoaded(false);
+      setDocumentError("");
+      setReviewedPackageUrl("");
+      draftPackageAttemptedRef.current = false;
       setWorkOrderChanges([]);
 
       const { data: woData, error: woError } = await supabase
@@ -214,6 +230,8 @@ const [debitNotes, setDebitNotes] = useState<any[]>([]);
           wo_value,
           gst_percent,
           approval_status,
+          standard_terms_snapshot,
+          delivery_snapshot,
           department,
           cost_code,
           created_by_name,
@@ -229,7 +247,25 @@ const [debitNotes, setDebitNotes] = useState<any[]>([]);
 
       if (woError) throw woError;
 
-      setWorkOrder(woData);
+      let displayWorkOrder = woData;
+      if (String(woData.approval_status || "").toLowerCase() === "draft" && woData.creation_request_id) {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+          const draftResponse = await fetch(`/api/work-orders/drafts/${encodeURIComponent(woData.id)}`, {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          });
+          if (draftResponse.ok) {
+            const draftData = await draftResponse.json().catch(() => ({}));
+            displayWorkOrder = {
+              ...woData,
+              standard_terms_snapshot: draftData.standard_terms_snapshot || woData.standard_terms_snapshot,
+              delivery_snapshot: draftData.delivery_snapshot || woData.delivery_snapshot,
+            };
+          }
+        }
+      }
+
+      setWorkOrder(displayWorkOrder);
 
       const [companyResult, siteResult] = await Promise.all([
         woData.company_id
@@ -255,7 +291,7 @@ const [debitNotes, setDebitNotes] = useState<any[]>([]);
       setSite(siteResult.data);
 
       setLoading(false);
-      void loadRelatedData(woData);
+      void loadRelatedData(displayWorkOrder);
     } catch (error: any) {
       setMessage(error.message || "Failed to load work order.");
       setLoading(false);
@@ -414,7 +450,30 @@ const [debitNotes, setDebitNotes] = useState<any[]>([]);
     }
   }
 
-  async function openReviewPdf() {
+  async function loadDocuments() {
+    try {
+      setLoadingDocuments(true);
+      setDocumentError("");
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Your session expired. Please log in again.");
+      const response = await fetch(
+        `/api/work-orders/documents?work_order_id=${encodeURIComponent(workOrderId)}`,
+        { headers: { Authorization: `Bearer ${session.access_token}` } },
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Failed to load Work Order documents.");
+      setDocuments(result.documents || []);
+      setDocumentsLoaded(true);
+    } catch (error: any) {
+      setDocumentError(error.message || "Failed to load Work Order documents.");
+    } finally {
+      setLoadingDocuments(false);
+    }
+  }
+
+  async function loadReviewedPackage() {
     try {
       setLoadingReviewPdf(true);
       setMessage("");
@@ -432,15 +491,19 @@ const [debitNotes, setDebitNotes] = useState<any[]>([]);
         throw new Error(result.error || "Unable to generate Work Order PDF.");
       }
 
-      const objectUrl = URL.createObjectURL(await response.blob());
-      window.open(objectUrl, "_blank", "noopener,noreferrer");
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      setReviewedPackageUrl(URL.createObjectURL(await response.blob()));
     } catch (error: any) {
       setMessage(error.message || "Unable to generate Work Order PDF.");
     } finally {
       setLoadingReviewPdf(false);
     }
   }
+
+  useEffect(() => {
+    if (!workOrder?.creation_request_id || String(workOrder.approval_status || "").toLowerCase() !== "draft" || reviewedPackageUrl || loadingReviewPdf || draftPackageAttemptedRef.current) return;
+    draftPackageAttemptedRef.current = true;
+    void loadReviewedPackage();
+  }, [workOrder?.id, workOrder?.creation_request_id, workOrder?.approval_status, reviewedPackageUrl, loadingReviewPdf]);
 
   async function removeLinkedVendor(row: any) {
     if (isMainVendorLink(row)) {
@@ -1067,6 +1130,7 @@ function downloadWOLedger(workOrderId: string) {
     String(workOrder.approval_status || "").toLowerCase() === "approved";
   const workOrderStatusKey = String(workOrder.status || "").toLowerCase();
   const workOrderApprovalStatusKey = String(workOrder.approval_status || "").toLowerCase();
+  const isDraftWorkOrder = workOrderApprovalStatusKey === "draft" && Boolean(workOrder.creation_request_id);
   const isSuspendedWorkOrder =
     ["suspended", "cancelled"].includes(workOrderStatusKey) ||
     ["suspended", "cancelled"].includes(workOrderApprovalStatusKey);
@@ -1105,6 +1169,59 @@ function downloadWOLedger(workOrderId: string) {
   const liveUpdatedGstAmount = totals.woGstAmount + liveAdditionalGstAmount;
   const liveUpdatedWoTotalValue = liveUpdatedWoBasicValue + liveUpdatedGstAmount;
 
+  if (isDraftWorkOrder) {
+    return (
+      <div className="space-y-6" data-testid="work-order-draft-detail">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-sky-700">Work Order Draft</p>
+            <h1 className="mt-2 text-3xl font-bold">{workOrderTitle}</h1>
+            <p className="mt-2 text-sm text-slate-500">Draft — Not submitted</p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            {canEditWorkOrder && (
+              <Link href={`/work-orders/new/structured?draft=${encodeURIComponent(workOrder.id)}`} className="rounded-lg bg-slate-950 px-4 py-2 font-medium text-white hover:bg-slate-800">
+                Edit Draft
+              </Link>
+            )}
+            {canEditWorkOrder && (
+              <Link href={`/work-orders/new/structured?draft=${encodeURIComponent(workOrder.id)}`} className="rounded-lg bg-slate-950 px-4 py-2 font-medium text-white hover:bg-slate-800">
+                Submit for Approval
+              </Link>
+            )}
+            <button type="button" onClick={() => void previewWorkOrderPdf()} disabled={loadingReviewPdf} className="rounded-lg border border-slate-300 px-4 py-2 font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60">
+              {loadingReviewPdf ? "Loading PDF..." : "View / Download Work Order PDF"}
+            </button>
+          </div>
+        </div>
+
+        <section id="work-order-pdf-package" className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm" data-testid="work-order-draft-pdf-package">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold">Work Order Package</h2>
+              <p className="mt-1 text-sm text-slate-500">Generated Work Order PDF and supporting documents.</p>
+            </div>
+            {!reviewedPackageUrl && (
+              <button type="button" onClick={loadReviewedPackage} disabled={loadingReviewPdf} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold disabled:opacity-60">
+                {loadingReviewPdf ? "Loading package..." : "View / Download PDF"}
+              </button>
+            )}
+          </div>
+          {reviewedPackageUrl && (
+            <div className="mt-4 space-y-3">
+              <iframe title="Work Order PDF package" src={reviewedPackageUrl} className="h-[70vh] min-h-[560px] w-full rounded-lg border" />
+              <a href={reviewedPackageUrl} target="_blank" rel="noreferrer" className="inline-flex text-sm font-semibold text-sky-700 hover:underline">
+                View / download Work Order PDF package
+              </a>
+            </div>
+          )}
+          {documentError && <p className="mt-3 text-sm text-red-700" role="alert">{documentError}</p>}
+        </section>
+
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {statusMessage && (
@@ -1134,6 +1251,14 @@ function downloadWOLedger(workOrderId: string) {
         </div>
 
        <div className="flex gap-3">
+  {isDraftWorkOrder && canEditWorkOrder && (
+    <Link
+      href={`/work-orders/new/structured?draft=${encodeURIComponent(workOrder.id)}`}
+      className="rounded-lg bg-slate-950 px-4 py-2 font-medium text-white hover:bg-slate-800"
+    >
+      Edit Draft
+    </Link>
+  )}
   {canUndoSuspension && (
     <button
       type="button"
@@ -1243,22 +1368,60 @@ function downloadWOLedger(workOrderId: string) {
           <Info label="Approved At" value={formatIstTimestamp(workOrder.approved_at)} />
           <Info label="Updated By" value={workOrder.updated_by_name || workOrder.updated_by_email || workOrder.updated_by || "-"} />
           <Info label="Updated At" value={formatIstTimestamp(workOrder.updated_at_user || workOrder.updated_at)} />
-        </div>
+</div>
 <div className="mt-6 border-t pt-4">
   <h3 className="mb-3 font-semibold">
     Work Order Files
   </h3>
 
-  {workOrder.creation_request_id && (
+  {workOrder.creation_request_id ? (
+    reviewedPackageUrl ? (
+      <div className="space-y-2">
+        <p className="text-sm font-semibold text-slate-800">1 package</p>
+        <a href={reviewedPackageUrl} download={`${String(workOrder.wo_number || "work-order").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "work-order"}.reviewed-package.pdf`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm font-semibold text-sky-700 hover:underline">
+          <Download className="h-4 w-4" />
+          {`${String(workOrder.wo_number || "work-order").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "work-order"}.reviewed-package.pdf`}
+        </a>
+      </div>
+    ) : (
+      <button type="button" onClick={loadReviewedPackage} disabled={loadingReviewPdf} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60">
+        {loadingReviewPdf ? "Loading package..." : "Load documents"}
+      </button>
+    )
+  ) : !documentsLoaded ? (
     <button
       type="button"
-      onClick={openReviewPdf}
-      disabled={loadingReviewPdf}
-      className="mb-3 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+      onClick={loadDocuments}
+      disabled={loadingDocuments}
+      className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
     >
-      {loadingReviewPdf ? "Opening review PDF..." : "Review Complete Work Order PDF"}
+      {loadingDocuments ? "Loading documents..." : "Load documents"}
     </button>
+  ) : documents.length === 0 ? (
+    <p className="text-sm text-slate-500">No files attached.</p>
+  ) : (
+    <div className="space-y-2">
+      {documents.map((document) => (
+        <div key={document.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2">
+          <span className="text-sm font-medium text-slate-800">{document.file_name || "Attached file"}</span>
+          {document.signed_url ? (
+            <a
+              href={document.signed_url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-2 text-sm font-semibold text-sky-700 hover:underline"
+            >
+              <Download className="h-4 w-4" />
+              Open / download
+            </a>
+          ) : (
+            <span className="text-sm text-amber-700">File link unavailable</span>
+          )}
+        </div>
+      ))}
+    </div>
   )}
+  {documentError && <p className="mt-2 text-sm text-red-700">{documentError}</p>}
 
 </div>
         {workOrder.description && (
@@ -1351,13 +1514,22 @@ function downloadWOLedger(workOrderId: string) {
 
             {canUpdateStatus && (
               <div className="flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  onClick={() => { setCreationRequestId(crypto.randomUUID()); openChangeModal("rate_terms_revision"); }}
-                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
-                >
-                  Add Rate/Terms Revision
-                </button>
+                {workOrder.creation_request_id ? (
+                  <Link
+                    href={`/work-orders/${workOrderId}/revisions/new`}
+                    className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+                  >
+                    Create Pilot Revision
+                  </Link>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { setCreationRequestId(crypto.randomUUID()); openChangeModal("rate_terms_revision"); }}
+                    className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+                  >
+                    Add Rate/Terms Revision
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => { setCreationRequestId(crypto.randomUUID()); openChangeModal("additional_work"); }}
