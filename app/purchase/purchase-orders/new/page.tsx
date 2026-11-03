@@ -32,6 +32,15 @@ function normalizeKeyTerm(term: any) {
   return { description: String(term?.description ?? term?.label ?? ""), terms: String(term?.terms ?? term?.value ?? "") };
 }
 
+function buildEditedStructuredTermsSnapshot(template: any, text: string): string | null {
+  if (!template?.id || !text.trim()) return null;
+  const sections = (template.sections || []).filter((section: any) => section.status === undefined || section.status === "active").sort((a: any, b: any) => Number(a.sort_order || 0) - Number(b.sort_order || 0));
+  const source = text.trim();
+  const matches = sections.map((section: any) => ({ section, heading: String(section.heading || "").trim(), index: source.toLocaleLowerCase().indexOf(String(section.heading || "").trim().toLocaleLowerCase()) }));
+  if (!sections.length || matches.some((match: any) => !match.heading || match.index < 0) || matches.some((match: any, index: number) => index > 0 && match.index <= matches[index - 1].index)) return null;
+  return JSON.stringify({ template_id: template.id, template_name: template.template_name, clauses: matches.map((match: any, index: number) => ({ ...(match.section.id ? { id: match.section.id } : {}), heading: match.heading, clause_body: source.slice(match.index + match.heading.length, index + 1 < matches.length ? matches[index + 1].index : source.length).trim(), sort_order: Number.isFinite(Number(match.section.sort_order)) ? Number(match.section.sort_order) : index })) });
+}
+
 function normalizeSavedKeyTerms(savedTerms: any[]) {
   const saved = Array.isArray(savedTerms) ? savedTerms.map(normalizeKeyTerm) : [];
   const used = new Set<number>();
@@ -69,6 +78,7 @@ export default function NewPurchaseOrderPage() {
   const [commercial, setCommercial] = useState<{ payment_terms: string; delivery_terms: string; purpose?: string; recovery_work_order_id?: string | null; recovery_vendor_id?: string | null }>({ payment_terms: "", delivery_terms: "", purpose: "General Purchase", recovery_work_order_id: null, recovery_vendor_id: null });
   const [standardTerms, setStandardTerms] = useState("");
   const [termsTemplateId, setTermsTemplateId] = useState("");
+  const initialStructuredTermsRef = useRef("");
   const [billingContactId, setBillingContactId] = useState("");
   const [deliveryContactId, setDeliveryContactId] = useState("");
   const [deliveryLocationId, setDeliveryLocationId] = useState("");
@@ -136,7 +146,11 @@ export default function NewPurchaseOrderPage() {
       setAdditionalCharges(Array.isArray(po.commercial_snapshot?.additional_charges) ? po.commercial_snapshot.additional_charges.map((charge: any) => ({ name: String(charge.name || ""), amount: String(charge.amount ?? "") })) : []);
       setKeyTerms(normalizeSavedKeyTerms(po.commercial_snapshot?.key_terms || []));
       const parsedTerms = parsePurchaseOrderStandardTerms(po.standard_terms_snapshot);
-      setStandardTerms(parsedTerms?.kind === "structured" ? parsedTerms.clauses.map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n") : parsedTerms?.text || "");
+      if (parsedTerms?.kind === "structured") {
+        initialStructuredTermsRef.current = String(po.standard_terms_snapshot || "");
+        try { const savedTemplateId = JSON.parse(initialStructuredTermsRef.current).template_id; if (savedTemplateId) setTermsTemplateId(String(savedTemplateId)); } catch { /* legacy plain text */ }
+        setStandardTerms(parsedTerms.clauses.map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n"));
+      } else { initialStructuredTermsRef.current = ""; setStandardTerms(parsedTerms?.text || ""); }
       setItems((po.items || []).map((item: any) => ({ po_item_id: item.id, item_id: item.item_id, item_name: item.item_name_snapshot || "", item_code: item.item_code_snapshot, description: item.description_snapshot || item.specification_snapshot || "", specification: item.specification_snapshot, make: item.make_snapshot || "", quantity: String(item.quantity ?? ""), uom: item.uom_snapshot || "", unit_rate: String(item.unit_rate ?? ""), gst_rate: String(item.gst_rate ?? "0"), source_requisition_line_key: item.source_requisition_line_key, isMaterialMasterLinked: false })));
       originalPersistedItemIdsRef.current = (po.items || []).map((item: any) => String(item.id || item.po_item_id || "").trim().toLowerCase());
       setExistingDocuments(documentResult.documents || []);
@@ -350,11 +364,11 @@ export default function NewPurchaseOrderPage() {
   async function uploadAttachments(purchaseOrderId: string) {
     if (!attachments.length) return;
     const token = await getAccessToken();
-    for (const attachment of attachments) {
+    await Promise.all(attachments.map(async (attachment, index) => {
       const form = new FormData();
       form.set("file", attachment.file);
       form.set("document_type", attachment.documentType);
-      form.set("sort_order", String(attachments.indexOf(attachment)));
+      form.set("sort_order", String(index));
       const response = await fetch(`/api/procurement/purchase-orders/${purchaseOrderId}/documents`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
@@ -363,7 +377,7 @@ export default function NewPurchaseOrderPage() {
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(`${attachment.file.name}: ${result.error || "upload failed"}`);
       setAttachments((current) => current.filter((candidate) => candidate !== attachment));
-    }
+    }));
   }
 
   async function removeExistingDocument(document: any) {
@@ -425,7 +439,11 @@ export default function NewPurchaseOrderPage() {
     try {
       const deliveryPayload = { expected_date: delivery.expected_date, location: selectedDeliveryLocation.location_name, address: deliveryAddressFor(selectedDeliveryLocation), delivery_location_id: selectedDeliveryLocation.id, site_contact_id: selectedDeliveryContact.id };
       const identity = revisionNo && revisionIdentityRef.current ? revisionIdentityRef.current : null;
-      const body = { source_type: identity?.source || source, company_id: identity?.companyId || companyId, site_id: identity?.siteId || siteId, vendor_id: identity?.vendorId || vendorId, po_date: poDate, source_requisition_id: identity?.requisitionId || selectedIndent?.requisition_id || params.get("requisition_id") || null, expected_original_item_ids: editId ? [...originalPersistedItemIdsRef.current] : undefined, items: items.map((item) => ({ ...item, po_item_id: item.po_item_id || undefined, item_id: item.item_id || undefined, unit_rate: Number(item.unit_rate), quantity: Number(item.quantity), gst_rate: Number(item.gst_rate), make_snapshot: item.make })), master_selection: { gst_registration_id: selectedGstBilling.id, billing_contact_id: selectedBillingContact.id, delivery_location_id: selectedDeliveryLocation.id, delivery_contact_id: selectedDeliveryContact.id }, delivery: deliveryPayload, commercial: { ...commercial, additional_charges: explicitCharges.map((charge) => ({ name: charge.name.trim(), amount: Number(charge.amount) })) }, standard_terms: standardTerms, standard_terms_template_id: selectedTerms?.id || null, standard_terms_sections: selectedTerms?.sections?.filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order) || [], key_terms: keyTerms.map(normalizeKeyTerm) };
+      const activeTermsSections = selectedTerms?.sections?.filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order) || [];
+      const savedStructuredTerms = initialStructuredTermsRef.current ? parsePurchaseOrderStandardTerms(initialStructuredTermsRef.current) : null;
+      const savedStructuredText = savedStructuredTerms?.kind === "structured" ? savedStructuredTerms.clauses.map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n") : "";
+      const standardTermsSnapshot = buildEditedStructuredTermsSnapshot(selectedTerms, standardTerms) || (editId && initialStructuredTermsRef.current && selectedTerms?.id === termsTemplateId && standardTerms === savedStructuredText ? initialStructuredTermsRef.current : standardTerms);
+      const body = { source_type: identity?.source || source, company_id: identity?.companyId || companyId, site_id: identity?.siteId || siteId, vendor_id: identity?.vendorId || vendorId, po_date: poDate, source_requisition_id: identity?.requisitionId || selectedIndent?.requisition_id || params.get("requisition_id") || null, expected_original_item_ids: editId ? [...originalPersistedItemIdsRef.current] : undefined, items: items.map((item) => ({ ...item, po_item_id: item.po_item_id || undefined, item_id: item.item_id || undefined, unit_rate: Number(item.unit_rate), quantity: Number(item.quantity), gst_rate: Number(item.gst_rate), make_snapshot: item.make })), master_selection: { gst_registration_id: selectedGstBilling.id, billing_contact_id: selectedBillingContact.id, delivery_location_id: selectedDeliveryLocation.id, delivery_contact_id: selectedDeliveryContact.id }, delivery: deliveryPayload, commercial: { ...commercial, additional_charges: explicitCharges.map((charge) => ({ name: charge.name.trim(), amount: Number(charge.amount) })) }, standard_terms: standardTermsSnapshot, standard_terms_template_id: selectedTerms?.id || null, standard_terms_sections: activeTermsSections, key_terms: keyTerms.map(normalizeKeyTerm) };
       (body as any).creation_request_id = creationRequestId;
       if (editId) {
         await apiFetch(`/api/procurement/purchase-orders/${editId}`, { method: "PUT", body: JSON.stringify(body) });

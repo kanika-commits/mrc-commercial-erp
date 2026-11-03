@@ -150,7 +150,7 @@ export default function PurchaseOrderDetailPage() {
 
   async function save() {
     setSaving(true);
-    try { const commercial = { ...(form.commercial as any) }; delete commercial.freight_amount; if (Array.isArray(commercial.additional_charges)) commercial.additional_charges = commercial.additional_charges.filter((charge: any) => Number(charge.amount) > 0).map((charge: any) => ({ name: String(charge.name || "").trim(), amount: Number(charge.amount) })); await apiFetch(`/api/procurement/purchase-orders/${id}`, { method: "PUT", body: JSON.stringify({ ...form, commercial }) }); await load(); setEditMode(false); setMessage("Purchase Order draft saved."); }
+    try { const commercial = { ...(form.commercial as any) }; delete commercial.freight_amount; if (Array.isArray(commercial.additional_charges)) commercial.additional_charges = commercial.additional_charges.filter((charge: any) => Number(charge.amount) > 0).map((charge: any) => ({ name: String(charge.name || "").trim(), amount: Number(charge.amount) })); await apiFetch(`/api/procurement/purchase-orders/${id}`, { method: "PUT", body: JSON.stringify({ ...form, commercial }) }); await load(); setPackageRefresh((current) => current + 1); setEditMode(false); setMessage("Purchase Order draft saved."); }
     catch (error: any) { setMessage(error.message); }
     finally { setSaving(false); }
   }
