@@ -683,6 +683,49 @@ export async function PATCH(
 
     const action = String(payload.action || "").trim().toLowerCase();
 
+    if (action === "send_back") {
+      const permission = await requirePermission(request, "wo_approval", "approve");
+      if ("response" in permission) return permission.response;
+      const comment = String(payload.comment || payload.reason || "").trim();
+      if (!comment) {
+        return NextResponse.json({ error: "A send-back comment is required." }, { status: 400 });
+      }
+      const admin = adminClient();
+      const scopedWorkOrder = await loadScopedWorkOrder(admin, permission.user.id, id);
+      if ("error" in scopedWorkOrder) {
+        return NextResponse.json({ error: scopedWorkOrder.error }, { status: scopedWorkOrder.status });
+      }
+      const approvalStatus = String(scopedWorkOrder.workOrder.approval_status || "").trim().toLowerCase();
+      if (approvalStatus === "draft" || approvalStatus !== "pending") {
+        return NextResponse.json({ error: "Only submitted pending Work Orders can be sent back." }, { status: 409 });
+      }
+      try {
+        await recordAuditEvent(admin, permission.user, {
+          organizationId: scopedWorkOrder.workOrder.organization_id,
+          companyId: scopedWorkOrder.workOrder.company_id,
+          siteId: scopedWorkOrder.workOrder.site_id,
+          moduleCode: MODULE_CODE,
+          entityType: "work_order",
+          recordId: scopedWorkOrder.workOrder.id,
+          recordNumber: scopedWorkOrder.workOrder.wo_number,
+          // Production's audit constraint permits reject/update; retain the
+          // Send Back semantics in the label and description.
+          action: "reject",
+          actionCategory: "workflow",
+          activityLabel: "Sent Back Work Order",
+          description: comment,
+          workflowStage: "Before Approval",
+          reason: comment,
+          oldValues: { status: scopedWorkOrder.workOrder.status, approval_status: scopedWorkOrder.workOrder.approval_status },
+          newValues: { status: scopedWorkOrder.workOrder.status, approval_status: scopedWorkOrder.workOrder.approval_status, send_back_comment: comment },
+        }, request);
+      } catch (auditError) {
+        console.error("[Commercial Audit] Work Order send-back audit failed", auditError);
+        return NextResponse.json({ error: "Could not save the send-back comment." }, { status: 500 });
+      }
+      return NextResponse.json({ work_order_id: id, sent_back: true, comment });
+    }
+
     if (["undo_suspension", "undo_suspend", "reactivate", "reactivated"].includes(action)) {
       const platformOwner = await requirePlatformOwner(request);
 

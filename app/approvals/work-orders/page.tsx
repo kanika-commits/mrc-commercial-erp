@@ -80,6 +80,7 @@ function badgeClass(value?: string | null) {
 export default function WorkOrderApprovalPage() {
   const { access } = useAccessContext();
   const [workOrders, setWorkOrders] = useState<any[]>([]);
+  const [latestSendBackComments, setLatestSendBackComments] = useState<Record<string, any>>({});
   const [documentsByWorkOrder, setDocumentsByWorkOrder] = useState<Record<string, any[]>>({});
   const [loadingDocumentsByWorkOrder, setLoadingDocumentsByWorkOrder] = useState<Record<string, boolean>>({});
   const [documentErrorsByWorkOrder, setDocumentErrorsByWorkOrder] = useState<Record<string, string>>({});
@@ -157,6 +158,7 @@ export default function WorkOrderApprovalPage() {
 
       const woData = approvalResult.workOrders || [];
       setWorkOrderDeletionEnabled(approvalResult.workOrderDeletionEnabled === true);
+      setLatestSendBackComments(approvalResult.latestSendBackComments || {});
       setEditRows(
         Object.fromEntries(
           (woData || []).map((wo: any) => [
@@ -427,6 +429,26 @@ export default function WorkOrderApprovalPage() {
   }
   }
 
+  async function sendBackWorkOrder(wo: any) {
+    const comment = window.prompt("Send-back comment (required)")?.trim() || "";
+    if (!comment) {
+      setMessage("A send-back comment is required.");
+      return;
+    }
+    try {
+      setSavingId(wo.id);
+      setMessage("");
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Your session expired. Please log in again.");
+      const response = await fetch(`/api/work-orders/${wo.id}`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` }, body: JSON.stringify({ action: "send_back", comment }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Failed to send Work Order back.");
+      setLatestSendBackComments((current) => ({ ...current, [wo.id]: { comment, created_by_name: "You" } }));
+      setMessage("Work Order sent back with comment.");
+      await loadWorkOrders();
+    } catch (error: any) { setMessage(error.message || "Failed to send Work Order back."); } finally { setSavingId(""); }
+  }
+
   async function deleteWorkOrder(wo: any) {
     const confirmed = window.confirm(
       `Permanently delete Work Order ${wo.wo_number || "-"}? This cannot be undone. Database records and links will be deleted; Drive and Supabase Storage files will be preserved.`,
@@ -653,6 +675,7 @@ export default function WorkOrderApprovalPage() {
                         <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold uppercase tracking-wide ${badgeClass(wo.approval_status)}`}>
                           {wo.approval_status || "Pending"}
                         </span>
+                        {latestSendBackComments[wo.id]?.comment && <div className="mt-1 max-w-64 text-left text-xs leading-4 text-rose-700" aria-label={`Send-back comment: ${latestSendBackComments[wo.id].comment}`}>↳ {latestSendBackComments[wo.id].comment}</div>}
                         {formatDate(wo.approved_at) && (
                           <div className="mt-1 text-xs font-medium text-slate-500">
                             {formatDate(wo.approved_at)}
@@ -687,6 +710,10 @@ export default function WorkOrderApprovalPage() {
                               >
                                 Edit
                               </button>
+                          )}
+
+                          {canApproveWorkOrderApprovals && String(wo.approval_status || "").trim().toLowerCase() === "pending" && (
+                            <button type="button" disabled={isSaving} onClick={() => void sendBackWorkOrder(wo)} className="rounded border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-50 disabled:opacity-60">Send Back</button>
                           )}
 
                           {canApproveWorkOrderApprovals && (

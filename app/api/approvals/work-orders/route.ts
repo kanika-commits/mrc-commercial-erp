@@ -57,7 +57,9 @@ export async function GET(request: Request) {
             creation_request_id
           `,
         )
-        .or("approval_status.is.null,approval_status.ilike.pending,approval_status.ilike.draft")
+        // Drafts remain editable and enter this queue only after submission.
+        // Keep legacy null statuses and case-insensitive submitted/pending rows.
+        .or("approval_status.is.null,approval_status.ilike.pending")
         .order("created_at", { ascending: false }),
       organizationScope,
     );
@@ -73,6 +75,29 @@ export async function GET(request: Request) {
     query = applyCompanySiteScope(query, assignments);
 
     const workOrders = await safeQuery(query);
+    const workOrderIds = workOrders.map((wo: any) => wo.id).filter(Boolean);
+    const auditRows = workOrderIds.length
+      ? await safeQuery(
+          admin
+            .from("erp_audit_logs")
+            .select("record_id,description,created_at,created_by_name,created_by_email,action")
+            .eq("entity_type", "work_order")
+            .eq("action", "reject")
+            .in("record_id", workOrderIds)
+            .order("created_at", { ascending: false }),
+        )
+      : [];
+    const latestSendBackComments: Record<string, any> = {};
+    for (const row of auditRows) {
+      if (row.record_id && !latestSendBackComments[row.record_id]) {
+        latestSendBackComments[row.record_id] = {
+          comment: row.description,
+          created_at: row.created_at,
+          created_by_name: row.created_by_name,
+          created_by_email: row.created_by_email,
+        };
+      }
+    }
     const companyIds = Array.from(
       new Set(workOrders.map((wo: any) => wo.company_id).filter(Boolean)),
     );
@@ -97,6 +122,7 @@ export async function GET(request: Request) {
       workOrders,
       companies,
       sites,
+      latestSendBackComments,
       workOrderDeletionEnabled:
         process.env.VERCEL_ENV === "production" &&
         auth.roleCodes.includes("platform_owner"),

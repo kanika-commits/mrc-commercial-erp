@@ -2,18 +2,29 @@
 
 // Structured Work Order form route.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch } from "@/components/hr/hrClient";
 import { supabase } from "@/lib/supabase";
-import { clearWorkOrderPilotDraft, getWorkOrderPilotDraft, setWorkOrderPilotDraft } from "@/lib/workOrderPilotDraft.client";
+import { getWorkOrderPilotDraft, setWorkOrderPilotDraft } from "@/lib/workOrderPilotDraft.client";
+import { matchSavedTermsTemplateId, mergeWorkOrderDraftLookupOptions, readSavedTermsClauses, readWorkOrderDraftSelections } from "@/lib/workOrderDraftSelections";
 
 type Line = { item_master_id: string; description: string; unit: string; additional_description: string; quantity: string; unit_rate: string; gst_percent: string };
 type KeyTerms = { inclusions: string[]; exclusions: string[]; additional: Array<{ label: string; value: string }> };
 
 const emptyLine = (): Line => ({ item_master_id: "", description: "", unit: "", additional_description: "", quantity: "", unit_rate: "", gst_percent: "0" });
 const money = (n: unknown) => `₹ ${Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const REQUEST_TIMEOUT_MS = 12000;
+
+function requestWithTimeout(path: string, label: string, init: RequestInit = {}) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  return apiFetch(path, { ...init, signal: controller.signal }).catch((error: any) => {
+    if (error?.name === "AbortError") throw new Error(`${label} timed out. Please try again.`);
+    throw error;
+  }).finally(() => window.clearTimeout(timer));
+}
 
 export default function NewWorkOrderPage() {
   const router = useRouter();
@@ -22,10 +33,6 @@ export default function NewWorkOrderPage() {
   const revisionId = searchParams.get("revision");
   const revisionWorkOrderId = searchParams.get("work_order");
   const returningFromPreview = searchParams.get("from") === "preview";
-  const explicitlyResuming = Boolean(draftId || revisionId || returningFromPreview);
-  useEffect(() => {
-    if (!explicitlyResuming) clearWorkOrderPilotDraft();
-  }, [explicitlyResuming]);
   const preservedPreviewDraft = returningFromPreview ? getWorkOrderPilotDraft() : null;
   const [lookups, setLookups] = useState<any>({ companies: [], sites: [], vendors: [], items: [], letterheads: [], terms_templates: [], gst_billing_masters: [], billing_addresses: [], delivery_locations: [], site_contacts: [] });
   const [form, setForm] = useState<any>(() => preservedPreviewDraft?.form || ({ company_id: "", site_id: "", vendor_id: "", vendor_role: "Main Contractor", wo_number: "", wo_date: new Date().toISOString().slice(0, 10), wo_type: "Consultant", description: "", letterhead_id: "", terms_template_id: "", standard_terms_snapshot: "", gst_registration_id: "", billing_address_id: "", delivery_location_id: "", billing_contact_id: "", delivery_contact_id: "" }));
@@ -37,7 +44,20 @@ export default function NewWorkOrderPage() {
   const [saving, setSaving] = useState(false);
   const [numberEdited, setNumberEdited] = useState(false);
   const [lookupRetry, setLookupRetry] = useState(0);
+  const [messageKind, setMessageKind] = useState<"lookup" | "preview" | "other">("other");
   const [lookupLoading, setLookupLoading] = useState(true);
+  const [lookupError, setLookupError] = useState("");
+  const [draftLoading, setDraftLoading] = useState(Boolean(draftId));
+  const [draftError, setDraftError] = useState("");
+  const [draftSelectionError, setDraftSelectionError] = useState("");
+  const [savedTermsMatchWarning, setSavedTermsMatchWarning] = useState("");
+  const [termsEditorText, setTermsEditorText] = useState("");
+  const [draftSelectionIds, setDraftSelectionIds] = useState<{ companyId: string; siteId: string; vendorId: string; itemIds: string[] }>({ companyId: "", siteId: "", vendorId: "", itemIds: [] });
+  const draftLookupRef = useRef<any | null>(null);
+  const lookupRequestRef = useRef<Promise<any> | null>(null);
+  const lookupDataRef = useRef<any | null>(null);
+  const errorSummaryRef = useRef<HTMLDivElement | null>(null);
+  const termsHydrationRef = useRef(false);
   const [supportingDocuments, setSupportingDocuments] = useState<File[]>(() => preservedPreviewDraft?.supportingDocuments || []);
   const [revision, setRevision] = useState<any>(null);
   const [applicableDate, setApplicableDate] = useState("");
@@ -50,7 +70,7 @@ export default function NewWorkOrderPage() {
     if (!revisionId || !revisionWorkOrderId) return;
     let cancelled = false;
     setRevisionHydration("loading");
-    apiFetch(`/api/work-orders/${revisionWorkOrderId}/revisions/${revisionId}`).then((result: any) => {
+    requestWithTimeout(`/api/work-orders/${revisionWorkOrderId}/revisions/${revisionId}`, "Revision loading").then((result: any) => {
       if (cancelled) return;
       const snapshot = result.revision?.snapshot || {};
       const fields = snapshot.fields || {};
@@ -67,49 +87,93 @@ export default function NewWorkOrderPage() {
   }, [revisionId, revisionWorkOrderId]);
 
   useEffect(() => {
-    setLookupLoading(true);
-    apiFetch("/api/work-orders/create-lookups").then((result: any) => {
-      setLookups({ companies: [], sites: [], vendors: [], items: [], letterheads: [], terms_templates: [], gst_billing_masters: [], billing_addresses: [], delivery_locations: [], site_contacts: [], ...result });
+    let cancelled = false;
+    if (lookupRetry > 0) {
+      lookupDataRef.current = null;
+      lookupRequestRef.current = null;
+    }
+    const cached = lookupDataRef.current;
+    setLookupLoading(!cached);
+    const request = cached
+      ? Promise.resolve(cached)
+      : (lookupRequestRef.current || (lookupRequestRef.current = requestWithTimeout("/api/work-orders/create-lookups", "Work Order lookup loading")));
+    request.then((result: any) => {
+      if (cancelled) return;
+      lookupDataRef.current = result;
+      setLookupError("");
+      const nextLookups = { companies: [], sites: [], vendors: [], items: [], letterheads: [], terms_templates: [], gst_billing_masters: [], billing_addresses: [], delivery_locations: [], site_contacts: [], ...result };
+      setLookups(draftLookupRef.current ? mergeWorkOrderDraftLookupOptions(nextLookups, draftLookupRef.current) : nextLookups);
+      if (!Object.values(result.form_modes || {}).some((mode: any) => mode === "pilot" || mode === "both")) setMessage("The Work Order Form form is not enabled for your organization.");
       const failures = (result.lookup_errors || []).map((entry: any) => entry.message).join(" ");
-      setMessage(failures);
-    }).catch((e: any) => setMessage(e.message)).finally(() => setLookupLoading(false));
+      setLookupError(failures);
+      setMessage(failures); setMessageKind(failures ? "lookup" : "other");
+    }).catch((e: any) => { if (!cancelled) { setLookupError(e.message || "Work Order lookup loading failed."); setMessage(e.message || "Work Order lookup loading failed."); setMessageKind("lookup"); } }).finally(() => {
+      if (!lookupDataRef.current && lookupRequestRef.current === request) lookupRequestRef.current = null;
+      if (!cancelled) setLookupLoading(false);
+    });
+    return () => { cancelled = true; };
   }, [lookupRetry]);
 
   useEffect(() => {
     if (!draftId) return;
-    apiFetch(`/api/work-orders/drafts/${draftId}`).then((draft: any) => {
-      const selection = draft.delivery_snapshot?.master_selection || {};
-      setForm({ company_id: draft.company_id || "", site_id: draft.site_id || "", vendor_id: draft.vendor_id || "", vendor_role: draft.vendor_role || "Main Contractor", wo_number: draft.wo_number || "", wo_date: draft.wo_date || "", wo_type: draft.wo_type || "", description: draft.description || "", letterhead_id: draft.letterhead_id || "", terms_template_id: draft.terms_template_id || "", standard_terms_snapshot: draft.standard_terms_snapshot || "", gst_registration_id: selection.gst_registration_id || "", billing_address_id: selection.billing_address_id || "", delivery_location_id: selection.delivery_location_id || "", billing_contact_id: selection.billing_contact_id || "", delivery_contact_id: selection.delivery_contact_id || "" });
+    setDraftLoading(true);
+    setDraftError("");
+    requestWithTimeout(`/api/work-orders/drafts/${encodeURIComponent(draftId)}`, "Saved Work Order draft loading").then((draft: any) => {
+      draftLookupRef.current = draft;
+      const selection = readWorkOrderDraftSelections(draft);
+      setDraftSelectionIds({ companyId: draft.company_id || "", siteId: draft.site_id || "", vendorId: draft.vendor_id || "", itemIds: (draft.items || []).map((item: any) => item.item_master_id).filter(Boolean) });
+      setSavedTermsMatchWarning("");
+      const savedTermsSnapshot = draft.standard_terms_snapshot || "";
+      termsHydrationRef.current = true;
+      setForm({ company_id: draft.company_id || "", site_id: draft.site_id || "", vendor_id: draft.vendor_id || "", vendor_role: draft.vendor_role || "Main Contractor", wo_number: draft.wo_number || "", wo_date: draft.wo_date || "", wo_type: draft.wo_type || "", description: draft.description || "", letterhead_id: selection.letterhead_id, terms_template_id: selection.terms_template_id, standard_terms_snapshot: savedTermsSnapshot, gst_registration_id: selection.gst_registration_id, billing_address_id: selection.billing_address_id, delivery_location_id: selection.delivery_location_id, billing_contact_id: selection.billing_contact_id, delivery_contact_id: selection.delivery_contact_id });
+      setTermsEditorText(readSavedTermsClauses(savedTermsSnapshot).map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n"));
+      setLookups((current: any) => mergeWorkOrderDraftLookupOptions(current, draft));
       const savedTerms = draft.work_order_key_terms || {};
       setKeyTerms({ inclusions: Array.isArray(savedTerms.inclusions) && savedTerms.inclusions.length ? savedTerms.inclusions : [""], exclusions: Array.isArray(savedTerms.exclusions) && savedTerms.exclusions.length ? savedTerms.exclusions : [""], additional: Array.isArray(savedTerms.additional) ? savedTerms.additional : [] });
       setLines((draft.items || []).map((item: any) => ({ item_master_id: item.item_master_id || "", description: item.description_snapshot || item.item_header_snapshot || "", unit: item.unit_snapshot || item.uom_snapshot || "", additional_description: item.additional_description_snapshot || "", quantity: String(item.quantity ?? ""), unit_rate: String(item.unit_rate ?? ""), gst_percent: String(item.gst_percent ?? "0") })));
       setNumberEdited(true);
-    }).catch((e: any) => setMessage(e.message));
+    }).catch((e: any) => { setDraftError(e?.message || "The saved Work Order draft could not be loaded."); setMessageKind("lookup"); }).finally(() => setDraftLoading(false));
   }, [draftId]);
 
   useEffect(() => {
-    if (revisionId || !form.vendor_id || !form.wo_type) {
-      setAvailability({ state: "idle", message: "" });
-      return;
+    if (!draftId || draftLoading || lookupLoading || draftError || lookupError || !draftSelectionIds.companyId) return;
+    const missing: string[] = [];
+    if (!lookups.companies.some((row: any) => row.id === draftSelectionIds.companyId)) missing.push("Company");
+    if (!lookups.sites.some((row: any) => row.id === draftSelectionIds.siteId)) missing.push("Site");
+    if (!lookups.vendors.some((row: any) => row.id === draftSelectionIds.vendorId)) missing.push("Vendor");
+    if (draftSelectionIds.itemIds.some((id) => !lookups.items.some((row: any) => row.id === id))) missing.push("one or more Item Master rows");
+    setDraftSelectionError(missing.length ? `Saved draft selections are not available in your active authorized lookup scope: ${missing.join(", ")}. Nothing was cleared. Return to Work Order Forms or ask an authorized administrator to review the draft scope.` : "");
+  }, [draftId, draftLoading, lookupLoading, draftError, lookupError, draftSelectionIds, lookups.companies, lookups.sites, lookups.vendors, lookups.items]);
+
+  useEffect(() => {
+    if (!draftId || !termsHydrationRef.current || draftLoading || lookupLoading || draftError || lookupError || !form.standard_terms_snapshot) return;
+    termsHydrationRef.current = false;
+    const authorizedTerms = lookups.terms_templates.filter((row: any) => row.company_id === form.company_id && row.status === "active");
+    const savedMasterSnapshot = draftLookupRef.current?.terms_template_snapshot || draftLookupRef.current?.delivery_snapshot?.terms_template_snapshot;
+    const matchedId = matchSavedTermsTemplateId(savedMasterSnapshot || form.standard_terms_snapshot, authorizedTerms)
+      || matchSavedTermsTemplateId(form.standard_terms_snapshot, authorizedTerms);
+    if (matchedId) {
+      setForm((current: any) => current.terms_template_id === matchedId ? current : { ...current, terms_template_id: matchedId });
+      setSavedTermsMatchWarning("");
+    } else {
+      if (form.terms_template_id) setForm((current: any) => current.terms_template_id === form.terms_template_id ? { ...current, terms_template_id: "" } : current);
+      setSavedTermsMatchWarning("The saved Terms & Conditions text has no exact matching authorized master; the saved text remains unchanged and no default was selected.");
     }
-    let cancelled = false;
-    setAvailability({ state: "loading", message: "Checking Work Order availability…" });
-    apiFetch(`/api/work-orders/pilot/availability?vendor_id=${encodeURIComponent(form.vendor_id)}&company_id=${encodeURIComponent(form.company_id)}&site_id=${encodeURIComponent(form.site_id)}&wo_type=${encodeURIComponent(form.wo_type)}`)
-      .then((result: any) => {
-        if (cancelled) return;
-        if (result?.available === false) setAvailability({ state: "blocked", message: result.message || "This vendor already has an active Work Order of this type. Create a revision instead." });
-        else setAvailability({ state: "available", message: "" });
-      })
-      .catch((error: any) => { if (!cancelled) setAvailability({ state: "error", message: error?.message || "Availability could not be verified." }); });
-    return () => { cancelled = true; };
-  }, [form.vendor_id, form.company_id, form.site_id, form.wo_type, revisionId]);
+  }, [draftId, draftLoading, lookupLoading, draftError, lookupError, form.terms_template_id, form.standard_terms_snapshot, form.company_id, lookups.terms_templates]);
+
+  const blockingError = draftError || draftSelectionError || lookupError;
+  const topError = blockingError || (messageKind !== "other" ? message : "");
+  useEffect(() => {
+    if (!topError) return;
+    window.requestAnimationFrame(() => errorSummaryRef.current?.focus());
+  }, [topError]);
 
   useEffect(() => {
     if (!form.company_id || !form.site_id || numberEdited) return;
     let cancelled = false;
     setNumberLoading(true);
     setNumberError("");
-    apiFetch(`/api/work-orders/suggest-number?company_id=${encodeURIComponent(form.company_id)}&site_id=${encodeURIComponent(form.site_id)}`)
+    requestWithTimeout(`/api/work-orders/suggest-number?company_id=${encodeURIComponent(form.company_id)}&site_id=${encodeURIComponent(form.site_id)}`, "Work Order number loading")
       .then((result: any) => {
         if (cancelled) return;
         if (!result.wo_number) throw new Error("The Work Order Number could not be generated.");
@@ -125,10 +189,35 @@ export default function NewWorkOrderPage() {
     return () => { cancelled = true; };
   }, [form.company_id, form.site_id, numberEdited]);
 
+  useEffect(() => {
+    if (revisionId || !form.vendor_id || !form.company_id || !form.site_id || !form.wo_type) {
+      setAvailability({ state: "idle", message: "" });
+      return;
+    }
+    let cancelled = false;
+    setAvailability({ state: "loading", message: "Checking Work Order availability…" });
+    requestWithTimeout(`/api/work-orders/pilot/availability?vendor_id=${encodeURIComponent(form.vendor_id)}&company_id=${encodeURIComponent(form.company_id)}&site_id=${encodeURIComponent(form.site_id)}&wo_type=${encodeURIComponent(form.wo_type)}`, "Work Order availability check")
+      .then((result: any) => {
+        if (cancelled) return;
+        if (result?.available === false) setAvailability({ state: "blocked", message: result.message || "This vendor already has an active Work Order of this type. Create a revision instead." });
+        else setAvailability({ state: "available", message: "" });
+      })
+      .catch((error: any) => {
+        if (!cancelled) setAvailability({ state: "error", message: error.message || "Availability could not be verified. Try again before continuing." });
+      });
+    return () => { cancelled = true; };
+  }, [form.vendor_id, form.company_id, form.site_id, form.wo_type, revisionId]);
+
   const sites = lookups.sites;
-  const terms = useMemo(() => lookups.terms_templates.filter((t: any) => t.company_id === form.company_id && t.status === "active"), [lookups.terms_templates, form.company_id]);
+  const terms = useMemo(() => {
+    return lookups.terms_templates.filter((t: any) => t.company_id === form.company_id && t.status === "active");
+  }, [lookups.terms_templates, form.company_id]);
+  const savedTermsClauses = useMemo(() => readSavedTermsClauses(form.standard_terms_snapshot), [form.standard_terms_snapshot]);
+  const selectedTerms = terms.find((row: any) => row.id === form.terms_template_id);
   const letterhead = lookups.letterheads.find((l: any) => l.company_id === form.company_id && l.is_default);
-  const selectedLetterhead = lookups.letterheads.find((l: any) => l.id === form.letterhead_id) || letterhead;
+  // A saved draft owns its selection.  Do not silently replace an unavailable
+  // saved letterhead with the current company default while lookups hydrate.
+  const selectedLetterhead = lookups.letterheads.find((l: any) => l.id === form.letterhead_id) || (!draftId ? letterhead : null);
   const gstMasters = useMemo(() => lookups.gst_billing_masters.filter((row: any) => row.company_id === form.company_id), [lookups.gst_billing_masters, form.company_id]);
   const billingAmbiguity = gstMasters.find((row: any) => row.id === form.gst_registration_id && !row.billing_address && (row.billing_addresses || []).length > 1);
   const billingAddresses = useMemo(() => lookups.billing_addresses.filter((row: any) => row.company_id === form.company_id && (!form.gst_registration_id || row.gst_registration_id === form.gst_registration_id)), [lookups.billing_addresses, form.company_id, form.gst_registration_id]);
@@ -142,7 +231,7 @@ export default function NewWorkOrderPage() {
   const defaultSiteContact = siteContacts.find((row: any) => row.is_default) || siteContacts[0] || null;
   const totals = useMemo(() => lines.reduce((r, l) => {
     const basic = form.wo_type === "Daily Wage" ? Number(l.unit_rate || 0) : Number(l.quantity || 0) * Number(l.unit_rate || 0);
-    const gst = form.wo_type === "Daily Wage" ? 0 : basic * Number(l.gst_percent || 0) / 100;
+    const gst = basic * Number(l.gst_percent || 0) / 100;
     return { basic: r.basic + basic, gst: r.gst + gst, total: r.total + basic + gst };
   }, { basic: 0, gst: 0, total: 0 }), [lines]);
 
@@ -152,11 +241,12 @@ export default function NewWorkOrderPage() {
   const selectTerms = (id: string) => {
     const template = lookups.terms_templates.find((row: any) => row.id === id);
     const snapshot = (template?.sections || []).filter((s: any) => s.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order).map((s: any) => `${s.heading}\n${s.clause_body}`).join("\n\n");
+    setTermsEditorText(snapshot);
     setForm((current: any) => ({ ...current, terms_template_id: id, standard_terms_snapshot: snapshot }));
   };
 
   useEffect(() => {
-    if (!form.site_id) return;
+    if (!form.site_id || draftId) return;
     if (revisionId && revisionHydration !== "ready") return;
     setForm((current: any) => {
       const billingValid = siteContacts.some((row: any) => row.id === current.billing_contact_id);
@@ -166,12 +256,12 @@ export default function NewWorkOrderPage() {
       if (nextBillingId === current.billing_contact_id && nextDeliveryId === current.delivery_contact_id) return current;
       return { ...current, billing_contact_id: nextBillingId, delivery_contact_id: nextDeliveryId };
     });
-  }, [form.site_id, siteContacts, defaultSiteContact?.id, revisionId, revisionHydration]);
+  }, [form.site_id, siteContacts, defaultSiteContact?.id, revisionId, revisionHydration, draftId, draftLoading, lookupLoading]);
 
   useEffect(() => {
-    if (revisionId && revisionHydration !== "ready") return;
+    if ((revisionId && revisionHydration !== "ready") || draftId) return;
     if (form.billing_address_id && !selectedBillingAddress) setForm((current: any) => ({ ...current, billing_address_id: "", delivery_location_id: "", billing_contact_id: "", delivery_contact_id: "" }));
-  }, [form.billing_address_id, selectedBillingAddress?.id, revisionId, revisionHydration]);
+  }, [form.billing_address_id, selectedBillingAddress?.id, revisionId, revisionHydration, draftId, draftLoading, lookupLoading]);
 
   async function saveRevisionSnapshot() {
     if (!revisionId || !revisionWorkOrderId || !applicableDate) {
@@ -183,15 +273,15 @@ export default function NewWorkOrderPage() {
       const basicAmount = Number(line.quantity || 0) * Number(line.unit_rate || 0);
       const gstAmount = basicAmount * Number(line.gst_percent || 0) / 100;
       return {
-        item_master_id: form.wo_type === "Daily Wage" ? null : line.item_master_id,
-        item_header_snapshot: form.wo_type === "Daily Wage" ? line.description : item.item_header || "",
-        description_snapshot: form.wo_type === "Daily Wage" ? line.description : item.description || "",
+        item_master_id: line.item_master_id,
+        item_header_snapshot: item.item_header || "",
+        description_snapshot: item.description || "",
         additional_description_snapshot: line.additional_description || "",
-        unit_snapshot: form.wo_type === "Daily Wage" ? line.unit : item.unit || "",
-        mode_of_measurement_snapshot: form.wo_type === "Daily Wage" ? null : item.mode_of_measurement || "",
-        quantity: form.wo_type === "Daily Wage" ? 1 : Number(line.quantity || 0),
+        unit_snapshot: item.unit || "",
+        mode_of_measurement_snapshot: item.mode_of_measurement || "",
+        quantity: Number(line.quantity || 0),
         unit_rate: Number(line.unit_rate || 0),
-        gst_percent: form.wo_type === "Daily Wage" ? 0 : Number(line.gst_percent || 0),
+        gst_percent: Number(line.gst_percent || 0),
         basic_amount: basicAmount,
         gst_amount: gstAmount,
         line_total: basicAmount + gstAmount,
@@ -210,7 +300,7 @@ export default function NewWorkOrderPage() {
       items: selectedItems,
     };
     setRevisionSaveState("saving");
-    const saved = await apiFetch(`/api/work-orders/${revisionWorkOrderId}/revisions/${revisionId}`, { method: "PATCH", body: JSON.stringify({ applicable_date: applicableDate, snapshot }) });
+    const saved = await requestWithTimeout(`/api/work-orders/${revisionWorkOrderId}/revisions/${revisionId}`, "Work Order revision save", { method: "PATCH", body: JSON.stringify({ applicable_date: applicableDate, snapshot }) });
     setRevision(saved.revision || revision);
     setRevisionSaveState("saved");
     return saved.revision || revision;
@@ -225,6 +315,7 @@ export default function NewWorkOrderPage() {
   }, [form, keyTerms, lines, applicableDate, revisionHydration]);
 
   useEffect(() => {
+    if (draftId) return;
     const master = gstMasters.find((row: any) => row.id === form.gst_registration_id);
     const linkedAddressId = master?.billing_address?.id;
     if (linkedAddressId && linkedAddressId !== form.billing_address_id) setForm((current: any) => ({ ...current, billing_address_id: linkedAddressId, delivery_location_id: "" }));
@@ -235,12 +326,16 @@ export default function NewWorkOrderPage() {
   }, [billingAmbiguity?.id]);
 
   useEffect(() => {
-    if (!defaultDeliveryLocation || defaultDeliveryLocation.id === form.delivery_location_id) return;
+    if (draftId || !defaultDeliveryLocation || defaultDeliveryLocation.id === form.delivery_location_id) return;
     setForm((current: any) => ({ ...current, delivery_location_id: defaultDeliveryLocation.id }));
-  }, [defaultDeliveryLocation?.id, form.delivery_location_id]);
+  }, [defaultDeliveryLocation?.id, form.delivery_location_id, draftId]);
 
   async function preview(event: React.FormEvent) {
     event.preventDefault();
+    if (!revisionId && availability.state !== "available") {
+      setMessage(availability.state === "loading" ? "Checking Work Order availability…" : availability.message || "Availability could not be verified. Try again before continuing.");
+      return;
+    }
     if (revisionId && revisionHydration !== "ready") { setRevisionMessage(revisionHydration === "error" ? "Unable to load the revision draft. Return to the Work Order and try again." : "Loading revision data…"); return; }
     setMessage("");
     const missing = [!form.company_id && "Company", !form.site_id && "Site", !form.vendor_id && "Vendor", !form.wo_number.trim() && "Work Order Number", !form.gst_registration_id && "GST/Billing Master", !form.billing_address_id && "Billing Address", !form.delivery_location_id && "Delivery Location", !form.billing_contact_id && "Billing Contact", !form.delivery_contact_id && "Delivery Contact", !form.letterhead_id && "Letterhead", !form.terms_template_id && "Terms & Conditions"].filter(Boolean);
@@ -255,7 +350,7 @@ export default function NewWorkOrderPage() {
       setMessage("Mandatory Inclusions and Exclusions are required.");
       return;
     }
-    if (form.wo_type !== "Daily Wage" && (keyTerms.inclusions.slice(1).some((entry) => !entry.trim()) || keyTerms.exclusions.slice(1).some((entry) => !entry.trim()) || keyTerms.additional.some((entry) => !entry.label.trim() || !entry.value.trim()))) {
+    if (keyTerms.inclusions.slice(1).some((entry) => !entry.trim()) || keyTerms.exclusions.slice(1).some((entry) => !entry.trim()) || keyTerms.additional.some((entry) => !entry.label.trim() || !entry.value.trim())) {
       setMessage("Complete every additional Key Term before saving.");
       return;
     }
@@ -302,17 +397,24 @@ export default function NewWorkOrderPage() {
       const previewForm = new FormData();
       previewForm.append("payload", JSON.stringify(payload));
       supportingDocuments.forEach((file) => previewForm.append("supporting_documents", file, file.name));
-      const result = await apiFetch("/api/work-orders/preview", {
+      const result = await requestWithTimeout("/api/work-orders/preview", "Work Order PDF preview", {
         method: "POST",
         body: previewForm,
       });
-      const pdfBase64 = typeof result.pdf_base64 === "string" ? result.pdf_base64.trim() : "";
-      if (!pdfBase64) throw new Error("The preview response did not contain a PDF. Your form values were kept; please try Preview again.");
-      const creationRequestId = crypto.randomUUID();
-      setWorkOrderPilotDraft({ form, keyTerms, lines, supportingDocuments, payload, previewUrl: `data:application/pdf;base64,${pdfBase64}`, creationRequestId });
-      router.push("/work-orders/new/structured/preview");
+      if (result.pdf_base64) {
+        const creationRequestId = crypto.randomUUID();
+        const draftPayload = { ...payload, creation_request_id: creationRequestId, draft_only: true };
+        const saved = draftId
+          ? await requestWithTimeout(`/api/work-orders/drafts/${encodeURIComponent(draftId)}`, "Work Order draft save", { method: "PATCH", body: JSON.stringify({ action: "save", payload: draftPayload }) })
+          : await requestWithTimeout("/api/work-orders/create", "Work Order draft save", { method: "POST", body: (() => { const form = new FormData(); form.append("payload", JSON.stringify(draftPayload)); supportingDocuments.forEach((file) => form.append("supporting_documents", file, file.name)); return form; })() });
+        const savedDraftId = draftId || saved.workOrder?.id;
+        if (!savedDraftId) throw new Error("The draft was not saved. Your form values were kept; please try Preview again.");
+        setWorkOrderPilotDraft({ form, keyTerms, lines, supportingDocuments, payload: draftPayload, previewUrl: `data:application/pdf;base64,${result.pdf_base64}`, creationRequestId, draftId: savedDraftId });
+        router.push(`/work-orders/new/structured/preview?draft=${encodeURIComponent(savedDraftId)}`);
+      }
     } catch (e: any) {
-      setMessage(e.message);
+      setMessage(e?.message || "Work Order PDF preview could not be generated. Your form values are still here; retry when ready.");
+      setMessageKind("preview");
     } finally {
       setSaving(false);
     }
@@ -320,29 +422,37 @@ export default function NewWorkOrderPage() {
 
 
   if (revisionId && revisionHydration !== "ready") return <section className="mx-auto max-w-3xl space-y-6"><header className="rounded-2xl border bg-white p-6"><p className="text-xs font-semibold uppercase tracking-widest text-sky-700">Work Orders</p><h1 className="mt-2 text-2xl font-bold">{revisionHydration === "error" ? "Unable to load revision" : "Loading revision"}</h1><p className="mt-2 text-sm text-slate-600">{revisionMessage || "Loading the saved revision before enabling the form…"}</p><Link href={revisionWorkOrderId ? `/work-orders/${revisionWorkOrderId}` : "/work-orders"} className="mt-4 inline-block rounded-xl border px-4 py-2 text-sm font-semibold">Back to Work Order</Link></header></section>;
+  if (draftId && (draftError || draftSelectionError)) return <section className="mx-auto max-w-3xl space-y-6"><header ref={errorSummaryRef} tabIndex={-1} data-testid="work-order-draft-error-summary" className="rounded-2xl border border-red-200 bg-red-50 p-6 outline-none"><p className="text-xs font-semibold uppercase tracking-widest text-red-700">Work Orders</p><h1 className="mt-2 text-2xl font-bold text-red-950">Unable to load saved draft</h1><p role="alert" className="mt-2 text-sm text-red-800">{draftError || draftSelectionError}</p><p className="mt-2 text-sm text-red-800">Your saved values were not cleared. Return to the Forms register or ask an authorized administrator to review the draft’s organization, company, and site scope.</p><Link href="/forms/work-orders" className="mt-4 inline-block rounded-xl border border-red-300 bg-white px-4 py-2 text-sm font-semibold">Back to Work Order Forms</Link></header></section>;
+  if (draftId && lookupError) return <section className="mx-auto max-w-3xl space-y-6"><header ref={errorSummaryRef} tabIndex={-1} data-testid="work-order-draft-error-summary" className="rounded-2xl border border-red-200 bg-red-50 p-6 outline-none"><p className="text-xs font-semibold uppercase tracking-widest text-red-700">Work Orders</p><h1 className="mt-2 text-2xl font-bold text-red-950">Authorized lookup data could not be loaded</h1><p role="alert" className="mt-2 text-sm text-red-800">{lookupError}</p><p className="mt-2 text-sm text-red-800">The saved draft is unchanged. Retry the authorized lookups or return to the Forms register; no selection has been cleared.</p><button type="button" className="mt-4 rounded-xl border border-red-300 bg-white px-4 py-2 text-sm font-semibold" onClick={() => setLookupRetry((value) => value + 1)}>Retry authorized lookups</button><Link href="/forms/work-orders" className="ml-3 inline-block rounded-xl border border-red-300 bg-white px-4 py-2 text-sm font-semibold">Back to Work Order Forms</Link></header></section>;
+  if (draftId && draftLoading) return <section className="mx-auto max-w-3xl space-y-6"><header className="rounded-2xl border bg-white p-6"><p className="text-xs font-semibold uppercase tracking-widest text-sky-700">Work Orders</p><h1 className="mt-2 text-2xl font-bold">Loading saved draft</h1><p className="mt-2 text-sm text-slate-600">Loading the saved Work Order. Authorized lookup options will remain loading until they are ready.</p></header></section>;
   return <section className="mx-auto max-w-7xl space-y-6">
-    <header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-sky-700">Work Orders</p><h1 className="text-3xl font-bold">{revision ? `Pilot Work Order Revision R-${revision.revision_number}` : "Create Work Order"}</h1><p className="mt-1 text-sm text-slate-500">{revision ? "Edit the complete Work Order. The current version remains unchanged until issuance." : "Structured lines use immutable Work Order Item Master snapshots."}</p></div><Link href="/forms/work-orders" className="rounded-xl border px-4 py-2 text-sm font-semibold">Back to Work Order Forms</Link></header>
-    {revision && <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><p className="text-sm font-semibold">Revision identifier <span className="ml-2 font-normal">R{revision.revision_number}</span></p><p className="mt-3 text-sm text-slate-700">Upon issuance of this Revised Work Order, the previous Work Order and all prior versions are superseded and shall stand cancelled and replaced by this Revised Work Order.</p>{revisionSaveState && <p className="mt-2 text-xs text-slate-500">{revisionSaveState === "saving" ? "Saving draft…" : "Draft saved"}</p>}{revisionMessage && <p className="mt-2 text-sm text-slate-700">{revisionMessage}</p>}</section>}
-    <form onSubmit={preview} noValidate={form.wo_type === "Daily Wage"} className="space-y-6">
+    <header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-sky-700">Work Orders</p><h1 className="text-3xl font-bold">{revision ? `Work Order Form Revision R-${revision.revision_number}` : "Create Work Order"}</h1><p className="mt-1 text-sm text-slate-500">{revision ? "Edit the complete Work Order. The current version remains unchanged until issuance." : "Structured lines use immutable Work Order Item Master snapshots."}</p></div><Link href="/forms/work-orders" className="rounded-xl border px-4 py-2 text-sm font-semibold">Back to Work Orders</Link></header>
+    {topError && <div ref={errorSummaryRef} tabIndex={-1} data-testid="work-order-draft-error-summary" role="alert" className="scroll-mt-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800 outline-none"><p className="font-semibold">{messageKind === "preview" ? "Work Order preview could not be generated." : messageKind === "lookup" ? "Work Order data could not be loaded or saved." : "Some saved Work Order data could not be loaded."}</p><p className="mt-1">{topError}</p>{lookupError && <button type="button" className="mt-3 rounded border border-red-300 bg-white px-3 py-1 font-semibold" onClick={() => setLookupRetry((value) => value + 1)}>Retry authorized lookups</button>}<Link href="/forms/work-orders" className="ml-3 inline-block rounded border border-red-300 bg-white px-3 py-1 font-semibold">Back to Work Order Forms</Link></div>}
+    {revision && <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><p className="text-sm font-semibold">Revision identifier <span className="ml-2 font-normal">R{revision.revision_number}</span></p><p className="mt-3 text-sm text-slate-700">Upon issuance of this Revised Work Order, the previous Work Order and all prior versions are superseded and shall stand cancelled and replaced by this Revised Work Order.</p>{revisionMessage && <p className="mt-2 text-sm text-slate-700">{revisionMessage}</p>}</section>}
+    <style>{`form > section:nth-of-type(4) { order: 6; } form > section:nth-of-type(5) { order: 5; } form > section:nth-of-type(6) { order: 7; } form > button { order: 8; } form:has(option[value="Daily Wage"]:checked) table[class*="min-w-[520px]"] tbody tr:nth-child(-n+2) { display: none; } section[data-testid="daily-wage-items"] span:nth-child(2) { display: none; } section[data-testid="daily-wage-items"] { border-color: rgb(203 213 225); box-shadow: 0 10px 30px rgb(15 23 42 / 0.06); } section[data-testid="daily-wage-items"] h2 { letter-spacing: -0.01em; } section[data-testid="daily-wage-items"] table { border-collapse: separate; border-spacing: 0; } section[data-testid="daily-wage-items"] thead tr:first-child { background: rgb(241 245 249); } section[data-testid="daily-wage-items"] thead tr:first-child th { border-color: rgb(203 213 225); color: rgb(51 65 85); font-size: 0.75rem; letter-spacing: 0.04em; text-transform: uppercase; } section[data-testid="daily-wage-items"] thead tr:first-child th:nth-child(1) { width: 10%; text-align: center; } section[data-testid="daily-wage-items"] thead tr:first-child th:nth-child(2) { width: 38%; } section[data-testid="daily-wage-items"] thead tr:first-child th:nth-child(3) { width: 25%; } section[data-testid="daily-wage-items"] thead tr:first-child th:nth-child(4) { width: 27%; } section[data-testid="daily-wage-items"] thead tr:nth-child(2) th { background: rgb(248 250 252); border-color: rgb(226 232 240); color: rgb(71 85 105); font-style: italic; } section[data-testid="daily-wage-items"] tbody tr { background: white; } section[data-testid="daily-wage-items"] tbody tr + tr td { border-top-color: rgb(226 232 240); } section[data-testid="daily-wage-items"] tbody td:first-child { width: 10%; text-align: center; color: rgb(71 85 105); font-variant-numeric: tabular-nums; } section[data-testid="daily-wage-items"] tbody input { box-sizing: border-box; min-height: 42px; width: 100%; border-color: rgb(203 213 225); border-radius: 0.5rem; background: rgb(248 250 252); padding: 0.625rem 0.75rem; font-size: 0.875rem; transition: border-color 150ms, box-shadow 150ms, background 150ms; } section[data-testid="daily-wage-items"] tbody input:focus { border-color: rgb(14 165 233); background: white; box-shadow: 0 0 0 3px rgb(14 165 233 / 0.15); outline: none; } section[data-testid="daily-wage-items"] > div:last-child { border-color: rgb(226 232 240); color: rgb(51 65 85); } section[data-testid="daily-wage-items"] > div:last-child span:last-child { font-weight: 700; }`}</style><form noValidate={form.wo_type === "Daily Wage"} onSubmit={preview} className="flex flex-col space-y-6">
       <section className="grid gap-4 rounded-2xl border bg-white p-5 md:grid-cols-3">
         {([['company_id', 'Company'], ['site_id', 'Site'], ['vendor_id', 'Vendor']] as const).map(([field, label]) => <label key={field} className="text-sm font-semibold">{label}<select required disabled={lookupLoading || Boolean(revision)} className="mt-1 w-full rounded-lg border p-2 disabled:bg-slate-50" value={(form as any)[field]} onChange={(e) => { if (field !== 'vendor_id') { setNumberEdited(false); setNumberError(""); } setForm({ ...form, [field]: e.target.value, ...(field === 'site_id' ? { billing_contact_id: '', delivery_contact_id: '', delivery_location_id: '', wo_number: '' } : field === 'company_id' ? { gst_registration_id: '', billing_address_id: '', delivery_location_id: '', billing_contact_id: '', delivery_contact_id: '', wo_number: '' } : {}) }); }}>{<option value="">{lookupLoading ? `Loading ${label.toLowerCase()}s…` : `Select ${label.toLowerCase()}`}</option>}{(field === 'company_id' ? lookups.companies : field === 'site_id' ? sites : lookups.vendors).map((row: any) => <option key={row.id} value={row.id}>{row.company_name || row.site_name || row.vendor_name}</option>)}</select></label>)}
         <label className="text-sm font-semibold">WO Number *<input required readOnly={Boolean(revision)} aria-describedby={numberError ? "wo-number-error" : undefined} className="mt-1 w-full rounded-lg border p-2 read-only:bg-slate-50" value={form.wo_number} onChange={(e) => { setNumberEdited(true); setNumberError(""); setForm({ ...form, wo_number: e.target.value }); }} placeholder="SITE/CODE/101" />{numberLoading && <span className="mt-1 block text-xs font-normal text-slate-500">Generating next Work Order Number…</span>}{numberError && <span id="wo-number-error" role="alert" className="mt-1 block text-xs font-normal text-red-700">{numberError}</span>}</label>
         <label className="text-sm font-semibold">{revision ? "WO Revision Applicable Date *" : "WO Date"}<input required type="date" className="mt-1 w-full rounded-lg border p-2" value={revision ? applicableDate : form.wo_date} onChange={(e) => revision ? setApplicableDate(e.target.value) : setForm({ ...form, wo_date: e.target.value })} /></label>
         <label className="text-sm font-semibold">WO Type *<select required className="mt-1 w-full rounded-lg border p-2" value={form.wo_type} onChange={(e) => setForm({ ...form, wo_type: e.target.value })}><option value="">Select Work Order type</option>{['Consultant', 'Contractor (Labour)', 'Contractor (SITC)', 'Daily Wage', 'Rental'].map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
         <label className="text-sm font-semibold md:col-span-3">Description<textarea className="mt-1 w-full rounded-lg border p-2" rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
+        {!revisionId && availability.state === "loading" && <p role="status" className="md:col-span-3 text-sm text-slate-600">Checking Work Order availability…</p>}
+        {!revisionId && (availability.state === "blocked" || availability.state === "error") && <p role="alert" className="md:col-span-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{availability.message || "Availability could not be verified. Try again before continuing."}</p>}
       </section>
       <section className="space-y-5 rounded-2xl border bg-white p-5"><h2 className="text-xl font-bold">GST, Billing and Delivery</h2><div className="grid gap-5 md:grid-cols-2"><div><p className="text-xs font-semibold uppercase text-slate-500">Bill To / Billing Details</p><p className="mt-2 font-semibold">{lookups.companies.find((row: any) => row.id === form.company_id)?.company_name || "Select a company"}</p><p className="mt-2 text-sm"><span className="font-semibold">GSTIN</span><br />{gstMasters.find((row: any) => row.id === form.gst_registration_id)?.gstin || "—"}</p><label className="mt-4 block text-sm font-semibold">Billing Address<select required className="mt-1 w-full rounded-lg border p-2" value={form.billing_address_id} onChange={(e) => setForm({ ...form, billing_address_id: e.target.value, delivery_location_id: "", billing_contact_id: "", delivery_contact_id: "" })}><option value="">{form.gst_registration_id ? "Select billing address" : "Select a GST/Billing Master first"}</option>{billingAddresses.map((row: any) => <option key={row.id} value={row.id}>{[row.label, row.address_line1, row.city, row.state, row.pincode].filter(Boolean).join(" — ")}</option>)}</select></label><label className="mt-4 block text-sm font-semibold">Billing Contact Person<select required className="mt-1 w-full rounded-lg border p-2" value={form.billing_contact_id} onChange={(e) => setForm({ ...form, billing_contact_id: e.target.value })} disabled={!form.site_id || siteContacts.length === 0}><option value="">{form.site_id ? "Select billing contact" : "Select a site first"}</option>{siteContacts.map((row: any) => <option key={row.id} value={row.id}>{row.contact_name}{row.designation ? ` — ${row.designation}` : ""}{row.mobile ? ` — ${row.mobile}` : ""}</option>)}</select></label></div><div><label className="text-sm font-semibold">GST / Billing Master<select required className="mt-1 w-full rounded-lg border p-2" value={form.gst_registration_id} onChange={(e) => setForm({ ...form, gst_registration_id: e.target.value, billing_address_id: "", delivery_location_id: "", billing_contact_id: "", delivery_contact_id: "" })}><option value="">Select GST / Billing Master</option>{gstMasters.map((row: any) => <option key={row.id} value={row.id}>{[row.gstin, row.trade_name || row.legal_name, row.state].filter(Boolean).join(" — ")}</option>)}</select></label></div></div><div className="border-t pt-5"><p className="text-xs font-semibold uppercase text-slate-500">Delivery Details</p><div className="mt-3 grid gap-4 md:grid-cols-2"><label className="text-sm font-semibold">Delivery Location<select required className="mt-1 w-full rounded-lg border p-2" value={form.delivery_location_id} onChange={(e) => setForm({ ...form, delivery_location_id: e.target.value })}><option value="">Select delivery location</option>{deliveryLocations.map((row: any) => <option key={row.id} value={row.id}>{row.location_name}</option>)}</select></label><div className="text-sm"><span className="font-semibold">Delivery Address</span><p className="mt-1 rounded-lg border bg-slate-50 p-3">{(() => { const row = deliveryLocations.find((item: any) => item.id === form.delivery_location_id); return row ? [row.address || row.address_line1, row.address_line2, row.city, row.state, row.pincode].filter(Boolean).join(", ") : "Select a delivery location."; })()}</p></div><label className="text-sm font-semibold">Delivery Contact Person<select required className="mt-1 w-full rounded-lg border p-2" value={form.delivery_contact_id} onChange={(e) => setForm({ ...form, delivery_contact_id: e.target.value })} disabled={!form.site_id || siteContacts.length === 0}><option value="">{form.site_id ? "Select delivery contact" : "Select a site first"}</option>{siteContacts.map((row: any) => <option key={row.id} value={row.id}>{row.contact_name}{row.designation ? ` — ${row.designation}` : ""}{row.mobile ? ` — ${row.mobile}` : ""}</option>)}</select></label></div></div></section>
       {(() => { const row = deliveryLocations.find((item: any) => item.id === form.delivery_location_id); const company = deliveryCompanyName(row); return company ? <p className="-mt-2 px-1 text-sm text-slate-600">Project / Associated Company: <span className="font-semibold">{company}</span></p> : null; })()}
       {form.wo_type === "Daily Wage" && <section data-testid="daily-wage-items" className="overflow-x-auto rounded-2xl border bg-white p-5"><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-bold">Work Order Items</h2><p className="text-sm text-slate-500">Amounts are recalculated on the server.</p></div><button type="button" className="rounded-lg border px-3 py-2 text-sm font-semibold" onClick={() => setLines([...lines, emptyLine()])}>Add Line</button></div><table className="w-full min-w-[720px] text-left text-sm"><thead className="bg-slate-50"><tr>{["Sr. No.", "Description of item", "Unit", "Labour Rate (₹)"].map((heading) => <th key={heading} className="border p-2">{heading}</th>)}</tr><tr><th colSpan={4} className="border px-2 py-1 text-left text-xs font-semibold">Labour rate for 8 hours of work.</th></tr></thead><tbody>{lines.map((line, index) => <tr key={index} className="border-t align-top"><td className="p-2">{index + 1}</td><td className="p-2"><input required className="w-full rounded border p-2" value={line.description} onChange={(e) => updateLine(index, 'description', e.target.value)} placeholder="Description of item" /></td><td className="p-2"><input required className="w-full rounded border p-2" value={line.unit} onChange={(e) => updateLine(index, 'unit', e.target.value)} placeholder="Unit" /></td><td className="p-2"><input required type="number" min="0" step="any" className="w-full rounded border p-2" value={line.unit_rate} onChange={(e) => updateLine(index, 'unit_rate', e.target.value)} placeholder="0.00" /></td></tr>)}</tbody></table></section>}
       {form.wo_type !== "Daily Wage" && <section className="overflow-x-auto rounded-2xl border bg-white p-5"><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-bold">Work Order Items</h2><p className="text-sm text-slate-500">Amounts are recalculated on the server.</p></div><button type="button" className="rounded-lg border px-3 py-2 text-sm font-semibold" onClick={() => setLines([...lines, emptyLine()])}>Add Line</button></div><table className="min-w-[1350px] w-full text-left text-sm"><thead className="bg-slate-50"><tr>{['Sr. No.', 'Item Header', 'Description', 'Unit', 'Mode of Measurement', 'Additional Description', 'Quantity', 'Unit Rate', 'GST %', 'Basic Amount', 'GST Amount', 'Line Total', ''].map((h) => <th className="p-2" key={h}>{h}</th>)}</tr></thead><tbody>{lines.map((line, index) => { const item = lookups.items.find((i: any) => i.id === line.item_master_id); const basic = Number(line.quantity || 0) * Number(line.unit_rate || 0); const gst = basic * Number(line.gst_percent || 0) / 100; return <tr key={index} className="border-t align-top"><td className="p-2">{index + 1}</td><td className="p-2"><select required className="w-44 rounded border p-2" value={line.item_master_id} onChange={(e) => updateLine(index, 'item_master_id', e.target.value)}><option value="">Select item</option>{lookups.items.map((i: any) => <option key={i.id} value={i.id}>{i.item_header}</option>)}</select></td><td className="p-2">{item?.description || '—'}</td><td className="p-2">{item?.unit || '—'}</td><td className="p-2">{item?.mode_of_measurement || '—'}</td><td className="p-2"><input type="text" className="w-48 rounded border p-2" value={line.additional_description} onChange={(e) => updateLine(index, 'additional_description', e.target.value)} placeholder="Optional" /></td>{(['quantity', 'unit_rate', 'gst_percent'] as const).map((field) => <td className="p-2" key={field}><input required type="number" min={field === 'quantity' ? '0.001' : '0'} step="any" className="w-24 rounded border p-2" value={line[field]} onChange={(e) => updateLine(index, field, e.target.value)} /></td>)}<td className="p-2 font-semibold">{money(basic)}</td><td className="p-2">{money(gst)}</td><td className="p-2 font-semibold">{money(basic + gst)}</td><td className="p-2"><button type="button" className="text-red-700" disabled={lines.length === 1} onClick={() => setLines(lines.filter((_, i) => i !== index))}>Remove</button></td></tr>; })}</tbody></table><div className="mt-4 flex justify-end gap-6 border-t pt-4 text-sm"><span>Basic <b>{money(totals.basic)}</b></span><span>GST <b>{money(totals.gst)}</b></span><span className="text-base">Grand Total <b>{money(totals.total)}</b></span></div></section>}
-      <section className="grid gap-4 rounded-2xl border bg-white p-5 md:grid-cols-2">
-        <label className="text-sm font-semibold">Letterhead<select className="mt-1 w-full rounded-lg border p-2" value={form.letterhead_id} onChange={(e) => setForm({ ...form, letterhead_id: e.target.value })}><option value="">Select letterhead</option>{lookups.letterheads.filter((row: any) => row.company_id === form.company_id).map((row: any) => <option key={row.id} value={row.id}>{row.letterhead_name}</option>)}</select></label>
-        <label className="text-sm font-semibold">Terms &amp; Conditions<select className="mt-1 w-full rounded-lg border p-2" value={form.terms_template_id} onChange={(e) => selectTerms(e.target.value)}><option value="">Select terms master</option>{terms.map((t: any) => <option key={t.id} value={t.id}>{t.template_name}</option>)}</select></label>
-        <label className="text-sm font-semibold md:col-span-2">Terms &amp; Conditions snapshot<textarea className="mt-1 w-full rounded-lg border p-2" rows={6} value={form.standard_terms_snapshot} onChange={(e) => setForm({ ...form, standard_terms_snapshot: e.target.value })} /></label>
+      <section className="order-6 rounded-2xl border bg-white p-5">
+        <div className="grid items-start gap-4 md:grid-cols-2">
+          <div className="text-sm"><label className="font-semibold">Letterhead<select className="mt-1 w-full rounded-lg border p-2" value={form.letterhead_id} onChange={(e) => setForm({ ...form, letterhead_id: e.target.value })}><option value="">Select letterhead</option>{lookups.letterheads.filter((row: any) => row.company_id === form.company_id).map((row: any) => <option key={row.id} value={row.id}>{row.letterhead_name}</option>)}</select></label></div>
+          <div className="text-sm"><label className="font-semibold">Terms &amp; Conditions<select className="mt-1 w-full rounded-lg border p-2" value={form.terms_template_id} onChange={(e) => selectTerms(e.target.value)}><option value="">Select terms master</option>{terms.map((t: any) => <option key={t.id} value={t.id}>{t.template_name}</option>)}</select>{selectedTerms && <span className="mt-2 block text-xs font-normal text-slate-500">{selectedTerms.template_name} is the selected company template. Its approved wording is snapshotted with the Work Order.</span>}{savedTermsMatchWarning && <span className="mt-1 block text-xs font-normal text-amber-700">{savedTermsMatchWarning}</span>}</label></div>
+          <div className="text-sm md:col-span-2" data-testid="work-order-saved-terms">{selectedTerms && <details className="rounded-lg border p-3"><summary className="cursor-pointer text-sm font-semibold">View Terms</summary><div className="mt-3 max-h-64 space-y-3 overflow-y-auto text-sm">{(selectedTerms.sections || []).filter((section: any) => section.status === "active").sort((a: any, b: any) => Number(a.sort_order || 0) - Number(b.sort_order || 0)).map((section: any) => <div key={section.id || section.heading}><b>{section.heading}</b><p className="mt-1 whitespace-pre-wrap text-slate-600">{section.clause_body}</p></div>)}</div></details>}{(savedTermsClauses.length > 0 || termsEditorText) && <textarea aria-label="Saved Terms & Conditions snapshot" value={termsEditorText} onChange={(e) => { const value = e.target.value; setTermsEditorText(value); setForm((current: any) => ({ ...current, standard_terms_snapshot: value })); }} className="mt-4 min-h-24 w-full rounded-lg border p-3" />}</div>
+        </div>
       </section>
-      <section className="rounded-2xl border bg-white p-5"><div className="mb-3 flex items-center justify-between"><div><h2 className="text-lg font-bold">Key Terms</h2><p className="text-sm text-slate-500">Inclusions and Exclusions are optional for Daily Wage Work Orders.</p></div><button type="button" className="rounded-lg border px-3 py-2 text-sm font-semibold" onClick={addKeyTerm}>+ Add Additional Term</button></div><div className="overflow-x-auto"><table className="min-w-[520px] w-full border-collapse text-sm"><thead className="bg-slate-50"><tr><th className="w-56 border p-3 text-left">Key Term</th><th className="border p-3 text-left">Terms</th></tr></thead><tbody><tr><td className="border p-3 font-semibold">Inclusions{form.wo_type !== "Daily Wage" ? " *" : ""}</td><td className="border p-3"><textarea required={form.wo_type !== "Daily Wage"} rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={keyTerms.inclusions[0] || ""} onChange={(e) => updateKeyTerm('inclusions', 0, e.target.value)} /></td></tr><tr><td className="border p-3 font-semibold">Exclusions{form.wo_type !== "Daily Wage" ? " *" : ""}</td><td className="border p-3"><textarea required={form.wo_type !== "Daily Wage"} rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={keyTerms.exclusions[0] || ""} onChange={(e) => updateKeyTerm('exclusions', 0, e.target.value)} /></td></tr>{keyTerms.inclusions.slice(1).map((entry, index) => <tr key={`inclusion-${index + 1}`}><td className="border p-3 font-semibold"><div className="flex items-center justify-between gap-2"><span>Inclusions {index + 2}</span><button type="button" className="text-xs font-semibold text-red-700" onClick={() => setKeyTerms((current) => ({ ...current, inclusions: current.inclusions.filter((_, i) => i !== index + 1) }))}>Remove</button></div></td><td className="border p-3"><textarea rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={entry} onChange={(e) => updateKeyTerm('inclusions', index + 1, e.target.value)} /></td></tr>)}{keyTerms.exclusions.slice(1).map((entry, index) => <tr key={`exclusion-${index + 1}`}><td className="border p-3 font-semibold"><div className="flex items-center justify-between gap-2"><span>Exclusions {index + 2}</span><button type="button" className="text-xs font-semibold text-red-700" onClick={() => setKeyTerms((current) => ({ ...current, exclusions: current.exclusions.filter((_, i) => i !== index + 1) }))}>Remove</button></div></td><td className="border p-3"><textarea rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={entry} onChange={(e) => updateKeyTerm('exclusions', index + 1, e.target.value)} /></td></tr>)}{keyTerms.additional.map((term, index) => <tr key={`additional-${index}`}><td className="border p-3"><div className="flex items-center gap-2"><input className="min-w-0 flex-1 rounded-lg border p-2" placeholder="Description" value={term.label} onChange={(e) => setKeyTerms((current) => ({ ...current, additional: current.additional.map((row, i) => i === index ? { ...row, label: e.target.value } : row) }))} /><button type="button" className="shrink-0 text-xs font-semibold text-red-700" onClick={() => setKeyTerms((current) => ({ ...current, additional: current.additional.filter((_, i) => i !== index) }))}>Remove</button></div></td><td className="border p-3"><textarea rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" placeholder="Terms" value={term.value} onChange={(e) => setKeyTerms((current) => ({ ...current, additional: current.additional.map((row, i) => i === index ? { ...row, value: e.target.value } : row) }))} /></td></tr>)}</tbody></table></div></section>
+      <section className="order-5 rounded-2xl border bg-white p-5"><div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-bold">Key Terms</h2><button type="button" className="rounded-lg border px-3 py-2 text-sm font-semibold" onClick={addKeyTerm}>+ Add Additional Term</button></div><div className="overflow-x-auto"><table className="min-w-[520px] w-full border-collapse text-sm"><thead className="bg-slate-50"><tr><th className="w-56 border p-3 text-left">Key Term</th><th className="border p-3 text-left">Terms</th></tr></thead><tbody><tr><td className="border p-3 font-semibold">Inclusions{form.wo_type !== "Daily Wage" ? " *" : ""}</td><td className="border p-3"><textarea required={form.wo_type !== "Daily Wage"} rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={keyTerms.inclusions[0] || ""} onChange={(e) => updateKeyTerm('inclusions', 0, e.target.value)} /></td></tr><tr><td className="border p-3 font-semibold">Exclusions{form.wo_type !== "Daily Wage" ? " *" : ""}</td><td className="border p-3"><textarea required={form.wo_type !== "Daily Wage"} rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={keyTerms.exclusions[0] || ""} onChange={(e) => updateKeyTerm('exclusions', 0, e.target.value)} /></td></tr>{keyTerms.inclusions.slice(1).map((entry, index) => <tr key={`inclusion-${index + 1}`}><td className="border p-3 font-semibold"><div className="flex items-center justify-between gap-2"><span>Inclusions {index + 2}</span><button type="button" className="text-xs font-semibold text-red-700" onClick={() => setKeyTerms((current) => ({ ...current, inclusions: current.inclusions.filter((_, i) => i !== index + 1) }))}>Remove</button></div></td><td className="border p-3"><textarea rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={entry} onChange={(e) => updateKeyTerm('inclusions', index + 1, e.target.value)} /></td></tr>)}{keyTerms.exclusions.slice(1).map((entry, index) => <tr key={`exclusion-${index + 1}`}><td className="border p-3 font-semibold"><div className="flex items-center justify-between gap-2"><span>Exclusions {index + 2}</span><button type="button" className="text-xs font-semibold text-red-700" onClick={() => setKeyTerms((current) => ({ ...current, exclusions: current.exclusions.filter((_, i) => i !== index + 1) }))}>Remove</button></div></td><td className="border p-3"><textarea rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={entry} onChange={(e) => updateKeyTerm('exclusions', index + 1, e.target.value)} /></td></tr>)}{keyTerms.additional.map((term, index) => <tr key={`additional-${index}`}><td className="border p-3"><div className="flex items-center gap-2"><input className="min-w-0 flex-1 rounded-lg border p-2" placeholder="Description" value={term.label} onChange={(e) => setKeyTerms((current) => ({ ...current, additional: current.additional.map((row, i) => i === index ? { ...row, label: e.target.value } : row) }))} /><button type="button" className="shrink-0 text-xs font-semibold text-red-700" onClick={() => setKeyTerms((current) => ({ ...current, additional: current.additional.filter((_, i) => i !== index) }))}>Remove</button></div></td><td className="border p-3"><textarea rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" placeholder="Terms" value={term.value} onChange={(e) => setKeyTerms((current) => ({ ...current, additional: current.additional.map((row, i) => i === index ? { ...row, value: e.target.value } : row) }))} /></td></tr>)}</tbody></table></div></section>
       <section className="space-y-4 rounded-2xl border bg-white p-5"><div><h2 className="text-lg font-bold">Supporting Documents</h2><p className="text-sm text-slate-500">Any file type is accepted. PDFs and common images are shown in the preview; other files are listed there and remain attached after submission.</p></div><input type="file" multiple onChange={(event) => { const files = Array.from(event.target.files || []); setSupportingDocuments((current) => [...current, ...files]); event.currentTarget.value = ""; setMessage(""); }} className="block w-full rounded-lg border p-2 text-sm" />{supportingDocuments.length > 0 && <ul className="space-y-2 text-sm">{supportingDocuments.map((file, index) => <li key={`${file.name}-${index}`} className="flex items-center justify-between gap-3 rounded-lg border bg-slate-50 px-3 py-2"><span className="truncate">{file.name}</span><button type="button" className="shrink-0 font-semibold text-red-700" onClick={() => setSupportingDocuments((current) => current.filter((_, fileIndex) => fileIndex !== index))}>Remove</button></li>)}</ul>}</section>
-      {availability.message && <p className={`rounded-lg p-3 text-sm ${availability.state === "blocked" || availability.state === "error" ? "border border-red-200 bg-red-50 text-red-700" : "bg-slate-50 text-slate-600"}`}>{availability.message}</p>}{message && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"><p>{message}</p><button type="button" className="mt-2 rounded border border-red-300 px-3 py-1 font-semibold" onClick={() => setLookupRetry((value) => value + 1)}>Retry lookup loading</button></div>}<button type="submit" disabled={saving || (!revisionId && availability.state !== "available")} className="rounded-xl bg-slate-950 px-5 py-3 font-semibold text-white disabled:opacity-50">{saving ? 'Generating Preview…' : revision ? 'Preview revised PDF' : 'Preview Work Order PDF'}</button>
+      {message && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"><p>{message}</p>{messageKind === "lookup" && <button type="button" className="mt-2 rounded border border-red-300 px-3 py-1 font-semibold" onClick={() => setLookupRetry((value) => value + 1)}>Retry lookup loading</button>}{messageKind === "preview" && <button type="submit" className="mt-2 rounded border border-red-300 px-3 py-1 font-semibold" disabled={saving}>Retry PDF preview</button>}</div>}<button type="submit" disabled={saving || (!revisionId && availability.state !== "available")} className="rounded-xl bg-slate-950 px-5 py-3 font-semibold text-white disabled:opacity-50">{saving ? 'Generating Preview…' : revision ? 'Preview revised PDF' : 'Preview Work Order PDF'}</button>
     </form>
   </section>;
 }

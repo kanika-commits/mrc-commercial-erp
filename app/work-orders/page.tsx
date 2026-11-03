@@ -88,6 +88,12 @@ type WorkOrderDocument = {
 
 type SelectionMap = Record<string, boolean>;
 type SortField = "wo_number" | "vendor_name" | "wo_value" | "status" | "approval_status" | "wo_date";
+
+function workOrderViewHref(wo: Pick<WorkOrder, "id" | "approval_status" | "creation_request_id">, pilotOnly: boolean) {
+  const approvalStatus = String(wo.approval_status || "").trim().toLowerCase();
+  if (approvalStatus === "draft" && wo.creation_request_id) return `/work-orders/drafts/${wo.id}`;
+  return pilotOnly ? `/work-orders/${wo.id}?from=forms-work-orders` : `/work-orders/${wo.id}`;
+}
 type SortDirection = "asc" | "desc";
 
 const LIFECYCLE_STATUS_OPTIONS = [
@@ -391,6 +397,29 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
       setLoadedReviewedPackages((previous) => ({ ...previous, [workOrder.id]: packageUrl }));
     } catch (reviewError: any) {
       setError(reviewError.message || "Could not load Work Order package.");
+    } finally {
+      setLoadingReviewedPackages((previous) => ({ ...previous, [workOrder.id]: false }));
+    }
+  }
+
+  async function loadDraftPackage(workOrder: WorkOrder) {
+    try {
+      setLoadingReviewedPackages((previous) => ({ ...previous, [workOrder.id]: true }));
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Unable to open Work Order draft package: missing auth session.");
+      const response = await fetch(`/api/work-orders/drafts/${encodeURIComponent(workOrder.id)}/preview`, { headers: { Authorization: `Bearer ${session.access_token}` } });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || "Could not open the saved Work Order draft PDF.");
+      }
+      if (!(response.headers.get("content-type") || "").toLowerCase().includes("application/pdf")) {
+        throw new Error("The saved Work Order draft preview did not return a PDF.");
+      }
+      const packageUrl = URL.createObjectURL(await response.blob());
+      setLoadedReviewedPackages((previous) => ({ ...previous, [workOrder.id]: packageUrl }));
+      await loadDocumentsForWorkOrder(workOrder.id);
+    } catch (draftError: any) {
+      setError(draftError.message || "Could not load the saved Work Order draft package.");
     } finally {
       setLoadingReviewedPackages((previous) => ({ ...previous, [workOrder.id]: false }));
     }
@@ -918,7 +947,7 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
                     <td className="px-6 py-5 align-top">
                       <div className="max-w-[320px] text-base font-bold leading-6">
                         <Link
-                          href={pilotOnly ? `/work-orders/${wo.id}?from=forms-work-orders` : `/work-orders/${wo.id}`}
+                          href={workOrderViewHref(wo, pilotOnly)}
                           onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "work_order", recordId: wo.id, source: "work_orders_register" })}
                           className="text-[#00658b] hover:underline"
                         >
@@ -953,18 +982,20 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
                           Number(wo.document_count ?? loadedDocuments?.length ?? 0) || 0;
 
                         if (pilotOnly) {
+                          const isDraft = String(wo.approval_status || "").toLowerCase() === "draft";
                           return (
                             <div className="space-y-2 text-sm">
-                              <div className="font-semibold text-slate-800">1 package</div>
+                              <div className="font-semibold text-slate-800">{isDraft ? "Saved draft PDF" : "1 package"}</div>
                               {loadedReviewedPackages[wo.id] ? (
                                 <a href={loadedReviewedPackages[wo.id]} download={reviewedPackageName(wo.wo_number)} target="_blank" rel="noreferrer" className="font-semibold text-[#00658b] hover:underline">
-                                  {reviewedPackageName(wo.wo_number)}
+                                  {isDraft ? "Open saved draft PDF" : reviewedPackageName(wo.wo_number)}
                                 </a>
                               ) : (
-                                <button type="button" onClick={() => void loadReviewedPackage(wo)} disabled={loadingReviewedPackages[wo.id]} className="font-semibold text-[#00658b] hover:underline disabled:opacity-50">
+                                <button type="button" onClick={() => void (isDraft ? loadDraftPackage(wo) : loadReviewedPackage(wo))} disabled={loadingReviewedPackages[wo.id]} className="font-semibold text-[#00658b] hover:underline disabled:opacity-50">
                                   {loadingReviewedPackages[wo.id] ? "Loading package…" : "Load documents"}
                                 </button>
                               )}
+                              {isDraft && loadedDocumentsByWorkOrder[wo.id]?.length === 0 && <div className="text-xs text-slate-500">No supporting documents</div>}
                             </div>
                           );
                         }
@@ -1076,7 +1107,7 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
                     <td className="px-6 py-5 align-top">
                       <div className="flex justify-end gap-2">
                         <Link
-                          href={pilotOnly ? `/work-orders/${wo.id}?from=forms-work-orders` : `/work-orders/${wo.id}`}
+                          href={workOrderViewHref(wo, pilotOnly)}
                           className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 text-slate-500 transition hover:bg-[#f6f3f5] hover:text-slate-950"
                           title="View"
                         >
