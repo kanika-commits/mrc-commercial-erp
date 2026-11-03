@@ -713,6 +713,7 @@ const WORK_ORDER_COLUMNS = `
   company_id,
   site_id,
   organization_id,
+  creation_request_id,
   department,
   cost_code,
   created_at

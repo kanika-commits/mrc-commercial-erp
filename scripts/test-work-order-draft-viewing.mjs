@@ -6,6 +6,7 @@ const page = fs.readFileSync("app/work-orders/drafts/[id]/page.tsx", "utf8");
 const draftApi = fs.readFileSync("app/api/work-orders/drafts/[id]/route.ts", "utf8");
 const previewApi = fs.readFileSync("app/api/work-orders/drafts/[id]/preview/route.ts", "utf8");
 const draftHelper = fs.readFileSync("lib/serverWorkOrderDraft.ts", "utf8");
+assert.match(register, /creation_request_id/);
 
 assert.match(register, /function workOrderViewHref\(wo[^\n]*pilotOnly[^\n]*\)/);
 assert.match(register, /const approvalStatus = String\(wo\.approval_status \|\| ""\)\.trim\(\)\.toLowerCase\(\)/);
