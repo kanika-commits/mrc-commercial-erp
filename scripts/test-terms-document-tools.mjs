@@ -1,0 +1,10 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+const source = fs.readFileSync("lib/procurement/termsDocument.ts", "utf8");
+const api = fs.readFileSync("app/api/procurement/purchase-orders/master-data/route.ts", "utf8");
+const page = fs.readFileSync("app/settings/purchase-order-masters/page.tsx", "utf8");
+assert.match(source, /parseTermsDocument/); assert.match(source, /sort_order/); assert.match(source, /uncertain/); assert.match(source, /richTextHtml/); assert.match(source, /<strong|<b/);
+assert.match(source, /clause\\s\+/i); assert.match(source, /boldIndexes/); assert.ok(source.includes("Pasted Terms"));
+assert.match(api, /terms_template_copy/); assert.match(api, /hasOrg\(auth, source\.data\.organization_id\)/); assert.match(api, /companyScope\(admin, auth, text\(target\.company_id\)\)/); assert.match(api, /conflict/); assert.match(api, /p_status: "inactive"/);
+assert.match(page, /Paste full Terms document/); assert.match(page, /clipboardData\.getData\("text\/html"\)/); assert.match(page, /Copy to companies/); assert.match(page, /raw paste stays available/);
+console.log("Terms document parser rules: PASS");

@@ -232,6 +232,32 @@ async function mutate(request: Request, action: "add" | "edit") {
   try {
     const body = await request.json().catch(() => ({}));
     const admin = adminClient(); const kind = text(body.kind); const id = text(body.id);
+    if (action === "add" && kind === "terms_template_copy") {
+      const auth = await authorize(request, "add", TERMS_MODULE);
+      if ("response" in auth) return auth.response;
+      const source = await admin.from("company_po_terms_templates").select("id,organization_id,template_name,sections:company_po_terms_sections(heading,clause_body,sort_order,status)").eq("id", text(body.source_id)).maybeSingle();
+      if (source.error) throw source.error;
+      if (!source.data || !hasOrg(auth, source.data.organization_id)) return jsonError("Source Terms set is outside your access.", 403);
+      const targets = Array.isArray(body.targets) ? body.targets.filter((target: any) => text(target.company_id)) : [];
+      if (!targets.length) return jsonError("Select at least one target company.", 400);
+      const checked = [];
+      for (const target of targets) {
+        const scope = await companyScope(admin, auth, text(target.company_id));
+        if ("error" in scope || scope.organizationId !== source.data.organization_id) return jsonError("A target company is outside the source organization.", 403);
+        const name = text(target.template_name) || source.data.template_name;
+        const conflict = await admin.from("company_po_terms_templates").select("id").eq("organization_id", source.data.organization_id).eq("company_id", target.company_id).eq("template_name", name).maybeSingle();
+        if (conflict.error) throw conflict.error;
+        if (conflict.data) return NextResponse.json({ error: "A Terms set with that name already exists for one or more targets.", conflicts: [{ company_id: target.company_id, template_name: name }] }, { status: 409 });
+        checked.push({ company_id: target.company_id, template_name: name });
+      }
+      const created = [];
+      for (const target of checked) {
+        const result = await admin.rpc("save_procurement_terms_template_with_sections_atomic", { p_organization_id: source.data.organization_id, p_template_id: null, p_company_id: target.company_id, p_template_name: target.template_name, p_is_default: false, p_status: "inactive", p_sections: (source.data.sections || []).filter((section: any) => section.status === "active").sort((a: any, b: any) => Number(a.sort_order || 0) - Number(b.sort_order || 0)).map((section: any, index: number) => ({ heading: section.heading, clause_body: section.clause_body, sort_order: index, status: "active" })) });
+        if (result.error) throw result.error;
+        created.push(result.data);
+      }
+      return NextResponse.json({ created });
+    }
     const auth = await authorize(request, action, masterModule(kind));
     if ("response" in auth) return auth.response;
     if (action === "edit") { const owned = await ownedOrganization(admin, auth, kind, id); if ("error" in owned) return jsonError(owned.error || "Invalid master-data record.", owned.status || 400); }
@@ -322,6 +348,12 @@ async function mutate(request: Request, action: "add" | "edit") {
       if ("error" in scope) return jsonError(scope.error || "Invalid company.", scope.status || 400);
       const templateName = text(body.template_name) || "Standard Purchase Order Terms";
       if (!id && !templateName) return jsonError("Add at least one clause before creating Standard PO Terms.", 400);
+      if (Array.isArray(body.sections)) {
+        const atomic = await admin.rpc("save_procurement_terms_template_with_sections_atomic", { p_organization_id: scope.organizationId, p_template_id: id || null, p_company_id: text(body.company_id), p_template_name: templateName, p_is_default: body.is_default === true, p_status: text(body.status) || "active", p_sections: body.sections.map((section: any, index: number) => ({ ...section, sort_order: index, status: "active" })) });
+        if (atomic.error) throw atomic.error;
+        await auditMasterMutation(admin, auth, request, { organizationId: scope.organizationId, moduleCode: masterModule(kind), entityType: kind, recordId: atomic.data?.id || id, action: id ? "update" : "create", description: `${id ? "Updated" : "Created"} terms template ${templateName}.`, newValues: { ...body, sections: body.sections } });
+        return NextResponse.json(atomic.data);
+      }
       if (!id && templateName) {
         const existing = await admin.from("company_po_terms_templates").select("id").eq("organization_id", scope.organizationId).eq("company_id", text(body.company_id)).eq("template_name", templateName).eq("status", "active").maybeSingle();
         if (existing.error) throw existing.error;
