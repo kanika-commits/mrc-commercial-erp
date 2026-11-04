@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { adminClient, applyCompanySiteAccess, applyOrganizationAccess, jsonError, requireProcurementPermission, text, validateOrganizationSiteAccess } from "@/lib/serverProcurementAccess";
 import { createPrivateStorageAdapter } from "@/lib/storage/privateStorage";
 import { validatePurchaseOrderPurpose, validateRecoveryWorkOrder } from "@/lib/procurement/contractorRecoveryDebitNote.server";
+import { attachCurrentSendBackComments } from "@/lib/procurement/poSendBackPresentation";
 
 const MODULE = "procurement_purchase_orders";
 function normalizePurchaseOrderItems(items: any[]) {
@@ -42,7 +43,7 @@ export async function GET(request: Request) {
       const key = row.revision_family_id || row.id;
       families.set(key, [...(families.get(key) || []), row]);
     }
-    const purchaseOrders = [...families.values()]
+    let purchaseOrders = [...families.values()]
       .map((family) => {
         const open = family.filter((row) => ["draft", "pending_approval", "sent_back"].includes(row.status)).sort((a, b) => Number(b.revision_no || 0) - Number(a.revision_no || 0))[0];
         const effective = family.filter((row) => ["approved", "issued"].includes(row.status) && !row.superseded_by_revision_id).sort((a, b) => Number(b.revision_no || 0) - Number(a.revision_no || 0))[0];
@@ -50,6 +51,16 @@ export async function GET(request: Request) {
         return selected ? { ...selected, revision_indicator: open ? "Revision in Progress" : effective ? "Current" : "Historical", revision_history: family } : null;
       })
       .filter(Boolean);
+    const purchaseOrderIds = purchaseOrders.map((row: any) => row.id).filter(Boolean);
+    if (purchaseOrderIds.length) {
+      const events = await admin.from("procurement_purchase_order_events")
+        .select("purchase_order_id,event_type,event_note,created_at,id")
+        .in("purchase_order_id", purchaseOrderIds)
+        .eq("event_type", "send_back")
+        .order("created_at", { ascending: false });
+      if (events.error) throw events.error;
+      purchaseOrders = attachCurrentSendBackComments(purchaseOrders as any[], events.data || []);
+    }
     const approvedIds = purchaseOrders.filter((row: any) => ["approved", "issued"].includes(row.status)).map((row: any) => row.id);
     if (approvedIds.length) {
       const signedDocumentOrganizationIds = [...new Set(purchaseOrders.filter((row: any) => approvedIds.includes(row.id)).map((row: any) => row.organization_id).filter(Boolean))];
