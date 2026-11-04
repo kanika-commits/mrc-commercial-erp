@@ -8,6 +8,7 @@ import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { VendorCreateForm } from "@/app/vendors/new/page";
 import { parsePurchaseOrderStandardTerms } from "@/lib/procurement/standardTerms";
+import { findSavedPurchaseOrderTermsTemplate } from "@/lib/procurement/poTermsTemplateSelection";
 
 type Source = "direct" | "indent";
 type Item = { po_item_id?: string; item_id?: string; item_name: string; item_code?: string; description?: string; specification?: string; make?: string; quantity: string; uom?: string; unit_rate: string; gst_rate: string; source_requisition_line_key?: string; isMaterialMasterLinked?: boolean };
@@ -69,6 +70,7 @@ export default function NewPurchaseOrderPage() {
   const [commercial, setCommercial] = useState<{ payment_terms: string; delivery_terms: string; purpose?: string; recovery_work_order_id?: string | null; recovery_vendor_id?: string | null }>({ payment_terms: "", delivery_terms: "", purpose: "General Purchase", recovery_work_order_id: null, recovery_vendor_id: null });
   const [standardTerms, setStandardTerms] = useState("");
   const [termsTemplateId, setTermsTemplateId] = useState("");
+  const savedTermsSnapshotRef = useRef<unknown>(null);
   const [billingContactId, setBillingContactId] = useState("");
   const [deliveryContactId, setDeliveryContactId] = useState("");
   const [deliveryLocationId, setDeliveryLocationId] = useState("");
@@ -136,6 +138,7 @@ export default function NewPurchaseOrderPage() {
       setAdditionalCharges(Array.isArray(po.commercial_snapshot?.additional_charges) ? po.commercial_snapshot.additional_charges.map((charge: any) => ({ name: String(charge.name || ""), amount: String(charge.amount ?? "") })) : []);
       setKeyTerms(normalizeSavedKeyTerms(po.commercial_snapshot?.key_terms || []));
       const parsedTerms = parsePurchaseOrderStandardTerms(po.standard_terms_snapshot);
+      savedTermsSnapshotRef.current = po.standard_terms_snapshot;
       setStandardTerms(parsedTerms?.kind === "structured" ? parsedTerms.clauses.map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n") : parsedTerms?.text || "");
       setItems((po.items || []).map((item: any) => ({ po_item_id: item.id, item_id: item.item_id, item_name: item.item_name_snapshot || "", item_code: item.item_code_snapshot, description: item.description_snapshot || item.specification_snapshot || "", specification: item.specification_snapshot, make: item.make_snapshot || "", quantity: String(item.quantity ?? ""), uom: item.uom_snapshot || "", unit_rate: String(item.unit_rate ?? ""), gst_rate: String(item.gst_rate ?? "0"), source_requisition_line_key: item.source_requisition_line_key, isMaterialMasterLinked: false })));
       originalPersistedItemIdsRef.current = (po.items || []).map((item: any) => String(item.id || item.po_item_id || "").trim().toLowerCase());
@@ -255,8 +258,11 @@ export default function NewPurchaseOrderPage() {
     previousCompanyIdRef.current = companyId;
   }, [companyId]);
   useEffect(() => {
-    setTermsTemplateId((current) => companyTerms.some((row: any) => row.id === current) ? current : companyTerms.find((row: any) => row.is_default)?.id || companyTerms[0]?.id || "");
-  }, [companyTerms]);
+    setTermsTemplateId((current) => {
+      const savedMatch = editId ? findSavedPurchaseOrderTermsTemplate(savedTermsSnapshotRef.current, companyTerms) : null;
+      return savedMatch?.id || (companyTerms.some((row: any) => row.id === current) ? current : companyTerms.find((row: any) => row.is_default)?.id || companyTerms[0]?.id || "");
+    });
+  }, [companyTerms, editId]);
   useEffect(() => {
     if (!selectedTerms || standardTerms.trim()) return;
     const clauses = (selectedTerms.sections || []).filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order).map((section: any) => `${section.heading}\n${section.clause_body}`).join("\n\n");
