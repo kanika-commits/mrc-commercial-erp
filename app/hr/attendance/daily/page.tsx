@@ -9,6 +9,7 @@ import { apiFetch, formatDate } from "@/components/hr/hrClient";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { ATTENDANCE_STATUS_LABELS, PHASE1_ATTENDANCE_STATUSES, currentIndiaDate, previousDate } from "@/lib/hr/attendance";
+import { getAttendanceSentBackDetails } from "@/lib/hr/attendanceSentBack";
 
 type RowState = {
   employee_id: string;
@@ -111,6 +112,8 @@ export default function DailyAttendancePage() {
   const dailySubmissionInfo = Object.values(attendanceContexts).map((context: any) => context.dailySubmission).filter(Boolean);
   const submittedSubmission = dailySubmissionInfo.find((submission: any) => submission.status === "submitted");
   const approvedSubmission = dailySubmissionInfo.find((submission: any) => submission.status === "approved");
+  const reopenedSubmission = dailySubmissionInfo.find((submission: any) => String(submission?.status || "").toLowerCase() === "reopened");
+  const sentBackDetails = getAttendanceSentBackDetails(reopenedSubmission, period);
 
   useEffect(() => {
     let active = true;
@@ -392,10 +395,10 @@ export default function DailyAttendancePage() {
         <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 shadow-sm">
           <p className="text-base font-bold">Attendance Sent Back</p>
           <div className="mt-2 grid gap-1 md:grid-cols-2">
-            <p><span className="font-semibold">Reason:</span> {period.send_back_reason || "No reason recorded."}</p>
-            <p><span className="font-semibold">Sent Back By:</span> {period.reopened_by_name || period.reopened_by_email || "-"}</p>
-            <p><span className="font-semibold">Sent Back At:</span> {period.reopened_at ? new Date(period.reopened_at).toLocaleString("en-IN") : "-"}</p>
-            <p><span className="font-semibold">Previously Submitted:</span> {period.submitted_at ? new Date(period.submitted_at).toLocaleString("en-IN") : "-"}</p>
+            <p><span className="font-semibold">Reason:</span> {sentBackDetails.reason}</p>
+            <p><span className="font-semibold">Sent Back By:</span> {sentBackDetails.sender}</p>
+            <p><span className="font-semibold">Sent Back At:</span> {sentBackDetails.sentBackAt ? new Date(sentBackDetails.sentBackAt).toLocaleString("en-IN") : "-"}</p>
+            <p><span className="font-semibold">Previously Submitted:</span> {sentBackDetails.previouslySubmittedAt ? new Date(sentBackDetails.previouslySubmittedAt).toLocaleString("en-IN") : "-"}</p>
           </div>
           <p className="mt-2 font-semibold">Correct the attendance and resubmit it for approval.</p>
         </section>

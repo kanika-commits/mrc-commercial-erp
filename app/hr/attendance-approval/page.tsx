@@ -93,6 +93,7 @@ export default function EmployeeAttendanceApprovalPage() {
   const [showHistory, setShowHistory] = useState(false);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [success, setSuccess] = useState("");
@@ -168,12 +169,13 @@ export default function EmployeeAttendanceApprovalPage() {
     if (!group) return;
     const requestId = ++detailRequestRef.current;
     setDetailLoading(true);
+    setDetailError("");
     setMessage("");
     try {
       const queueDates = rows.map((row: any) => row.attendance_date).filter(Boolean).sort();
       const nextFrom = range?.from || fromDate || appliedFromDate || queueDates[0] || group.attendance_date;
       const nextTo = range?.to || toDate || appliedToDate || queueDates[queueDates.length - 1] || group.attendance_date;
-      const payload = await apiFetch(`/api/hr/attendance/approval-groups?period_status=${encodeURIComponent(appliedPeriodStatus)}&site_id=${encodeURIComponent(group.site_id)}&attendance_date=${encodeURIComponent(group.attendance_date)}&from_date=${encodeURIComponent(nextFrom)}&to_date=${encodeURIComponent(nextTo)}`);
+      const payload = await apiFetch(`/api/hr/attendance/approval-groups?period_status=${encodeURIComponent("all")}&site_id=${encodeURIComponent(group.site_id)}&attendance_date=${encodeURIComponent(group.attendance_date)}&from_date=${encodeURIComponent(nextFrom)}&to_date=${encodeURIComponent(nextTo)}`);
       if (requestId !== detailRequestRef.current) return;
       setDetail(payload);
       if (range || appliedFromDate || appliedToDate) {
@@ -190,6 +192,7 @@ export default function EmployeeAttendanceApprovalPage() {
     } catch (error: any) {
       if (requestId !== detailRequestRef.current) return;
       setDetail(null);
+      setDetailError(safeError(error.message, "Failed to load attendance approval detail."));
       setMessage(safeError(error.message, "Failed to load attendance approval detail."));
     } finally {
       if (requestId === detailRequestRef.current) setDetailLoading(false);
@@ -256,7 +259,13 @@ export default function EmployeeAttendanceApprovalPage() {
     setSuccess("");
     try {
       const endpoint = action === "send-back" ? "/api/hr/attendance/approval-groups/send-back" : "/api/hr/attendance/approval-groups/approve";
-      const eligibleIds = (detail?.workflow_states || selectedRow?.periods || []).filter((period: any) => action === "finalize" ? period.status === "submitted" : period.status === "submitted").map((period: any) => period.id || period.daily_submission_id).filter(Boolean);
+      const submittedIds = (detail?.workflow_states || selectedRow?.periods || [])
+        .filter((period: any) => period.status === "submitted")
+        .map((period: any) => period.id || period.daily_submission_id)
+        .filter(Boolean);
+      const eligibleIds = action === "send-back"
+        ? submittedIds.filter((id: string) => sendBackIds.includes(id))
+        : submittedIds;
       const result = await apiFetch(endpoint, { method: "POST", body: JSON.stringify({ daily_submission_ids: eligibleIds, reason }) });
       const failures = (result.results || []).filter((item: any) => !item.success);
       const resultSummary = (result.results || []).map((item: any) => `${formatDate(item.attendance_date)} - ${item.success ? action === "send-back" ? "Sent Back" : "Approved" : `Failed: ${item.error || "Unknown error"}`}`).join(" | ");
@@ -396,7 +405,9 @@ export default function EmployeeAttendanceApprovalPage() {
               </div>
             </div>
           </div>
-          {detailLoading || !detail ? <p className="rounded-2xl border bg-white p-4 text-sm text-slate-500 shadow-sm">Loading approval details...</p> : (
+          {detailLoading ? <p className="rounded-2xl border bg-white p-4 text-sm text-slate-500 shadow-sm">Loading approval details...</p> : detailError ? (
+            <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800 shadow-sm"><p>{detailError}</p><button type="button" onClick={() => selectedId && void loadDetail(selectedId)} className="mt-3 rounded-lg border border-red-300 bg-white px-3 py-2 font-semibold">Retry loading approval details</button></div>
+          ) : !detail ? <p className="rounded-2xl border bg-white p-4 text-sm text-slate-500 shadow-sm">No attendance approval details found.</p> : (
             <MonthlyDetail
               detail={detail}
               rows={filteredRows}
