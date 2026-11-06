@@ -53,7 +53,6 @@ export async function GET(request: Request) {
       companyId: params.companyId,
       siteId: params.siteId,
       attendanceDate: params.attendanceDate,
-      attendanceType: "employee",
     });
     const dateAllowed = assertDateSelectable(auth, params.attendanceDate, Boolean(historicalAccess), returnedDate);
     if (!dateAllowed.allowed) return jsonError(dateAllowed.error || "Attendance date cannot be loaded.", 403);
