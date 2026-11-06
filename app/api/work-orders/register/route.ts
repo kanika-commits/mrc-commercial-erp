@@ -27,6 +27,7 @@ type Permission = {
 
 type WorkOrderRow = {
   id: string;
+  creation_request_id: string | null;
   wo_number: string | null;
   wo_date: string | null;
   wo_type: string | null;
@@ -231,7 +232,7 @@ function applyWorkOrderScope(
   organizationScope: OrganizationScope,
 ) {
   let next = query.or(
-    "and(approval_status.ilike.approved,status.eq.active),status.ilike.suspended,status.ilike.cancelled,approval_status.ilike.suspended,approval_status.ilike.cancelled"
+    "and(approval_status.ilike.approved,status.eq.active),approval_status.ilike.draft,status.ilike.suspended,status.ilike.cancelled,approval_status.ilike.suspended,approval_status.ilike.cancelled"
   );
   next = applyOrganizationScope(next, organizationScope);
 
@@ -682,6 +683,7 @@ function enrichRows(
 
 const WORK_ORDER_COLUMNS = `
   id,
+  creation_request_id,
   wo_number,
   wo_date,
   wo_type,

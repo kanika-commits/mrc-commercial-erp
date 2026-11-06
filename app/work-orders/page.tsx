@@ -20,6 +20,7 @@ import { recordClientAuditEvent } from "@/lib/clientAudit";
 
 type WorkOrder = {
   id: string;
+  creation_request_id?: string | null;
   wo_number: string | null;
   wo_date: string | null;
   wo_type: string | null;
@@ -878,6 +879,7 @@ export default function WorkOrdersPage() {
                   const lifecycleStatus = lifecycleStatusValue(wo.status);
                   const commercials = workOrderCommercials(wo);
                   const vendorName = getVendorName(wo);
+                  const isDraft = String(wo.approval_status || "").trim().toLowerCase() === "draft";
 
                   return (
                   <tr key={wo.id} className="transition hover:bg-[#f6f3f5]">
@@ -1025,14 +1027,14 @@ export default function WorkOrdersPage() {
                     <td className="px-6 py-5 align-top">
                       <div className="flex justify-end gap-2">
                         <Link
-                          href={`/work-orders/${wo.id}`}
+                          href={isDraft ? `/work-orders/drafts/${wo.id}` : `/work-orders/${wo.id}`}
                           className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 text-slate-500 transition hover:bg-[#f6f3f5] hover:text-slate-950"
                           title="View"
                         >
                           <Eye className="h-4 w-4" />
                         </Link>
 
-                        {canDelete && (
+                        {(isDraft || canDelete) && (
                           <button
                             type="button"
                             onClick={() => {

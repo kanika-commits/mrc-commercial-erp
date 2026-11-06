@@ -81,7 +81,7 @@ export default function NewWorkOrderPage() {
   }, [draftId, form.company_id, form.standard_terms_snapshot, lookups.terms_templates]);
 
   useEffect(() => {
-    if (!form.company_id || !form.site_id || numberEdited) return;
+    if (draftId || !form.company_id || !form.site_id || numberEdited) return;
     let cancelled = false;
     setNumberLoading(true);
     setNumberError("");
@@ -99,7 +99,7 @@ export default function NewWorkOrderPage() {
       })
       .finally(() => { if (!cancelled) setNumberLoading(false); });
     return () => { cancelled = true; };
-  }, [form.company_id, form.site_id, numberEdited]);
+  }, [draftId, form.company_id, form.site_id, numberEdited]);
 
   const sites = lookups.sites;
   const terms = useMemo(() => lookups.terms_templates.filter((t: any) => t.company_id === form.company_id && t.status === "active"), [lookups.terms_templates, form.company_id]);
@@ -114,7 +114,7 @@ export default function NewWorkOrderPage() {
   const deliveryLocationMatchesSelectedMaster = (row: any) => row.site_id === form.site_id && row.status === "active" && row.billing_address?.gst_registration_id === form.gst_registration_id;
   const deliveryLocations = useMemo(() => form.gst_registration_id ? lookups.delivery_locations.filter(deliveryLocationMatchesSelectedMaster) : [], [lookups.delivery_locations, form.site_id, form.gst_registration_id]);
   const eligibleDeliveryLocations = useMemo(() => form.gst_registration_id ? lookups.delivery_locations.filter(deliveryLocationMatchesSelectedMaster) : [], [lookups.delivery_locations, form.site_id, form.gst_registration_id]);
-  const defaultDeliveryLocation = eligibleDeliveryLocations.find((row: any) => row.is_default) || (eligibleDeliveryLocations.length === 1 ? eligibleDeliveryLocations[0] : null);
+  const defaultDeliveryLocation = eligibleDeliveryLocations.length === 1 ? eligibleDeliveryLocations[0] : null;
   const siteContacts = useMemo(() => lookups.site_contacts.filter((row: any) => row.site_id === form.site_id && row.status === "active").sort((a: any, b: any) => Number(b.is_default) - Number(a.is_default) || String(a.contact_name || "").localeCompare(String(b.contact_name || ""))), [lookups.site_contacts, form.site_id]);
   const totals = useMemo(() => lines.reduce((r, l) => {
     const basic = Number(l.quantity || 0) * Number(l.unit_rate || 0);
@@ -132,23 +132,30 @@ export default function NewWorkOrderPage() {
   };
 
   useEffect(() => {
-    if (form.billing_address_id && !selectedBillingAddress) setForm((current: any) => ({ ...current, billing_address_id: "", delivery_location_id: "", billing_contact_id: "", delivery_contact_id: "" }));
-  }, [form.billing_address_id, selectedBillingAddress?.id]);
+    if (lookupLoading || !form.billing_address_id || selectedBillingAddress) return;
+    setForm((current: any) => ({ ...current, billing_address_id: "", delivery_location_id: "", billing_contact_id: "", delivery_contact_id: "" }));
+  }, [lookupLoading, form.billing_address_id, selectedBillingAddress?.id]);
 
   useEffect(() => {
-    const master = gstMasters.find((row: any) => row.id === form.gst_registration_id);
-    const linkedAddressId = master?.billing_address?.id;
-    if (linkedAddressId && linkedAddressId !== form.billing_address_id) setForm((current: any) => ({ ...current, billing_address_id: linkedAddressId, delivery_location_id: "" }));
-  }, [form.gst_registration_id, gstMasters, form.billing_address_id]);
+    if (draftId || lookupLoading || form.billing_address_id || billingAddresses.length !== 1) return;
+    const onlyBillingAddressId = billingAddresses[0].id;
+    setForm((current: any) => current.billing_address_id ? current : { ...current, billing_address_id: onlyBillingAddressId });
+  }, [draftId, lookupLoading, billingAddresses.length, billingAddresses[0]?.id, form.billing_address_id]);
+
+  useEffect(() => {
+    if (draftId || lookupLoading || siteContacts.length !== 1) return;
+    const onlySiteContactId = siteContacts[0].id;
+    setForm((current: any) => ({ ...current, billing_contact_id: current.billing_contact_id || onlySiteContactId, delivery_contact_id: current.delivery_contact_id || onlySiteContactId }));
+  }, [draftId, lookupLoading, siteContacts.length, siteContacts[0]?.id, form.billing_contact_id, form.delivery_contact_id]);
 
   useEffect(() => {
     if (billingAmbiguity) setMessage("The selected GST/Billing Master has multiple linked billing addresses and no default. Select the canonical Billing Address explicitly.");
   }, [billingAmbiguity?.id]);
 
   useEffect(() => {
-    if (!defaultDeliveryLocation || defaultDeliveryLocation.id === form.delivery_location_id) return;
-    setForm((current: any) => ({ ...current, delivery_location_id: defaultDeliveryLocation.id }));
-  }, [defaultDeliveryLocation?.id, form.delivery_location_id]);
+    if (draftId || lookupLoading || form.delivery_location_id || !defaultDeliveryLocation) return;
+    setForm((current: any) => current.delivery_location_id ? current : { ...current, delivery_location_id: defaultDeliveryLocation.id });
+  }, [draftId, lookupLoading, defaultDeliveryLocation?.id, form.delivery_location_id]);
 
   async function preview(event: React.FormEvent) {
     event.preventDefault();
@@ -193,6 +200,17 @@ export default function NewWorkOrderPage() {
       const previewForm = new FormData();
       previewForm.append("payload", JSON.stringify(payload));
       supportingDocuments.forEach((file) => previewForm.append("supporting_documents", file, file.name));
+      if (draftId) {
+        try {
+          await apiFetch(`/api/work-orders/drafts/${encodeURIComponent(draftId)}`, {
+            method: "PATCH",
+            body: JSON.stringify({ ...payload, action: "draft" }),
+          });
+        } catch (error: any) {
+          setMessage(`Draft could not be saved. Preview was not started. ${error?.message || "Please try again."}`);
+          return;
+        }
+      }
       const result = await apiFetch("/api/work-orders/preview", {
         method: "POST",
         body: previewForm,
@@ -202,7 +220,7 @@ export default function NewWorkOrderPage() {
         router.push("/work-orders/new/structured/preview");
       }
     } catch (e: any) {
-      setMessage(e.message);
+      setMessage(`${draftId ? "Draft saved, but Preview could not be generated. You can retry Preview. " : ""}${e?.message || "Preview could not be generated."}`);
     } finally {
       setSaving(false);
     }
@@ -228,7 +246,7 @@ export default function NewWorkOrderPage() {
       </section>
       <section className="rounded-2xl border bg-white p-5"><div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-bold">Key Terms</h2><button type="button" className="rounded-lg border px-3 py-2 text-sm font-semibold" onClick={addKeyTerm}>+ Add Additional Term</button></div><div className="overflow-x-auto"><table className="min-w-[520px] w-full border-collapse text-sm"><thead className="bg-slate-50"><tr><th className="w-56 border p-3 text-left">Key Term</th><th className="border p-3 text-left">Terms</th></tr></thead><tbody><tr><td className="border p-3 font-semibold">Inclusions *</td><td className="border p-3"><textarea required rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={keyTerms.inclusions[0] || ""} onChange={(e) => updateKeyTerm('inclusions', 0, e.target.value)} /></td></tr><tr><td className="border p-3 font-semibold">Exclusions *</td><td className="border p-3"><textarea required rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={keyTerms.exclusions[0] || ""} onChange={(e) => updateKeyTerm('exclusions', 0, e.target.value)} /></td></tr>{keyTerms.inclusions.slice(1).map((entry, index) => <tr key={`inclusion-${index + 1}`}><td className="border p-3 font-semibold"><div className="flex items-center justify-between gap-2"><span>Inclusions {index + 2}</span><button type="button" className="text-xs font-semibold text-red-700" onClick={() => setKeyTerms((current) => ({ ...current, inclusions: current.inclusions.filter((_, i) => i !== index + 1) }))}>Remove</button></div></td><td className="border p-3"><textarea rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={entry} onChange={(e) => updateKeyTerm('inclusions', index + 1, e.target.value)} /></td></tr>)}{keyTerms.exclusions.slice(1).map((entry, index) => <tr key={`exclusion-${index + 1}`}><td className="border p-3 font-semibold"><div className="flex items-center justify-between gap-2"><span>Exclusions {index + 2}</span><button type="button" className="text-xs font-semibold text-red-700" onClick={() => setKeyTerms((current) => ({ ...current, exclusions: current.exclusions.filter((_, i) => i !== index + 1) }))}>Remove</button></div></td><td className="border p-3"><textarea rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" value={entry} onChange={(e) => updateKeyTerm('exclusions', index + 1, e.target.value)} /></td></tr>)}{keyTerms.additional.map((term, index) => <tr key={`additional-${index}`}><td className="border p-3"><div className="flex items-center gap-2"><input className="min-w-0 flex-1 rounded-lg border p-2" placeholder="Description" value={term.label} onChange={(e) => setKeyTerms((current) => ({ ...current, additional: current.additional.map((row, i) => i === index ? { ...row, label: e.target.value } : row) }))} /><button type="button" className="shrink-0 text-xs font-semibold text-red-700" onClick={() => setKeyTerms((current) => ({ ...current, additional: current.additional.filter((_, i) => i !== index) }))}>Remove</button></div></td><td className="border p-3"><textarea rows={2} className="min-h-10 w-full resize-y rounded-lg border p-2" placeholder="Terms" value={term.value} onChange={(e) => setKeyTerms((current) => ({ ...current, additional: current.additional.map((row, i) => i === index ? { ...row, value: e.target.value } : row) }))} /></td></tr>)}</tbody></table></div></section>
       <section className="space-y-4 rounded-2xl border bg-white p-5"><div><h2 className="text-lg font-bold">Supporting Documents</h2><p className="text-sm text-slate-500">Any file type is accepted. PDFs and common images are shown in the preview; other files are listed there and remain attached after submission.</p></div><input type="file" multiple onChange={(event) => { const files = Array.from(event.target.files || []); setSupportingDocuments((current) => [...current, ...files]); event.currentTarget.value = ""; setMessage(""); }} className="block w-full rounded-lg border p-2 text-sm" />{supportingDocuments.length > 0 && <ul className="space-y-2 text-sm">{supportingDocuments.map((file, index) => <li key={`${file.name}-${index}`} className="flex items-center justify-between gap-3 rounded-lg border bg-slate-50 px-3 py-2"><span className="truncate">{file.name}</span><button type="button" className="shrink-0 font-semibold text-red-700" onClick={() => setSupportingDocuments((current) => current.filter((_, fileIndex) => fileIndex !== index))}>Remove</button></li>)}</ul>}</section>
-      {message && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"><p>{message}</p><button type="button" className="mt-2 rounded border border-red-300 px-3 py-1 font-semibold" onClick={() => setLookupRetry((value) => value + 1)}>Retry lookup loading</button></div>}<button type="submit" disabled={saving} className="rounded-xl bg-slate-950 px-5 py-3 font-semibold text-white disabled:opacity-50">{saving ? 'Generating Preview…' : 'Preview Work Order PDF'}</button>
+      {message && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"><p>{message}</p><button type="button" className="mt-2 rounded border border-red-300 px-3 py-1 font-semibold" onClick={() => setLookupRetry((value) => value + 1)}>Retry lookup loading</button></div>}<button type="submit" disabled={saving} className="rounded-xl bg-slate-950 px-5 py-3 font-semibold text-white disabled:opacity-50">{saving ? (draftId ? 'Saving draft and generating Preview…' : 'Generating Preview…') : 'Preview Work Order PDF'}</button>
     </form>
   </section>;
 }

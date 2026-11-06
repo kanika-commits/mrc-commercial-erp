@@ -5,6 +5,7 @@ import {
 } from "@/lib/serverDeleteAudit";
 import { recordAuditEvent } from "@/lib/auditEvent";
 import { requirePermission } from "@/lib/serverPermissions";
+import { loadActorOrganizationScope } from "@/lib/serverOrganizationScope";
 import { optimizeUploadFile } from "@/lib/fileOptimization";
 import { createWorkOrderDriveFolder } from "@/src/lib/googleDrive";
 
@@ -619,19 +620,6 @@ export async function DELETE(request: Request) {
     }
 
     const admin = adminClient();
-    const permission = await requireDeletePermission(
-      admin,
-      auth.user,
-      MODULE_CODE
-    );
-
-    if ("error" in permission) {
-      return NextResponse.json(
-        { error: permission.error },
-        { status: permission.status }
-      );
-    }
-
     const { data: workOrder, error: workOrderError } = await admin
       .from("work_orders")
       .select("*")
@@ -645,6 +633,75 @@ export async function DELETE(request: Request) {
         { error: "Work Order was not found." },
         { status: 404 }
       );
+    }
+
+    const isDraft =
+      String(workOrder.approval_status || "").trim().toLowerCase() === "draft";
+
+    if (isDraft) {
+      const listAccess = await requirePermission(request, MODULE_CODE, "view");
+
+      if ("response" in listAccess) return listAccess.response;
+
+      const organizationScope = await loadActorOrganizationScope(admin, listAccess);
+      if (
+        organizationScope !== null &&
+        (!workOrder.organization_id ||
+          !organizationScope.includes(workOrder.organization_id))
+      ) {
+        return NextResponse.json(
+          { error: "You do not have access to this Work Order." },
+          { status: 403 }
+        );
+      }
+
+      const { data: assignments, error: assignmentsError } = await admin
+        .from("user_access_assignments")
+        .select("organization_id, company_id, site_id")
+        .eq("user_id", listAccess.user.id);
+
+      if (assignmentsError) throw assignmentsError;
+
+      const scopedAssignments = (assignments || []).filter(
+        (assignment) =>
+          organizationScope === null ||
+          organizationScope.includes(assignment.organization_id)
+      );
+      const siteIds = new Set(
+        scopedAssignments.map((assignment) => assignment.site_id).filter(Boolean)
+      );
+      const companyIds = new Set(
+        scopedAssignments.map((assignment) => assignment.company_id).filter(Boolean)
+      );
+      const hasOrganizationAssignment = scopedAssignments.some(
+        (assignment) => !assignment.company_id && !assignment.site_id
+      );
+      const inScope =
+        organizationScope === null ||
+        hasOrganizationAssignment ||
+        (siteIds.size > 0
+          ? siteIds.has(workOrder.site_id)
+          : companyIds.has(workOrder.company_id));
+
+      if (!inScope) {
+        return NextResponse.json(
+          { error: "You do not have access to this Work Order." },
+          { status: 403 }
+        );
+      }
+    } else {
+      const permission = await requireDeletePermission(
+        admin,
+        auth.user,
+        MODULE_CODE
+      );
+
+      if ("error" in permission) {
+        return NextResponse.json(
+          { error: permission.error },
+          { status: permission.status }
+        );
+      }
     }
 
     const [

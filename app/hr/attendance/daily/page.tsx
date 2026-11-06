@@ -9,6 +9,7 @@ import { apiFetch, formatDate } from "@/components/hr/hrClient";
 import { useAccessContext } from "@/components/AccessContext";
 import { can } from "@/lib/accessControl";
 import { ATTENDANCE_STATUS_LABELS, PHASE1_ATTENDANCE_STATUSES, currentIndiaDate, previousDate } from "@/lib/hr/attendance";
+import { getAttendanceSentBackDetails } from "@/lib/hr/attendanceSentBack";
 
 type RowState = {
   employee_id: string;
@@ -67,6 +68,19 @@ export default function DailyAttendancePage() {
     !context.dayLock &&
     !["submitted", "approved", "reopened", "cancelled"].includes(String(context.dailySubmission?.status || "").toLowerCase()),
   );
+  const contextHasReturnedSubmission = (context: any) => {
+    const submission = context?.dailySubmission;
+    return Boolean(
+      submission &&
+      String(submission.status || "").toLowerCase() === "reopened" &&
+      submission.attendance_date === date &&
+      submission.company_id === context?.period?.company_id &&
+      submission.site_id === context?.period?.site_id,
+    );
+  };
+  const hasReturnedSubmission = companyId
+    ? contextHasReturnedSubmission(attendanceContexts[companyId])
+    : rows.some((item) => contextHasReturnedSubmission(attendanceContexts[item.employee.company_id || ""]));
   const hasHistoricalAccess = companyId
     ? contextHasHistoricalDraftAccess(attendanceContexts[companyId])
     : rows.some((item) => contextHasHistoricalDraftAccess(attendanceContexts[item.employee.company_id || ""]));
@@ -77,9 +91,9 @@ export default function DailyAttendancePage() {
   const readOnlyReason = useMemo(() => {
     if (!canEdit) return "You do not have permission to edit attendance.";
     if (isFuture) return "Future attendance cannot be created or edited.";
-    if (isOlderThanYesterday && !isAdminRecovery && !hasHistoricalAccess) return "Attendance can be edited only for today or yesterday.";
+    if (isOlderThanYesterday && !isAdminRecovery && !hasHistoricalAccess && !hasReturnedSubmission) return "Attendance can be edited only for today or yesterday.";
     return "";
-  }, [canEdit, hasHistoricalAccess, isAdminRecovery, isFuture, isOlderThanYesterday]);
+  }, [canEdit, hasHistoricalAccess, hasReturnedSubmission, isAdminRecovery, isFuture, isOlderThanYesterday]);
   const editable = canEdit && !readOnlyReason;
   const visibleRows = useMemo(
     () => companyId ? rows.filter((item) => item.employee.company_id === companyId) : rows,
@@ -91,10 +105,11 @@ export default function DailyAttendancePage() {
     return visibleRows.filter((item) => String(item.employee?.employee_name || "").toLowerCase().includes(query));
   }, [employeeSearch, visibleRows]);
   const rowEditable = (item: any) => {
-    if (!canEdit || isFuture || (isOlderThanYesterday && !isAdminRecovery && !contextHasHistoricalDraftAccess(attendanceContexts[item.employee.company_id || ""]))) return false;
     const context = attendanceContexts[item.employee.company_id || ""];
+    const returned = contextHasReturnedSubmission(context);
+    if (!canEdit || isFuture || (isOlderThanYesterday && !isAdminRecovery && !contextHasHistoricalDraftAccess(context) && !returned)) return false;
     if (!context || context.dayLock) return false;
-    return !["submitted", "approved", "cancelled"].includes(String(context.dailySubmission?.status || ""));
+    return !["submitted", "approved", "cancelled"].includes(String(context.dailySubmission?.status || "").toLowerCase());
   };
   const hasEditableRows = rows.some(rowEditable);
   const statusCounts = useMemo(() => rows.reduce((counts: { present: number; absent: number; incomplete: number }, item: any) => {
@@ -111,6 +126,8 @@ export default function DailyAttendancePage() {
   const dailySubmissionInfo = Object.values(attendanceContexts).map((context: any) => context.dailySubmission).filter(Boolean);
   const submittedSubmission = dailySubmissionInfo.find((submission: any) => submission.status === "submitted");
   const approvedSubmission = dailySubmissionInfo.find((submission: any) => submission.status === "approved");
+  const reopenedSubmission = dailySubmissionInfo.find((submission: any) => String(submission?.status || "").toLowerCase() === "reopened");
+  const sentBackDetails = getAttendanceSentBackDetails(reopenedSubmission, period);
 
   useEffect(() => {
     let active = true;
@@ -392,10 +409,10 @@ export default function DailyAttendancePage() {
         <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 shadow-sm">
           <p className="text-base font-bold">Attendance Sent Back</p>
           <div className="mt-2 grid gap-1 md:grid-cols-2">
-            <p><span className="font-semibold">Reason:</span> {period.send_back_reason || "No reason recorded."}</p>
-            <p><span className="font-semibold">Sent Back By:</span> {period.reopened_by_name || period.reopened_by_email || "-"}</p>
-            <p><span className="font-semibold">Sent Back At:</span> {period.reopened_at ? new Date(period.reopened_at).toLocaleString("en-IN") : "-"}</p>
-            <p><span className="font-semibold">Previously Submitted:</span> {period.submitted_at ? new Date(period.submitted_at).toLocaleString("en-IN") : "-"}</p>
+            <p><span className="font-semibold">Reason:</span> {sentBackDetails.reason}</p>
+            <p><span className="font-semibold">Sent Back By:</span> {sentBackDetails.sender}</p>
+            <p><span className="font-semibold">Sent Back At:</span> {sentBackDetails.sentBackAt ? new Date(sentBackDetails.sentBackAt).toLocaleString("en-IN") : "-"}</p>
+            <p><span className="font-semibold">Previously Submitted:</span> {sentBackDetails.previouslySubmittedAt ? new Date(sentBackDetails.previouslySubmittedAt).toLocaleString("en-IN") : "-"}</p>
           </div>
           <p className="mt-2 font-semibold">Correct the attendance and resubmit it for approval.</p>
         </section>

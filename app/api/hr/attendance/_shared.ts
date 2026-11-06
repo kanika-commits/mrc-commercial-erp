@@ -761,6 +761,20 @@ export async function loadDailySubmission(
   return data || null;
 }
 
+export function isExactReopenedDailySubmission(
+  submission: any,
+  values: { organizationId: string; companyId: string; siteId: string; attendanceDate: string },
+) {
+  return Boolean(
+    submission &&
+    String(submission.status || "").toLowerCase() === "reopened" &&
+    submission.organization_id === values.organizationId &&
+    submission.company_id === values.companyId &&
+    submission.site_id === values.siteId &&
+    submission.attendance_date === values.attendanceDate,
+  );
+}
+
 export async function ensureDailySubmission(
   admin: ReturnType<typeof adminClient>,
   auth: ServerPermissionContext,
@@ -873,13 +887,13 @@ export function validateDailyPayload(payload: any) {
   return null;
 }
 
-export function assertDateEditAllowed(auth: ServerPermissionContext, attendanceDate: string, reason?: string | null, historicallyOpened = false) {
-  if (historicallyOpened && attendanceDate < currentIndiaDate()) return { allowed: true, backdated: false };
+export function assertDateEditAllowed(auth: ServerPermissionContext, attendanceDate: string, reason?: string | null, historicallyOpened = false, returnedDate = false) {
+  if ((historicallyOpened || returnedDate) && attendanceDate < currentIndiaDate()) return { allowed: true, backdated: false };
   return canEditAttendanceDate(attendanceDate, isAdminRecoveryRole(auth.roleCodes), reason);
 }
 
-export function assertDateSelectable(auth: ServerPermissionContext, attendanceDate: string, historicallyOpened = false) {
-  if (historicallyOpened && attendanceDate < currentIndiaDate()) return { allowed: true };
+export function assertDateSelectable(auth: ServerPermissionContext, attendanceDate: string, historicallyOpened = false, returnedDate = false) {
+  if ((historicallyOpened || returnedDate) && attendanceDate < currentIndiaDate()) return { allowed: true };
   return canSelectAttendanceDate(attendanceDate, isAdminRecoveryRole(auth.roleCodes));
 }
 
