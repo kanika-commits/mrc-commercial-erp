@@ -169,7 +169,7 @@ export default function NewWorkOrderPage() {
   }, [topError]);
 
   useEffect(() => {
-    if (!form.company_id || !form.site_id || numberEdited) return;
+    if (draftId || !form.company_id || !form.site_id || numberEdited) return;
     let cancelled = false;
     setNumberLoading(true);
     setNumberError("");
@@ -187,7 +187,7 @@ export default function NewWorkOrderPage() {
       })
       .finally(() => { if (!cancelled) setNumberLoading(false); });
     return () => { cancelled = true; };
-  }, [form.company_id, form.site_id, numberEdited]);
+  }, [draftId, form.company_id, form.site_id, numberEdited]);
 
   useEffect(() => {
     if (revisionId || !form.vendor_id || !form.company_id || !form.site_id || !form.wo_type) {
@@ -226,7 +226,7 @@ export default function NewWorkOrderPage() {
   const deliveryLocationMatchesSelectedMaster = (row: any) => row.site_id === form.site_id && row.status === "active" && row.billing_address?.gst_registration_id === form.gst_registration_id;
   const deliveryLocations = useMemo(() => form.gst_registration_id ? lookups.delivery_locations.filter(deliveryLocationMatchesSelectedMaster) : [], [lookups.delivery_locations, form.site_id, form.gst_registration_id]);
   const eligibleDeliveryLocations = useMemo(() => form.gst_registration_id ? lookups.delivery_locations.filter(deliveryLocationMatchesSelectedMaster) : [], [lookups.delivery_locations, form.site_id, form.gst_registration_id]);
-  const defaultDeliveryLocation = eligibleDeliveryLocations.find((row: any) => row.is_default) || (eligibleDeliveryLocations.length === 1 ? eligibleDeliveryLocations[0] : null);
+  const defaultDeliveryLocation = eligibleDeliveryLocations.length === 1 ? eligibleDeliveryLocations[0] : null;
   const siteContacts = useMemo(() => lookups.site_contacts.filter((row: any) => row.site_id === form.site_id && row.status === "active").sort((a: any, b: any) => Number(b.is_default) - Number(a.is_default) || String(a.contact_name || "").localeCompare(String(b.contact_name || ""))), [lookups.site_contacts, form.site_id]);
   const defaultSiteContact = siteContacts.find((row: any) => row.is_default) || siteContacts[0] || null;
   const totals = useMemo(() => lines.reduce((r, l) => {
@@ -248,20 +248,34 @@ export default function NewWorkOrderPage() {
   useEffect(() => {
     if (!form.site_id || draftId) return;
     if (revisionId && revisionHydration !== "ready") return;
+    if (lookupLoading || siteContacts.length !== 1) return;
+    const onlySiteContactId = siteContacts[0]?.id;
+    if (!onlySiteContactId) return;
     setForm((current: any) => {
       const billingValid = siteContacts.some((row: any) => row.id === current.billing_contact_id);
       const deliveryValid = siteContacts.some((row: any) => row.id === current.delivery_contact_id);
-      const nextBillingId = billingValid ? current.billing_contact_id : defaultSiteContact?.id || "";
-      const nextDeliveryId = deliveryValid ? current.delivery_contact_id : defaultSiteContact?.id || "";
+      const nextBillingId = billingValid ? current.billing_contact_id : "";
+      const nextDeliveryId = deliveryValid ? current.delivery_contact_id : "";
       if (nextBillingId === current.billing_contact_id && nextDeliveryId === current.delivery_contact_id) return current;
-      return { ...current, billing_contact_id: nextBillingId, delivery_contact_id: nextDeliveryId };
+      if (nextBillingId || nextDeliveryId) return { ...current, billing_contact_id: nextBillingId, delivery_contact_id: nextDeliveryId };
+      return { ...current, billing_contact_id: current.billing_contact_id || onlySiteContactId, delivery_contact_id: current.delivery_contact_id || onlySiteContactId };
     });
-  }, [form.site_id, siteContacts, defaultSiteContact?.id, revisionId, revisionHydration, draftId, draftLoading, lookupLoading]);
+  }, [form.site_id, siteContacts, revisionId, revisionHydration, draftId, draftLoading, lookupLoading]);
 
   useEffect(() => {
     if ((revisionId && revisionHydration !== "ready") || draftId) return;
     if (form.billing_address_id && !selectedBillingAddress) setForm((current: any) => ({ ...current, billing_address_id: "", delivery_location_id: "", billing_contact_id: "", delivery_contact_id: "" }));
   }, [form.billing_address_id, selectedBillingAddress?.id, revisionId, revisionHydration, draftId, draftLoading, lookupLoading]);
+
+  useEffect(() => {
+    if (lookupLoading || !form.billing_address_id || selectedBillingAddress) return;
+    if (draftId || lookupLoading || form.billing_address_id || billingAddresses.length !== 1) return;
+  }, [draftId, lookupLoading, form.billing_address_id, billingAddresses, selectedBillingAddress?.id]);
+
+  useEffect(() => {
+    if (draftId || lookupLoading || form.billing_address_id || billingAddresses.length !== 1) return;
+    setForm((current: any) => ({ ...current, billing_address_id: billingAddresses[0].id }));
+  }, [draftId, lookupLoading, form.billing_address_id, billingAddresses]);
 
   async function saveRevisionSnapshot() {
     if (!revisionId || !revisionWorkOrderId || !applicableDate) {
@@ -326,9 +340,9 @@ export default function NewWorkOrderPage() {
   }, [billingAmbiguity?.id]);
 
   useEffect(() => {
-    if (draftId || !defaultDeliveryLocation || defaultDeliveryLocation.id === form.delivery_location_id) return;
+    if (draftId || lookupLoading || form.delivery_location_id || !defaultDeliveryLocation) return;
     setForm((current: any) => ({ ...current, delivery_location_id: defaultDeliveryLocation.id }));
-  }, [defaultDeliveryLocation?.id, form.delivery_location_id, draftId]);
+  }, [defaultDeliveryLocation?.id, form.delivery_location_id, draftId, lookupLoading]);
 
   async function preview(event: React.FormEvent) {
     event.preventDefault();
@@ -355,6 +369,7 @@ export default function NewWorkOrderPage() {
       return;
     }
     setSaving(true);
+    let draftSaved = false;
     try {
       const selectedVendor = lookups.vendors.find((row: any) => row.id === form.vendor_id) || null;
       const primaryVendorContact = selectedVendor?.contacts?.find((contact: any) => contact?.is_primary) || selectedVendor?.contacts?.[0] || {};
@@ -394,26 +409,29 @@ export default function NewWorkOrderPage() {
         router.push(`/work-orders/new/structured/preview?revision=${encodeURIComponent(revisionId)}&work_order=${encodeURIComponent(revisionWorkOrderId)}`);
         return;
       }
+      const existingCreationRequestId = draftLookupRef.current?.creation_request_id || payload.creation_request_id;
+      const creationRequestId = draftId ? existingCreationRequestId || draftId : crypto.randomUUID();
+      const draftPayload = { ...payload, creation_request_id: creationRequestId, draft_only: true };
+      const saved = draftId
+        ? await requestWithTimeout(`/api/work-orders/drafts/${encodeURIComponent(draftId)}`, "Work Order draft save", { method: "PATCH", body: JSON.stringify({ action: "save", payload: draftPayload }) })
+        : await requestWithTimeout("/api/work-orders/create", "Work Order draft save", { method: "POST", body: (() => { const form = new FormData(); form.append("payload", JSON.stringify(draftPayload)); supportingDocuments.forEach((file) => form.append("supporting_documents", file, file.name)); return form; })() });
+      const savedDraftId = draftId || saved.workOrder?.id;
+      if (!savedDraftId) throw new Error("The draft was not saved. Your form values were kept; please try Preview again.");
+      draftSaved = true;
+
       const previewForm = new FormData();
-      previewForm.append("payload", JSON.stringify(payload));
+      previewForm.append("payload", JSON.stringify(draftPayload));
       supportingDocuments.forEach((file) => previewForm.append("supporting_documents", file, file.name));
       const result = await requestWithTimeout("/api/work-orders/preview", "Work Order PDF preview", {
         method: "POST",
         body: previewForm,
       });
       if (result.pdf_base64) {
-        const creationRequestId = crypto.randomUUID();
-        const draftPayload = { ...payload, creation_request_id: creationRequestId, draft_only: true };
-        const saved = draftId
-          ? await requestWithTimeout(`/api/work-orders/drafts/${encodeURIComponent(draftId)}`, "Work Order draft save", { method: "PATCH", body: JSON.stringify({ action: "save", payload: draftPayload }) })
-          : await requestWithTimeout("/api/work-orders/create", "Work Order draft save", { method: "POST", body: (() => { const form = new FormData(); form.append("payload", JSON.stringify(draftPayload)); supportingDocuments.forEach((file) => form.append("supporting_documents", file, file.name)); return form; })() });
-        const savedDraftId = draftId || saved.workOrder?.id;
-        if (!savedDraftId) throw new Error("The draft was not saved. Your form values were kept; please try Preview again.");
         setWorkOrderPilotDraft({ form, keyTerms, lines, supportingDocuments, payload: draftPayload, previewUrl: `data:application/pdf;base64,${result.pdf_base64}`, creationRequestId, draftId: savedDraftId });
         router.push(`/work-orders/new/structured/preview?draft=${encodeURIComponent(savedDraftId)}`);
       }
     } catch (e: any) {
-      setMessage(e?.message || "Work Order PDF preview could not be generated. Your form values are still here; retry when ready.");
+      setMessage(draftSaved ? "Draft saved, but Preview could not be generated. You can retry Preview." : e?.message || "Draft could not be saved. Preview was not started.");
       setMessageKind("preview");
     } finally {
       setSaving(false);

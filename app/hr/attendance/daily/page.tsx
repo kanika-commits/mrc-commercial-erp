@@ -68,6 +68,19 @@ export default function DailyAttendancePage() {
     !context.dayLock &&
     !["submitted", "approved", "reopened", "cancelled"].includes(String(context.dailySubmission?.status || "").toLowerCase()),
   );
+  const contextHasReturnedSubmission = (context: any) => {
+    const submission = context?.dailySubmission;
+    return Boolean(
+      submission &&
+      String(submission.status || "").toLowerCase() === "reopened" &&
+      submission.attendance_date === date &&
+      submission.company_id === context?.period?.company_id &&
+      submission.site_id === context?.period?.site_id,
+    );
+  };
+  const hasReturnedSubmission = companyId
+    ? contextHasReturnedSubmission(attendanceContexts[companyId])
+    : rows.some((item) => contextHasReturnedSubmission(attendanceContexts[item.employee.company_id || ""]));
   const hasHistoricalAccess = companyId
     ? contextHasHistoricalDraftAccess(attendanceContexts[companyId])
     : rows.some((item) => contextHasHistoricalDraftAccess(attendanceContexts[item.employee.company_id || ""]));
@@ -78,9 +91,9 @@ export default function DailyAttendancePage() {
   const readOnlyReason = useMemo(() => {
     if (!canEdit) return "You do not have permission to edit attendance.";
     if (isFuture) return "Future attendance cannot be created or edited.";
-    if (isOlderThanYesterday && !isAdminRecovery && !hasHistoricalAccess) return "Attendance can be edited only for today or yesterday.";
+    if (isOlderThanYesterday && !isAdminRecovery && !hasHistoricalAccess && !hasReturnedSubmission) return "Attendance can be edited only for today or yesterday.";
     return "";
-  }, [canEdit, hasHistoricalAccess, isAdminRecovery, isFuture, isOlderThanYesterday]);
+  }, [canEdit, hasHistoricalAccess, hasReturnedSubmission, isAdminRecovery, isFuture, isOlderThanYesterday]);
   const editable = canEdit && !readOnlyReason;
   const visibleRows = useMemo(
     () => companyId ? rows.filter((item) => item.employee.company_id === companyId) : rows,
@@ -92,10 +105,11 @@ export default function DailyAttendancePage() {
     return visibleRows.filter((item) => String(item.employee?.employee_name || "").toLowerCase().includes(query));
   }, [employeeSearch, visibleRows]);
   const rowEditable = (item: any) => {
-    if (!canEdit || isFuture || (isOlderThanYesterday && !isAdminRecovery && !contextHasHistoricalDraftAccess(attendanceContexts[item.employee.company_id || ""]))) return false;
     const context = attendanceContexts[item.employee.company_id || ""];
+    const returned = contextHasReturnedSubmission(context);
+    if (!canEdit || isFuture || (isOlderThanYesterday && !isAdminRecovery && !contextHasHistoricalDraftAccess(context) && !returned)) return false;
     if (!context || context.dayLock) return false;
-    return !["submitted", "approved", "cancelled"].includes(String(context.dailySubmission?.status || ""));
+    return !["submitted", "approved", "cancelled"].includes(String(context.dailySubmission?.status || "").toLowerCase());
   };
   const hasEditableRows = rows.some(rowEditable);
   const statusCounts = useMemo(() => rows.reduce((counts: { present: number; absent: number; incomplete: number }, item: any) => {

@@ -91,8 +91,8 @@ type SortField = "wo_number" | "vendor_name" | "wo_value" | "status" | "approval
 
 function workOrderViewHref(wo: Pick<WorkOrder, "id" | "approval_status" | "creation_request_id">, pilotOnly: boolean) {
   const approvalStatus = String(wo.approval_status || "").trim().toLowerCase();
-  if (approvalStatus === "draft" && wo.creation_request_id) return `/work-orders/drafts/${wo.id}`;
-  return pilotOnly ? `/work-orders/${wo.id}?from=forms-work-orders` : `/work-orders/${wo.id}`;
+  const isDraft = approvalStatus === "draft";
+  return isDraft ? `/work-orders/drafts/${wo.id}` : (pilotOnly ? `/work-orders/${wo.id}?from=forms-work-orders` : `/work-orders/${wo.id}`);
 }
 type SortDirection = "asc" | "desc";
 
@@ -943,6 +943,7 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
                   const lifecycleStatus = lifecycleStatusValue(wo.status);
                   const commercials = workOrderCommercials(wo);
                   const vendorName = getVendorName(wo);
+            const isDraft = String(wo.approval_status || "").trim().toLowerCase() === "draft";
 
                   return (
                   <tr key={wo.id} className="transition hover:bg-[#f6f3f5]">
@@ -1116,7 +1117,7 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
                           <Eye className="h-4 w-4" />
                         </Link>
 
-                        {canDelete && (
+                  {(isDraft || canDelete) && (
                           <button
                             type="button"
                             onClick={() => {

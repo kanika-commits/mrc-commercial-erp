@@ -9,6 +9,7 @@ import {
   jsonError,
   loadAttendanceRows,
   loadDailySubmission,
+  isExactReopenedDailySubmission,
   loadActiveHistoricalAttendanceAccess,
   loadDayLock,
   loadEligibleEmployees,
@@ -35,17 +36,31 @@ export async function GET(request: Request) {
     const admin = adminClient();
     const scope = await validateCompanySiteScope(admin, auth, params.companyId, params.siteId);
     if ("response" in scope) return scope.response;
-    const historicalAccess = await loadActiveHistoricalAttendanceAccess(admin, {
+    const [historicalAccess, dailySubmission] = await Promise.all([
+      loadActiveHistoricalAttendanceAccess(admin, {
+        organizationId: scope.organizationId,
+        siteId: params.siteId,
+        attendanceDate,
+        attendanceType: "employee",
+      }),
+      loadDailySubmission(admin, {
+        organizationId: scope.organizationId,
+        companyId: params.companyId,
+        siteId: params.siteId,
+        attendanceDate,
+      }),
+    ]);
+    const returnedDate = isExactReopenedDailySubmission(dailySubmission, {
       organizationId: scope.organizationId,
+      companyId: params.companyId,
       siteId: params.siteId,
       attendanceDate,
-      attendanceType: "employee",
     });
-    const dateAllowed = assertDateSelectable(auth, attendanceDate, Boolean(historicalAccess));
-    if (!dateAllowed.allowed) return jsonError(("error" in dateAllowed ? dateAllowed.error : undefined) ?? "Attendance date cannot be loaded.", 403);
+    const dateAllowed = assertDateSelectable(auth, attendanceDate, Boolean(historicalAccess), returnedDate);
+    if (!dateAllowed.allowed) return jsonError(dateAllowed.error || "Attendance date cannot be loaded.", 403);
 
     const month = monthStart(attendanceDate)!;
-    let [employees, rows, period, dayLock, policy, dailySubmission] = await Promise.all([
+    let [employees, rows, period, dayLock, policy] = await Promise.all([
       loadEligibleEmployees(admin, {
         organizationId: scope.organizationId,
         companyId: params.companyId,
@@ -75,12 +90,6 @@ export async function GET(request: Request) {
       loadEmployeeAttendancePolicyForScope(admin, {
         organizationId: scope.organizationId,
         siteId: params.siteId,
-      }),
-      loadDailySubmission(admin, {
-        organizationId: scope.organizationId,
-        companyId: params.companyId,
-        siteId: params.siteId,
-        attendanceDate: params.attendanceDate,
       }),
     ]);
     if (!policy) return jsonError("Employee Attendance Policy is not configured for the selected site.", 409);
@@ -160,14 +169,28 @@ export async function PUT(request: Request) {
     const admin = adminClient();
     const scope = await validateCompanySiteScope(admin, auth, params.companyId, params.siteId);
     if ("response" in scope) return scope.response;
-    const historicalAccess = await loadActiveHistoricalAttendanceAccess(admin, {
+    const [historicalAccess, dailySubmission] = await Promise.all([
+      loadActiveHistoricalAttendanceAccess(admin, {
+        organizationId: scope.organizationId,
+        siteId: params.siteId,
+        attendanceDate,
+        attendanceType: "employee",
+      }),
+      loadDailySubmission(admin, {
+        organizationId: scope.organizationId,
+        companyId: params.companyId,
+        siteId: params.siteId,
+        attendanceDate,
+      }),
+    ]);
+    const returnedDate = isExactReopenedDailySubmission(dailySubmission, {
       organizationId: scope.organizationId,
+      companyId: params.companyId,
       siteId: params.siteId,
       attendanceDate,
-      attendanceType: "employee",
     });
-    const editAllowed = assertDateEditAllowed(auth, attendanceDate, payload.backdated_reason, Boolean(historicalAccess));
-    if (!editAllowed.allowed) return jsonError(("error" in editAllowed ? editAllowed.error : undefined) ?? "Attendance date is not editable.", 403);
+    const editAllowed = assertDateEditAllowed(auth, attendanceDate, payload.backdated_reason, Boolean(historicalAccess), returnedDate);
+    if (!editAllowed.allowed) return jsonError(editAllowed.error || "Attendance date is not editable.", 403);
 
     const month = monthStart(attendanceDate)!;
     const period = await ensurePeriod(admin, auth, {
@@ -187,12 +210,6 @@ export async function PUT(request: Request) {
       siteId: params.siteId,
     });
     if (!policy) return jsonError("Employee Attendance Policy is not configured for the selected site.", 409);
-    const dailySubmission = await loadDailySubmission(admin, {
-      organizationId: scope.organizationId,
-      companyId: params.companyId,
-      siteId: params.siteId,
-      attendanceDate,
-    });
     if (dailySubmission && !["draft", "reopened"].includes(String(dailySubmission.status || "").toLowerCase())) {
       return jsonError("This attendance date is already submitted or approved and is read-only.", 403);
     }

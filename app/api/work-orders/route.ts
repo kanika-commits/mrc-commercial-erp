@@ -687,18 +687,6 @@ export async function DELETE(request: Request) {
     }
 
     const admin = adminClient();
-    const permission = await requireDeletePermission(
-      admin,
-      auth.user,
-      MODULE_CODE
-    );
-
-    if ("error" in permission) {
-      return NextResponse.json(
-        { error: permission.error },
-        { status: permission.status }
-      );
-    }
 
     const { data: workOrder, error: workOrderError } = await admin
       .from("work_orders")
@@ -713,6 +701,27 @@ export async function DELETE(request: Request) {
         { error: "Work Order was not found." },
         { status: 404 }
       );
+    }
+
+    const listAccess = await requirePermission(request, MODULE_CODE, "view");
+    if ("response" in listAccess) {
+      return listAccess.response;
+    }
+
+    const isDraft = String(workOrder.approval_status || "").toLowerCase() === "draft";
+    if (!isDraft) {
+      const permission = await requireDeletePermission(
+        admin,
+        auth.user,
+        MODULE_CODE
+      );
+
+      if ("error" in permission) {
+        return NextResponse.json(
+          { error: permission.error },
+          { status: permission.status }
+        );
+      }
     }
 
     const [organizationScope, assignments] = await Promise.all([

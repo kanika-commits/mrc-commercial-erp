@@ -22,6 +22,9 @@ export default function WorkOrderDraftDetailPage() {
   const [pdfLoading, setPdfLoading] = useState(true);
   const [error, setError] = useState("");
   const [pdfError, setPdfError] = useState("");
+  const [documents, setDocuments] = useState<any[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(true);
+  const [documentsError, setDocumentsError] = useState("");
 
   const loadDraft = useCallback(async (cancelled: { current: boolean }) => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -49,6 +52,23 @@ export default function WorkOrderDraftDetailPage() {
     } finally { if (!cancelled.current) setPdfLoading(false); }
   }, [draftId]);
 
+  const loadDocuments = useCallback(async () => {
+    setDocumentsLoading(true); setDocumentsError("");
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Your session expired. Please log in again.");
+      const response = await requestWithTimeout(`/api/work-orders/documents?work_order_id=${encodeURIComponent(draftId)}`, { Authorization: `Bearer ${session.access_token}` });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Supporting documents could not be loaded.");
+      const nextDocuments = Array.isArray(payload?.documents) ? payload.documents : Array.isArray(payload) ? payload : [];
+      setDocuments(nextDocuments);
+    } catch (reason: any) {
+      setDocumentsError(reason?.name === "AbortError" ? "Supporting documents took too long to load." : reason.message || "Supporting documents could not be loaded.");
+    } finally {
+      setDocumentsLoading(false);
+    }
+  }, [draftId]);
+
   const loadPage = useCallback(() => {
     const cancelled = { current: false };
     setDraftLoading(true); setError("");
@@ -58,6 +78,7 @@ export default function WorkOrderDraftDetailPage() {
   }, [loadDraft, loadPdf]);
 
   useEffect(() => loadPage(), [loadPage]);
+  useEffect(() => { void loadDocuments(); }, [params.id]);
   useEffect(() => () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); }, [pdfUrl]);
 
   const title = displayValue(draft?.wo_number, draft?.work_order_number) || "Work Order Draft";
@@ -68,5 +89,6 @@ export default function WorkOrderDraftDetailPage() {
     {error && <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700" role="alert"><p>{error}</p><button type="button" onClick={loadPage} className="mt-3 rounded border border-red-300 bg-white px-3 py-2 font-semibold">Retry draft</button></div>}
     {!draftLoading && !error && pdfError && <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800" role="alert"><p>{pdfError}</p><button type="button" onClick={() => void loadPdf()} className="mt-3 rounded border border-amber-300 bg-white px-3 py-2 font-semibold">Retry PDF</button></div>}
     <section data-testid="work-order-draft-pdf-package" className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-semibold">Work Order Package</h2><p className="mt-1 text-sm text-slate-500">Generated Work Order PDF and supporting documents.</p></div>{pdfUrl && <a href={pdfUrl} download={downloadName} target="_blank" rel="noreferrer" className="rounded-lg border px-3 py-2 text-sm font-semibold">View / Download Work Order PDF</a>}</div>{pdfUrl ? <div className="mt-4 space-y-3"><iframe data-testid="work-order-draft-pdf" title="Work Order draft PDF preview" src={pdfUrl} className="h-[78vh] min-h-[560px] w-full rounded-xl border bg-slate-100" /><a href={pdfUrl} download={downloadName} className="inline-flex text-sm font-semibold text-sky-700 hover:underline">Download PDF</a></div> : pdfLoading ? <p className="mt-4 rounded-xl border bg-slate-50 p-8 text-sm text-slate-500">Loading saved draft PDF…</p> : null}</section>
+    <section data-testid="work-order-draft-supporting-documents" className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm"><h2 className="text-xl font-semibold">Supporting Documents</h2>{documentsLoading ? <p className="mt-3 text-sm text-slate-500">Loading supporting documents</p> : documentsError ? <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700" role="alert"><p>{documentsError}</p><button type="button" onClick={() => void loadDocuments()} className="mt-3 rounded border border-red-300 bg-white px-3 py-2 font-semibold">Retry supporting documents</button></div> : documents.length === 0 ? <p className="mt-3 text-sm text-slate-500">No supporting documents are attached</p> : <ul className="mt-3 space-y-2">{documents.map((document: any) => <li key={document.id || document.name} className="flex items-center justify-between gap-3 rounded border p-3"><span>{document.name || document.file_name || "Supporting document"}</span>{document.signed_url && <button type="button" onClick={() => window.open(document.signed_url, "_blank", "noopener,noreferrer")} className="text-sm font-semibold text-sky-700 hover:underline">Open</button>}</li>)}</ul>}</section>
   </main>;
 }
