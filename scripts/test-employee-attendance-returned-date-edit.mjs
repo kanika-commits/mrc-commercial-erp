@@ -27,6 +27,8 @@ if (!submitRoute.includes('if (dailySubmission && !["draft", "reopened"].include
 if (!dailyPage.includes("contextHasReturnedSubmission")) throw new Error("Daily page must recognize the exact returned date");
 if (!dailyPage.includes("hasReturnedSubmission")) throw new Error("Daily page must exempt only the returned date from the old-date message");
 if (!dailyPage.includes('String(context.dailySubmission?.status || "").toLowerCase()')) throw new Error("Daily page must normalize status casing before allowing edits");
+if (!shared.includes('.in("status", ["submitted", "approved", "reopened"])')) throw new Error("Lookup metadata must include reopened daily submissions");
+if (!shared.includes("returnedDatesBySite")) throw new Error("Lookup metadata must expose exact reopened dates to the date selector");
 
 const scope = {
   organizationId: "org-a",

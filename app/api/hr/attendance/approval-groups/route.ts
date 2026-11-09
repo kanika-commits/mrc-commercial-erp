@@ -6,7 +6,6 @@ import {
   jsonError,
   loadActorAssignments,
   loadEligibleEmployees,
-  loadEmployeeAttendanceLookups,
   loadAttendanceRows,
   requireAttendanceApprovalActor,
 } from "../_shared";
@@ -158,10 +157,7 @@ export async function GET(request: Request) {
     const allStates = await accessibleDailyRows(admin, auth, statusFilter(params.get("period_status") || "pending"));
     const states = allStates.filter((row: any) => (!selectedSiteId || row.site_id === selectedSiteId) && (!filterFromDate || row.attendance_date >= filterFromDate) && (!filterToDate || row.attendance_date <= filterToDate));
     const groups = groupRows(states, auth);
-    const lookup = await loadEmployeeAttendanceLookups(admin, auth);
-    const siteMap = new Map<string, any>();
-    for (const pair of lookup.pairs || []) if (!siteMap.has(pair.site_id)) siteMap.set(pair.site_id, { id: pair.site_id, label: pair.site_name, organization_id: pair.organization_id });
-    const sites = Array.from(siteMap.values());
+    const sites = await loadApprovalSites(admin, auth);
     const eligibilityCache = new Map<string, Promise<any[]>>();
     for (const group of groups) {
       const groupStates = states.filter((row: any) => row.organization_id === group.organization_id && row.site_id === group.site_id && row.attendance_date === group.attendance_date);

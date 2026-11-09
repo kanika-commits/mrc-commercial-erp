@@ -290,12 +290,22 @@ export async function loadEmployeeAttendanceLookups(
   let submissionQuery = admin
     .from("employee_attendance_daily_submissions")
     .select("company_id, site_id, attendance_date, status")
-    .in("status", ["submitted", "approved"]);
+    .in("status", ["submitted", "approved", "reopened"]);
   if (selected.siteId) submissionQuery = submissionQuery.eq("site_id", selected.siteId);
   if (selected.companyId) submissionQuery = submissionQuery.eq("company_id", selected.companyId);
-  const submissionResult = await submissionQuery;
+  submissionQuery = applyOrganizationScope(submissionQuery, organizationScope);
+  const submissionResult = submissionQuery ? await submissionQuery : { data: [], error: null };
   if (submissionResult.error && submissionResult.error.code !== "42P01") throw submissionResult.error;
-  const protectedDates = new Set((submissionResult.data || []).map((row: any) => `${row.site_id}:${row.attendance_date}`));
+  const protectedDates = new Set((submissionResult.data || [])
+    .filter((row: any) => ["submitted", "approved"].includes(String(row.status || "").toLowerCase()))
+    .map((row: any) => `${row.site_id}:${row.attendance_date}`));
+  const returnedDatesBySite: Record<string, string[]> = {};
+  for (const row of submissionResult.data || []) {
+    if (String(row.status || "").toLowerCase() !== "reopened" || !uniqueSites.some((site) => site.id === row.site_id)) continue;
+    const dates = returnedDatesBySite[row.site_id] || [];
+    dates.push(row.attendance_date);
+    returnedDatesBySite[row.site_id] = dates;
+  }
   const historicalDatesBySite: Record<string, string[]> = {};
   for (const row of historicalResult.data || []) {
     if (!uniqueSites.some((site) => site.id === row.site_id)) continue;
@@ -308,6 +318,9 @@ export async function loadEmployeeAttendanceLookups(
       cursor.setUTCDate(cursor.getUTCDate() + 1);
     }
     historicalDatesBySite[row.site_id] = dates;
+  }
+  for (const [siteId, dates] of Object.entries(returnedDatesBySite)) {
+    historicalDatesBySite[siteId] = [...(historicalDatesBySite[siteId] || []), ...dates];
   }
 
   return {
