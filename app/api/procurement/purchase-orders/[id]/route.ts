@@ -138,12 +138,12 @@ export async function PUT(
     if (recovery.purpose === "Recover from contractor") {
       await validateRecoveryWorkOrder(result.admin, result.row.organization_id, result.row.company_id, result.row.site_id, recovery.recoveryWorkOrderId!, recoveryVendorId!);
     }
+    if (Array.isArray(body.key_terms)) commercial.key_terms = body.key_terms;
     const { recovery_vendor_id: _recoveryVendorId, recovery_work_order_id: _recoveryWorkOrderId, ...commercialInput } = commercial;
     const recoveryCommercial = recovery.purpose === "Recover from contractor"
       ? { recovery_work_order_id: recovery.recoveryWorkOrderId, recovery_vendor_id: recovery.recoveryVendorId }
       : {};
     const persistedCommercial = { ...commercialInput, purpose: recovery.purpose, ...recoveryCommercial };
-    if (Array.isArray(body.key_terms)) commercial.key_terms = body.key_terms;
     if (
       Object.prototype.hasOwnProperty.call(commercial, "additional_charges")
     ) {
