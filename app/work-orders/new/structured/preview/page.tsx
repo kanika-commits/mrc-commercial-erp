@@ -14,6 +14,7 @@ export default function WorkOrderPilotPreviewPage() {
   const searchParams = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
   const revisionId = searchParams.get("revision");
   const revisionWorkOrderId = searchParams.get("work_order");
+  const draftId = searchParams.get("draft") || draft?.draftId || "";
   const [revisionPreviewUrl, setRevisionPreviewUrl] = useState("");
 
   useEffect(() => {
@@ -66,13 +67,13 @@ export default function WorkOrderPilotPreviewPage() {
   return <section className="mx-auto max-w-7xl space-y-6">
     <header className="flex flex-wrap items-end justify-between gap-4">
       <div><p className="text-xs font-semibold uppercase tracking-widest text-sky-700">Work Orders</p><h1 className="text-3xl font-bold">{revisionId ? "Revised Work Order PDF Preview" : "Work Order PDF Preview"}</h1><p className="mt-1 text-sm text-slate-500">{revisionId ? "This is the exact PDF artifact that will be submitted for approval." : "Preview only. No database record has been created."}</p></div>
-      <button type="button" onClick={() => router.push("/work-orders/new/structured?from=preview")} className="rounded-xl border px-4 py-2 text-sm font-semibold">Back to Edit</button>
+      <button type="button" onClick={() => router.push(draftId ? `/work-orders/new/structured?draft=${encodeURIComponent(draftId)}&from=preview` : "/work-orders/new/structured?from=preview")} className="rounded-xl border px-4 py-2 text-sm font-semibold">Back to Edit</button>
     </header>
     <section className="space-y-4 rounded-2xl border bg-white p-5">
       <iframe title="Work Order PDF preview" src={revisionPreviewUrl || draft?.previewUrl || "about:blank"} className="h-[82vh] w-full rounded-lg border" />
       {message && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{message}</p>}
       <div className="flex flex-wrap gap-3">
-        <button type="button" onClick={() => router.push(revisionId ? `/work-orders/new/structured?revision=${revisionId}&work_order=${revisionWorkOrderId}` : "/work-orders/new/structured?from=preview")} className="rounded-xl border px-5 py-3 font-semibold">Back to Edit</button>
+        <button type="button" onClick={() => router.push(revisionId ? `/work-orders/new/structured?revision=${revisionId}&work_order=${revisionWorkOrderId}` : draftId ? `/work-orders/new/structured?draft=${encodeURIComponent(draftId)}&from=preview` : "/work-orders/new/structured?from=preview")} className="rounded-xl border px-5 py-3 font-semibold">Back to Edit</button>
         <button type="button" onClick={() => void submitForApproval()} disabled={saving || Boolean(revisionId && !revisionPreviewUrl)} className="rounded-xl bg-emerald-700 px-5 py-3 font-semibold text-white disabled:opacity-50">{saving ? "Submitting…" : revisionId ? "Submit for approval" : "Submit Work Order for Approval"}</button>
       </div>
     </section>
