@@ -287,16 +287,29 @@ export async function loadEmployeeAttendanceLookups(
   );
   const historicalResult = historicalQuery ? await historicalQuery : { data: [], error: null };
   if (historicalResult.error && historicalResult.error.code !== "42P01") throw historicalResult.error;
-  let submissionQuery = admin
+  let submissionQuery = applyOrganizationScope(
+    admin
     .from("employee_attendance_daily_submissions")
     .select("company_id, site_id, attendance_date, status")
-    .in("status", ["submitted", "approved"]);
-  if (selected.siteId) submissionQuery = submissionQuery.eq("site_id", selected.siteId);
-  if (selected.companyId) submissionQuery = submissionQuery.eq("company_id", selected.companyId);
-  const submissionResult = await submissionQuery;
+    .in("status", ["submitted", "approved", "reopened"]),
+    organizationScope,
+  );
+  if (submissionQuery && selected.siteId) submissionQuery = submissionQuery.eq("site_id", selected.siteId);
+  if (submissionQuery && selected.companyId) submissionQuery = submissionQuery.eq("company_id", selected.companyId);
+  const submissionResult = submissionQuery ? await submissionQuery : { data: [], error: null };
   if (submissionResult.error && submissionResult.error.code !== "42P01") throw submissionResult.error;
-  const protectedDates = new Set((submissionResult.data || []).map((row: any) => `${row.site_id}:${row.attendance_date}`));
+  const visiblePairKeys = new Set(visiblePairs.map((pair) => `${pair.company_id}:${pair.site_id}`));
+  const scopedSubmissions = (submissionResult.data || []).filter((row: any) => visiblePairKeys.has(`${row.company_id}:${row.site_id}`));
+  const protectedDates = new Set(scopedSubmissions
+    .filter((row: any) => ["submitted", "approved"].includes(String(row.status || "").toLowerCase()))
+    .map((row: any) => `${row.site_id}:${row.attendance_date}`));
   const historicalDatesBySite: Record<string, string[]> = {};
+  for (const row of scopedSubmissions) {
+    if (String(row.status || "").toLowerCase() !== "reopened" || !row.attendance_date) continue;
+    const dates = historicalDatesBySite[row.site_id] || [];
+    dates.push(row.attendance_date);
+    historicalDatesBySite[row.site_id] = dates;
+  }
   for (const row of historicalResult.data || []) {
     if (!uniqueSites.some((site) => site.id === row.site_id)) continue;
     const dates = historicalDatesBySite[row.site_id] || [];
