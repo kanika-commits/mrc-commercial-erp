@@ -1,5 +1,4 @@
-import { availableActionsForModule } from "@/lib/permissionMatrix";
-import { FINANCE_MODULES } from "@/lib/finance/types";
+import { availableActionsForModule, FINANCE_MODULES } from "@/lib/permissionMatrix";
 
 const HIDDEN_PERMISSION_MODULES = new Set([
   "labour_import",

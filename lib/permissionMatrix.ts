@@ -1,4 +1,13 @@
-import { FINANCE_MODULES } from "@/lib/finance/types";
+// Keep permission-module identifiers in the permission registry so the registry
+// does not depend on optional Finance feature files.
+export const FINANCE_MODULES = {
+  controlCentre: "finance_dashboard",
+  bankGuarantees: "finance_bg",
+  fdr: "finance_fdr",
+  insurance: "finance_insurance",
+  tenderEmd: "finance_tender_emd",
+  bankingLimits: "finance_banking_limits",
+} as const;
 
 export const PERMISSION_ACTIONS = [
   "view",
