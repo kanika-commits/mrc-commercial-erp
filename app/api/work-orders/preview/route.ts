@@ -6,6 +6,8 @@ import { loadWorkOrderLetterheadAssets, renderWorkOrderPdf } from "@/lib/workOrd
 import { addWorkOrderDraftWatermark, addWorkOrderPackagePageNumbers } from "@/lib/workOrderPdfPackage.server";
 import { appendWorkOrderSupportingPdfs, validateWorkOrderSupportingFiles } from "@/lib/workOrderSupportingDocuments.server";
 
+export const maxDuration = 30;
+
 const text = (value: unknown, fallback = "—") => { const result = String(value ?? "").trim(); return result || fallback; };
 const money = (value: unknown) => `Rs. ${Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -70,7 +72,16 @@ async function loadAuthorizedPreviewData(admin: any, auth: any, request: Request
   const primaryVendorContact = (vendorContactsResult.data || [])[0] || {};
   const vendorSnapshot = { vendor_id: vendor.id, vendor_name: vendor.vendor_name, address: vendor.address || null, gstin: vendor.gstin || null, pan: vendor.pan || null, contact_person: primaryVendorContact.contact_name || "", phone: primaryVendorContact.contact_number || "", email: primaryVendorContact.email || "", contacts: vendorContactsResult.data || [] };
   const letterheadSnapshot = { id: letterheadResult.data.id, company_id: letterheadResult.data.company_id, letterhead_name: letterheadResult.data.letterhead_name, version_id: letterheadVersion.id, version_number: letterheadVersion.version_number, header_storage_provider: letterheadVersion.header_storage_provider, header_storage_bucket: letterheadVersion.header_storage_bucket, header_storage_key: letterheadVersion.header_storage_key, footer_storage_provider: letterheadVersion.footer_storage_provider, footer_storage_bucket: letterheadVersion.footer_storage_bucket, footer_storage_key: letterheadVersion.footer_storage_key, header_height_points: letterheadVersion.header_height_points, footer_height_points: letterheadVersion.footer_height_points };
-    const termsClauses = (termsResult.data.sections || []).filter((section: any) => section.status === "active").sort((a: any, b: any) => Number(a.sort_order || 0) - Number(b.sort_order || 0)).map((section: any) => ({ heading: section.heading, clause_body: section.clause_body }));
+  const authorizedTermsClauses = (termsResult.data.sections || []).filter((section: any) => section.status === "active").sort((a: any, b: any) => Number(a.sort_order || 0) - Number(b.sort_order || 0)).map((section: any) => ({ heading: section.heading, clause_body: section.clause_body }));
+  let termsClauses = authorizedTermsClauses;
+  if (typeof body.standard_terms_snapshot === "string" && body.standard_terms_snapshot.trim()) {
+    try {
+      const parsed = JSON.parse(body.standard_terms_snapshot);
+      if (Array.isArray(parsed) && parsed.every((section: any) => section && (section.heading || section.clause_body))) termsClauses = parsed.map((section: any) => ({ heading: String(section.heading || ""), clause_body: String(section.clause_body || "") })).filter((section: any) => section.heading || section.clause_body);
+    } catch {
+      termsClauses = [{ heading: "", clause_body: body.standard_terms_snapshot }];
+    }
+  }
   return { company, site, vendorSnapshot, itemMap, gst: gstResult.data, billing: billingResult.data, delivery: deliveryResult.data, billingContact, deliveryContact, letterheadSnapshot, terms: termsClauses };
 }
 

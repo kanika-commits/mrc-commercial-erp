@@ -31,7 +31,21 @@ export async function apiFetchWithToken(
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(path, { ...init, headers });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  if (init.signal) {
+    if (init.signal.aborted) controller.abort();
+    else init.signal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
+  let response: Response;
+  try {
+    response = await fetch(path, { ...init, headers, signal: controller.signal });
+  } catch (error: any) {
+    if (error?.name === "AbortError") throw new Error("Request timed out. Please try again.");
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
   const raw = await response.text();
   let result: any = {};
   try { result = raw ? JSON.parse(raw) : {}; } catch { result = { error: response.status === 413 ? "Attachment is too large to upload." : raw || "Request failed." }; }
