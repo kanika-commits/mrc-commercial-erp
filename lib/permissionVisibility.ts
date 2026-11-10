@@ -1,4 +1,5 @@
 import { availableActionsForModule } from "@/lib/permissionMatrix";
+import { FINANCE_MODULES } from "@/lib/finance/types";
 
 const HIDDEN_PERMISSION_MODULES = new Set([
   "labour_import",
@@ -89,6 +90,7 @@ const PERMISSION_PRESENTATION: Record<string, VisiblePermissionPresentation> = {
 
   purchase_requisitions: { visible_group: "Store Management", visible_name: "Material Indent", visible_sort_order: 5, visible_actions: ["view", "add", "edit", "delete", "submit", "export"] },
   purchase_requisition_approval: { visible_group: "Store Management", visible_name: "Indent Approval", visible_sort_order: 6, visible_actions: ["view", "approve", "reject"], visible_action_labels: { reject: "Send Back / Reject" } },
+  purchase_requisition_approval_configuration: { visible_group: "Settings", visible_name: "Indent Approval Policy", visible_sort_order: 95, visible_actions: ["view", "edit"] },
   procurement_goods_receipts: { visible_group: "Store Management", visible_name: "Purchase Order Tracking", visible_sort_order: 7, visible_actions: ["view", "add", "edit", "approve", "export"], visible_action_labels: { approve: "Finalize" } },
   procurement_inventory: { visible_group: "Store Management", visible_name: "Inventory", visible_sort_order: 8, visible_actions: ["view", "add", "edit", "approve", "export"], visible_action_labels: { approve: "Finalize Issue" } },
   procurement_rfqs: { visible_group: "Purchase", visible_name: "Request for Quotation", visible_sort_order: 7, visible_actions: ["view", "add", "edit", "delete", "issue", "export"] },
@@ -97,19 +99,25 @@ const PERMISSION_PRESENTATION: Record<string, VisiblePermissionPresentation> = {
   procurement_gst_billing_delivery_master: { visible_group: "Settings", visible_name: "Masters - GST / Billing & Delivery", visible_sort_order: 60, visible_actions: ["view", "add", "edit"] },
   procurement_site_contact_master: { visible_group: "Settings", visible_name: "Masters - Site Contacts", visible_sort_order: 61, visible_actions: ["view", "add", "edit"] },
   procurement_letterhead_master: { visible_group: "Settings", visible_name: "Masters - Letterheads", visible_sort_order: 62, visible_actions: ["view", "add", "edit", "delete"] },
-  procurement_po_terms_master: { visible_group: "Settings", visible_name: "Masters - PO & WO Terms & Conditions", visible_sort_order: 63, visible_actions: ["view", "add", "edit"] },
+  procurement_po_terms_master: { visible_group: "Settings", visible_name: "Masters - PO Terms & Conditions", visible_sort_order: 63, visible_actions: ["view", "add", "edit"] },
   work_orders: { visible_group: "Purchase", visible_name: "Work Orders", visible_sort_order: 10 },
   wo_approval: { visible_group: "Purchase", visible_name: "Work Order Approval", visible_sort_order: 20 },
 
   invoices: { visible_group: "Accounts / Finance", visible_name: "Invoices", visible_sort_order: 10 },
   itc_claims: { visible_group: "Accounts / Finance", visible_name: "ITC Review", visible_sort_order: 20 },
   payments: { visible_group: "Accounts / Finance", visible_name: "Payments", visible_sort_order: 30 },
+  [FINANCE_MODULES.controlCentre]: { visible_group: "Accounts / Finance", visible_name: "Finance Control Centre", visible_sort_order: 5, permission_note: "Controls access to the finance overview; each source remains protected by its own permission." },
+  [FINANCE_MODULES.bankGuarantees]: { visible_group: "Accounts / Finance", visible_name: "Bank Guarantees", visible_sort_order: 40, visible_actions: ["view", "create", "edit", "delete", "upload"] },
+  [FINANCE_MODULES.fdr]: { visible_group: "Accounts / Finance", visible_name: "FDR", visible_sort_order: 50 },
+  [FINANCE_MODULES.insurance]: { visible_group: "Accounts / Finance", visible_name: "Insurance", visible_sort_order: 60 },
+  [FINANCE_MODULES.tenderEmd]: { visible_group: "Accounts / Finance", visible_name: "Tender & EMD", visible_sort_order: 70 },
+  [FINANCE_MODULES.bankingLimits]: { visible_group: "Accounts / Finance", visible_name: "Banking Limits", visible_sort_order: 80 },
 
   reports: {
     visible_group: "Reports",
     visible_name: "Reports",
     visible_sort_order: 10,
-    visible_actions: ["view", "export"],
+    visible_actions: ["view"],
   },
 
   hr_employees: {
@@ -370,6 +378,19 @@ export function presentVisiblePermissionModule<T extends PermissionModuleRow>(mo
 
 export function prepareVisiblePermissionModules<T extends PermissionModuleRow>(modules: T[]) {
   const registryModules = [...modules];
+  const financePermissionModules = [
+    [FINANCE_MODULES.controlCentre, "Finance Control Centre", 5],
+    [FINANCE_MODULES.bankGuarantees, "Bank Guarantees", 40],
+    [FINANCE_MODULES.fdr, "FDR", 50],
+    [FINANCE_MODULES.insurance, "Insurance", 60],
+    [FINANCE_MODULES.tenderEmd, "Tender & EMD", 70],
+    [FINANCE_MODULES.bankingLimits, "Banking Limits", 80],
+  ] as const;
+  for (const [moduleCode, moduleName, sortOrder] of financePermissionModules) {
+    if (!registryModules.some((module) => module.module_code === moduleCode)) {
+      registryModules.push({ module_code: moduleCode, module_group: "accounts", module_name: moduleName, sort_order: sortOrder, status: "active" } as T);
+    }
+  }
   if (!registryModules.some((module) => module.module_code === "procurement_goods_receipts")) {
     registryModules.push({ module_code: "procurement_goods_receipts", module_group: "store_management", module_name: "Purchase Order Tracking", sort_order: 7, status: "active" } as T);
   }
@@ -378,6 +399,12 @@ export function prepareVisiblePermissionModules<T extends PermissionModuleRow>(m
   }
   if (!registryModules.some((module) => module.module_code === "procurement_purchase_orders")) {
     registryModules.push({ module_code: "procurement_purchase_orders", module_group: "purchase", module_name: "Purchase Orders", sort_order: 8, status: "active" } as T);
+  }
+  if (!registryModules.some((module) => module.module_code === "purchase_requisition_approval_configuration")) {
+    registryModules.push({ module_code: "purchase_requisition_approval_configuration", module_group: "settings", module_name: "Indent Approval Policy", sort_order: 95, status: "active" } as T);
+  }
+  if (!registryModules.some((module) => module.module_code === "credit_notes")) {
+    registryModules.push({ module_code: "credit_notes", module_group: "project_management", module_name: "Credit Notes", sort_order: 21, status: "active" } as T);
   }
   const visibleModules = filterVisiblePermissionModules(registryModules)
     .map(presentVisiblePermissionModule);

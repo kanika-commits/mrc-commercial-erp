@@ -229,6 +229,11 @@ const pageMeta: Record<
     className: "from-slate-50 to-white border-slate-200 text-slate-700",
     description: "Change account password.",
   },
+  purchase_requisition_approval_configuration: {
+    icon: CheckCircle2,
+    className: "from-green-50 to-white border-green-100 text-green-700",
+    description: "Assign Indent approvers by company and site.",
+  },
 };
 
 export default function ModulePage({
@@ -335,6 +340,9 @@ export default function ModulePage({
       ...settingsRows,
       ...settingsMasterCards,
     ];
+    if ((globalAccess || can(permissions, "purchase_requisition_approval_configuration", "view")) && !settingsRows.some((page) => page.module_code === "purchase_requisition_approval_configuration")) {
+      settingsRows.push({ id: "settings-indent-approval-policy", module_group: "settings", module_code: "purchase_requisition_approval_configuration", module_name: "Indent Approval Policy", route: "/purchase/requisitions/configuration", sort_order: 95 });
+    }
     if (!globalAccess && !can(permissions, "hr_employee_attendance_policy", "view")) {
       return settingsRows.sort((first, second) => first.sort_order - second.sort_order);
     }
@@ -424,7 +432,7 @@ function SettingsSections({ pages }: { pages: ModuleRow[] }) {
     },
     {
       title: "Policies",
-      codes: ["hr_employee_attendance_policy", "labour_muster_configuration", "labour_attendance_unlock"],
+      codes: ["hr_employee_attendance_policy", "labour_muster_configuration", "labour_attendance_unlock", "purchase_requisition_approval_configuration"],
     },
     {
       title: "Change Password",

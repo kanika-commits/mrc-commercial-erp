@@ -28,16 +28,18 @@ export async function GET(request: Request) {
     if ((auth.companies || []).length) companies = companies.in("id", auth.companies); if ((auth.sites || []).length) sites = sites.in("id", auth.sites);
     const [c, s] = await Promise.all([companies, sites]); if (c.error) throw c.error; if (s.error) throw s.error;
     let configuration = null; let configurations: any[] = []; let approvers: any[] = [];
-    const allConfigs = applyOrganizationAccess(admin.from("purchase_requisition_approval_configurations").select("*").eq("status", "active").order("updated_at", { ascending: false }), auth);
+    const allConfigs = applyOrganizationAccess(admin.from("purchase_requisition_approval_configurations").select("id,organization_id,company_id,site_id,layer_count,workflow_version,status,updated_at").eq("status", "active").order("updated_at", { ascending: false }), auth);
     if (allConfigs) {
       let scopedConfigs: any = allConfigs;
       if ((auth.companies || []).length) scopedConfigs = scopedConfigs.in("company_id", auth.companies);
       if ((auth.sites || []).length) scopedConfigs = scopedConfigs.in("site_id", auth.sites);
-      const [configRows, layerRows] = await Promise.all([
-        scopedConfigs,
-        admin.from("purchase_requisition_approval_layers").select("*").eq("status", "active"),
-      ]);
-      if (configRows.error) throw configRows.error; if (layerRows.error) throw layerRows.error;
+      const configRows = await scopedConfigs;
+      if (configRows.error) throw configRows.error;
+      const configurationIds = (configRows.data || []).map((row: any) => row.id);
+      const layerRows = configurationIds.length
+        ? await admin.from("purchase_requisition_approval_layers").select("configuration_id,workflow_version,layer_number,stage_name,approver_user_id,status").eq("status", "active").in("configuration_id", configurationIds)
+        : { data: [], error: null };
+      if (layerRows.error) throw layerRows.error;
       const ids = Array.from(new Set((layerRows.data || []).map((x: any) => x.approver_user_id)));
       const profiles = ids.length ? await admin.from("profiles").select("id,full_name,email").in("id", ids) : { data: [], error: null };
       if (profiles.error) throw profiles.error;
@@ -67,18 +69,44 @@ export async function GET(request: Request) {
 export async function PUT(request: Request) {
   try {
     const auth = await requireProcurementPermission(request, MODULE, "edit"); if ("response" in auth) return auth.response;
-    const payload = await request.json().catch(() => ({})); const companyId = text(payload.company_id); const siteId = text(payload.site_id); const layerCount = Number(payload.layer_count); if (!companyId || !siteId) return jsonError("Company and site are required.",400); if (![2,3].includes(layerCount)) return jsonError("Approval layers must be 2 or 3.",400);
-    const admin = adminClient(); const valid = await scope(auth, admin, companyId, siteId); if (!valid) return jsonError("Selected company/site is outside your access.",403); const incoming = Array.isArray(payload.layers) ? payload.layers : []; if (incoming.length !== layerCount) return jsonError("Every approval layer must be configured.",400);
-    const layers = incoming.map((x: any, i: number) => ({ layer_number: i + 1, stage_name: text(x.stage_name) || defaults[i], approver_user_id: text(x.approver_user_id) })).filter((x: any) => x.approver_user_id && x.stage_name); if (layers.length !== layerCount) return jsonError("Each layer requires a stage and approver.",400);
-    const profiles = await admin.from("profiles").select("id,full_name,email,status").in("id", layers.map((x: any) => x.approver_user_id)); if (profiles.error) throw profiles.error; if ((profiles.data || []).length !== layerCount || (profiles.data || []).some((p: any) => p.status !== "active")) return jsonError("Every approver must be an active ERP user.",400);
+    const payload = await request.json().catch(() => ({}));
+    const layerCount = Number(payload.layer_count);
+    if (![1, 2, 3].includes(layerCount)) return jsonError("Approval layers must be 1, 2, or 3.", 400);
+    const incoming = Array.isArray(payload.layers) ? payload.layers : [];
+    if (incoming.length !== layerCount) return jsonError("Every approval layer must be configured.", 400);
+    const layers = incoming.map((x: any, i: number) => ({ layer_number: i + 1, stage_name: text(x.stage_name) || defaults[i], approver_user_id: text(x.approver_user_id) })).filter((x: any) => x.approver_user_id && x.stage_name);
+    if (layers.length !== layerCount) return jsonError("Each layer requires a stage and approver.", 400);
+    const requestedScopes = Array.isArray(payload.scopes) ? payload.scopes : [{ company_id: payload.company_id, site_id: payload.site_id }];
+    const scopes = Array.from(new Map(requestedScopes.map((x: any) => [`${text(x.company_id)}:${text(x.site_id)}`, { companyId: text(x.company_id), siteId: text(x.site_id) }])).values()).filter((x: any) => x.companyId && x.siteId);
+    if (!scopes.length) return jsonError("At least one company/site scope is required.", 400);
+    const admin = adminClient();
+    const validated = [];
+    for (const selected of scopes) {
+      const valid = await scope(auth, admin, selected.companyId, selected.siteId);
+      if (!valid) return jsonError("One or more selected company/site scopes are outside your access.", 403);
+      validated.push({ ...selected, valid });
+    }
+    const approverIds = Array.from(new Set(layers.map((layer: any) => layer.approver_user_id)));
+    const profiles = await admin.from("profiles").select("id,full_name,email,status").in("id", approverIds); if (profiles.error) throw profiles.error;
+    const assignments = await admin.from("user_access_assignments").select("user_id,organization_id,company_id,site_id"); if (assignments.error) throw assignments.error;
+    const profileMap = new Map((profiles.data || []).map((p: any) => [p.id, p]));
+    const bypassScope = auth.isGlobalAccess || (auth.roleCodes || []).includes("platform_owner");
+    for (const selected of validated) {
+      const eligible = layers.every((layer: any) => { const profile = profileMap.get(layer.approver_user_id); if (!profile || profile.status !== "active") return false; if (bypassScope) return true; return (assignments.data || []).some((entry: any) => entry.user_id === profile.id && entry.organization_id === selected.valid.organizationId && (!entry.company_id || entry.company_id === selected.companyId) && (!entry.site_id || entry.site_id === selected.siteId)); });
+      if (!eligible) return jsonError("Every approver must be an active ERP user with access to each selected company and site.", 400);
+    }
+    const existing = await admin.from("purchase_requisition_approval_configurations").select("company_id,site_id").eq("status", "active").in("company_id", validated.map((x: any) => x.companyId)).in("site_id", validated.map((x: any) => x.siteId));
+    if (existing.error) throw existing.error;
+    const existingKeys = new Set((existing.data || []).map((x: any) => `${x.company_id}:${x.site_id}`));
+    const replacements = validated.filter((x: any) => existingKeys.has(`${x.companyId}:${x.siteId}`));
+    if (replacements.length && payload.confirm_overwrite !== true) return NextResponse.json({ error: "Some selected scopes already have an active policy.", requires_overwrite_confirmation: true, existing_scopes: replacements.map((x: any) => ({ company_id: x.companyId, site_id: x.siteId })) }, { status: 409 });
     const actor = { user_id: auth.user.id, name: auth.user.user_metadata?.full_name || auth.user.email, email: auth.user.email };
-    const result = await admin.rpc("save_purchase_requisition_approval_configuration_atomic", {
-      p_scope: { organization_id: valid.organizationId, company_id: companyId, site_id: siteId },
-      p_layers: layers,
-      p_actor: actor,
-      p_event_note: text(payload.event_note) || null,
-    });
-    if (result.error) throw result.error;
-    return NextResponse.json({ ok: true, ...result.data });
+    const results = [];
+    for (const selected of validated) {
+      const result = await admin.rpc("save_purchase_requisition_approval_configuration_atomic", { p_scope: { organization_id: selected.valid.organizationId, company_id: selected.companyId, site_id: selected.siteId }, p_layers: layers, p_actor: actor, p_event_note: text(payload.event_note) || null });
+      if (result.error) throw result.error;
+      results.push({ company_id: selected.companyId, site_id: selected.siteId, ...result.data });
+    }
+    return NextResponse.json({ ok: true, scopes: results, ...results[0] });
   } catch (error: any) { return NextResponse.json({ error: error.message || "Failed to save approval configuration." }, { status: 500 }); }
 }

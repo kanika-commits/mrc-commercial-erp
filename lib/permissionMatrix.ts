@@ -1,3 +1,5 @@
+import { FINANCE_MODULES } from "@/lib/finance/types";
+
 export const PERMISSION_ACTIONS = [
   "view",
   "create",
@@ -70,7 +72,7 @@ const ACTION_LABELS: Record<PermissionAction, string> = {
 
 const MODULE_ACTIONS: Record<string, PermissionAction[]> = {
   dashboard: ["view"],
-  reports: ["view", "export"],
+  reports: ["view"],
 
   organizations: ["view", "add", "edit", "delete"],
   users: ["view", "add", "edit", "delete"],
@@ -88,6 +90,7 @@ const MODULE_ACTIONS: Record<string, PermissionAction[]> = {
   wo_approval: ["view", "edit", "approve", "reject", "upload"],
   purchase_requisitions: ["view", "add", "edit", "delete", "submit", "export"],
   purchase_requisition_approval: ["view", "approve", "reject"],
+  purchase_requisition_approval_configuration: ["view", "edit"],
   procurement_rfqs: ["view", "add", "edit", "delete", "issue", "export"],
   procurement_purchase_orders: ["view", "add", "edit", "approve", "reject", "export"],
   procurement_gst_billing_delivery_master: ["view", "add", "edit"],
@@ -103,7 +106,13 @@ const MODULE_ACTIONS: Record<string, PermissionAction[]> = {
   itc_claims: ["view", "approve", "delete"],
   payments: ["view", "add", "delete"],
   debit_notes: ["view", "add", "delete"],
-  credit_notes: ["view", "add", "edit", "delete"],
+  credit_notes: ["view", "add", "edit", "delete", "approve", "reject", "export"],
+  [FINANCE_MODULES.controlCentre]: ["view"],
+  [FINANCE_MODULES.bankGuarantees]: ["view", "create", "edit", "delete", "upload"],
+  [FINANCE_MODULES.fdr]: ["view"],
+  [FINANCE_MODULES.insurance]: ["view"],
+  [FINANCE_MODULES.tenderEmd]: ["view"],
+  [FINANCE_MODULES.bankingLimits]: ["view"],
 
   hr_employees: ["view", "add", "edit", "delete"],
   hr_departments: ["view", "add", "edit", "delete"],
@@ -154,6 +163,24 @@ const MODULE_ACTIONS: Record<string, PermissionAction[]> = {
   labour_photo_evidence: ["view", "upload", "edit", "delete"],
   labour_rate_overrides: ["view", "add", "edit", "delete", "approve", "export"],
 };
+
+// Product entitlements are intentionally broader than the permission modules
+// checked by individual pages and APIs.
+export const ENTITLEMENT_PERMISSION_MODULES: Record<string, string[]> = {
+  dashboard: ["dashboard"],
+  administration: ["organizations", "users", "roles", "permissions", "companies", "sites", "vendors", "company_bank_accounts"],
+  hr: ["hr_employees", "hr_departments", "hr_designations", "hr_attendance", "hr_attendance_register", "hr_attendance_approval", "hr_employee_attendance_policy", "hr_employee_import", "hr_employee_document_import", "hr_audit", "hr_salary", "reimbursements"],
+  labour: ["labour_contractors", "labour_workers", "labour_deployments", "labour_import", "labour_documents", "labour_trades", "labour_attendance", "labour_attendance_approval", "labour_attendance_import", "labour_wage_rates", "labour_wages", "labour_wage_approval", "labour_advances", "labour_manpower_work_orders", "labour_attendance_policy", "labour_attendance_unlock", "labour_site_in", "labour_engineer_daily", "labour_muster_configuration", "labour_engineer_groups", "labour_work_groups", "labour_work_logs", "labour_daily_submission", "labour_overtime", "labour_photo_evidence", "labour_rate_overrides"],
+  purchase: ["procurement_items", "procurement_purchase_queue", "purchase_requisitions", "purchase_requisition_approval", "procurement_rfqs", "procurement_purchase_orders", "procurement_gst_billing_delivery_master", "procurement_site_contact_master", "procurement_letterhead_master", "procurement_po_terms_master"],
+  store: ["procurement_goods_receipts", "procurement_inventory"],
+  commercial: ["ra_bills", "ra_approval", "invoices", "itc_claims", "payments", "debit_notes", "credit_notes"],
+  accounts: ["ra_bills", "ra_approval", "invoices", "itc_claims", "payments", "debit_notes", "credit_notes", FINANCE_MODULES.controlCentre, FINANCE_MODULES.bankGuarantees, FINANCE_MODULES.fdr, FINANCE_MODULES.insurance, FINANCE_MODULES.tenderEmd, FINANCE_MODULES.bankingLimits],
+  reports: ["reports"],
+};
+
+export function permissionModulesForEntitlements(entitlementCodes: string[]) {
+  return Array.from(new Set(entitlementCodes.flatMap((code) => ENTITLEMENT_PERMISSION_MODULES[code] || [])));
+}
 
 export function permissionActionLabel(actionCode: string) {
   return ACTION_LABELS[actionCode as PermissionAction] || actionCode;

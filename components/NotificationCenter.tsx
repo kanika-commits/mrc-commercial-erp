@@ -22,6 +22,7 @@ export default function NotificationCenter({ workflowCounts }: { workflowCounts:
   const [panelPosition, setPanelPosition] = useState({ top: 0, right: 16 });
   const bellRef = useRef<HTMLButtonElement>(null);
   const knownIdsRef = useRef<Set<string> | null>(null);
+  const loadingRef = useRef(false);
   const workflowTotal = workflowLinks.reduce((sum, [, key]) => sum + (workflowCounts[key] || 0), 0);
   const unread = notifications.filter((item) => !item.is_read).length;
   const total = workflowTotal + unread;
@@ -48,6 +49,9 @@ export default function NotificationCenter({ workflowCounts }: { workflowCounts:
   }, [soundEnabled]);
 
   const load = useCallback(async () => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    try {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) return;
     const response = await fetch("/api/notifications?limit=20", { headers: { Authorization: `Bearer ${session.access_token}` } });
@@ -58,13 +62,16 @@ export default function NotificationCenter({ workflowCounts }: { workflowCounts:
     if (previousIds && [...nextIds].some((id) => !previousIds.has(id))) beep();
     knownIdsRef.current = nextIds;
     setNotifications(next);
+    } finally {
+      loadingRef.current = false;
+    }
   }, [beep]);
 
   useEffect(() => {
     try { setSoundEnabled(window.localStorage.getItem("erp-notification-sound") === "on"); } catch { /* local preference unavailable */ }
-    void load();
+    const initialTimer = window.setTimeout(() => void load(), 1000);
     const timer = window.setInterval(() => void load(), 30000);
-    return () => window.clearInterval(timer);
+    return () => { window.clearTimeout(initialTimer); window.clearInterval(timer); };
   }, [load]);
 
   function toggleSound() {

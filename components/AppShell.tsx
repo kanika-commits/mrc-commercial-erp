@@ -363,6 +363,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       nested("settings-policies", "Policies", [
         navLeaf("Employee Attendance Policy", "hr_employee_attendance_policy", "/settings/policies/employee-attendance"),
         navLeaf("Labour Attendance Policy", "labour_muster_configuration", "/labour/configuration"),
+        navLeaf("Indent Approval Policy", "purchase_requisition_approval_configuration", "/purchase/requisitions/configuration"),
       ]),
       navLeaf("Change Password", "settings_password", "/settings/password"),
     ]);

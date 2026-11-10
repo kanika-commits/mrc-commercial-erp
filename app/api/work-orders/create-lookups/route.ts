@@ -48,7 +48,6 @@ export async function GET(request: Request) {
     // Site contacts are authorized through their canonical site's organization and site scope.
     // Do not apply the denormalized contact organization_id separately: legacy rows may carry
     // a stale organization value even though their site is authorized and unchanged.
-    const site_contacts: any = admin.from("site_contacts").select("id,organization_id,site_id,contact_name,designation,mobile,email,contact_type,is_default,status").eq("status", "active").order("contact_name");
     if (!hasGlobalProcurementAccess(auth)) {
       if ((auth.companies || []).length > 0 && companies) companies = companies.in("id", auth.companies);
       if ((auth.sites || []).length > 0 && sites) sites = sites.in("id", auth.sites);
@@ -58,13 +57,11 @@ export async function GET(request: Request) {
       if (result?.error) throw new Error(`${name} lookup failed: ${result.error.message}`);
     }
     const vendorIds = (vendorResult.data || []).map((vendor: any) => vendor.id).filter(Boolean);
-    const vendorContactsResult = await loadVendorContacts(admin, vendorIds);
-    // Keep contact enrichment scoped to the same authorized vendor records so
-    // the Work Order preview receives the selected vendor's canonical contact data.
-    const contactsByVendor = new Map<string, any[]>();
-    for (const contact of vendorContactsResult.data || []) contactsByVendor.set(contact.vendor_id, [...(contactsByVendor.get(contact.vendor_id) || []), contact]);
-    const resolvedVendors = (vendorResult.data || []).map((vendor: any) => ({ ...vendor, contacts: contactsByVendor.get(vendor.id) || [] }));
-
+    const vendorContactsPromise = loadVendorContacts(admin, vendorIds);
+    const accessibleSiteIds = new Set((siteResult.data || []).map((site: any) => site.id).filter(Boolean));
+    const siteContactsQuery: any = accessibleSiteIds.size
+      ? admin.from("site_contacts").select("id,organization_id,site_id,contact_name,designation,mobile,email,contact_type,is_default,status").eq("status", "active").in("site_id", Array.from(accessibleSiteIds)).order("contact_name")
+      : admin.from("site_contacts").select("id,organization_id,site_id,contact_name,designation,mobile,email,contact_type,is_default,status").eq("status", "active").limit(0);
     const dependentQueries = [
       ["Work Order Item Master", items],
       ["Letterhead Master", letterheadQuery],
@@ -72,18 +69,22 @@ export async function GET(request: Request) {
       ["GST/Billing Master", gst_billing_masters],
       ["Billing Address Master", billing_addresses],
       ["Delivery Location Master", delivery_locations],
-      ["Site Contact Master", site_contacts],
+      ["Site Contact Master", siteContactsQuery],
     ] as const;
-    const dependentResults = await Promise.all(dependentQueries.map(async ([name, query]) => {
+    const [vendorContactsResult, dependentResults] = await Promise.all([vendorContactsPromise, Promise.all(dependentQueries.map(async ([name, query]) => {
       if (!query) return { name, data: [], error: `${name} lookup is outside the authorized scope.` };
       const result = await query;
       return result?.error
         ? { name, data: [], error: `${name} lookup failed: ${result.error.message}` }
         : { name, data: result?.data || [], error: null };
-    }));
+    }))]);
+    // Keep contact enrichment scoped to the same authorized vendor records so
+    // the Work Order preview receives the selected vendor's canonical contact data.
+    const contactsByVendor = new Map<string, any[]>();
+    for (const contact of vendorContactsResult.data || []) contactsByVendor.set(contact.vendor_id, [...(contactsByVendor.get(contact.vendor_id) || []), contact]);
+    const resolvedVendors = (vendorResult.data || []).map((vendor: any) => ({ ...vendor, contacts: contactsByVendor.get(vendor.id) || [] }));
     const dependentData = Object.fromEntries(dependentResults.map((result) => [result.name, result.data]));
     const billingRows = dependentData["Billing Address Master"] || [];
-    const accessibleSiteIds = new Set((siteResult.data || []).map((site: any) => site.id));
     const accessibleBillingIds = new Set(billingRows.map((row: any) => row.id));
     dependentData["Site Contact Master"] = (dependentData["Site Contact Master"] || []).filter((row: any) => accessibleSiteIds.has(row.site_id));
     const gstBillingMasters = (dependentData["GST/Billing Master"] || [])

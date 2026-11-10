@@ -73,6 +73,7 @@ const settingsViewModules = [
   "hr_employee_attendance_policy",
   "labour_attendance_policy",
   "labour_attendance_unlock",
+  "purchase_requisition_approval_configuration",
 ];
 
 function hasSettingsViewAccess(access: CurrentUserAccess) {
@@ -86,6 +87,7 @@ function settingsRouteAccess(pathname: string, access: CurrentUserAccess) {
   if (pathname === "/settings/purchase-order-masters") return can(access.permissions, "procurement_po_terms_master", "view") || can(access.permissions, "procurement_gst_billing_delivery_master", "view");
   if (pathname === "/settings/policies/employee-attendance") return can(access.permissions, "hr_employee_attendance_policy", "view");
   if (pathname === "/settings/policies/attendance-date-access") return can(access.permissions, "labour_attendance_unlock", "view");
+  if (pathname === "/purchase/requisitions/configuration") return can(access.permissions, "purchase_requisition_approval_configuration", "view");
   if (pathname === "/settings") return hasSettingsViewAccess(access);
   return null;
 }
