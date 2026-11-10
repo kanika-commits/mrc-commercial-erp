@@ -4,6 +4,13 @@ import { hasServerPermission } from "@/lib/serverPermissions";
 
 const MODULE = "purchase_requisition_approval_configuration";
 const defaults = ["Billing Engineer Verification", "Project Manager Approval", "Final Approval"];
+type ScopeInput = { company_id?: unknown; site_id?: unknown };
+type ApprovalScope = { companyId: string; siteId: string };
+type ValidatedScope = ApprovalScope & { valid: NonNullable<Awaited<ReturnType<typeof scope>>> };
+
+function isScopeInput(value: unknown): value is ScopeInput {
+  return typeof value === "object" && value !== null;
+}
 
 async function scope(auth: any, admin: any, companyId: string, siteId: string) {
   const company = await admin.from("companies").select("id,organization_id,company_name").eq("id", companyId).maybeSingle();
@@ -77,10 +84,12 @@ export async function PUT(request: Request) {
     const layers = incoming.map((x: any, i: number) => ({ layer_number: i + 1, stage_name: text(x.stage_name) || defaults[i], approver_user_id: text(x.approver_user_id) })).filter((x: any) => x.approver_user_id && x.stage_name);
     if (layers.length !== layerCount) return jsonError("Each layer requires a stage and approver.", 400);
     const requestedScopes = Array.isArray(payload.scopes) ? payload.scopes : [{ company_id: payload.company_id, site_id: payload.site_id }];
-    const scopes = Array.from(new Map(requestedScopes.map((x: any) => [`${text(x.company_id)}:${text(x.site_id)}`, { companyId: text(x.company_id), siteId: text(x.site_id) }])).values()).filter((x: any) => x.companyId && x.siteId);
+    const requestedScopeValues: unknown[] = requestedScopes;
+    if (!requestedScopeValues.every(isScopeInput)) return jsonError("Each company/site scope must be an object.", 400);
+    const scopes: ApprovalScope[] = Array.from(new Map(requestedScopeValues.map((x) => [`${text(x.company_id)}:${text(x.site_id)}`, { companyId: text(x.company_id), siteId: text(x.site_id) }])).values()).filter((x): x is ApprovalScope => Boolean(x.companyId && x.siteId));
     if (!scopes.length) return jsonError("At least one company/site scope is required.", 400);
     const admin = adminClient();
-    const validated = [];
+    const validated: ValidatedScope[] = [];
     for (const selected of scopes) {
       const valid = await scope(auth, admin, selected.companyId, selected.siteId);
       if (!valid) return jsonError("One or more selected company/site scopes are outside your access.", 403);
