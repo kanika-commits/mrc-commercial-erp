@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { diagnosticFetch } from "@/lib/serverSupabaseDiagnostics";
 import { hasServerPermission, loadPermissionContext, requirePermission, requireAnyPermission, type ServerPermissionContext } from "@/lib/serverPermissions";
 import {
   applyOrganizationScope,
@@ -31,11 +32,11 @@ import {
   summarizeAttendance,
 } from "@/lib/hr/attendance";
 
-export function adminClient() {
+export function adminClient(route: "attendance/daily" | "attendance/monthly" | "attendance/approval-groups" = "attendance/daily") {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
   if (!serviceRoleKey) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY.");
-  return createClient(supabaseUrl, serviceRoleKey);
+  return createClient(supabaseUrl, serviceRoleKey, { global: { fetch: diagnosticFetch(route, "admin") } });
 }
 
 export function jsonError(message: string, status = 400) {
@@ -287,29 +288,16 @@ export async function loadEmployeeAttendanceLookups(
   );
   const historicalResult = historicalQuery ? await historicalQuery : { data: [], error: null };
   if (historicalResult.error && historicalResult.error.code !== "42P01") throw historicalResult.error;
-  let submissionQuery = applyOrganizationScope(
-    admin
+  let submissionQuery = admin
     .from("employee_attendance_daily_submissions")
     .select("company_id, site_id, attendance_date, status")
-    .in("status", ["submitted", "approved", "reopened"]),
-    organizationScope,
-  );
-  if (submissionQuery && selected.siteId) submissionQuery = submissionQuery.eq("site_id", selected.siteId);
-  if (submissionQuery && selected.companyId) submissionQuery = submissionQuery.eq("company_id", selected.companyId);
-  const submissionResult = submissionQuery ? await submissionQuery : { data: [], error: null };
+    .in("status", ["submitted", "approved"]);
+  if (selected.siteId) submissionQuery = submissionQuery.eq("site_id", selected.siteId);
+  if (selected.companyId) submissionQuery = submissionQuery.eq("company_id", selected.companyId);
+  const submissionResult = await submissionQuery;
   if (submissionResult.error && submissionResult.error.code !== "42P01") throw submissionResult.error;
-  const visiblePairKeys = new Set(visiblePairs.map((pair) => `${pair.company_id}:${pair.site_id}`));
-  const scopedSubmissions = (submissionResult.data || []).filter((row: any) => visiblePairKeys.has(`${row.company_id}:${row.site_id}`));
-  const protectedDates = new Set(scopedSubmissions
-    .filter((row: any) => ["submitted", "approved"].includes(String(row.status || "").toLowerCase()))
-    .map((row: any) => `${row.site_id}:${row.attendance_date}`));
+  const protectedDates = new Set((submissionResult.data || []).map((row: any) => `${row.site_id}:${row.attendance_date}`));
   const historicalDatesBySite: Record<string, string[]> = {};
-  for (const row of scopedSubmissions) {
-    if (String(row.status || "").toLowerCase() !== "reopened" || !row.attendance_date) continue;
-    const dates = historicalDatesBySite[row.site_id] || [];
-    dates.push(row.attendance_date);
-    historicalDatesBySite[row.site_id] = dates;
-  }
   for (const row of historicalResult.data || []) {
     if (!uniqueSites.some((site) => site.id === row.site_id)) continue;
     const dates = historicalDatesBySite[row.site_id] || [];
@@ -540,6 +528,16 @@ export async function validateCompanySiteScope(
   }
   if (site.organization_id !== company.organization_id) {
     return { response: jsonError("Selected site is not available for this organization.", 403) } as const;
+  }
+
+  // Employee attendance scope is assignment/history based.  A site may be shared
+  // by companies, so the site's legacy company_id is not the pair authority.
+  const [{ data: assignedEmployee }, { data: historicalAssignment }] = await Promise.all([
+    admin.from("hr_employees").select("id").eq("organization_id", company.organization_id).eq("company_id", companyId).eq("site_id", siteId).neq("status", "deleted").limit(1).maybeSingle(),
+    admin.from("employee_employment_history").select("id").eq("organization_id", company.organization_id).eq("company_id", companyId).eq("site_id", siteId).neq("employment_status", "deleted").limit(1).maybeSingle(),
+  ]);
+  if (!assignedEmployee && !historicalAssignment) {
+    return { response: jsonError("Selected company/site pair is not available for Employee Attendance.", 403) } as const;
   }
 
   if (!isGlobalScope(organizationScope)) {
@@ -871,7 +869,7 @@ export function parseMonthlyParams(url: string) {
 
 export async function loadActiveHistoricalAttendanceAccess(
   admin: ReturnType<typeof adminClient>,
-  input: { organizationId: string; siteId: string; attendanceDate: string; attendanceType: "labour" | "employee" },
+  input: { organizationId: string; companyId?: string | null; siteId: string; attendanceDate: string; attendanceType: "labour" | "employee" },
 ) {
   const now = new Date().toISOString();
   const { data, error } = await admin
@@ -885,6 +883,7 @@ export async function loadActiveHistoricalAttendanceAccess(
     .lte("opens_at", now)
     .lte("from_date", input.attendanceDate)
     .gte("to_date", input.attendanceDate)
+    .or(`company_id.is.null,company_id.eq.${input.companyId || ""}`)
     .or(`expires_at.is.null,expires_at.gt.${now}`)
     .order("opened_at", { ascending: false })
     .limit(1)

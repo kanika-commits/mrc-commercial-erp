@@ -147,8 +147,12 @@ export default function LabourDailyAttendancePage() {
   const attendanceLoaded = Boolean(rows.length && loadedContextKey === currentContextKey);
   const dateSummary = period?.summary?.date_statuses?.[filters.attendance_date] || {};
   const reopenedDate = dateSummary.status === "reopened";
-  const selectedDateStatus = dateSummary.status || "draft";
-  const readOnly = period?.server_read_only ?? (dayLock?.is_locked || ["submitted", "finalized"].includes(selectedDateStatus));
+  const selectedDateStatus = period?.server_date_status || dateSummary.status || "draft";
+  const historicalDateOpen = Boolean(historicalAccess) || reopenedDate;
+  const submittedSnapshot = ["submitted", "finalized", "approved"].includes(selectedDateStatus);
+  const readOnly = submittedSnapshot || Boolean(
+    !historicalDateOpen && (period?.server_read_only ?? dayLock?.is_locked),
+  );
   const sentBack = selectedDateStatus === "reopened";
   const canEditSupportingPdf = canEditAttendance &&
     attendanceLoaded &&
@@ -184,10 +188,12 @@ export default function LabourDailyAttendancePage() {
         headers: { Authorization: `Bearer ${await token()}` },
         signal: controller.signal,
       });
-      const payload = await response.json();
+      const responseText = await response.text();
+      let payload: any = {};
+      try { payload = responseText.trim() ? JSON.parse(responseText) : {}; } catch { throw new Error(`Attendance filters failed (HTTP ${response.status}): the server returned a non-JSON response. Check local dev-server logs.`); }
       if (requestId !== lookupRequestRef.current) return;
       if (!response.ok) {
-        setMessage(payload.error || "Could not load attendance filters.");
+        setMessage(payload.error || `Could not load attendance filters (HTTP ${response.status}).`);
         return;
       }
       setLookups(payload);
@@ -250,7 +256,17 @@ export default function LabourDailyAttendancePage() {
         headers: { Authorization: `Bearer ${await token()}` },
         signal: controller.signal,
       });
-      const payload = await response.json();
+      const contentType = response.headers.get("content-type") || "";
+      const responseText = await response.text();
+      let payload: any = {};
+      if (responseText.trim()) {
+        try {
+          payload = JSON.parse(responseText);
+        } catch {
+          const detail = response.status ? ` (HTTP ${response.status})` : "";
+          throw new Error(`Attendance load failed${detail}: the server returned a non-JSON response${contentType ? ` (${contentType})` : ""}. Check the local development server logs.`);
+        }
+      }
       if (
         requestId !== rowRequestRef.current ||
         controller.signal.aborted ||
@@ -260,12 +276,12 @@ export default function LabourDailyAttendancePage() {
       ) {
         return;
       }
-      if (!response.ok) return setMessage(payload.error || "Could not load attendance.");
+      if (!response.ok) return setMessage(payload.error || `Could not load attendance (HTTP ${response.status}).`);
       const nextRows = payload.rows || [];
       setRows(nextRows);
       setLoadedContextKey(nextRows.length ? [requestContext.company_id, requestContext.site_id, requestContext.attendance_date].join("|") : null);
       setMessage(nextRows.length ? "" : "No eligible deployed labourers found for this Site/date.");
-      setPeriod(payload.period ? { ...payload.period, server_read_only: payload.read_only } : null);
+      setPeriod(payload.period ? { ...payload.period, server_read_only: payload.read_only, server_date_status: payload.date_status || "draft" } : null);
       setSupportingPdf(payload.supporting_pdf || null);
       setDayLock(payload.day_lock || null);
       setHistoricalAccess(payload.historical_access || null);
@@ -854,7 +870,7 @@ export default function LabourDailyAttendancePage() {
 
         {message && <div className="rounded-lg border bg-white p-3 text-sm">{message}</div>}
         {submitError && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-800">{submitError}</div>}
-        {readOnly && readOnlyReason && (
+        {readOnly && readOnlyReason && !historicalDateOpen && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800">
             {readOnlyReason}
           </div>

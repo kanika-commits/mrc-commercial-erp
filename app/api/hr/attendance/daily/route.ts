@@ -33,12 +33,13 @@ export async function GET(request: Request) {
     if ("error" in params) return jsonError(String(params.error), 400);
     const attendanceDate = params.attendanceDate;
     if (typeof attendanceDate !== "string" || attendanceDate.length === 0) return jsonError("Valid attendance date is required.", 400);
-    const admin = adminClient();
+    const admin = adminClient("attendance/daily");
     const scope = await validateCompanySiteScope(admin, auth, params.companyId, params.siteId);
     if ("response" in scope) return scope.response;
     const [historicalAccess, dailySubmission] = await Promise.all([
       loadActiveHistoricalAttendanceAccess(admin, {
         organizationId: scope.organizationId,
+        companyId: params.companyId,
         siteId: params.siteId,
         attendanceDate,
         attendanceType: "employee",
@@ -172,6 +173,7 @@ export async function PUT(request: Request) {
     const [historicalAccess, dailySubmission] = await Promise.all([
       loadActiveHistoricalAttendanceAccess(admin, {
         organizationId: scope.organizationId,
+        companyId: params.companyId,
         siteId: params.siteId,
         attendanceDate,
         attendanceType: "employee",

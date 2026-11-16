@@ -48,6 +48,10 @@ export const ATTENDANCE_STATUS_CODES: Record<AttendanceStatus, string> = {
   on_duty: "OD",
 };
 
+export function attendanceRowKey(employeeId: unknown, attendanceDate: unknown) {
+  return `${String(employeeId ?? "").trim()}:${String(attendanceDate ?? "").trim().slice(0, 10)}`;
+}
+
 export const ATTENDANCE_PERIOD_STATUSES = [
   "draft",
   "submitted",

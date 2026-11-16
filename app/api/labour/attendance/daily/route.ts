@@ -18,7 +18,7 @@ import {
   requireLabourPermission,
   originatingAttendanceSystem,
   resolveSiteAttendanceSystem,
-  validateLabourCompanySiteIndependent,
+  validateLabourOperationalCompanySite,
   validateTrade,
   validateWorkOrder,
 } from "@/app/api/labour/_shared";
@@ -506,7 +506,7 @@ export async function GET(request: Request) {
     if (!attendanceDateRaw) return jsonError("Attendance date is required.");
     if (!attendanceDate) return jsonError("Attendance date must be in YYYY-MM-DD format.");
 
-    const scopeCheck = await validateLabourCompanySiteIndependent(access, requestedOrganizationId, companyId, siteId);
+    const scopeCheck = await validateLabourOperationalCompanySite(access, requestedOrganizationId, companyId, siteId);
     if ("error" in scopeCheck) return jsonError(scopeCheck.error || "Selected company/site is not available.", 403);
     const organizationId = scopeCheck.organizationId;
     const siteHrBlocker = await loadMusterSiteHrBlocker(access, { organizationId, companyId, siteId });
@@ -528,7 +528,7 @@ export async function GET(request: Request) {
     if ("error" in tradeCheck) return jsonError(tradeCheck.error || "Selected labour category is not available.", 403);
 
     const period = await findOrCreateAttendancePeriod(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate, originatingAttendanceSystem: "standard" });
-    const dateAuthority = await loadLabourAttendanceDateAuthority(access, { period, organizationId, siteId, attendanceDate });
+    const dateAuthority = await loadLabourAttendanceDateAuthority(access, { period, organizationId, companyId, siteId, attendanceDate });
     const selectedStatus = dateAuthority.status;
     const submittedSnapshotRows = ["submitted", "finalized", "approved"].includes(selectedStatus) && dateAuthority.latestSubmitted
       ? await loadSubmittedSnapshotRows(access, period, dateAuthority.latestSubmitted)
@@ -646,6 +646,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       rows,
       period: period ? { ...period, status: selectedStatus, period_status: period.status } : period,
+      date_status: selectedStatus,
       supporting_pdf: publicSupportingPdf(supportingPdf),
       day_lock: dayLock,
       policy: policy ? {
@@ -680,7 +681,7 @@ export async function POST(request: Request) {
     const backdatedReason = text(payload.backdated_reason);
     if (!companyId || !siteId || !attendanceDate) return jsonError("Company, site and attendance date are required.");
 
-    const scopeCheck = await validateLabourCompanySiteIndependent(access, requestedOrganizationId, companyId, siteId);
+    const scopeCheck = await validateLabourOperationalCompanySite(access, requestedOrganizationId, companyId, siteId);
     if ("error" in scopeCheck) return jsonError(scopeCheck.error || "Selected company/site is not available.", 403);
     const organizationId = scopeCheck.organizationId;
     const siteHrBlocker = await loadMusterSiteHrBlocker(access, { organizationId, companyId, siteId });
@@ -705,7 +706,7 @@ export async function POST(request: Request) {
       return jsonError("This attendance period belongs to Site-In & Engineer Daily Labour. Use Engineer Daily Labour for this existing record.", 403);
     }
     const period = originResult.period || await findOrCreateAttendancePeriod(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate, originatingAttendanceSystem: "standard" });
-    const dateAuthority = await loadLabourAttendanceDateAuthority(access, { period, organizationId, siteId, attendanceDate });
+    const dateAuthority = await loadLabourAttendanceDateAuthority(access, { period, organizationId, companyId, siteId, attendanceDate });
     if (dateAuthority.submittedSnapshotLocked) return jsonError("Attendance for this date has already been submitted. Reopen the date before making changes.", 403);
     const explicitlyOpen = dateAuthority.reopened || Boolean(historicalAccess);
     const lockBlocker = explicitlyOpen

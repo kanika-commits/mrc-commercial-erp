@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import {
   applyCompanySiteScope,
   jsonError,
-  loadEligibleDeployments,
   loadResolvedLabourSitePairs,
   requireLabourPermission,
   resolveSiteAttendanceSystem,
@@ -234,13 +233,19 @@ async function loadDeploymentContractorsForCompanySiteDate(access: any, input: {
   if (!input.companyId || !input.siteId) return { contractors: [] };
   const scopeCheck = await validateLabourCompanySiteIndependent(access, input.organizationId, input.companyId, input.siteId);
   if ("error" in scopeCheck) throw new Error(scopeCheck.error || "Selected company/site is not available.");
-  const deployments = await loadEligibleDeployments(access, {
-    organizationId: scopeCheck.organizationId,
-    companyId: input.companyId,
-    siteId: input.siteId,
-    contractorProfileId: null,
-    attendanceDate: input.effectiveDate,
-  });
+  let deploymentQuery = access.admin
+    .from("labour_deployments")
+    .select("contractor_profile_id, labour_contractor_profiles(id, contractor_code, vendors(vendor_name))")
+    .eq("organization_id", scopeCheck.organizationId)
+    .eq("company_id", input.companyId)
+    .eq("site_id", input.siteId)
+    .in("status", ["active", "ended"])
+    .lte("effective_from", input.effectiveDate)
+    .or(`effective_to.is.null,effective_to.gte.${input.effectiveDate}`);
+  deploymentQuery = applyCompanySiteScope(deploymentQuery, access.assignments);
+  if (!deploymentQuery) return { contractors: [] };
+  const { data: deployments, error } = await deploymentQuery;
+  if (error) throw error;
   const contractorMap = new Map<string, any>();
   for (const deployment of deployments) {
     const contractor = Array.isArray(deployment.labour_contractor_profiles) ? deployment.labour_contractor_profiles[0] : deployment.labour_contractor_profiles;
@@ -292,6 +297,35 @@ async function loadSiteInContractorsForCompanySiteDate(access: any, input: {
       String(a?.vendors?.vendor_name || a?.contractor_code || "").localeCompare(String(b?.vendors?.vendor_name || b?.contractor_code || "")),
     ),
   };
+}
+
+async function loadAttendanceLookupDeployments(access: any, input: {
+  organizationId: string;
+  companyId: string;
+  siteId: string;
+  attendanceDate: string;
+}) {
+  let query = access.admin
+    .from("labour_deployments")
+    .select(`
+      id, contractor_profile_id, work_order_id, manpower_work_order_id, labour_trade_id,
+      labour_contractor_profiles(id, contractor_code, vendors(vendor_name)),
+      work_orders(id, wo_number),
+      manpower_work_orders(id, manpower_wo_number, title, status),
+      labour_trades(id, trade_name, trade_code, status)
+    `)
+    .eq("organization_id", input.organizationId)
+    .eq("company_id", input.companyId)
+    .eq("site_id", input.siteId)
+    .in("status", ["active", "ended"])
+    .lte("effective_from", input.attendanceDate)
+    .or(`effective_to.is.null,effective_to.gte.${input.attendanceDate}`)
+    .order("effective_from", { ascending: false });
+  query = applyCompanySiteScope(query, access.assignments);
+  if (!query) return [];
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
 }
 
 export async function GET(request: Request) {
@@ -394,7 +428,7 @@ export async function GET(request: Request) {
           ))).filter((date): date is string => /^\d{4}-\d{2}-\d{2}$/.test(date)).sort();
         }
         const now = new Date().toISOString();
-        const { data: accessRows, error: accessError } = await access.admin
+        let accessRowsQuery = access.admin
           .from("attendance_historical_access")
           .select("from_date, to_date")
           .eq("organization_id", scopeCheck.organizationId)
@@ -404,6 +438,10 @@ export async function GET(request: Request) {
           .is("closed_at", null)
           .lte("opens_at", now)
           .or(`expires_at.is.null,expires_at.gt.${now}`);
+        accessRowsQuery = selectedCompanyId
+          ? accessRowsQuery.or(`company_id.is.null,company_id.eq.${selectedCompanyId}`)
+          : accessRowsQuery.is("company_id", null);
+        const { data: accessRows, error: accessError } = await accessRowsQuery;
         if (accessError && accessError.code !== "42P01") throw accessError;
         for (const row of accessRows || []) {
           const cursor = new Date(`${row.from_date}T00:00:00Z`);
@@ -429,13 +467,11 @@ export async function GET(request: Request) {
           }
         }
         historicalAttendanceDates = historicalAttendanceDates.filter((date) => ["draft", "reopened"].includes(statusByDate.get(date) || "draft"));
-        deployments = await loadEligibleDeployments(access, {
+        deployments = await loadAttendanceLookupDeployments(access, {
           organizationId: scopeCheck.organizationId,
           companyId: selectedCompanyId,
           siteId: selectedSiteId,
-          contractorProfileId: null,
           attendanceDate,
-          allowHistoricallyInactiveWorker: true,
         });
         if (system.ok && system.attendanceSystem === "standard") {
           const contractorMap = new Map<string, any>();

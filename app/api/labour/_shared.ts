@@ -13,6 +13,7 @@ import { normalizeIdentifier, normalizeText } from "@/lib/labour/constants";
 import { daysBefore, isAfterLabourDayEndLockCutoff, isAfterLabourPolicyLockCutoff, monthStart, todayInIst } from "@/lib/labour/operations";
 import { optionalFormattedAadhaar } from "@/lib/utils/aadhaar";
 import { hasActiveSiteHrAssignment } from "@/lib/serverSiteHr";
+import { supabaseServerFetch } from "@/lib/serverSupabase";
 
 export const LABOUR_DOCUMENT_BUCKET = "labour-documents";
 
@@ -20,7 +21,7 @@ export function adminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
   if (!serviceRoleKey) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY.");
-  return createClient(supabaseUrl, serviceRoleKey);
+  return createClient(supabaseUrl, serviceRoleKey, { global: { fetch: supabaseServerFetch } });
 }
 
 export function jsonError(message: string, status = 400) {
@@ -437,11 +438,42 @@ export async function loadEligibleDeployments(access: LabourAccess, input: {
   if (!scoped) return [];
   const { data, error } = await scoped;
   if (error) throw error;
+  const inactiveWorkers = (data || []).filter((deployment: any) => {
+    const worker = Array.isArray(deployment.labour_workers) ? deployment.labour_workers[0] : deployment.labour_workers;
+    return worker && worker.status !== "active";
+  });
+  const inactiveEffectiveDates = new Map<string, string>();
+  if (inactiveWorkers.length) {
+    const workerIds = Array.from(new Set(inactiveWorkers.map((deployment: any) => deployment.labour_worker_id).filter(Boolean)));
+    const { data: statusAudits, error: statusAuditError } = await access.admin
+      .from("erp_audit_logs")
+      .select("record_id, new_values, created_at")
+      .eq("organization_id", input.organizationId)
+      .eq("module_code", "labour_workers")
+      .eq("entity_type", "labour_worker")
+      .in("record_id", workerIds)
+      .order("created_at", { ascending: false });
+    if (statusAuditError) throw statusAuditError;
+    for (const auditRow of statusAudits || []) {
+      const values = auditRow.new_values || {};
+      if (values.status !== "inactive" || inactiveEffectiveDates.has(auditRow.record_id)) continue;
+      const effectiveDate = String(values.effective_date || "").slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)) {
+        inactiveEffectiveDates.set(auditRow.record_id, effectiveDate);
+      } else if (auditRow.created_at) {
+        inactiveEffectiveDates.set(auditRow.record_id, new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date(auditRow.created_at)));
+      }
+    }
+  }
   return (data || []).filter((deployment: any) => {
     const worker = Array.isArray(deployment.labour_workers) ? deployment.labour_workers[0] : deployment.labour_workers;
     if (!worker) return false;
     const historicalDate = input.allowHistoricallyInactiveWorker && input.attendanceDate < todayInIst();
     if (!historicalDate && worker.status !== "active") return false;
+    if (worker.status !== "active") {
+      const inactiveEffectiveDate = inactiveEffectiveDates.get(deployment.labour_worker_id);
+      if (inactiveEffectiveDate && input.attendanceDate >= inactiveEffectiveDate) return false;
+    }
     if (!historicalDate && !input.ignoreWorkerCreatedAt && worker.created_at) {
       const registrationDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date(worker.created_at));
       if (registrationDate > input.attendanceDate) return false;
@@ -513,6 +545,7 @@ export async function loadAttendanceRowsForWorkers(access: LabourAccess, input: 
 export async function loadLabourAttendanceDateAuthority(access: LabourAccess, input: {
   period: any | null;
   organizationId: string;
+  companyId?: string | null;
   siteId: string;
   attendanceDate: string;
   attendanceType?: "labour";
@@ -534,6 +567,7 @@ export async function loadLabourAttendanceDateAuthority(access: LabourAccess, in
   if (error) throw error;
   const historicalAccess = await getActiveHistoricalAttendanceAccess(access, {
     organizationId: input.organizationId,
+    companyId: input.companyId || input.period?.company_id || null,
     siteId: input.siteId,
     attendanceDate: input.attendanceDate,
     attendanceType: input.attendanceType || "labour",

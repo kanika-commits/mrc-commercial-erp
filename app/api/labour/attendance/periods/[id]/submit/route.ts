@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { actorFields, applyCompanySiteScope, audit, isGlobalOrSuperAdmin, jsonError, loadAttendanceRowsForWorkers, loadEligibleDeployments, loadFrozenAttendanceDeploymentIds, loadLabourAttendanceDateAuthority, originatingAttendanceSystem, requireLabourPermission } from "@/app/api/labour/_shared";
+import { actorFields, applyCompanySiteScope, audit, getActiveHistoricalAttendanceAccess, isGlobalOrSuperAdmin, jsonError, loadAttendanceRowsForWorkers, loadEligibleDeployments, loadFrozenAttendanceDeploymentIds, loadLabourAttendanceDateAuthority, originatingAttendanceSystem, requireLabourPermission } from "@/app/api/labour/_shared";
 import { applyOrganizationScope } from "@/lib/serverOrganizationScope";
-import { isoDate } from "@/lib/labour/operations";
+import { isoDate, todayInIst } from "@/lib/labour/operations";
 import { hasActiveSiteHrAssignment } from "@/lib/serverSiteHr";
 
 async function loadPeriod(access: any, id: string) {
@@ -31,7 +31,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (!workflow) return jsonError("This attendance period has no originating attendance workflow. Confirm the historical workflow before submitting it.", 409);
     if (workflow === "site_in_engineer") return jsonError("This attendance period belongs to Site-In & Engineer Daily Labour. Use Engineer Daily Labour for this existing record.", 403);
     if (attendanceDate) {
-      const dateAuthority = await loadLabourAttendanceDateAuthority(access, { period, organizationId: period.organization_id, siteId: period.site_id, attendanceDate });
+      const dateAuthority = await loadLabourAttendanceDateAuthority(access, { period, organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, attendanceDate });
+      const historicalAccess = dateAuthority.historicalAccess || await getActiveHistoricalAttendanceAccess(access, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, attendanceDate, attendanceType: "labour" });
+      if (attendanceDate < todayInIst() && !dateAuthority.reopened && !historicalAccess) {
+        return jsonError("This historical attendance date must be reopened or explicitly opened before submission.", 403);
+      }
       if (dateAuthority.submittedSnapshotLocked) return jsonError("Attendance for this date has already been submitted. Reopen the date before making changes.", 403);
       const selectedStatus = dateAuthority.status;
       const frozenDeploymentIds = await loadFrozenAttendanceDeploymentIds(access, period, attendanceDate, selectedStatus);

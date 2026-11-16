@@ -1,6 +1,6 @@
 import { insertErpAuditLog } from "@/lib/serverAudit";
 import { actorName } from "@/lib/hr/attendance";
-import { adminClient, ensureDailySubmission, jsonError, loadAttendanceRows, loadEligibleEmployees, loadEmployeeAttendancePolicyForScope, loadDailySubmission, requireAttendancePermission } from "../../../_shared";
+import { adminClient, assertDateSelectable, ensureDailySubmission, isExactReopenedDailySubmission, jsonError, loadActiveHistoricalAttendanceAccess, loadAttendanceRows, loadEligibleEmployees, loadEmployeeAttendancePolicyForScope, loadDailySubmission, requireAttendancePermission } from "../../../_shared";
 import { loadScopedPeriod } from "../_shared";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -16,6 +16,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const attendanceDate = String(payload.attendance_date || "").trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate) || !attendanceDate.startsWith(String(period.period_month).slice(0, 7))) return jsonError("A valid attendance date in the selected period is required.", 400);
     const dailySubmission = await loadDailySubmission(admin, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, attendanceDate });
+    const historicalAccess = await loadActiveHistoricalAttendanceAccess(admin, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, attendanceDate, attendanceType: "employee" });
+    const returnedDate = isExactReopenedDailySubmission(dailySubmission, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, attendanceDate });
+    const dateAllowed = assertDateSelectable(auth, attendanceDate, Boolean(historicalAccess), returnedDate);
+    if (!dateAllowed.allowed) return jsonError(("error" in dateAllowed ? dateAllowed.error : undefined) || "Attendance date cannot be submitted.", 403);
     if (dailySubmission && !["draft", "reopened"].includes(String(dailySubmission.status || "").toLowerCase())) return jsonError("This attendance date is already submitted or approved.", 403);
     const [employees, rows, policy] = await Promise.all([
       loadEligibleEmployees(admin, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, startDate: attendanceDate, endDate: attendanceDate }),
@@ -26,9 +30,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!rows.length) return jsonError("Save attendance before submitting this date.", 400);
     const daily = await ensureDailySubmission(admin, auth, { organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, periodId: period.id, attendanceDate });
     const now = new Date().toISOString();
-    const approvalLevelCount = Math.max(0, Math.min(3, Number(policy.approval_level_count ?? 1)));
     const { data, error } = await admin.from("employee_attendance_daily_submissions").update({
-        status: approvalLevelCount === 0 ? "finalized" : "submitted",
+        status: "submitted",
         submitted_by: auth.user.id,
         submitted_by_name: actorName(auth.user),
         submitted_by_email: auth.user.email || null,

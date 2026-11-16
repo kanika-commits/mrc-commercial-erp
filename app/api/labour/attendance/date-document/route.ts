@@ -15,7 +15,7 @@ import {
   loadMusterSiteHrBlocker,
   originatingAttendanceSystem,
   requireLabourPermission,
-  validateLabourCompanySiteIndependent,
+  validateLabourOperationalCompanySite,
 } from "@/app/api/labour/_shared";
 import { isoDate } from "@/lib/labour/operations";
 import { hasActiveSiteHrAssignment } from "@/lib/serverSiteHr";
@@ -63,7 +63,7 @@ function canMutateDateDocument(period: any, attendanceDate: string) {
 async function resolveContext(access: any, input: { organizationId?: string | null; companyId?: string | null; siteId?: string | null; attendanceDate?: string | null; requireSiteHr?: boolean }) {
   const attendanceDate = isoDate(input.attendanceDate);
   if (!input.companyId || !input.siteId || !attendanceDate) return { error: "Company, site and attendance date are required.", status: 400 } as const;
-  const scopeCheck = await validateLabourCompanySiteIndependent(access, input.organizationId || null, input.companyId, input.siteId);
+  const scopeCheck = await validateLabourOperationalCompanySite(access, input.organizationId || null, input.companyId, input.siteId);
   if ("error" in scopeCheck) return { error: scopeCheck.error || "Selected company/site is not available.", status: 403 } as const;
   const organizationId = scopeCheck.organizationId;
   if (input.requireSiteHr !== false) {
@@ -151,14 +151,16 @@ export async function POST(request: Request) {
     if (file.type !== "application/pdf") return jsonError("Only PDF files are allowed.");
     if (file.size > MAX_PDF_SIZE_BYTES) return jsonError("PDF must be 10 MB or smaller.");
     if (!resolved.period) return jsonError("Load attendance before uploading a supporting PDF.", 404);
-    if (!canMutateDateDocument(resolved.period, resolved.attendanceDate)) return jsonError("Supporting PDF can be changed only while this date is Draft or Sent Back.", 403);
     const dateAuthority = await loadLabourAttendanceDateAuthority(access, {
       period: resolved.period,
       organizationId: resolved.organizationId,
+      companyId: resolved.companyId,
       siteId: resolved.siteId,
       attendanceDate: resolved.attendanceDate,
     });
     if (dateAuthority.submittedSnapshotLocked) return jsonError("Attendance for this date has already been submitted. Reopen the date before uploading a supporting PDF.", 403);
+    const explicitlyOpen = dateAuthority.reopened || Boolean(dateAuthority.historicalAccess);
+    if (!canMutateDateDocument(resolved.period, resolved.attendanceDate) && !explicitlyOpen) return jsonError("Supporting PDF can be changed only while this date is Draft or Sent Back.", 403);
     const historicalAccess = await getActiveHistoricalAttendanceAccess(access, { organizationId: resolved.organizationId, companyId: resolved.companyId, siteId: resolved.siteId, attendanceDate: resolved.attendanceDate, attendanceType: "labour" });
     const dateAccess = actorCanEditAttendanceDate(
       access,
@@ -170,8 +172,8 @@ export async function POST(request: Request) {
     if (!isGlobalOrSuperAdmin(access) && !(await hasActiveSiteHrAssignment(access.admin, { organizationId: resolved.organizationId, companyId: resolved.companyId, siteId: resolved.siteId, userId: access.auth.user.id }))) {
       return jsonError("You are not assigned as Site HR for this site.", 403);
     }
-    const explicitlyOpen = dateAuthority.reopened || Boolean(historicalAccess);
-    if (!explicitlyOpen) {
+    const explicitlyOpenForLock = dateAuthority.reopened || Boolean(historicalAccess);
+    if (!explicitlyOpenForLock) {
       const lockBlocker = await loadLabourEditLockBlocker(access, {
         organizationId: resolved.organizationId,
         companyId: resolved.companyId,
@@ -279,18 +281,27 @@ export async function DELETE(request: Request) {
     });
     if ("error" in resolved) return jsonError(resolved.error || "Invalid attendance document request.", resolved.status || 400);
     if (!resolved.period) return jsonError("Attendance register not found.", 404);
-    if (!canMutateDateDocument(resolved.period, resolved.attendanceDate)) return jsonError("Supporting PDF can be removed only while this date is Draft or Sent Back.", 403);
+    const dateAuthority = await loadLabourAttendanceDateAuthority(access, {
+      period: resolved.period,
+      organizationId: resolved.organizationId,
+      companyId: resolved.companyId,
+      siteId: resolved.siteId,
+      attendanceDate: resolved.attendanceDate,
+    });
+    if (dateAuthority.submittedSnapshotLocked) return jsonError("Attendance for this date has already been submitted. Reopen the date before removing a supporting PDF.", 403);
+    const explicitlyOpen = dateAuthority.reopened || Boolean(dateAuthority.historicalAccess);
+    if (!canMutateDateDocument(resolved.period, resolved.attendanceDate) && !explicitlyOpen) return jsonError("Supporting PDF can be removed only while this date is Draft or Sent Back.", 403);
     const dateAccess = actorCanEditAttendanceDate(
       access,
       resolved.attendanceDate,
       text(searchParams.get("backdated_reason")),
-      { reopened: dateStatus(resolved.period, resolved.attendanceDate) === "reopened" },
+      { reopened: dateAuthority.reopened, historicallyOpened: Boolean(dateAuthority.historicalAccess) && !dateAuthority.reopened },
     );
     if ("error" in dateAccess) return jsonError(dateAccess.error || "You cannot edit attendance for this date.", 403);
     if (!isGlobalOrSuperAdmin(access) && !(await hasActiveSiteHrAssignment(access.admin, { organizationId: resolved.organizationId, companyId: resolved.companyId, siteId: resolved.siteId, userId: access.auth.user.id }))) {
       return jsonError("You are not assigned as Site HR for this site.", 403);
     }
-    const lockBlocker = await loadLabourEditLockBlocker(access, {
+    const lockBlocker = explicitlyOpen ? null : await loadLabourEditLockBlocker(access, {
       organizationId: resolved.organizationId,
       companyId: resolved.companyId,
       siteId: resolved.siteId,
