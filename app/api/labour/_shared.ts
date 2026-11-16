@@ -645,12 +645,13 @@ export async function getActiveUnlockWindow(access: LabourAccess, input: {
 
 export async function getActiveHistoricalAttendanceAccess(access: LabourAccess, input: {
   organizationId: string;
+  companyId?: string | null;
   siteId: string;
   attendanceDate: string;
   attendanceType: "labour" | "employee";
 }) {
   const now = new Date().toISOString();
-  const { data, error } = await access.admin
+  let query = access.admin
     .from("attendance_historical_access")
     .select("id, attendance_type, from_date, to_date, reason, opened_by_name, opened_at, expires_at")
     .eq("organization_id", input.organizationId)
@@ -662,9 +663,8 @@ export async function getActiveHistoricalAttendanceAccess(access: LabourAccess, 
     .lte("from_date", input.attendanceDate)
     .gte("to_date", input.attendanceDate)
     .or(`expires_at.is.null,expires_at.gt.${now}`)
-    .order("opened_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  if (input.companyId) query = query.or(`company_id.is.null,company_id.eq.${input.companyId}`);
+  const { data, error } = await query.order("opened_at", { ascending: false }).limit(1).maybeSingle();
   if (error) throw error;
   return data || null;
 }

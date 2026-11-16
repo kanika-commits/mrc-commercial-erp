@@ -150,6 +150,11 @@ export default function LabourDailyAttendancePage() {
   const selectedDateStatus = dateSummary.status || "draft";
   const readOnly = period?.server_read_only ?? (dayLock?.is_locked || ["submitted", "finalized"].includes(selectedDateStatus));
   const sentBack = selectedDateStatus === "reopened";
+  const canEditSupportingPdf = canEditAttendance &&
+    attendanceLoaded &&
+    !readOnly &&
+    ["draft", "reopened"].includes(selectedDateStatus) &&
+    (Boolean(historicalAccess) || reopenedDate);
   const filtersDisabled = rowLoading || saving || submitting;
   const attendanceSystem = lookups.attendance_system || null;
   const systemValue = attendanceSystem?.value || null;
@@ -965,7 +970,7 @@ export default function LabourDailyAttendancePage() {
                   <FileText className="h-4 w-4" />View
                 </button>
               )}
-              {canEditAttendance && !readOnly && (
+              {canEditSupportingPdf && (
                 <label className={`inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border bg-white px-3 text-xs font-bold ${documentBusy || !attendanceLoaded ? "pointer-events-none opacity-60" : ""}`}>
                   <Upload className="h-4 w-4" />{supportingPdf ? "Replace" : "Upload PDF"}
                   <input type="file" accept="application/pdf" disabled={documentBusy || !attendanceLoaded} className="hidden" onChange={(event) => {
@@ -975,7 +980,7 @@ export default function LabourDailyAttendancePage() {
                   }} />
                 </label>
               )}
-              {supportingPdf && canEditAttendance && !readOnly && (
+              {supportingPdf && canEditSupportingPdf && (
                 <button type="button" onClick={removeSupportingPdf} disabled={documentBusy} className="inline-flex h-9 items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 text-xs font-bold text-red-700 disabled:opacity-60">
                   <Trash2 className="h-4 w-4" />Remove
                 </button>

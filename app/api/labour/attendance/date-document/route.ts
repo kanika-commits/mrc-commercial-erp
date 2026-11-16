@@ -4,6 +4,7 @@ import { createPrivateStorageAdapter, safeObjectKey } from "@/lib/storage/privat
 import {
   actorCanEditAttendanceDate,
   getActiveHistoricalAttendanceAccess,
+  loadLabourAttendanceDateAuthority,
   actorFields,
   applyCompanySiteScope,
   audit,
@@ -151,25 +152,35 @@ export async function POST(request: Request) {
     if (file.size > MAX_PDF_SIZE_BYTES) return jsonError("PDF must be 10 MB or smaller.");
     if (!resolved.period) return jsonError("Load attendance before uploading a supporting PDF.", 404);
     if (!canMutateDateDocument(resolved.period, resolved.attendanceDate)) return jsonError("Supporting PDF can be changed only while this date is Draft or Sent Back.", 403);
-    const historicalAccess = await getActiveHistoricalAttendanceAccess(access, { organizationId: resolved.organizationId, siteId: resolved.siteId, attendanceDate: resolved.attendanceDate, attendanceType: "labour" });
+    const dateAuthority = await loadLabourAttendanceDateAuthority(access, {
+      period: resolved.period,
+      organizationId: resolved.organizationId,
+      siteId: resolved.siteId,
+      attendanceDate: resolved.attendanceDate,
+    });
+    if (dateAuthority.submittedSnapshotLocked) return jsonError("Attendance for this date has already been submitted. Reopen the date before uploading a supporting PDF.", 403);
+    const historicalAccess = await getActiveHistoricalAttendanceAccess(access, { organizationId: resolved.organizationId, companyId: resolved.companyId, siteId: resolved.siteId, attendanceDate: resolved.attendanceDate, attendanceType: "labour" });
     const dateAccess = actorCanEditAttendanceDate(
       access,
       resolved.attendanceDate,
       text(formData.get("backdated_reason")),
-      { reopened: dateStatus(resolved.period, resolved.attendanceDate) === "reopened", historicallyOpened: Boolean(historicalAccess) && dateStatus(resolved.period, resolved.attendanceDate) !== "reopened" },
+      { reopened: dateAuthority.reopened, historicallyOpened: Boolean(historicalAccess) && !dateAuthority.reopened },
     );
     if ("error" in dateAccess) return jsonError(dateAccess.error || "You cannot edit attendance for this date.", 403);
     if (!isGlobalOrSuperAdmin(access) && !(await hasActiveSiteHrAssignment(access.admin, { organizationId: resolved.organizationId, companyId: resolved.companyId, siteId: resolved.siteId, userId: access.auth.user.id }))) {
       return jsonError("You are not assigned as Site HR for this site.", 403);
     }
-    const lockBlocker = await loadLabourEditLockBlocker(access, {
-      organizationId: resolved.organizationId,
-      companyId: resolved.companyId,
-      siteId: resolved.siteId,
-      contractorProfileId: null,
-      attendanceDate: resolved.attendanceDate,
-    });
-    if (lockBlocker) return jsonError(lockBlocker, 403);
+    const explicitlyOpen = dateAuthority.reopened || Boolean(historicalAccess);
+    if (!explicitlyOpen) {
+      const lockBlocker = await loadLabourEditLockBlocker(access, {
+        organizationId: resolved.organizationId,
+        companyId: resolved.companyId,
+        siteId: resolved.siteId,
+        contractorProfileId: null,
+        attendanceDate: resolved.attendanceDate,
+      });
+      if (lockBlocker) return jsonError(lockBlocker, 403);
+    }
 
     const activeDocument = await loadActiveDocument(access, resolved.period.id, resolved.attendanceDate);
     const key = safeObjectKey([

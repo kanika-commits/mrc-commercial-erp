@@ -214,7 +214,8 @@ export async function PUT(request: Request) {
       return jsonError("This attendance date is already submitted or approved and is read-only.", 403);
     }
     const lockedByPolicy = isEmployeeAttendanceLockedByPolicy(policy, attendanceDate);
-    if (dayLock || lockedByPolicy) {
+    const explicitlyOpen = Boolean(historicalAccess) || returnedDate;
+    if ((dayLock || lockedByPolicy) && !explicitlyOpen) {
       if (!hasEmployeePostLockEditAuthority(auth, policy)) return jsonError("This attendance day is locked for this user.", 403);
       if (!String(payload.backdated_reason || "").trim()) return jsonError("Reason is required for editing locked attendance.", 400);
     }
