@@ -65,7 +65,6 @@ export default function DailyAttendancePage() {
   const sentBack = dailyStatus === "reopened";
   const contextHasHistoricalDraftAccess = (context: any) => Boolean(
     context?.historicalAccess &&
-    !context.dayLock &&
     !["submitted", "approved", "reopened", "cancelled"].includes(String(context.dailySubmission?.status || "").toLowerCase()),
   );
   const contextHasReturnedSubmission = (context: any) => {
@@ -108,7 +107,9 @@ export default function DailyAttendancePage() {
     const context = attendanceContexts[item.employee.company_id || ""];
     const returned = contextHasReturnedSubmission(context);
     if (!canEdit || isFuture || (isOlderThanYesterday && !isAdminRecovery && !contextHasHistoricalDraftAccess(context) && !returned)) return false;
-    if (!context || context.dayLock) return false;
+    if (!context) return false;
+    const explicitlyOpen = Boolean(context.historicalAccess) || returned;
+    if (context.dayLock && !explicitlyOpen) return false;
     return !["submitted", "approved", "cancelled"].includes(String(context.dailySubmission?.status || "").toLowerCase());
   };
   const hasEditableRows = rows.some(rowEditable);

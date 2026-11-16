@@ -27,6 +27,8 @@ if (!submitRoute.includes('if (dailySubmission && !["draft", "reopened"].include
 if (!dailyPage.includes("contextHasReturnedSubmission")) throw new Error("Daily page must recognize the exact returned date");
 if (!dailyPage.includes("hasReturnedSubmission")) throw new Error("Daily page must exempt only the returned date from the old-date message");
 if (!dailyPage.includes('String(context.dailySubmission?.status || "").toLowerCase()')) throw new Error("Daily page must normalize status casing before allowing edits");
+if (!dailyPage.includes("const explicitlyOpen = Boolean(context.historicalAccess) || returned;")) throw new Error("Daily page must allow an authorized historical or returned date to bypass the ordinary day lock");
+if (!dailyPage.includes("if (context.dayLock && !explicitlyOpen) return false;")) throw new Error("Daily page must retain ordinary day-lock protection outside an authorized open scope");
 
 const scope = {
   organizationId: "org-a",
@@ -56,5 +58,18 @@ for (const status of ["draft", "submitted", "approved", "cancelled"]) {
 if (isExactReopened({ ...reopenedFixture, status: "REOPENED", site_id: "other-site" }, scope)) throw new Error("A different site must not receive the returned-date exception");
 if (isExactReopened({ ...reopenedFixture, status: "reopened", attendance_date: "2026-10-30" }, scope)) throw new Error("A different date must not receive the returned-date exception");
 if (isExactReopened({ ...reopenedFixture, status: "reopened", organization_id: "other-org" }, scope)) throw new Error("A different organization must not receive the returned-date exception");
+
+const canEditRow = ({ canEdit, future, oldDate, adminRecovery, historicalAccess, returned, dayLock, status }) => {
+  if (!canEdit || future || (oldDate && !adminRecovery && !historicalAccess && !returned)) return false;
+  if (dayLock && !(historicalAccess || returned)) return false;
+  return !["submitted", "approved", "cancelled"].includes(String(status || "").toLowerCase());
+};
+if (!canEditRow({ canEdit: true, oldDate: true, historicalAccess: true, dayLock: true, status: "draft" })) throw new Error("Authorized historical draft must remain editable when the ordinary day lock is active");
+if (!canEditRow({ canEdit: true, oldDate: true, returned: true, dayLock: true, status: "reopened" })) throw new Error("Exact returned date must remain editable when the ordinary day lock is active");
+for (const status of ["submitted", "approved", "cancelled"]) {
+  if (canEditRow({ canEdit: true, oldDate: true, historicalAccess: true, dayLock: true, status })) throw new Error(status + " must remain protected from UI editing");
+}
+if (canEditRow({ canEdit: true, oldDate: true, historicalAccess: false, returned: false, dayLock: true, status: "draft" })) throw new Error("An ordinary locked old date must remain read-only");
+if (canEditRow({ canEdit: false, oldDate: true, historicalAccess: true, dayLock: true, status: "draft" })) throw new Error("Historical access must not bypass the edit permission");
 
 console.log("PASS: exact reopened daily dates are eligible for correction; ordinary old statuses and mismatched scopes remain blocked.");
