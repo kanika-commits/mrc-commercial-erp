@@ -21,7 +21,8 @@ assert.match(dailyApi, /loadLabourAttendanceDateAuthority/, "Daily attendance AP
 assert.match(dailyApi, /submittedSnapshotLocked[\s\S]+Attendance for this date has already been submitted\. Reopen the date before making changes\./, "Save must reject submitted dates unless reopened");
 assert.match(dailyApi, /const selectedStatus = dateAuthority\.status/, "Daily read/save status must not rely only on period summary");
 assert.match(dailyApi, /loadFrozenAttendanceDeploymentIds\(access, period, attendanceDate, dateStatusForPopulation\)/, "Submitted/finalized dates still hydrate frozen deployment population");
-assert.match(dailyApi, /existingPeriod\?\.summary\?\.date_statuses\?\.\[attendanceDate\]\?\.status === "reopened" \|\| existingPeriod\?\.status === "reopened"/, "Daily save must preserve existing period reopen/correction edit access");
+assert.match(dailyApi, /const dateAuthority = await loadLabourAttendanceDateAuthority\(access, \{ period: existingPeriod/, "Daily save must resolve exact server date authority before the generic date guard");
+assert.match(dailyApi, /reopened: dateAuthority\.reopened/, "Daily save must pass server-confirmed reopen authority to the date guard");
 
 assert.match(submitApi, /loadLabourAttendanceDateAuthority/, "Submit endpoint must use authoritative snapshot-backed state");
 assert.match(submitApi, /submittedSnapshotLocked[\s\S]+Attendance for this date has already been submitted\. Reopen the date before making changes\./, "Submit endpoint must reject duplicate submitted dates before RPC");
