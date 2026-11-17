@@ -98,6 +98,7 @@ export default function LabourDailyAttendancePage() {
   const [supportingPdf, setSupportingPdf] = useState<any>(null);
   const [dayLock, setDayLock] = useState<any>(null);
   const [historicalAccess, setHistoricalAccess] = useState<any>(null);
+  const [supportingPdfBackdatedReason, setSupportingPdfBackdatedReason] = useState("");
   const [readOnlyReason, setReadOnlyReason] = useState("");
   const [policy, setPolicy] = useState<any>(null);
   const reopenedAttendanceDates: string[] = lookups.reopened_attendance_dates || [];
@@ -149,6 +150,7 @@ export default function LabourDailyAttendancePage() {
   const reopenedDate = dateSummary.status === "reopened";
   const selectedDateStatus = period?.server_date_status || dateSummary.status || "draft";
   const historicalDateOpen = Boolean(historicalAccess) || reopenedDate;
+  const supportingPdfNeedsReason = filters.attendance_date < daysBefore(todayDate, 2) && !historicalDateOpen;
   const submittedSnapshot = ["submitted", "finalized", "approved"].includes(selectedDateStatus);
   const readOnly = submittedSnapshot || Boolean(
     !historicalDateOpen && (period?.server_read_only ?? dayLock?.is_locked),
@@ -158,7 +160,7 @@ export default function LabourDailyAttendancePage() {
     attendanceLoaded &&
     !readOnly &&
     ["draft", "reopened"].includes(selectedDateStatus) &&
-    (Boolean(historicalAccess) || reopenedDate);
+    (!supportingPdfNeedsReason || Boolean(supportingPdfBackdatedReason.trim()));
   const filtersDisabled = rowLoading || saving || submitting;
   const attendanceSystem = lookups.attendance_system || null;
   const systemValue = attendanceSystem?.value || null;
@@ -319,6 +321,7 @@ export default function LabourDailyAttendancePage() {
       setLoadedContextKey(null);
       setPeriod(null);
       setSupportingPdf(null);
+      setSupportingPdfBackdatedReason("");
       setDayLock(null);
       setReadOnlyReason("");
       setPolicy(null);
@@ -653,6 +656,7 @@ export default function LabourDailyAttendancePage() {
     params.set("company_id", filters.company_id);
     params.set("site_id", filters.site_id);
     params.set("attendance_date", filters.attendance_date);
+    if (supportingPdfNeedsReason && supportingPdfBackdatedReason.trim()) params.set("backdated_reason", supportingPdfBackdatedReason.trim());
     return params;
   }
 
@@ -665,9 +669,16 @@ export default function LabourDailyAttendancePage() {
       const response = await fetch(`/api/labour/attendance/date-document?${params.toString()}`, {
         headers: { Authorization: `Bearer ${await token()}` },
       });
-      const payload = await response.json();
+      const responseText = await response.text();
+      let payload: any = {};
+      try {
+        payload = responseText.trim() ? JSON.parse(responseText) : {};
+      } catch {
+        setMessage(`PDF open failed (HTTP ${response.status}): the server returned a non-JSON response. Check the server logs.`);
+        return;
+      }
       if (!response.ok || !payload.url) {
-        setMessage(payload.error || "Could not open supporting PDF.");
+        setMessage(payload.error || `Could not open supporting PDF (HTTP ${response.status}).`);
         return;
       }
       window.open(payload.url, "_blank", "noopener,noreferrer");
@@ -693,15 +704,23 @@ export default function LabourDailyAttendancePage() {
       formData.set("company_id", filters.company_id);
       formData.set("site_id", filters.site_id);
       formData.set("attendance_date", filters.attendance_date);
+      formData.set("backdated_reason", supportingPdfNeedsReason ? supportingPdfBackdatedReason.trim() : "");
       formData.set("file", file);
       const response = await fetch("/api/labour/attendance/date-document", {
         method: "POST",
         headers: { Authorization: `Bearer ${await token()}` },
         body: formData,
       });
-      const payload = await response.json();
+      const responseText = await response.text();
+      let payload: any = {};
+      try {
+        payload = responseText.trim() ? JSON.parse(responseText) : {};
+      } catch {
+        setMessage(`PDF upload failed (HTTP ${response.status}): the server returned a non-JSON response. Check the server logs.`);
+        return;
+      }
       if (!response.ok) {
-        setMessage(payload.error || "Could not upload supporting PDF.");
+        setMessage(payload.error || `Could not upload supporting PDF (HTTP ${response.status}).`);
         return;
       }
       setSupportingPdf(payload.document || null);
@@ -723,9 +742,16 @@ export default function LabourDailyAttendancePage() {
         method: "DELETE",
         headers: { Authorization: `Bearer ${await token()}` },
       });
-      const payload = await response.json();
+      const responseText = await response.text();
+      let payload: any = {};
+      try {
+        payload = responseText.trim() ? JSON.parse(responseText) : {};
+      } catch {
+        setMessage(`PDF removal failed (HTTP ${response.status}): the server returned a non-JSON response. Check the server logs.`);
+        return;
+      }
       if (!response.ok) {
-        setMessage(payload.error || "Could not remove supporting PDF.");
+        setMessage(payload.error || `Could not remove supporting PDF (HTTP ${response.status}).`);
         return;
       }
       setSupportingPdf(null);
@@ -995,6 +1021,12 @@ export default function LabourDailyAttendancePage() {
                     event.currentTarget.value = "";
                     void uploadSupportingPdf(file);
                   }} />
+                </label>
+              )}
+              {attendanceLoaded && !readOnly && ["draft", "reopened"].includes(selectedDateStatus) && supportingPdfNeedsReason && (
+                <label className="basis-full text-xs font-semibold text-slate-600">
+                  Reason for older attendance date
+                  <input value={supportingPdfBackdatedReason} onChange={(event) => setSupportingPdfBackdatedReason(event.target.value)} className="mt-1 h-9 w-full rounded-md border px-2 text-sm font-normal" placeholder="Enter the reason before uploading" />
                 </label>
               )}
               {supportingPdf && canEditSupportingPdf && (
