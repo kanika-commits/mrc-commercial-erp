@@ -98,7 +98,6 @@ export default function LabourDailyAttendancePage() {
   const [supportingPdf, setSupportingPdf] = useState<any>(null);
   const [dayLock, setDayLock] = useState<any>(null);
   const [historicalAccess, setHistoricalAccess] = useState<any>(null);
-  const [supportingPdfBackdatedReason, setSupportingPdfBackdatedReason] = useState("");
   const [readOnlyReason, setReadOnlyReason] = useState("");
   const [policy, setPolicy] = useState<any>(null);
   const reopenedAttendanceDates: string[] = lookups.reopened_attendance_dates || [];
@@ -149,9 +148,11 @@ export default function LabourDailyAttendancePage() {
   const dateSummary = period?.summary?.date_statuses?.[filters.attendance_date] || {};
   const reopenedDate = dateSummary.status === "reopened";
   const selectedDateStatus = period?.server_date_status || dateSummary.status || "draft";
+  // server_date_status is resolved by loadLabourAttendanceDateAuthority and must
+  // win when the persisted monthly summary is missing or stale.
   const serverReopenedDate = selectedDateStatus === "reopened";
-  const historicalDateOpen = Boolean(historicalAccess) || serverReopenedDate
-  const supportingPdfNeedsReason = filters.attendance_date < daysBefore(todayDate, 2) && !historicalDateOpen;
+  const historicalDateOpen = Boolean(historicalAccess) || serverReopenedDate;
+  const normalDateOpen = filters.attendance_date >= earliestNormalEditDate;
   const submittedSnapshot = ["submitted", "finalized", "approved"].includes(selectedDateStatus);
   const readOnly = submittedSnapshot || Boolean(
     !historicalDateOpen && (period?.server_read_only ?? dayLock?.is_locked),
@@ -161,7 +162,7 @@ export default function LabourDailyAttendancePage() {
     attendanceLoaded &&
     !readOnly &&
     ["draft", "reopened"].includes(selectedDateStatus) &&
-    (!supportingPdfNeedsReason || Boolean(supportingPdfBackdatedReason.trim()));
+    (serverReopenedDate || Boolean(historicalAccess) || (selectedDateStatus === "draft" && normalDateOpen));
   const filtersDisabled = rowLoading || saving || submitting;
   const attendanceSystem = lookups.attendance_system || null;
   const systemValue = attendanceSystem?.value || null;
@@ -322,7 +323,6 @@ export default function LabourDailyAttendancePage() {
       setLoadedContextKey(null);
       setPeriod(null);
       setSupportingPdf(null);
-      setSupportingPdfBackdatedReason("");
       setDayLock(null);
       setReadOnlyReason("");
       setPolicy(null);
@@ -388,7 +388,7 @@ export default function LabourDailyAttendancePage() {
     const existingField = shift === "first" ? "first_half_present" : "second_half_present";
     const reasonField = shift === "first" ? "first_shift_override_reason" : "second_shift_override_reason";
     const label = shift === "first" ? "First Shift" : "Second Shift";
-    const requiresOverride = selectedDateStatus !== "draft";
+    const requiresOverride = selectedDateStatus !== "draft" && !serverReopenedDate && !historicalAccess;
     if (requiresOverride && row?.attendance?.[existingField] === false && status === "present" && !canOverride) {
       setMessage(`You need attendance override permission to change ${label} from Absent to Present.`);
       return;
@@ -587,7 +587,8 @@ export default function LabourDailyAttendancePage() {
         setMessage(`Attendance save could not be confirmed. Expected ${expectedSavedCount} rows, server confirmed ${Number.isFinite(confirmedSavedCount) ? confirmedSavedCount : "an invalid count"}. Your unsaved changes have been kept.`);
         return false;
       }
-      setMessage(`Saved ${payload.saved} attendance rows.`);
+      const unsavedEligibleCount = mode === "draft" ? Math.max(rows.length - expectedSavedCount, 0) : 0;
+      setMessage(`Saved ${payload.saved} attendance rows.${unsavedEligibleCount ? ` ${unsavedEligibleCount} displayed eligible labourers still need attendance values before submission.` : ""}`);
       setSubmitError("");
       setSubmitSuccessMessage("");
       setDirtyWorkerIds((current) => {
@@ -620,7 +621,11 @@ export default function LabourDailyAttendancePage() {
     const incompleteRows = rows.filter((row) => incompleteWorkerIds.has(row.labour_worker_id));
     if (incompleteRows.length) {
       const countLabel = `${incompleteRows.length} labourer${incompleteRows.length === 1 ? "" : "s"}`;
-      setSubmitError(`Attendance is incomplete for ${countLabel}. ${incompleteRows.length === 1 ? "Complete both halves before submitting." : "Complete both halves for all incomplete labourers before submitting."}`);
+      const detail = incompleteRows.map((row) => {
+        const missing = [row.first_half_present == null ? "First Shift" : null, row.second_half_present == null ? "Second Shift" : null].filter(Boolean);
+        return `${row.worker?.worker_name || row.worker?.labour_code || row.labour_worker_id}: ${missing.join(", ") || "incomplete"}`;
+      }).join("; ");
+      setSubmitError(`Attendance is incomplete for ${countLabel}. ${detail} ${incompleteRows.length === 1 ? "Complete the missing shift before submitting." : "Complete the missing shifts for all listed labourers before submitting."}`);
       incompleteRowRefs.current.get(incompleteRows[0].labour_worker_id)?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
@@ -637,7 +642,11 @@ export default function LabourDailyAttendancePage() {
       });
       const payload = await response.json();
       if (!response.ok) {
-        setSubmitError(payload.error || "Could not submit attendance.");
+        const affected = Array.isArray(payload.affected_workers) ? payload.affected_workers : [];
+        const detail = affected.length
+          ? ` ${affected.map((worker: any) => `${worker.worker_name || worker.labour_code || worker.labour_worker_id}: ${(worker.missing_fields || []).join(", ") || worker.reason || "incomplete"}`).join("; ")}`
+          : "";
+        setSubmitError(`${payload.error || "Could not submit attendance."}${detail}`);
         return;
       }
       setDirtyWorkerIds(new Set());
@@ -657,7 +666,6 @@ export default function LabourDailyAttendancePage() {
     params.set("company_id", filters.company_id);
     params.set("site_id", filters.site_id);
     params.set("attendance_date", filters.attendance_date);
-    if (supportingPdfNeedsReason && supportingPdfBackdatedReason.trim()) params.set("backdated_reason", supportingPdfBackdatedReason.trim());
     return params;
   }
 
@@ -670,16 +678,9 @@ export default function LabourDailyAttendancePage() {
       const response = await fetch(`/api/labour/attendance/date-document?${params.toString()}`, {
         headers: { Authorization: `Bearer ${await token()}` },
       });
-      const responseText = await response.text();
-      let payload: any = {};
-      try {
-        payload = responseText.trim() ? JSON.parse(responseText) : {};
-      } catch {
-        setMessage(`PDF open failed (HTTP ${response.status}): the server returned a non-JSON response. Check the server logs.`);
-        return;
-      }
+      const payload = await response.json();
       if (!response.ok || !payload.url) {
-        setMessage(payload.error || `Could not open supporting PDF (HTTP ${response.status}).`);
+        setMessage(payload.error || "Could not open supporting PDF.");
         return;
       }
       window.open(payload.url, "_blank", "noopener,noreferrer");
@@ -705,23 +706,15 @@ export default function LabourDailyAttendancePage() {
       formData.set("company_id", filters.company_id);
       formData.set("site_id", filters.site_id);
       formData.set("attendance_date", filters.attendance_date);
-      formData.set("backdated_reason", supportingPdfNeedsReason ? supportingPdfBackdatedReason.trim() : "");
       formData.set("file", file);
       const response = await fetch("/api/labour/attendance/date-document", {
         method: "POST",
         headers: { Authorization: `Bearer ${await token()}` },
         body: formData,
       });
-      const responseText = await response.text();
-      let payload: any = {};
-      try {
-        payload = responseText.trim() ? JSON.parse(responseText) : {};
-      } catch {
-        setMessage(`PDF upload failed (HTTP ${response.status}): the server returned a non-JSON response. Check the server logs.`);
-        return;
-      }
+      const payload = await response.json();
       if (!response.ok) {
-        setMessage(payload.error || `Could not upload supporting PDF (HTTP ${response.status}).`);
+        setMessage(payload.error || "Could not upload supporting PDF.");
         return;
       }
       setSupportingPdf(payload.document || null);
@@ -743,16 +736,9 @@ export default function LabourDailyAttendancePage() {
         method: "DELETE",
         headers: { Authorization: `Bearer ${await token()}` },
       });
-      const responseText = await response.text();
-      let payload: any = {};
-      try {
-        payload = responseText.trim() ? JSON.parse(responseText) : {};
-      } catch {
-        setMessage(`PDF removal failed (HTTP ${response.status}): the server returned a non-JSON response. Check the server logs.`);
-        return;
-      }
+      const payload = await response.json();
       if (!response.ok) {
-        setMessage(payload.error || `Could not remove supporting PDF (HTTP ${response.status}).`);
+        setMessage(payload.error || "Could not remove supporting PDF.");
         return;
       }
       setSupportingPdf(null);
@@ -937,7 +923,7 @@ export default function LabourDailyAttendancePage() {
             <div className="mt-2 grid gap-1 md:grid-cols-2">
               <p><span className="font-semibold">Reason:</span> {dateSummary.reason || "No reason recorded."}</p>
               <p><span className="font-semibold">Sent Back By:</span> {dateSummary.reopened_by_name || dateSummary.reopened_by_email || period?.reopened_by_name || period?.reopened_by_email || "Unavailable"}</p>
-              <p><span className="font-semibold">Sent Back At:</span> {dateSummary.reopened_at ? new Date(dateSummary.reopened_at).toLocaleString("en-IN") : "-"}</p>
+              <p><span className="font-semibold">Sent Back At:</span> {(dateSummary.reopened_at || period?.reopened_at) ? new Date(dateSummary.reopened_at || period.reopened_at).toLocaleString("en-IN") : "-"}</p>
               <p><span className="font-semibold">Previously Submitted:</span> {dateSummary.submitted_at ? new Date(dateSummary.submitted_at).toLocaleString("en-IN") : "-"}</p>
             </div>
             <p className="mt-2 font-semibold">Correct the Labour attendance for this site/date and resubmit it for approval.</p>
@@ -1022,12 +1008,6 @@ export default function LabourDailyAttendancePage() {
                     event.currentTarget.value = "";
                     void uploadSupportingPdf(file);
                   }} />
-                </label>
-              )}
-              {attendanceLoaded && !readOnly && ["draft", "reopened"].includes(selectedDateStatus) && supportingPdfNeedsReason && (
-                <label className="basis-full text-xs font-semibold text-slate-600">
-                  Reason for older attendance date
-                  <input value={supportingPdfBackdatedReason} onChange={(event) => setSupportingPdfBackdatedReason(event.target.value)} className="mt-1 h-9 w-full rounded-md border px-2 text-sm font-normal" placeholder="Enter the reason before uploading" />
                 </label>
               )}
               {supportingPdf && canEditSupportingPdf && (

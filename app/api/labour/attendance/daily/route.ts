@@ -643,42 +643,13 @@ export async function GET(request: Request) {
       : { data: null, error: null };
     if (supportingPdfError) throw supportingPdfError;
 
-    const selectedDateSummary = period?.summary?.date_statuses?.[attendanceDate] || {};
-    let legacySendBackActor: { name: string | null; email: string | null } = { name: null, email: null };
-    if (selectedStatus === "reopened" && period?.id && !selectedDateSummary.reopened_by_name && !selectedDateSummary.reopened_by_email && !period.reopened_by_name && !period.reopened_by_email) {
-      const { data: auditRows, error: auditError } = await access.admin
-        .from("erp_audit_logs")
-        .select("created_by_name, created_by, new_values, created_at")
-        .eq("organization_id", organizationId)
-        .eq("module_code", "labour_attendance_approval")
-        .eq("entity_type", "labour_attendance_period")
-        .eq("record_id", period.id)
-        .eq("action", "reject")
-        .order("created_at", { ascending: false })
-        .limit(20);
-      if (auditError) throw auditError;
-      const matchingAudit = (auditRows || []).find((row: any) => row.new_values?.summary?.date_statuses?.[attendanceDate]?.status === "reopened");
-      if (matchingAudit) legacySendBackActor = { name: matchingAudit.created_by_name || null, email: null };
-    }
-    const responsePeriod = period ? {
-      ...period,
-      status: selectedStatus,
-      period_status: period.status,
-      summary: period.summary ? {
-        ...period.summary,
-        date_statuses: {
-          ...(period.summary.date_statuses || {}),
-          [attendanceDate]: {
-            ...(period.summary.date_statuses?.[attendanceDate] || {}),
-            ...(legacySendBackActor.name ? { reopened_by_name: legacySendBackActor.name } : {}),
-          },
-        },
-      } : period.summary,
-    } : period;
     return NextResponse.json({
       rows,
-      period: responsePeriod,
+      period: period ? { ...period, status: selectedStatus, period_status: period.status } : period,
       date_status: selectedStatus,
+      sent_back_by_name: period?.reopened_by_name || period?.reopened_by_email || null,
+      sent_back_at: period?.reopened_at || null,
+      send_back_reason: period?.transition_reason || null,
       supporting_pdf: publicSupportingPdf(supportingPdf),
       day_lock: dayLock,
       policy: policy ? {
@@ -772,7 +743,7 @@ export async function POST(request: Request) {
     });
     const selectedStatus = dateAuthority.status;
     if (["submitted", "finalized"].includes(selectedStatus) && !explicitlyOpen) return jsonError("Attendance is locked for editing for this date.", 403);
-    const requiresOverride = selectedStatus !== "draft";
+    const requiresOverride = selectedStatus !== "draft" && !explicitlyOpen;
     const { data: wagePeriod, error: wageError } = await access.admin
       .from("labour_wage_periods")
       .select("id, status")
