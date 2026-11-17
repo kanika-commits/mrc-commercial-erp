@@ -16,5 +16,8 @@ assert.match(lookups, /applyOrganizationAccess\(admin\.from\("sites"\)/);
 assert.match(lookups, /companyResult\.data \|\| \[\], sites: siteResult\.data \|\| \[\]/);
 assert.match(access, /export async function validateOrganizationSiteAccess/);
 assert.match(createRoute, /validateOrganizationSiteAccess\(admin, auth, selectedCompanyId, selectedSiteId\)/);
+const siteContacts = fs.readFileSync("app/api/procurement/purchase-orders/site-contacts/route.ts", "utf8");
+assert.match(siteContacts, /site\.organization_id/);
+assert.doesNotMatch(siteContacts, /site\.company_id.*access\.companies|access\.companies.*site\.company_id/);
 
 console.log("Purchase Order company-neutral site scope rules passed.");

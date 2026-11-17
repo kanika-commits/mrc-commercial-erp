@@ -1,10 +1,17 @@
 import { NextResponse } from "next/server";
 import { adminClient, applyCompanySiteAccess, applyOrganizationAccess, jsonError, requireProcurementPermission, text, validateOrganizationSiteAccess } from "@/lib/serverProcurementAccess";
 import { createPrivateStorageAdapter } from "@/lib/storage/privateStorage";
-import { validatePurchaseOrderPurpose, validateRecoveryWorkOrder } from "@/lib/procurement/contractorRecoveryDebitNote.server";
 import { attachCurrentSendBackComments } from "@/lib/procurement/poSendBackPresentation";
 
 const MODULE = "procurement_purchase_orders";
+const PO_PURPOSES = new Set(["General Purchase", "Asset Purchase", "Recover from contractor"]);
+async function persistRecoveryFields(admin: any, purchaseOrderId: string, organizationId: string, purpose: string, recoveryVendorId: string, recoveryWorkOrderId: string) {
+  const result = await admin.from("procurement_purchase_orders")
+    .update({ purpose, recovery_vendor_id: purpose === "Recover from contractor" ? recoveryVendorId : null, recovery_work_order_id: purpose === "Recover from contractor" ? recoveryWorkOrderId : null })
+    .eq("id", purchaseOrderId)
+    .eq("organization_id", organizationId);
+  if (result.error) throw result.error;
+}
 function normalizePurchaseOrderItems(items: any[]) {
   return items.map((item) => {
     const { description, specification, ...rest } = item || {};
@@ -54,7 +61,7 @@ export async function GET(request: Request) {
     const purchaseOrderIds = purchaseOrders.map((row: any) => row.id).filter(Boolean);
     if (purchaseOrderIds.length) {
       const events = await admin.from("procurement_purchase_order_events")
-        .select("purchase_order_id,event_type,event_note,created_at,id")
+        .select("purchase_order_id,event_type,event_note,created_at")
         .in("purchase_order_id", purchaseOrderIds)
         .eq("event_type", "send_back")
         .order("created_at", { ascending: false });
@@ -105,8 +112,6 @@ export async function POST(request: Request) {
     const scope = await validateOrganizationSiteAccess(admin, auth, selectedCompanyId, selectedSiteId); if ("error" in scope) return jsonError(String(scope.error), Number(scope.status || 400));
     const organizationId = "organizationId" in scope ? scope.organizationId : null;
     if (!organizationId) return jsonError("Selected company/site organization is invalid.", 400);
-    const recovery = validatePurchaseOrderPurpose(body.commercial?.purpose, body.commercial?.recovery_work_order_id, body.commercial?.recovery_vendor_id);
-    if (recovery.purpose === "Recover from contractor") await validateRecoveryWorkOrder(admin, organizationId, selectedCompanyId, selectedSiteId, recovery.recoveryWorkOrderId!, recovery.recoveryVendorId!);
     const vendor = await admin.from("vendors").select("id,organization_id,vendor_name,address,pan,gstin,status,is_deleted").eq("id", selectedVendorId).eq("organization_id", organizationId).maybeSingle();
     if (vendor.error) throw vendor.error; if (!vendor.data || vendor.data.status === "deleted" || vendor.data.is_deleted) return jsonError("Vendor is invalid for the selected organization.", 400);
     if (!text(vendor.data.address)) return jsonError("Vendor Address is required before creating the Purchase Order.", 400);
@@ -115,6 +120,20 @@ export async function POST(request: Request) {
     if (items.some((item: any) => !text(item.item_name) || Number(item.quantity) <= 0 || !Number.isFinite(Number(item.quantity)) || Number(item.unit_rate || 0) < 0 || Number(item.gst_rate || 0) < 0)) return jsonError("Each item needs a name, positive quantity, non-negative rate and valid GST.", 400);
     const additional = normalizeAdditionalCharges(body.commercial?.additional_charges);
     if (additional.error) return jsonError(additional.error, 400);
+    const purpose = text(body.commercial?.purpose) || "General Purchase";
+    if (!PO_PURPOSES.has(purpose)) return jsonError("Purchase Order purpose is invalid.", 400);
+    const recoveryWorkOrderId = text(body.commercial?.recovery_work_order_id);
+    const recoveryVendorId = text(body.commercial?.recovery_vendor_id);
+    if (purpose === "Recover from contractor" && !recoveryVendorId) return jsonError("A recovery contractor is required for contractor recovery Purchase Orders.", 400);
+    if (purpose === "Recover from contractor" && !recoveryWorkOrderId) return jsonError("A linked Work Order is required for contractor recovery Purchase Orders.", 400);
+    if (purpose === "Recover from contractor" && recoveryWorkOrderId) {
+      const recoveryWorkOrder = await admin.from("work_orders").select("id,organization_id,company_id,site_id").eq("id", recoveryWorkOrderId).eq("organization_id", organizationId).eq("company_id", selectedCompanyId).eq("site_id", selectedSiteId).maybeSingle();
+      if (recoveryWorkOrder.error) throw recoveryWorkOrder.error;
+      if (!recoveryWorkOrder.data) return jsonError("The linked Work Order is outside the selected organization/site scope.", 403);
+      const vendorLink = await admin.from("work_order_vendors").select("id,work_order_id,vendor_id,vendor_role,is_primary").eq("work_order_id", recoveryWorkOrderId).eq("vendor_id", recoveryVendorId).maybeSingle();
+      if (vendorLink.error) throw vendorLink.error;
+      if (!vendorLink.data || !["Main Contractor", "Subcontractor"].includes(String(vendorLink.data.vendor_role || ""))) return jsonError("The recovery Work Order must be linked to the selected Purchase Order vendor as a main contractor or subcontractor.", 400);
+    }
     const keyTerms = Array.isArray(body.key_terms) ? body.key_terms : [];
     if (keyTerms.length < 4 || keyTerms.slice(0, 4).some((term: any) => !text(term?.terms)) || keyTerms.slice(4).some((term: any) => !text(term?.description) || !text(term?.terms))) return jsonError("All default Key Terms and any additional terms must have meaningful values.", 400);
     const itemIds = [...new Set(items.map((item: any) => text(item.item_id || item.procurement_item_id)).filter(Boolean))];
@@ -141,10 +160,8 @@ export async function POST(request: Request) {
     const creationRequestId = text(body.creation_request_id) || null;
     if (creationRequestId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(creationRequestId)) return jsonError("Creation request ID is invalid.", 400);
     const { recovery_vendor_id: _recoveryVendorId, recovery_work_order_id: _recoveryWorkOrderId, ...commercialInput } = body.commercial || {};
-    const recoveryCommercial = recovery.purpose === "Recover from contractor"
-      ? { recovery_work_order_id: recovery.recoveryWorkOrderId, recovery_vendor_id: recovery.recoveryVendorId }
-      : {};
-    const rpcArgs: any = { p_source_type: sourceType, p_organization_id: organizationId, p_company_id: selectedCompanyId, p_site_id: selectedSiteId, p_vendor_id: selectedVendorId, p_vendor_snapshot: vendorSnapshot, p_source_requisition_id: requisitionId, p_source_requisition_number: requisitionNumber, p_items: items, p_fields: { po_date: text(body.po_date), delivery: body.delivery || {}, master_selection: body.master_selection || {}, commercial: { ...commercialInput, purpose: recovery.purpose, ...recoveryCommercial, additional_charges: additional.charges, key_terms: keyTerms }, standard_terms: text(body.standard_terms), standard_terms_template_id: text(body.standard_terms_template_id), standard_terms_sections: Array.isArray(body.standard_terms_sections) ? body.standard_terms_sections : [] }, p_actor: actor(auth) };
+    const recoveryCommercial = purpose === "Recover from contractor" ? { recovery_work_order_id: recoveryWorkOrderId, recovery_vendor_id: recoveryVendorId } : {};
+    const rpcArgs: any = { p_source_type: sourceType, p_organization_id: organizationId, p_company_id: selectedCompanyId, p_site_id: selectedSiteId, p_vendor_id: selectedVendorId, p_vendor_snapshot: vendorSnapshot, p_source_requisition_id: requisitionId, p_source_requisition_number: requisitionNumber, p_items: items, p_fields: { po_date: text(body.po_date), delivery: body.delivery || {}, master_selection: body.master_selection || {}, commercial: { ...commercialInput, purpose, ...recoveryCommercial, additional_charges: additional.charges, key_terms: keyTerms }, standard_terms: text(body.standard_terms), standard_terms_template_id: text(body.standard_terms_template_id), standard_terms_sections: Array.isArray(body.standard_terms_sections) ? body.standard_terms_sections : [] }, p_actor: actor(auth) };
     const rpcName = creationRequestId ? "create_procurement_purchase_order_draft_idempotent_atomic" : "create_procurement_purchase_order_draft_atomic";
     if (creationRequestId) rpcArgs.p_creation_request_id = creationRequestId;
     const result = await admin.rpc(rpcName, rpcArgs);
@@ -156,12 +173,7 @@ export async function POST(request: Request) {
     }
     const createdId = result.data?.purchase_order_id;
     if (createdId) {
-      const persistedRecoveryFields = await admin.from("procurement_purchase_orders")
-        .update(recovery.purpose === "Recover from contractor"
-          ? { purpose: recovery.purpose, recovery_work_order_id: recovery.recoveryWorkOrderId, recovery_vendor_id: recovery.recoveryVendorId }
-          : { purpose: recovery.purpose })
-        .eq("id", createdId)
-        .eq("organization_id", organizationId);
+      const persistedRecoveryFields = await admin.from("procurement_purchase_orders").update(purpose === "Recover from contractor" ? { purpose, recovery_work_order_id: recoveryWorkOrderId, recovery_vendor_id: recoveryVendorId } : { purpose }).eq("id", createdId).eq("organization_id", organizationId);
       if (persistedRecoveryFields.error) throw persistedRecoveryFields.error;
     }
     return NextResponse.json({ result: result.data }, { status: 201 });

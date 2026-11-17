@@ -166,6 +166,7 @@ begin
      where id = v_delivery_location_id
        and organization_id = p_organization_id
        and site_id = p_site_id
+       and billing_address_id = v_billing.id
        and status = 'active'
        and (
          company_id is null
@@ -196,6 +197,7 @@ begin
     from public.site_delivery_locations
     where organization_id = p_organization_id
       and site_id = p_site_id
+      and billing_address_id = v_billing.id
       and status = 'active'
       ;
 
@@ -209,6 +211,7 @@ begin
         from public.site_delivery_locations
        where organization_id = p_organization_id
          and site_id = p_site_id
+         and billing_address_id = v_billing.id
          and status = 'active'
        limit 1;
 
@@ -219,6 +222,7 @@ begin
         from public.site_delivery_locations
        where organization_id = p_organization_id
          and site_id = p_site_id
+         and billing_address_id = v_billing.id
          and status = 'active'
          and is_default
        limit 1;

@@ -6,7 +6,11 @@ function siteIsAuthorized(access: any, site: any) {
   if (global) return true;
   if (!(access.organizations || []).includes(site.organization_id)) return false;
   if ((access.sites || []).length > 0 && !(access.sites || []).includes(site.id)) return false;
-  return !site.company_id || (access.companies || []).length === 0 || (access.companies || []).includes(site.company_id);
+  return Boolean(
+    site.organization_id
+    && (access.isGlobalAccess || (access.roleCodes || []).includes("platform_owner") || (access.organizations || []).includes(site.organization_id))
+    && (!(access.sites || []).length || (access.sites || []).includes(site.id))
+  );
 }
 async function allowedSiteIds(admin: any, access: any) { const q = applyOrganizationAccess(admin.from("sites").select("id,organization_id,company_id"), access); if (!q) return []; const result = await q; if (result.error) throw result.error; return (result.data || []).filter((site: any) => siteIsAuthorized(access, site)).map((row: any) => row.id); }
 export async function GET(request: Request) { try { const access = await permission(request, "view"); if ("response" in access) return access.response; const admin = adminClient(); const siteIds = await allowedSiteIds(admin, access); if (!siteIds.length) return NextResponse.json({ contacts: [] }); const result = await admin.from("site_contacts").select("*").in("site_id", siteIds).order("site_id").order("is_default", { ascending: false }); if (result.error) throw result.error; return NextResponse.json({ contacts: result.data || [] }); } catch (e: any) { return jsonError(e.message || "Failed to load site contacts.", 500); } }

@@ -102,7 +102,7 @@ async function siteScope(admin: any, auth: any, siteId: string) {
 async function ownedOrganization(admin: any, auth: any, kind: string, id: string) {
     const queries: Record<string, Promise<any>> = {
     billing_address: admin.from("company_billing_addresses").select("id,organization_id,company_id").eq("id", id).maybeSingle(),
-    site_contact: admin.from("site_contacts").select("id,organization_id,site_id").eq("id", id).maybeSingle(),
+    site_contact: admin.from("site_contacts").select("id,organization_id,site_id,contact_name,designation,mobile,email,is_default,status").eq("id", id).maybeSingle(),
     terms_template: admin.from("company_po_terms_templates").select("id,organization_id,company_id").eq("id", id).maybeSingle(),
     terms_section: admin.from("company_po_terms_sections").select("id,status,template:company_po_terms_templates!inner(organization_id)").eq("id", id).maybeSingle(),
     po_template: admin.from("procurement_purchase_order_templates").select("id,organization_id,company_id").eq("id", id).maybeSingle(),
@@ -138,9 +138,9 @@ export async function GET(request: Request) {
     const [companies, sites, billing, templates, locations, addressContacts, poTemplates] = await Promise.all([
       applyOrganizationAccess(admin.from("companies").select("id,organization_id,company_name,company_code,status").eq("status", "active").order("company_name"), auth),
       applyOrganizationAccess(admin.from("sites").select("id,organization_id,company_id,site_name,site_code,status").eq("status", "active").order("site_name"), auth),
-      applyOrganizationAccess(admin.from("company_billing_addresses").select("*").order("company_id").order("is_default", { ascending: false }), auth),
-      applyOrganizationAccess(admin.from("company_po_terms_templates").select("*,sections:company_po_terms_sections(*)").order("company_id").order("is_default", { ascending: false }), auth),
-      applySiteAccess(admin.from("site_delivery_locations").select("*").order("site_id").order("is_default", { ascending: false }), auth),
+      applyOrganizationAccess(admin.from("company_billing_addresses").select("*").order("company_id"), auth),
+      applyOrganizationAccess(admin.from("company_po_terms_templates").select("*,sections:company_po_terms_sections(*)").order("company_id"), auth),
+      applySiteAccess(admin.from("site_delivery_locations").select("*").order("site_id"), auth),
       applyOrganizationAccess(admin.from("procurement_address_contacts").select("*").order("sort_order"), auth),
       applyOrganizationAccess(admin.from("procurement_purchase_order_templates").select("id,organization_id,company_id,template_name,template_code,status,is_default,updated_at,versions:procurement_purchase_order_template_versions(id,version_number,status,layout_definition,header_asset_reference,footer_asset_reference,source_storage_bucket,source_storage_path,source_original_filename,source_mime_type,source_size_bytes,source_uploaded_at,readiness_status,created_at)").order("company_id").order("template_name"), auth),
     ]);
@@ -165,7 +165,16 @@ export async function DELETE(request: Request) {
     const table = kind === "billing_address" ? "company_billing_addresses" : kind === "site_contact" ? "site_contacts" : kind === "terms_template" ? "company_po_terms_templates" : kind === "delivery_location" ? "site_delivery_locations" : kind === "po_template" ? "procurement_purchase_order_templates" : "procurement_purchase_order_template_versions";
     const permanent = body.permanent === true;
     if (permanent) {
-      if (kind !== "billing_address" && kind !== "delivery_location" && kind !== "site_contact" && kind !== "po_template" && kind !== "po_template_version") return jsonError("Only unused legacy address and site-contact records can be permanently deleted. Inactivate other master records instead.", 400);
+      if (kind !== "billing_address" && kind !== "delivery_location" && kind !== "site_contact" && kind !== "terms_template" && kind !== "po_template" && kind !== "po_template_version") return jsonError("This master record cannot be permanently deleted. Inactivate it instead.", 400);
+      if (kind === "billing_address" || kind === "delivery_location") {
+        const deleted = await admin.rpc("delete_procurement_master_graph_atomic", { p_organization_id: owned.organizationId, p_kind: kind, p_id: id, p_company_id: "row" in owned && kind === "billing_address" ? owned.row.company_id : null });
+        if (deleted.error) {
+          if (deleted.error.code === "P0001") return jsonError(deleted.error.message, 409);
+          throw deleted.error;
+        }
+        await auditMasterMutation(admin, auth, request, { organizationId: owned.organizationId, moduleCode: masterModule(kind), entityType: kind, recordId: id, action: "delete", description: `Deleted ${kind.replaceAll("_", " ")} ${id}.`, oldValues: "row" in owned ? owned.row : null });
+        return NextResponse.json(deleted.data);
+      }
       let templateVersions: any[] = [];
       if (kind === "po_template" || kind === "po_template_version") {
         const references = await admin.from("procurement_purchase_orders").select("id", { count: "exact", head: true }).eq("template_version_id", id);
@@ -186,7 +195,7 @@ export async function DELETE(request: Request) {
           if ((direct.count || 0) + (versionReferences.count || 0) > 0) return jsonError("This PO template is used by a Purchase Order and cannot be deleted. Inactivate it instead.", 409);
         }
       }
-      if (kind === "billing_address") {
+      if (String(kind) === "billing_address") {
         const children = await admin.from("site_delivery_locations").select("id", { count: "exact", head: true }).eq("billing_address_id", id).in("status", ["active", "inactive"]);
         if (children.error) throw children.error;
         if ((children.count || 0) > 0) return jsonError("This GSTIN / Billing Address has delivery addresses. Remove or reassign them before deleting it.", 409);
@@ -194,12 +203,14 @@ export async function DELETE(request: Request) {
         if (references.error && references.error.code !== "42703") throw references.error;
         if ((references.count || 0) > 0) return jsonError("This address is already used in Purchase Orders and cannot be deleted. Inactivate it instead.", 409);
       }
-      if (kind === "delivery_location") {
+      if (String(kind) === "delivery_location") {
         const references = await admin.from("procurement_purchase_orders").select("id", { count: "exact", head: true }).filter("delivery_snapshot->>delivery_location_id", "eq", id);
         if (references.error && references.error.code !== "42703") throw references.error;
         if ((references.count || 0) > 0) return jsonError("This delivery address is already used in Purchase Orders and cannot be deleted. Inactivate it instead.", 409);
       }
       if (kind === "site_contact") {
+        const contact = "row" in owned ? owned.row : null;
+        if (contact?.is_default && contact?.status === "active") return jsonError("Default contact cannot be deleted. Set another contact as default first.", 409);
         const references = await admin.from("procurement_purchase_orders").select("id", { count: "exact", head: true }).filter("delivery_snapshot->>delivery_contact_id", "eq", id);
         if (references.error && references.error.code !== "42703") throw references.error;
         if ((references.count || 0) > 0) return jsonError("This Site Contact is already used in Purchase Orders and cannot be deleted. Inactivate it instead.", 409);
@@ -341,37 +352,28 @@ async function mutate(request: Request, action: "add" | "edit") {
       const atomic = await admin.rpc("save_procurement_address_with_contacts_atomic", { p_kind: kind, p_organization_id: scope.organizationId, p_parent_id: id || null, p_parent: { ...body, company_id: companyId, gstin: shippingGstin, address: legacyDeliveryAddress(body), billing_address_id: billingAddressId }, p_contacts: Array.isArray(body.contacts) ? body.contacts : [] });
       if (atomic.error) throw atomic.error;
       await auditMasterMutation(admin, auth, request, { organizationId: scope.organizationId, moduleCode: masterModule(kind), entityType: kind, recordId: atomic.data?.id || id, action: id ? "update" : "create", description: `${id ? "Updated" : "Created"} delivery location.`, newValues: body });
-      return NextResponse.json(atomic.data);
+      const persisted = await admin.from("site_delivery_locations").select("id,organization_id,company_id,site_id,billing_address_id,status,is_default").eq("id", atomic.data?.id || id).eq("organization_id", scope.organizationId).maybeSingle();
+      if (persisted.error) throw persisted.error;
+      if (!persisted.data) return jsonError("Delivery address was saved but could not be reloaded for confirmation.", 502);
+      return NextResponse.json({ ...atomic.data, persisted: persisted.data, status: persisted.data.status, is_default: persisted.data.is_default });
     }
     if (kind === "terms_template") {
       const scope = await companyScope(admin, auth, text(body.company_id));
       if ("error" in scope) return jsonError(scope.error || "Invalid company.", scope.status || 400);
       const templateName = text(body.template_name) || "Standard Purchase Order Terms";
       if (!id && !templateName) return jsonError("Add at least one clause before creating Standard PO Terms.", 400);
-      if (Array.isArray(body.sections)) {
-        const atomic = await admin.rpc("save_procurement_terms_template_with_sections_atomic", { p_organization_id: scope.organizationId, p_template_id: id || null, p_company_id: text(body.company_id), p_template_name: templateName, p_is_default: body.is_default === true, p_status: text(body.status) || "active", p_sections: body.sections.map((section: any, index: number) => ({ ...section, sort_order: index, status: "active" })) });
-        if (atomic.error) throw atomic.error;
-        await auditMasterMutation(admin, auth, request, { organizationId: scope.organizationId, moduleCode: masterModule(kind), entityType: kind, recordId: atomic.data?.id || id, action: id ? "update" : "create", description: `${id ? "Updated" : "Created"} terms template ${templateName}.`, newValues: { ...body, sections: body.sections } });
-        return NextResponse.json(atomic.data);
-      }
-      if (!id && templateName) {
-        const existing = await admin.from("company_po_terms_templates").select("id").eq("organization_id", scope.organizationId).eq("company_id", text(body.company_id)).eq("template_name", templateName).eq("status", "active").maybeSingle();
-        if (existing.error) throw existing.error;
-        if (existing.data) return NextResponse.json({ id: existing.data.id, reused: true });
-      }
-      const values = { organization_id: scope.organizationId, company_id: text(body.company_id), template_name: templateName, is_default: body.is_default === true, status: text(body.status) || "active" };
-      if (values.is_default) { const cleared = await admin.from("company_po_terms_templates").update({ is_default: false }).eq("company_id", values.company_id).eq("status", "active").neq("id", id || emptyId); if (cleared.error) throw cleared.error; }
-      const result = id ? await admin.from("company_po_terms_templates").update(values).eq("id", id).select("id").single() : await admin.from("company_po_terms_templates").insert(values).select("id").single();
-      if (result.error) {
-        if (!id && result.error.code === "23505") {
-          const existing = await admin.from("company_po_terms_templates").select("id").eq("organization_id", scope.organizationId).eq("company_id", text(body.company_id)).eq("template_name", templateName).eq("status", "active").maybeSingle();
-          if (existing.error) throw existing.error;
-          if (existing.data) return NextResponse.json({ id: existing.data.id, reused: true });
-        }
-        throw result.error;
-      }
-      await auditMasterMutation(admin, auth, request, { organizationId: scope.organizationId, moduleCode: masterModule(kind), entityType: kind, recordId: result.data.id, action: id ? "update" : "create", description: `${id ? "Updated" : "Created"} terms template ${templateName}.`, newValues: values });
-      return NextResponse.json({ id: result.data.id });
+      const atomic = await admin.rpc("save_procurement_terms_template_with_sections_atomic", {
+        p_organization_id: scope.organizationId,
+        p_template_id: id || null,
+        p_company_id: text(body.company_id),
+        p_template_name: templateName,
+        p_is_default: body.is_default === true,
+        p_status: text(body.status) || "active",
+        p_sections: Array.isArray(body.sections) ? body.sections.map((section: any, index: number) => ({ ...section, sort_order: index, status: "active" })) : [],
+      });
+      if (atomic.error) throw atomic.error;
+      await auditMasterMutation(admin, auth, request, { organizationId: scope.organizationId, moduleCode: masterModule(kind), entityType: kind, recordId: atomic.data?.id || id, action: id ? "update" : "create", description: `${id ? "Updated" : "Created"} terms template ${templateName}.`, newValues: { ...body, sections: Array.isArray(body.sections) ? body.sections : [] } });
+      return NextResponse.json(atomic.data);
     }
     if (kind === "terms_section") {
       if (!text(body.template_id) || !text(body.heading) || !text(body.clause_body)) return jsonError("Template, Heading and Clause Body are required.", 400);

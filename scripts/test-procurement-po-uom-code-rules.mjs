@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const page = fs.readFileSync("app/purchase/purchase-orders/new/page.tsx", "utf8");
-const pdf = fs.readFileSync("app/api/procurement/purchase-orders/[id]/pdf/route.ts", "utf8");
+const pdf = fs.readFileSync("lib/procurement/poPdfRenderer.server.ts", "utf8") + "\n" + fs.readFileSync("app/api/procurement/purchase-orders/[id]/pdf/route.ts", "utf8");
 const updateApi = fs.readFileSync("app/api/procurement/purchase-orders/[id]/route.ts", "utf8");
 const migration = fs.readFileSync("supabase/migrations/202609100014_procurement_po_edit_item_persistence.sql", "utf8");
 
@@ -18,10 +18,10 @@ assert.match(page, /linkedUom/);
 assert.match(page, /uom: material\.default_uom\?\.uom_code \|\| \"\"/);
 assert.match(page, /linkedMaterial \? <span/);
 assert.match(page, /source === "direct" && !item\.item_id \? <input value=\{item\.uom/);
-assert.match(pdf, /text\(item\.uom_snapshot\)/);
+assert.match(pdf, /itemCell\("uom_snapshot"\)/);
 assert.match(page, /po_item_id: item\.id/);
 assert.match(updateApi, /update_procurement_purchase_order_draft_with_items_atomic/);
-assert.match(updateApi, /const items = Array\.isArray\(body\.items\) \? body\.items : \[\]/);
+assert.match(updateApi, /const items = normalizePurchaseOrderItems\(Array\.isArray\(body\.items\) \? body\.items : \[\]\)/);
 assert.match(updateApi, /items\.length \? "update_procurement_purchase_order_draft_with_items_atomic"/);
 assert.match(migration, /p_fields - 'items'/);
 assert.match(migration, /select u\.uom_code[\s\S]*procurement_uoms/);

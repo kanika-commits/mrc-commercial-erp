@@ -13,9 +13,9 @@ type Source = "direct" | "indent";
 type Item = { po_item_id?: string; item_id?: string; item_name: string; item_code?: string; description?: string; specification?: string; make?: string; quantity: string; uom?: string; unit_rate: string; gst_rate: string; source_requisition_line_key?: string; isMaterialMasterLinked?: boolean };
 type AttachmentDraft = { file: File; documentType: string };
 type AdditionalCharge = { name: string; amount: string };
-type KeyTerm = { description: string; terms: string };
 
 const FIXED_KEY_TERM_HEADINGS = ["Price Validity", "Freight", "Delivery Timeline", "Payment Terms"] as const;
+const normalizePurpose = (value: unknown) => value === "Standard" || !value ? "General Purchase" : String(value);
 
 const today = () => new Date().toISOString().slice(0, 10);
 const money = (value: number) => `₹ ${value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -28,17 +28,43 @@ function getCreatedId(value: any): string | null {
   return value.id || value.purchase_order_id || value.purchase_order?.id || value.purchase_orders?.[0]?.id || value.result?.id || value.result?.purchase_order_id || null;
 }
 
+function persistedItemId(value: unknown) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function persistedPoItemId(item: any) {
+  return persistedItemId(item?.po_item_id || item?.id);
+}
+
 function normalizeKeyTerm(term: any) {
-  return { description: String(term?.description ?? term?.label ?? ""), terms: String(term?.terms ?? term?.value ?? "") };
+  return {
+    description: String(term?.description ?? term?.label ?? ""),
+    terms: String(term?.terms ?? term?.value ?? ""),
+  };
 }
 
 function buildEditedStructuredTermsSnapshot(template: any, text: string): string | null {
   if (!template?.id || !text.trim()) return null;
-  const sections = (template.sections || []).filter((section: any) => section.status === undefined || section.status === "active").sort((a: any, b: any) => Number(a.sort_order || 0) - Number(b.sort_order || 0));
+  const sections = (template.sections || [])
+    .filter((section: any) => section.status === undefined || section.status === "active")
+    .sort((a: any, b: any) => Number(a.sort_order || 0) - Number(b.sort_order || 0));
   const source = text.trim();
-  const matches = sections.map((section: any) => ({ section, heading: String(section.heading || "").trim(), index: source.toLocaleLowerCase().indexOf(String(section.heading || "").trim().toLocaleLowerCase()) }));
+  const matches = sections.map((section: any) => ({
+    section,
+    heading: String(section.heading || "").trim(),
+    index: source.toLocaleLowerCase().indexOf(String(section.heading || "").trim().toLocaleLowerCase()),
+  }));
   if (!sections.length || matches.some((match: any) => !match.heading || match.index < 0) || matches.some((match: any, index: number) => index > 0 && match.index <= matches[index - 1].index)) return null;
-  return JSON.stringify({ template_id: template.id, template_name: template.template_name, clauses: matches.map((match: any, index: number) => ({ ...(match.section.id ? { id: match.section.id } : {}), heading: match.heading, clause_body: source.slice(match.index + match.heading.length, index + 1 < matches.length ? matches[index + 1].index : source.length).trim(), sort_order: Number.isFinite(Number(match.section.sort_order)) ? Number(match.section.sort_order) : index })) });
+  return JSON.stringify({
+    template_id: template.id,
+    template_name: template.template_name,
+    clauses: matches.map((match: any, index: number) => ({
+      ...(match.section.id ? { id: match.section.id } : {}),
+      heading: match.heading,
+      clause_body: source.slice(match.index + match.heading.length, index + 1 < matches.length ? matches[index + 1].index : source.length).trim(),
+      sort_order: Number.isFinite(Number(match.section.sort_order)) ? Number(match.section.sort_order) : index,
+    })),
+  });
 }
 
 function normalizeSavedKeyTerms(savedTerms: any[]) {
@@ -54,9 +80,46 @@ function normalizeSavedKeyTerms(savedTerms: any[]) {
   return [...fixed, ...saved.filter((_, index) => !used.has(index))];
 }
 
+function persistedItemContentKey(item: any) {
+  return JSON.stringify(Object.keys(item || {}).filter((key) => key !== "id" && key !== "po_item_id").sort().reduce((result, key) => ({ ...result, [key]: item[key] }), {}));
+}
+
+function persistedItemSetKey(items: any[]) {
+  return items.map(persistedItemContentKey).sort().join("\u001e");
+}
+
+function rebasePersistedItemIds(items: any[], originalRows: any[], latestRows: any[]) {
+  const latestIdsByContent = new Map<string, string[]>();
+  latestRows.forEach((row) => {
+    const content = persistedItemContentKey(row);
+    const ids = latestIdsByContent.get(content) || [];
+    ids.push(persistedItemId(row.id));
+    latestIdsByContent.set(content, ids);
+  });
+  const idMap = new Map<string, string>();
+  originalRows.forEach((row) => {
+    const ids = latestIdsByContent.get(persistedItemContentKey(row));
+    const nextId = ids?.shift();
+    if (nextId) idMap.set(persistedItemId(row.id), nextId);
+  });
+  return items.map((item) => {
+    const nextId = idMap.get(persistedItemId(item.po_item_id));
+    return nextId ? { ...item, po_item_id: nextId } : item;
+  });
+}
+
+function itemFromPersistedRow(item: any): Item {
+  return { po_item_id: item.id, item_id: item.item_id, item_name: item.item_name_snapshot || "", item_code: item.item_code_snapshot, description: item.description_snapshot || item.specification_snapshot || "", specification: item.specification_snapshot, make: item.make_snapshot || "", quantity: String(item.quantity ?? ""), uom: item.uom_snapshot || "", unit_rate: String(item.unit_rate ?? ""), gst_rate: String(item.gst_rate ?? "0"), source_requisition_line_key: item.source_requisition_line_key, isMaterialMasterLinked: false };
+}
+
 function fileSize(value: number) {
   if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`;
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function retainSelectedLookupOption(options: any[], id: string, labelKey: string, label: string) {
+  if (!id || options.some((option) => option.id === id)) return options;
+  return [{ id, [labelKey]: label || id }, ...options];
 }
 
 export default function NewPurchaseOrderPage() {
@@ -65,6 +128,7 @@ export default function NewPurchaseOrderPage() {
   const params = useSearchParams();
   const initialSource = (params.get("source") as Source) || "direct";
   const editId = params.get("edit_id");
+  const newRevision = params.get("new_revision") === "1";
   const [source, setSource] = useState<Source>(["direct", "indent"].includes(initialSource) ? initialSource : "direct");
   const [lookups, setLookups] = useState<any>({ companies: [], sites: [], vendors: [], items: [], work_orders: [], indents: [], delivery_locations: [], site_contacts: [], gst_billing_masters: [], letterheads: [] });
   const [companyId, setCompanyId] = useState(params.get("company_id") || "");
@@ -74,26 +138,29 @@ export default function NewPurchaseOrderPage() {
   const [indentLineKey, setIndentLineKey] = useState(params.get("line_key") || "");
   const [selectedIndentId, setSelectedIndentId] = useState(params.get("requisition_id") || "");
   const [items, setItems] = useState<Item[]>([{ item_name: "", quantity: "", unit_rate: "", gst_rate: "0" }]);
+  const originalPersistedItemIdsRef = useRef<string[]>([]);
+  const originalPersistedItemsRef = useRef<any[]>([]);
+  const originalPersistedItemContentRef = useRef<string>("");
   const [delivery, setDelivery] = useState({ location: "", address: "", expected_date: "" });
-  const [commercial, setCommercial] = useState<{ payment_terms: string; delivery_terms: string; purpose?: string; recovery_work_order_id?: string | null; recovery_vendor_id?: string | null }>({ payment_terms: "", delivery_terms: "", purpose: "General Purchase", recovery_work_order_id: null, recovery_vendor_id: null });
+  const [commercial, setCommercial] = useState({ payment_terms: "", delivery_terms: "", purpose: "General Purchase", recovery_vendor_id: "", recovery_work_order_id: "" });
   const [standardTerms, setStandardTerms] = useState("");
   const [termsTemplateId, setTermsTemplateId] = useState("");
   const [savedTermsSnapshot, setSavedTermsSnapshot] = useState<any>(null);
   const initialStructuredTermsRef = useRef("");
   const initialTermsTextRef = useRef("");
+  const draftLoadRequestRef = useRef(0);
   const termsTemplateChangedRef = useRef(false);
-  const hydratedTermsTemplateIdRef = useRef("");
   const [billingContactId, setBillingContactId] = useState("");
   const [deliveryContactId, setDeliveryContactId] = useState("");
   const [deliveryLocationId, setDeliveryLocationId] = useState("");
   const [gstRegistrationId, setGstRegistrationId] = useState("");
   const [additionalCharges, setAdditionalCharges] = useState<AdditionalCharge[]>([]);
-  const [keyTerms, setKeyTerms] = useState<KeyTerm[]>(FIXED_KEY_TERM_HEADINGS.map((description) => ({ description, terms: "" })));
+  const [keyTerms, setKeyTerms] = useState([{ description: "Price Validity", terms: "" }, { description: "Freight", terms: "" }, { description: "Delivery Timeline", terms: "" }, { description: "Payment Terms", terms: "" }]);
   const [message, setMessage] = useState("");
   const errorRef = useRef<HTMLDivElement>(null);
-  const [loading, setLoading] = useState(true);
   const [lookupLoading, setLookupLoading] = useState(true);
   const [draftLoading, setDraftLoading] = useState(Boolean(editId));
+  const loading = lookupLoading || draftLoading;
   const [saving, setSaving] = useState(false);
   const [customDelivery, setCustomDelivery] = useState(false);
   const [materialOpenIndex, setMaterialOpenIndex] = useState<number | null>(null);
@@ -110,14 +177,34 @@ export default function NewPurchaseOrderPage() {
   const [revisionNo, setRevisionNo] = useState<number | null>(null);
   const [previousRevisionNumber, setPreviousRevisionNumber] = useState("");
   const revisionIdentityRef = useRef<{ source: Source; companyId: string; siteId: string; vendorId: string; requisitionId: string } | null>(null);
+  const draftLookupSelectionRef = useRef<{ companyId: string; siteId: string; vendorId: string }>({ companyId: "", siteId: "", vendorId: "" });
   const [createdPoId, setCreatedPoId] = useState<string | null>(null);
   const [creationRequestId] = useState(() => crypto.randomUUID());
   const previousCompanyIdRef = useRef(companyId);
-  const originalPersistedItemIdsRef = useRef<string[]>([]);
-  const draftLoadRequestRef = useRef(0);
+  const recoveryScopeRef = useRef({ companyId, siteId });
+  const allWorkOrdersRef = useRef<any[]>([]);
+
 
   const canAddVendors = can(access?.permissions || [], "vendors", "add");
   const canEditVendors = can(access?.permissions || [], "vendors", "edit");
+  useEffect(() => {
+    if (!allWorkOrdersRef.current.length && (lookups.work_orders || []).length) {
+      allWorkOrdersRef.current = lookups.work_orders;
+      setLookups((current: any) => ({ ...current, work_orders: allWorkOrdersRef.current.filter((row: any) => (!companyId || row.company_id === companyId) && (!siteId || row.site_id === siteId) && (!vendorId || row.work_order_vendors?.some((link: any) => link.vendor_id === vendorId && ["Main Contractor", "Subcontractor"].includes(String(link.vendor_role || ""))))) }));
+    }
+  }, [lookups.work_orders]);
+
+  useEffect(() => {
+    if (draftLoading) {
+      recoveryScopeRef.current = { companyId, siteId };
+      return;
+    }
+    if (recoveryScopeRef.current.companyId !== companyId || recoveryScopeRef.current.siteId !== siteId) {
+      recoveryScopeRef.current = { companyId, siteId };
+      setCommercial((current) => ({ ...current, recovery_work_order_id: "" }));
+    }
+    if (allWorkOrdersRef.current.length) setLookups((current: any) => ({ ...current, work_orders: allWorkOrdersRef.current.filter((row: any) => (!companyId || row.company_id === companyId) && (!siteId || row.site_id === siteId) && (!vendorId || row.work_order_vendors?.some((link: any) => link.vendor_id === vendorId && ["Main Contractor", "Subcontractor"].includes(String(link.vendor_role || ""))))) }));
+  }, [companyId, siteId, vendorId, draftLoading]);
   const handleVendorCreated = (createdVendorId: string) => {
     setVendorModalOpen(false);
     apiFetch("/api/procurement/purchase-orders/lookups").then((nextLookups) => {
@@ -126,31 +213,37 @@ export default function NewPurchaseOrderPage() {
     }).catch((error) => setMessage(error.message || "Vendor was created, but the Vendor list could not be refreshed."));
   };
 
+  const mergeDraftLookupOptions = (nextLookups: any, draft: any) => ({
+    ...nextLookups,
+    companies: retainSelectedLookupOption(nextLookups.companies || [], draft.company_id, "company_name", draft.company?.company_name),
+    sites: retainSelectedLookupOption(nextLookups.sites || [], draft.site_id, "site_name", draft.site?.site_name),
+    vendors: retainSelectedLookupOption(nextLookups.vendors || [], draft.vendor_id, "vendor_name", draft.vendor_name_snapshot),
+  });
+
   useEffect(() => {
-    let active = true;
-    setLookupLoading(true);
     apiFetch("/api/procurement/purchase-orders/lookups")
-      .then((value) => { if (active) setLookups(value); })
+      .then((nextLookups) => setLookups((current: any) => ({
+        ...nextLookups,
+        companies: retainSelectedLookupOption(nextLookups.companies || [], draftLookupSelectionRef.current.companyId, "company_name", ""),
+        sites: retainSelectedLookupOption(nextLookups.sites || [], draftLookupSelectionRef.current.siteId, "site_name", ""),
+        vendors: retainSelectedLookupOption(nextLookups.vendors || [], draftLookupSelectionRef.current.vendorId, "vendor_name", ""),
+      })))
       .catch((error) => setMessage(error.message || "Failed to load Purchase Order options."))
-      .finally(() => { if (active) { setLookupLoading(false); setLoading(false); } });
-    return () => { active = false; };
+      .finally(() => setLookupLoading(false));
   }, []);
 
   useEffect(() => {
     const requestId = ++draftLoadRequestRef.current;
     let active = true;
+    initialStructuredTermsRef.current = "";
+    initialTermsTextRef.current = "";
+    termsTemplateChangedRef.current = false;
+    lastHydratedTermsTemplateIdRef.current = "";
+    setSavedTermsSnapshot(null);
+    setTermsTemplateId("");
+    setStandardTerms("");
     setDraftLoading(Boolean(editId));
     if (!editId) return () => { active = false; };
-    termsTemplateChangedRef.current = false;
-    hydratedTermsTemplateIdRef.current = "";
-    setSavedTermsSnapshot(null);
-    setSource("direct"); setCompanyId(""); setSiteId(""); setVendorId(""); setPoDate(today());
-    setDelivery({ location: "", address: "", expected_date: "" });
-    setCommercial({ payment_terms: "", delivery_terms: "", purpose: "General Purchase", recovery_work_order_id: null, recovery_vendor_id: null });
-    setStandardTerms(""); setTermsTemplateId(""); setItems([{ item_name: "", quantity: "", unit_rate: "", gst_rate: "0" }]);
-    setAdditionalCharges([]); setKeyTerms(FIXED_KEY_TERM_HEADINGS.map((description) => ({ description, terms: "" })));
-    setBillingContactId(""); setDeliveryContactId(""); setDeliveryLocationId(""); setGstRegistrationId("");
-    setIndentLineKey(""); setSelectedIndentId(""); setExistingDocuments([]); setEditablePoStatus(null); setRevisionNo(null); setPreviousRevisionNumber("");
     Promise.all([apiFetch(`/api/procurement/purchase-orders/${editId}`), apiFetch(`/api/procurement/purchase-orders/${editId}/documents`)]).then(([result, documentResult]) => {
       if (!active || requestId !== draftLoadRequestRef.current) return;
       const po = result.purchase_order;
@@ -160,9 +253,13 @@ export default function NewPurchaseOrderPage() {
       setPreviousRevisionNumber(po.previous_revision_id ? String((result.revision_history || []).find((candidate: any) => candidate.id === po.previous_revision_id)?.po_number || "Previous revision") : "");
       const nextSource = ["direct", "indent"].includes(po.source_type) ? po.source_type as Source : "direct";
       revisionIdentityRef.current = { source: nextSource, companyId: po.company_id || "", siteId: po.site_id || "", vendorId: po.vendor_id || "", requisitionId: po.source_requisition_id || "" };
+      previousCompanyIdRef.current = po.company_id || "";
+      draftLookupSelectionRef.current = { companyId: po.company_id || "", siteId: po.site_id || "", vendorId: po.vendor_id || "" };
+      setLookups((current: any) => mergeDraftLookupOptions(current, po));
       setSource(nextSource);
-      setCompanyId(po.company_id || ""); setSiteId(po.site_id || ""); setVendorId(po.vendor_id || ""); setPoDate(po.po_date || today());
-      setDelivery(po.delivery_snapshot || {}); setCommercial({ ...(po.commercial_snapshot || {}), purpose: po.purpose || po.commercial_snapshot?.purpose || "General Purchase", recovery_work_order_id: po.recovery_work_order_id || po.commercial_snapshot?.recovery_work_order_id || null, recovery_vendor_id: po.recovery_vendor_id || po.commercial_snapshot?.recovery_vendor_id || null });
+      setCompanyId(po.company_id || ""); setSiteId(po.site_id || ""); setVendorId(po.vendor_id || ""); setPoDate(newRevision ? today() : (po.po_date || today()));
+      if (newRevision) router.replace(`/purchase/purchase-orders/new?edit_id=${encodeURIComponent(editId)}`);
+      setDelivery(po.delivery_snapshot || {}); setCommercial({ ...(po.commercial_snapshot || {}), purpose: normalizePurpose(po.purpose || po.commercial_snapshot?.purpose), recovery_vendor_id: po.recovery_vendor_id || po.commercial_snapshot?.recovery_vendor_id || "", recovery_work_order_id: po.recovery_work_order_id || po.commercial_snapshot?.recovery_work_order_id || "" });
       setDeliveryLocationId(po.delivery_snapshot?.master_selection?.delivery_location_id || po.delivery_snapshot?.delivery_location_id || "");
       setGstRegistrationId(po.delivery_snapshot?.master_selection?.gst_registration_id || po.delivery_snapshot?.gst_registration_id || "");
       setBillingContactId(po.delivery_snapshot?.master_selection?.billing_contact_id || po.delivery_snapshot?.billing_contact?.site_contact_id || po.delivery_snapshot?.master_selection?.site_contact_id || "");
@@ -172,33 +269,43 @@ export default function NewPurchaseOrderPage() {
       const parsedTerms = parsePurchaseOrderStandardTerms(po.standard_terms_snapshot);
       if (parsedTerms?.kind === "structured") {
         initialStructuredTermsRef.current = String(po.standard_terms_snapshot || "");
+        try {
+          const parsedSnapshot = JSON.parse(initialStructuredTermsRef.current);
+          setSavedTermsSnapshot(parsedSnapshot);
+          const savedTemplateId = parsedSnapshot.template_id;
+          if (savedTemplateId) setTermsTemplateId(String(savedTemplateId));
+        } catch { /* legacy plain text */ }
         initialTermsTextRef.current = parsedTerms.clauses.map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n");
-        try { setSavedTermsSnapshot(JSON.parse(initialStructuredTermsRef.current)); } catch { setSavedTermsSnapshot(null); }
-        const savedTemplateId = (() => { try { return JSON.parse(initialStructuredTermsRef.current)?.template_id; } catch { return null; } })();
-        if (savedTemplateId) { hydratedTermsTemplateIdRef.current = String(savedTemplateId); setTermsTemplateId(String(savedTemplateId)); }
         setStandardTerms(initialTermsTextRef.current);
       } else {
         initialStructuredTermsRef.current = "";
+        setSavedTermsSnapshot(null);
         initialTermsTextRef.current = parsedTerms?.text || "";
         setStandardTerms(initialTermsTextRef.current);
       }
-      setItems((po.items || []).map((item: any) => ({ po_item_id: item.id, item_id: item.item_id, item_name: item.item_name_snapshot || "", item_code: item.item_code_snapshot, description: item.description_snapshot || item.specification_snapshot || "", specification: item.specification_snapshot, make: item.make_snapshot || "", quantity: String(item.quantity ?? ""), uom: item.uom_snapshot || "", unit_rate: String(item.unit_rate ?? ""), gst_rate: String(item.gst_rate ?? "0"), source_requisition_line_key: item.source_requisition_line_key, isMaterialMasterLinked: false })));
-      originalPersistedItemIdsRef.current = (po.items || []).map((item: any) => String(item.id || item.po_item_id || "").trim().toLowerCase());
+      originalPersistedItemIdsRef.current = (po.items || []).map(persistedPoItemId);
+      originalPersistedItemsRef.current = po.items || [];
+      originalPersistedItemContentRef.current = persistedItemSetKey(po.items || []);
+      setItems((po.items || []).map(itemFromPersistedRow));
       setExistingDocuments(documentResult.documents || []);
       setDraftLoading(false);
-    }).catch((error) => { if (active && requestId === draftLoadRequestRef.current) { setMessage(error.message || "Failed to load the Draft Purchase Order."); setDraftLoading(false); } });
+    }).catch((error) => {
+      if (!active || requestId !== draftLoadRequestRef.current) return;
+      setMessage(error.message || "Failed to load the Draft Purchase Order.");
+      setDraftLoading(false);
+    });
     return () => { active = false; };
-  }, [editId]);
+  }, [editId, newRevision, router]);
 
   useEffect(() => {
-    if (!revisionNo || loading) return;
+    if (!revisionNo || draftLoading) return;
     const section = [...document.querySelectorAll("section")].find((candidate) => candidate.querySelector("h2")?.textContent?.trim() === "Basic Details");
     const controls = section ? [...section.querySelectorAll("select")] as HTMLSelectElement[] : [];
     const vendorIndex = controls.length > 3 ? 3 : 2;
     const locked = [controls[0], controls[1], controls[vendorIndex]].filter(Boolean);
     locked.forEach((control) => { control.disabled = true; control.setAttribute("aria-readonly", "true"); });
     return () => locked.forEach((control) => { control.disabled = false; control.removeAttribute("aria-readonly"); });
-  }, [revisionNo, loading]);
+  }, [revisionNo, draftLoading]);
 
   useEffect(() => {
     if (!editId || !lookups.items?.length) return;
@@ -233,15 +340,16 @@ export default function NewPurchaseOrderPage() {
   const sites = useMemo(() => lookups.sites, [lookups.sites]);
   const selectedCompany = lookups.companies.find((company: any) => company.id === companyId);
   const selectedVendor = lookups.vendors.find((vendor: any) => vendor.id === vendorId);
-  const recoveryVendors = lookups.vendors.filter((vendor: any) => (lookups.work_orders || []).some((row: any) => row.company_id === companyId && row.site_id === siteId && row.work_order_vendors?.some((link: any) => link.vendor_id === vendor.id && ["Main Contractor", "Subcontractor"].includes(String(link.vendor_role || "")))));
+  const recoverySourceWorkOrders = allWorkOrdersRef.current.length ? allWorkOrdersRef.current : (lookups.work_orders || []);
+  const eligibleRecoveryVendorIds = new Set(recoverySourceWorkOrders.filter((row: any) => row.company_id === companyId && row.site_id === siteId).flatMap((row: any) => (row.work_order_vendors || []).filter((link: any) => ["Main Contractor", "Subcontractor"].includes(String(link.vendor_role || ""))).map((link: any) => link.vendor_id)));
+  const recoveryVendors = (lookups.vendors || []).filter((vendor: any) => eligibleRecoveryVendorIds.has(vendor.id)).sort((a: any, b: any) => String(a.vendor_name || "").localeCompare(String(b.vendor_name || "")));
+  const recoveryWorkOrders = recoverySourceWorkOrders.filter((row: any) => row.company_id === companyId && row.site_id === siteId && row.work_order_vendors?.some((link: any) => link.vendor_id === commercial.recovery_vendor_id && ["Main Contractor", "Subcontractor"].includes(String(link.vendor_role || ""))));
   useEffect(() => {
-    if (commercial.purpose !== "Recover from contractor") return;
-    const recoveryVendorId = commercial.recovery_vendor_id || "";
-    const recoveryWorkOrderId = commercial.recovery_work_order_id || "";
-    const vendorStillEligible = recoveryVendors.some((vendor: any) => vendor.id === recoveryVendorId);
-    const workOrderStillEligible = (lookups.work_orders || []).some((row: any) => row.id === recoveryWorkOrderId && row.company_id === companyId && row.site_id === siteId && row.work_order_vendors?.some((link: any) => link.vendor_id === recoveryVendorId && ["Main Contractor", "Subcontractor"].includes(String(link.vendor_role || ""))));
-    if ((recoveryVendorId && !vendorStillEligible) || (recoveryWorkOrderId && !workOrderStillEligible)) setCommercial((current: any) => ({ ...current, recovery_vendor_id: vendorStillEligible ? current.recovery_vendor_id : null, recovery_work_order_id: workOrderStillEligible ? current.recovery_work_order_id : null }));
-  }, [companyId, siteId, commercial.purpose, commercial.recovery_vendor_id, commercial.recovery_work_order_id, recoveryVendors, lookups.work_orders]);
+    if (draftLoading || commercial.purpose !== "Recover from contractor") return;
+    const vendorValid = recoveryVendors.some((vendor: any) => vendor.id === commercial.recovery_vendor_id);
+    const workOrderValid = recoveryWorkOrders.some((row: any) => row.id === commercial.recovery_work_order_id);
+    if ((commercial.recovery_vendor_id && !vendorValid) || (commercial.recovery_work_order_id && !workOrderValid)) setCommercial((current) => ({ ...current, recovery_vendor_id: vendorValid ? current.recovery_vendor_id : "", recovery_work_order_id: workOrderValid ? current.recovery_work_order_id : "" }));
+  }, [companyId, siteId, commercial.purpose, commercial.recovery_vendor_id, commercial.recovery_work_order_id, draftLoading, lookups.work_orders, lookups.vendors]);
   const selectedVendorContact = selectedVendor?.contact || null;
   const contractorType = String(selectedVendor?.contractor_type || "").trim().toLowerCase();
   const gstinRequired = ["company", "proprietorship", "proprietor"].includes(contractorType);
@@ -256,7 +364,7 @@ export default function NewPurchaseOrderPage() {
   const selectedLetterhead = (lookups.letterheads || []).find((row: any) => row.company_id === companyId);
   const deliveryAddressFor = (row: any) => [row?.address_line1, row?.address_line2, row?.city, row?.state, row?.pincode].filter(Boolean).join(", ") || row?.address || "";
   const deliveryCompanyName = (row: any) => row?.company?.company_name || lookups.companies.find((company: any) => company.id === row?.company_id)?.company_name || "";
-  const selectedGstBilling = gstBillingMasters.find((row: any) => row.id === gstRegistrationId) || (gstBillingMasters.length === 1 ? gstBillingMasters[0] : null);
+  const selectedGstBilling = gstBillingMasters.find((row: any) => row.id === gstRegistrationId) || (!gstRegistrationId && gstBillingMasters.length === 1 ? gstBillingMasters[0] : null);
   const selectedBilling = selectedGstBilling?.billing_address || null;
   const deliveryLocations = (lookups.delivery_locations || []).filter((row: any) => row.billing_address_id === selectedBilling?.id && row.site_id === siteId && row.status === "active").sort((a: any, b: any) => String(a.location_name || "").localeCompare(String(b.location_name || "")));
   const defaultDeliveryLocation = deliveryLocations.length === 1 ? deliveryLocations[0] : null;
@@ -267,23 +375,26 @@ export default function NewPurchaseOrderPage() {
   const selectedBillingContact = siteContacts.find((row: any) => row.id === billingContactId) || defaultSiteContact;
   const revisionIdentityLocked = Boolean(revisionNo);
   useEffect(() => {
-    setGstRegistrationId((current) => gstBillingMasters.some((row: any) => row.id === current) ? current : gstBillingMasters.length === 1 ? gstBillingMasters[0].id : "");
-  }, [companyId, gstBillingMasters.length]);
+    if (lookupLoading) return;
+    setGstRegistrationId((current) => current || (gstBillingMasters.length === 1 ? gstBillingMasters[0].id : ""));
+  }, [companyId, gstBillingMasters.length, lookupLoading]);
   useEffect(() => {
-    if (!siteId) {
+    if (lookupLoading || !siteId) {
+      if (lookupLoading) return;
       setDeliveryContactId("");
       return;
     }
-    setDeliveryContactId((current) => siteContacts.some((row: any) => row.id === current) ? current : defaultSiteContact?.id || "");
-    setBillingContactId((current) => siteContacts.some((row: any) => row.id === current) ? current : defaultSiteContact?.id || "");
-  }, [siteId, defaultSiteContact?.id, siteContacts.length]);
+    setDeliveryContactId((current) => current || defaultSiteContact?.id || "");
+    setBillingContactId((current) => current || defaultSiteContact?.id || "");
+  }, [siteId, defaultSiteContact?.id, siteContacts.length, lookupLoading]);
   useEffect(() => {
-    if (!siteId) {
+    if (lookupLoading || !siteId) {
+      if (lookupLoading) return;
       setDeliveryLocationId("");
       return;
     }
-    setDeliveryLocationId((current) => deliveryLocations.some((row: any) => row.id === current) ? current : defaultDeliveryLocation?.id || "");
-  }, [siteId, defaultDeliveryLocation?.id, deliveryLocations.length]);
+    setDeliveryLocationId((current) => current || defaultDeliveryLocation?.id || "");
+  }, [siteId, defaultDeliveryLocation?.id, deliveryLocations.length, lookupLoading]);
   useEffect(() => {
     setDelivery((current) => ({ ...current, location: selectedDeliveryLocation?.location_name || "", address: selectedDeliveryLocation ? deliveryAddressFor(selectedDeliveryLocation) : "" }));
   }, [selectedDeliveryLocation?.id]);
@@ -293,10 +404,18 @@ export default function NewPurchaseOrderPage() {
   }, [vendorId]);
   const companyTerms = useMemo(() => (lookups.terms_templates || []).filter((row: any) => row.company_id === companyId && row.status === "active"), [lookups.terms_templates, companyId]);
   const selectedTerms = companyTerms.find((row: any) => row.id === termsTemplateId) || null;
+  const displayTermsTemplateName = editId && savedTermsSnapshot?.template_id === termsTemplateId
+    ? savedTermsSnapshot.template_name
+    : selectedTerms?.template_name;
+  const displayTermsClauses = editId && savedTermsSnapshot?.template_id === termsTemplateId
+    ? savedTermsSnapshot.clauses || []
+    : (selectedTerms?.sections || []).filter((section: any) => section.status === undefined || section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order);
+  const lastHydratedTermsTemplateIdRef = useRef("");
   useEffect(() => {
-    if (!editId || !termsTemplateId || !hydratedTermsTemplateIdRef.current) return;
-    if (termsTemplateId !== hydratedTermsTemplateIdRef.current) termsTemplateChangedRef.current = true;
-  }, [editId, termsTemplateId]);
+    if (!editId || draftLoading) return;
+    if (lastHydratedTermsTemplateIdRef.current && lastHydratedTermsTemplateIdRef.current !== termsTemplateId) termsTemplateChangedRef.current = true;
+    if (termsTemplateId) lastHydratedTermsTemplateIdRef.current = termsTemplateId;
+  }, [editId, draftLoading, termsTemplateId]);
   useEffect(() => {
     if (previousCompanyIdRef.current !== companyId) {
       setTermsTemplateId("");
@@ -305,8 +424,11 @@ export default function NewPurchaseOrderPage() {
     previousCompanyIdRef.current = companyId;
   }, [companyId]);
   useEffect(() => {
-    setTermsTemplateId((current) => companyTerms.some((row: any) => row.id === current) ? current : companyTerms.find((row: any) => row.is_default)?.id || companyTerms[0]?.id || "");
-  }, [companyTerms]);
+    if (!companyId || !companyTerms.length) return;
+    setTermsTemplateId((current) => {
+      return current || companyTerms.find((row: any) => row.is_default)?.id || companyTerms[0]?.id || "";
+    });
+  }, [companyId, companyTerms]);
   useEffect(() => {
     if (!selectedTerms || standardTerms.trim()) return;
     const clauses = (selectedTerms.sections || []).filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order).map((section: any) => `${section.heading}\n${section.clause_body}`).join("\n\n");
@@ -400,11 +522,11 @@ export default function NewPurchaseOrderPage() {
   async function uploadAttachments(purchaseOrderId: string) {
     if (!attachments.length) return;
     const token = await getAccessToken();
-    for (const attachment of attachments) {
+    await Promise.all(attachments.map(async (attachment, index) => {
       const form = new FormData();
       form.set("file", attachment.file);
       form.set("document_type", attachment.documentType);
-      form.set("sort_order", String(attachments.indexOf(attachment)));
+      form.set("sort_order", String(index));
       const response = await fetch(`/api/procurement/purchase-orders/${purchaseOrderId}/documents`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
@@ -413,7 +535,7 @@ export default function NewPurchaseOrderPage() {
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(`${attachment.file.name}: ${result.error || "upload failed"}`);
       setAttachments((current) => current.filter((candidate) => candidate !== attachment));
-    }
+    }));
   }
 
   async function removeExistingDocument(document: any) {
@@ -463,6 +585,8 @@ export default function NewPurchaseOrderPage() {
   async function save() {
     setMessage("");
     if (!companyId || !siteId || !vendorId) return setMessage("Company, site and Vendor are required.");
+    if (commercial.purpose === "Recover from contractor" && !commercial.recovery_vendor_id) return setMessage("A recovery contractor is required for contractor recovery Purchase Orders.");
+    if (commercial.purpose === "Recover from contractor" && !commercial.recovery_work_order_id) return setMessage("A linked Work Order is required for contractor recovery Purchase Orders.");
     if (!selectedGstBilling?.billing_address) return setMessage(gstBillingMasters.length > 1 ? "Select a GST/Billing Master for the selected Company." : "Configure an active GST/Billing Master for the selected Company.");
     if (!selectedLetterhead) return setMessage("Configure a default Ready Letterhead Master for the selected Company.");
     if (!selectedDeliveryLocation) return setMessage(deliveryLocations.length > 1 ? "Select a Delivery Location for this Site." : "Configure an active Delivery Location for the selected Site.");
@@ -475,38 +599,80 @@ export default function NewPurchaseOrderPage() {
     try {
       const deliveryPayload = { expected_date: delivery.expected_date, location: selectedDeliveryLocation.location_name, address: deliveryAddressFor(selectedDeliveryLocation), delivery_location_id: selectedDeliveryLocation.id, site_contact_id: selectedDeliveryContact.id };
       const identity = revisionNo && revisionIdentityRef.current ? revisionIdentityRef.current : null;
-      const explicitTemplateChange = termsTemplateChangedRef.current;
-      const savedStructured = parsePurchaseOrderStandardTerms(initialStructuredTermsRef.current);
-      const savedText = savedStructured?.kind === "structured" ? savedStructured.clauses.map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n") : "";
-      const termsTemplateForSave = explicitTemplateChange ? selectedTerms : (savedTermsSnapshot && selectedTerms?.id === savedTermsSnapshot.template_id ? selectedTerms : selectedTerms);
-      const standardTermsSnapshot = editId && !explicitTemplateChange && savedStructured?.kind === "structured" && standardTerms === savedText ? initialStructuredTermsRef.current : buildEditedStructuredTermsSnapshot(termsTemplateForSave, standardTerms) || standardTerms;
-      const body = { source_type: identity?.source || source, company_id: identity?.companyId || companyId, site_id: identity?.siteId || siteId, vendor_id: identity?.vendorId || vendorId, po_date: poDate, source_requisition_id: identity?.requisitionId || selectedIndent?.requisition_id || params.get("requisition_id") || null, expected_original_item_ids: editId ? [...originalPersistedItemIdsRef.current] : undefined, items: items.map((item) => ({ ...item, po_item_id: item.po_item_id || undefined, item_id: item.item_id || undefined, unit_rate: Number(item.unit_rate), quantity: Number(item.quantity), gst_rate: Number(item.gst_rate), make_snapshot: item.make })), master_selection: { gst_registration_id: selectedGstBilling.id, billing_contact_id: selectedBillingContact.id, delivery_location_id: selectedDeliveryLocation.id, delivery_contact_id: selectedDeliveryContact.id }, delivery: deliveryPayload, commercial: { ...commercial, additional_charges: explicitCharges.map((charge) => ({ name: charge.name.trim(), amount: Number(charge.amount) })) }, standard_terms: standardTermsSnapshot, standard_terms_template_id: termsTemplateForSave?.id || savedTermsSnapshot?.template_id || null, standard_terms_sections: termsTemplateForSave?.sections?.filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order) || [], key_terms: keyTerms.map(normalizeKeyTerm) };
+      const savedStructuredTerms = initialStructuredTermsRef.current ? parsePurchaseOrderStandardTerms(initialStructuredTermsRef.current) : null;
+      const savedStructuredText = savedStructuredTerms?.kind === "structured" ? savedStructuredTerms.clauses.map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n") : "";
+      let savedTemplate: any = null;
+      if (editId && initialStructuredTermsRef.current && savedStructuredTerms?.kind === "structured") {
+        try {
+          const parsedSnapshot = JSON.parse(initialStructuredTermsRef.current);
+          savedTemplate = {
+            id: parsedSnapshot.template_id,
+            template_name: parsedSnapshot.template_name,
+            sections: savedStructuredTerms.clauses.map((clause: any) => ({ ...clause, status: "active" })),
+          };
+        } catch { /* preserve legacy plain-text fallback */ }
+      }
+      const termsTemplateForSave = savedTemplate || selectedTerms;
+      const activeTermsSections = termsTemplateForSave?.sections?.filter((section: any) => section.status === undefined || section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order) || [];
+      const explicitTermsEdit = !editId || termsTemplateChangedRef.current || standardTerms !== initialTermsTextRef.current;
+      const editedTermsSnapshot = explicitTermsEdit ? buildEditedStructuredTermsSnapshot(termsTemplateForSave, standardTerms) : null;
+      const standardTermsSnapshot = editedTermsSnapshot || (editId && initialStructuredTermsRef.current && standardTerms === savedStructuredText ? initialStructuredTermsRef.current : standardTerms);
+      const body = { source_type: identity?.source || source, company_id: identity?.companyId || companyId, site_id: identity?.siteId || siteId, vendor_id: identity?.vendorId || vendorId, po_date: poDate, source_requisition_id: identity?.requisitionId || selectedIndent?.requisition_id || params.get("requisition_id") || null, expected_original_item_ids: editId ? [...originalPersistedItemIdsRef.current] : undefined, items: items.map((item) => ({ ...item, po_item_id: item.po_item_id || undefined, item_id: item.item_id || undefined, unit_rate: Number(item.unit_rate), quantity: Number(item.quantity), gst_rate: Number(item.gst_rate), make_snapshot: item.make })), master_selection: { gst_registration_id: selectedGstBilling.id, billing_contact_id: selectedBillingContact.id, delivery_location_id: selectedDeliveryLocation.id, delivery_contact_id: selectedDeliveryContact.id }, delivery: deliveryPayload, commercial: { ...commercial, additional_charges: additionalCharges.map((charge) => ({ name: charge.name.trim(), amount: Number(charge.amount) })) }, standard_terms: standardTermsSnapshot, standard_terms_template_id: savedTermsSnapshot?.template_id || selectedTerms?.id || null, standard_terms_sections: activeTermsSections, key_terms: keyTerms.map(normalizeKeyTerm) };
       (body as any).creation_request_id = creationRequestId;
       if (editId) {
-        await apiFetch(`/api/procurement/purchase-orders/${editId}`, { method: "PUT", body: JSON.stringify(body) });
+        const saveExistingDraft = async (requestBody: any, attempt: "initial" | "retry" = "initial") => {
+          await apiFetch(`/api/procurement/purchase-orders/${editId}`, { method: "PUT", headers: { "x-po-save-attempt": attempt }, body: JSON.stringify(requestBody) });
+          try {
+            await uploadAttachments(editId);
+          } catch (error: any) {
+            setCreatedPoId(editId);
+            setMessage(`Purchase Order details were saved, but a supporting document upload failed. Please retry the document upload. ${error.message}`);
+            return;
+          }
+          router.push(`/purchase/purchase-orders/${editId}`);
+        };
         try {
-          await uploadAttachments(editId);
+          await saveExistingDraft(body, "initial");
         } catch (error: any) {
-          setCreatedPoId(editId);
-          setMessage(`Purchase Order details were saved, but a supporting document upload failed. Please retry the document upload. ${error.message}`);
-          return;
+          if (!String(error.message || "").includes("The editable item set changed")) throw error;
+          try {
+            const latest = await apiFetch(`/api/procurement/purchase-orders/${editId}`);
+            const latestItems = latest.purchase_order?.items || [];
+            if (persistedItemSetKey(latestItems) !== originalPersistedItemContentRef.current) {
+              setMessage("The saved item set changed. Your current form values remain unchanged; review the latest Purchase Order before saving again.");
+              return;
+            }
+            const latestPersistedItemIds = latestItems.map((item: any) => persistedItemId(item.id));
+            const rebasedItems = rebasePersistedItemIds(body.items, originalPersistedItemsRef.current, latestItems);
+            const rebasedPersistedItemIds = rebasedItems.map((item: any) => persistedItemId(item.po_item_id)).filter(Boolean).sort();
+            const latestPersistedItemIdSet = [...latestPersistedItemIds].sort();
+            if (rebasedPersistedItemIds.join("\u001e") !== latestPersistedItemIdSet.join("\u001e")) {
+              setMessage("The saved item set changed. Your current form values remain unchanged; review the latest Purchase Order before saving again.");
+              return;
+            }
+            originalPersistedItemIdsRef.current = latestPersistedItemIds;
+            await saveExistingDraft({ ...body, items: rebasedItems, expected_original_item_ids: latestPersistedItemIds }, "retry");
+          } catch (retryError: any) {
+            setMessage(retryError.message || "The saved item set changed. Your current form values remain unchanged; review the latest Purchase Order before saving again.");
+          }
         }
-        router.push(`/purchase/purchase-orders/${editId}`);
         return;
       }
       const result = await apiFetch("/api/procurement/purchase-orders", { method: "POST", body: JSON.stringify(body) });
       const id = getCreatedId(result.result || result); if (id) { try { await uploadAttachments(id); router.push(`/purchase/purchase-orders/${id}`); } catch (error: any) { setCreatedPoId(id); setMessage(`Purchase Order draft was created, but an attachment failed: ${error.message}`); } } else router.push("/purchase/purchase-orders");
-    } catch (error: any) { setMessage(error.message || "Failed to create Purchase Order draft."); }
+    } catch (error: any) {
+      setMessage(error.message || "Failed to save Purchase Order draft. Your current form values remain unchanged.");
+    }
     finally { setSaving(false); }
   }
 
-  if (loading || lookupLoading || draftLoading) return <p className="text-sm text-slate-500">{draftLoading ? "Loading Draft Purchase Order..." : "Loading Purchase Order options..."}</p>;
+  if (draftLoading) return <p className="text-sm text-slate-500">Loading Draft Purchase Order...</p>;
   return <section className="mx-auto max-w-[1500px] space-y-5 pb-12">
     <header className="flex flex-wrap items-start justify-between gap-4"><div><Link href={editId ? `/purchase/purchase-orders/${editId}` : "/purchase/purchase-orders"} className="text-sm text-slate-500">← {editId ? "Purchase Order" : "Purchase Orders"}</Link><p className="mt-3 text-xs font-semibold uppercase tracking-widest text-amber-700">Purchase</p><h1 className="text-3xl font-bold text-slate-950">{revisionNo ? `Revision R-${revisionNo}` : editId ? "Edit Draft Purchase Order" : "Create Purchase Order"}</h1><p className="text-sm text-slate-500">{revisionNo ? `Previous Revision: ${previousRevisionNumber}` : editId ? "Update the existing Draft Purchase Order." : "Create a simple draft from a direct purchase or approved Material Indent."}</p></div></header>
     {message && <div ref={errorRef} className="scroll-mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert"><div className="flex items-start justify-between gap-3"><div>{message}{createdPoId && <p className="mt-2"><Link className="font-semibold underline" href={`/purchase/purchase-orders/${createdPoId}`}>Open the draft to retry attachments.</Link></p>}</div><button type="button" aria-label="Dismiss error" onClick={() => setMessage("")} className="shrink-0 text-lg font-semibold leading-none text-red-700" title="Dismiss error">×</button></div></div>}
-    {revisionNo ? <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h2 className="font-semibold">Revision identity</h2><div className="mt-4 grid gap-4 md:grid-cols-4 text-sm"><div><b>Source Type</b><p>{sourceLabels[source]}</p></div><div><b>Company</b><p>{lookups.companies.find((row: any) => row.id === companyId)?.company_name || companyId}</p></div><div><b>Site</b><p>{sites.find((row: any) => row.id === siteId)?.site_name || siteId}</p></div><div><b>Vendor</b><p>{selectedVendor?.vendor_name || vendorId}</p></div></div><p className="mt-3 text-xs text-amber-900">Company, site, vendor and source identity are locked for this revision.</p></section> : <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">PO Source</h2><div className="mt-4 grid gap-3 md:grid-cols-3">{(Object.keys(sourceLabels) as Source[]).map((value) => <button type="button" key={value} onClick={() => changeSource(value)} className={`rounded-xl border p-4 text-left ${source === value ? "border-slate-950 bg-slate-50" : "border-slate-200"}`}><p className="font-semibold">{sourceLabels[value]}</p><p className="mt-1 text-xs text-slate-500">{value === "direct" ? "Create manually without an upstream document." : "Use an approved requirement with remaining quantity."}</p></button>)}</div>
-    <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">Basic Details</h2><div className="mt-4 grid gap-4 md:grid-cols-3"><label className="text-sm font-semibold">Company *<select value={companyId} onChange={(event) => { setCompanyId(event.target.value); setSiteId(""); setCommercial((current: any) => ({ ...current, recovery_work_order_id: null, recovery_vendor_id: null })); setIndentLineKey(""); setSelectedIndentId(""); setDeliveryLocationId(""); setDeliveryContactId(""); setCustomDelivery(false); setTermsTemplateId(""); setStandardTerms(""); }} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">Select company</option>{lookups.companies.map((row: any) => <option key={row.id} value={row.id}>{row.company_name}</option>)}</select></label><label className="text-sm font-semibold">Site / Project *<select value={siteId} onChange={(event) => { const value = event.target.value; const next = sites.find((row: any) => row.id === value); setSiteId(value); setCommercial((current: any) => ({ ...current, recovery_work_order_id: null, recovery_vendor_id: null })); setIndentLineKey(""); setSelectedIndentId(""); setDeliveryLocationId(""); setDeliveryContactId(""); setCustomDelivery(false); setDelivery((current) => ({ ...current, location: next?.site_name || "", address: next?.location || "" })); }} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">Select site</option>{sites.map((row: any) => <option key={row.id} value={row.id}>{row.site_name}</option>)}</select></label>{source === "indent" && <label className="text-sm font-semibold">Approved Material Indent *<select value={selectedIndentId} onChange={(event) => { setSelectedIndentId(event.target.value); setIndentLineKey(""); setItems([{ item_name: "", quantity: "", unit_rate: "", gst_rate: "0" }]); }} disabled={loading || !companyId || !siteId || indentGroups.length === 0} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">{!companyId || !siteId ? "Select Company and Site first" : loading ? "Loading approved Material Indents..." : indentGroups.length === 0 ? "No approved Material Indents with remaining quantity" : "Select approved Material Indent"}</option>{indentGroups.map((group: any) => <option key={group.requisition_id} value={group.requisition_id}>{group.requisition_number} — {group.lines.length} materials remaining</option>)}</select></label>}<label className="text-sm font-semibold">Vendor *<div className="flex gap-2"><select value={vendorId} onChange={(event) => { setVendorId(event.target.value); setCommercial((current: any) => ({ ...current, recovery_work_order_id: null, recovery_vendor_id: null })); }} className="mt-1 h-10 min-w-0 flex-1 rounded-lg border px-3 font-normal"><option value="">Select Vendor</option>{lookups.vendors.map((row: any) => <option key={row.id} value={row.id}>{row.vendor_name}</option>)}</select><button type="button" onClick={() => canAddVendors && setVendorModalOpen(true)} disabled={!canAddVendors} className="mt-1 whitespace-nowrap rounded-lg border px-3 text-xs font-semibold">+ Add New Vendor</button></div></label><label className="text-sm font-semibold">PO Date<input type="date" value={poDate} onChange={(event) => setPoDate(event.target.value)} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal" /></label></div></section>
-    <div className="mt-4 grid gap-4 md:grid-cols-3"><label className="text-sm font-semibold">Purchase Purpose<select value={commercial.purpose || "General Purchase"} onChange={(event) => setCommercial((current: any) => ({ ...current, purpose: event.target.value, recovery_vendor_id: event.target.value === "Recover from contractor" ? current.recovery_vendor_id : null, recovery_work_order_id: event.target.value === "Recover from contractor" ? current.recovery_work_order_id : null }))} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option>General Purchase</option><option>Asset Purchase</option><option>Recover from contractor</option></select></label>{commercial.purpose === "Recover from contractor" && <label className="text-sm font-semibold">Recovery Vendor *<select value={commercial.recovery_vendor_id || ""} onChange={(event) => setCommercial((current: any) => ({ ...current, recovery_vendor_id: event.target.value, recovery_work_order_id: null }))} disabled={!companyId || !siteId} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">{!companyId || !siteId ? "Select company and site first" : "Select recovery vendor"}</option>{recoveryVendors.map((row: any) => <option key={row.id} value={row.id}>{row.vendor_name}</option>)}</select></label>}{commercial.purpose === "Recover from contractor" && <label className="text-sm font-semibold">Linked Work Order *<select value={commercial.recovery_work_order_id || ""} onChange={(event) => setCommercial((current: any) => ({ ...current, recovery_work_order_id: event.target.value }))} disabled={!companyId || !siteId || !commercial.recovery_vendor_id} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">{!companyId || !siteId || !commercial.recovery_vendor_id ? "Select company, site and recovery vendor first" : "Select Work Order"}</option>{(lookups.work_orders || []).filter((row: any) => row.company_id === companyId && row.site_id === siteId && row.work_order_vendors?.some((link: any) => link.vendor_id === commercial.recovery_vendor_id && ["Main Contractor", "Subcontractor"].includes(String(link.vendor_role || "")))).map((row: any) => <option key={row.id} value={row.id}>{row.wo_number}</option>)}</select></label>}</div></section>}
+    {revisionNo ? <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h2 className="font-semibold">Revision identity</h2><div className="mt-4 grid gap-4 md:grid-cols-4 text-sm"><div><b>Source Type</b><p>{sourceLabels[source]}</p></div><div><b>Company</b><p>{lookups.companies.find((row: any) => row.id === companyId)?.company_name || companyId}</p></div><div><b>Site</b><p>{sites.find((row: any) => row.id === siteId)?.site_name || siteId}</p></div><div><b>Vendor</b><p>{selectedVendor?.vendor_name || vendorId}</p></div></div><p className="mt-3 text-xs text-amber-900">Company, site, vendor and source identity are locked for this revision.</p></section> : <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">PO Source</h2><div className="mt-4 grid gap-3 md:grid-cols-3">{(Object.keys(sourceLabels) as Source[]).map((value) => <button type="button" key={value} onClick={() => changeSource(value)} className={`rounded-xl border p-4 text-left ${source === value ? "border-slate-950 bg-slate-50" : "border-slate-200"}`}><p className="font-semibold">{sourceLabels[value]}</p><p className="mt-1 text-xs text-slate-500">{value === "direct" ? "Create manually without an upstream document." : "Use an approved requirement with remaining quantity."}</p></button>)}</div></section>}
+    <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">Basic Details</h2><div className="mt-4 grid gap-4 md:grid-cols-3"><label className="text-sm font-semibold">Company *<select value={companyId} onChange={(event) => { setCompanyId(event.target.value); setSiteId(""); setIndentLineKey(""); setSelectedIndentId(""); setDeliveryLocationId(""); setDeliveryContactId(""); setCustomDelivery(false); setTermsTemplateId(""); setStandardTerms(""); }} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">Select company</option>{lookups.companies.map((row: any) => <option key={row.id} value={row.id}>{row.company_name}</option>)}</select></label><label className="text-sm font-semibold">Site / Project *<select value={siteId} onChange={(event) => { const value = event.target.value; const next = sites.find((row: any) => row.id === value); setSiteId(value); setIndentLineKey(""); setSelectedIndentId(""); setDeliveryLocationId(""); setDeliveryContactId(""); setCustomDelivery(false); setDelivery((current) => ({ ...current, location: next?.site_name || "", address: next?.location || "" })); }} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">Select site</option>{sites.map((row: any) => <option key={row.id} value={row.id}>{row.site_name}</option>)}</select></label>{source === "indent" && <label className="text-sm font-semibold">Approved Material Indent *<select value={selectedIndentId} onChange={(event) => { setSelectedIndentId(event.target.value); setIndentLineKey(""); setItems([{ item_name: "", quantity: "", unit_rate: "", gst_rate: "0" }]); }} disabled={loading || !companyId || !siteId || indentGroups.length === 0} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">{!companyId || !siteId ? "Select Company and Site first" : loading ? "Loading approved Material Indents..." : indentGroups.length === 0 ? "No approved Material Indents with remaining quantity" : "Select approved Material Indent"}</option>{indentGroups.map((group: any) => <option key={group.requisition_id} value={group.requisition_id}>{group.requisition_number} — {group.lines.length} materials remaining</option>)}</select></label>}<label className="text-sm font-semibold">Vendor *<div className="flex gap-2"><select value={vendorId} onChange={(event) => setVendorId(event.target.value)} className="mt-1 h-10 min-w-0 flex-1 rounded-lg border px-3 font-normal"><option value="">Select Vendor</option>{lookups.vendors.map((row: any) => <option key={row.id} value={row.id}>{row.vendor_name}</option>)}</select><button type="button" onClick={() => canAddVendors && setVendorModalOpen(true)} disabled={!canAddVendors} className="mt-1 whitespace-nowrap rounded-lg border px-3 text-xs font-semibold">+ Add New Vendor</button></div></label><label className="text-sm font-semibold">{revisionNo ? "Revised PO Date" : "PO Date"}<input type="date" value={poDate} onChange={(event) => setPoDate(event.target.value)} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal" /></label></div></section>
+    <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">Purchase purpose</h2><div className="mt-4 grid gap-4 md:grid-cols-3"><label className="text-sm font-semibold">PO purpose<select value={commercial.purpose || "General Purchase"} onChange={(event) => setCommercial((current) => ({ ...current, purpose: event.target.value, recovery_vendor_id: event.target.value === "Recover from contractor" ? current.recovery_vendor_id : "", recovery_work_order_id: event.target.value === "Recover from contractor" ? current.recovery_work_order_id : "" }))} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option>General Purchase</option><option>Asset Purchase</option><option>Recover from contractor</option></select></label>{commercial.purpose === "Recover from contractor" && <label className="text-sm font-semibold">Recover from contractor *<select value={commercial.recovery_vendor_id || ""} onChange={(event) => setCommercial((current) => ({ ...current, recovery_vendor_id: event.target.value, recovery_work_order_id: "" }))} disabled={lookupLoading || !companyId || !siteId} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">{lookupLoading ? "Loading eligible contractors..." : !companyId || !siteId ? "Select company and site first" : recoveryVendors.length ? "Select contractor" : "No eligible contractors for this company/site"}</option>{recoveryVendors.map((row: any) => <option key={row.id} value={row.id}>{row.vendor_name}</option>)}</select></label>}{commercial.purpose === "Recover from contractor" && <label className="text-sm font-semibold">Linked Work Order *<select value={commercial.recovery_work_order_id || ""} onChange={(event) => setCommercial((current) => ({ ...current, recovery_work_order_id: event.target.value }))} disabled={!companyId || !siteId || !commercial.recovery_vendor_id} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">{!companyId || !siteId || !commercial.recovery_vendor_id ? "Select company, site and recovery contractor first" : recoveryWorkOrders.length ? "Select Work Order" : "No eligible Work Orders for this contractor"}</option>{recoveryWorkOrders.map((row: any) => <option key={row.id} value={row.id}>{row.wo_number}</option>)}</select></label>}</div>{commercial.purpose === "Recover from contractor" && <p className="mt-2 text-xs text-slate-500">The PO Vendor remains the supplier. The recovery contractor is used for the recovery Debit Note.</p>}{commercial.purpose === "Asset Purchase" && <p className="mt-2 text-xs text-slate-500">Asset registration occurs after receipt and acceptance.</p>}</section>
     {(
       <section className="rounded-2xl border bg-white p-5 shadow-sm">
         <h2 className="font-semibold">Vendor Details</h2>
@@ -539,7 +705,7 @@ export default function NewPurchaseOrderPage() {
     <section className="rounded-2xl border bg-white shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b p-5"><div><h2 className="font-semibold">Items</h2><p className="text-xs text-slate-500">Taxable = quantity × rate. GST is calculated per line.</p></div>{source === "direct" && <button type="button" onClick={() => setItems((current) => [...current, { item_name: "", quantity: "", unit_rate: "", gst_rate: "0" }])} className="rounded-lg border px-3 py-2 text-sm font-semibold">Add Item</button>}</div>
       <div className="overflow-x-auto">
-                <table className="w-full min-w-[1800px] table-fixed text-left text-sm"><colgroup><col className="w-[280px]" /><col className="w-[240px]" /><col className="w-[180px]" /><col className="w-[120px]" /><col className="w-[120px]" /><col className="w-[130px]" /><col className="w-[110px]" /><col className="w-[130px]" /><col className="w-[130px]" /><col className="w-[140px]" /><col className="w-[100px]" /></colgroup><thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="p-3">Material / Item</th><th className="p-3">Description / Specification</th><th className="p-3">Make / Brand</th><th className="p-3">Quantity</th><th className="p-3">Unit</th><th className="p-3">Rate</th><th className="p-3">GST %</th><th className="p-3">Taxable</th><th className="p-3">GST Amount</th><th className="p-3">Total</th><th className="p-3">Action</th></tr></thead><tbody className="divide-y">{items.map((item, index) => { const taxable = Number(item.quantity || 0) * Number(item.unit_rate || 0); const gst = taxable * Number(item.gst_rate || 0) / 100; const search = item.item_name.trim().toLowerCase(); const matches = search ? (lookups.items || []).filter((material: any) => `${material.item_code || ""} ${material.item_name || ""}`.toLowerCase().includes(search)).slice(0, 8) : []; const linkedMaterial = item.isMaterialMasterLinked || Boolean(item.item_id) || Boolean(item.item_code && (lookups.items || []).some((material: any) => material.item_code === item.item_code)); const linkedUom = item.item_id ? (lookups.items || []).find((material: any) => material.id === item.item_id)?.default_uom?.uom_code : (lookups.items || []).find((material: any) => material.item_code === item.item_code)?.default_uom?.uom_code; return <tr key={`${item.source_requisition_line_key || "item"}-${index}`}><td className="relative z-10 p-3"><input ref={(element) => { materialInputRefs.current[index] = element; }} value={item.item_name} readOnly={source !== "direct"} onFocus={(event) => source === "direct" && (event.currentTarget.value.trim() ? openMaterialMenu(index, event.currentTarget) : (setMaterialOpenIndex(null), setMaterialMenuPosition(null)))} onBlur={() => window.setTimeout(() => { setMaterialOpenIndex(null); setMaterialMenuPosition(null); }, 150)} onChange={(event) => { updateItem(index, "item_name", event.target.value); setItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, item_id: undefined, item_code: undefined, isMaterialMasterLinked: false } : row)); if (event.target.value.trim()) openMaterialMenu(index, event.currentTarget); else { setMaterialOpenIndex(null); setMaterialMenuPosition(null); } }} placeholder={source === "direct" ? "Search material name or code..." : "Source-controlled material"} className="h-9 w-64 rounded border px-2 disabled:bg-slate-50" />{item.item_code && <small className="block text-xs text-slate-500">{item.item_code}</small>}{source === "direct" && materialMenuPosition?.index === index && <div data-material-menu="true" style={{ position: "fixed", left: materialMenuPosition.left, top: materialMenuPosition.top, width: materialMenuPosition.width }} className="z-[100] rounded-lg border bg-white p-1 shadow-xl"><div className="max-h-64 overflow-y-auto">{matches.map((material: any) => <button type="button" key={material.id} onMouseDown={(event) => event.preventDefault()} onClick={() => selectMaterial(index, material)} className="block w-full rounded px-3 py-2 text-left hover:bg-slate-50"><span className="block text-xs font-semibold text-slate-500">{material.item_code || "No code"}</span><span className="block text-sm font-semibold">{material.item_name}</span></button>)}{matches.length === 0 && search && <p className="px-3 py-2 text-xs text-slate-500">No matching Material Master item.</p>}</div>{search && <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => useCustomItem(index)} className="w-full border-t px-3 py-2 text-left text-sm font-semibold text-slate-700">+ Use "{item.item_name}" as Custom / New Item</button>}</div>}</td><td className="p-3"><input value={item.description || item.specification || ""} readOnly={source !== "direct"} onChange={(event) => updateItem(index, "description", event.target.value)} className="h-9 w-52 rounded border px-2" /></td><td className="p-3"><input value={item.make || ""} readOnly={false} onChange={(event) => updateItem(index, "make", event.target.value)} className="h-9 w-40 rounded border px-2" placeholder="Select or enter Make / Brand" /></td><td className="p-3"><input type="number" min="0" step="0.001" max={source === "indent" ? indentRemainingQuantity(item) : undefined} value={item.quantity} onChange={(event) => updateItem(index, "quantity", event.target.value)} className="h-9 w-28 rounded border px-2" /></td><td className="p-3">{linkedMaterial ? <span className="inline-flex h-9 min-w-24 items-center rounded border bg-slate-50 px-3" title="Derived from Material Master">{linkedUom || item.uom || "—"}</span> : source === "direct" && !item.item_id ? <input value={item.uom || ""} onChange={(event) => updateItem(index, "uom", event.target.value)} placeholder="Unit" className="h-9 w-24 rounded border px-2" /> : item.uom || "—"}</td><td className="p-3"><input type="number" min="0" step="0.01" value={item.unit_rate} readOnly={false} onChange={(event) => updateItem(index, "unit_rate", event.target.value)} className="h-9 w-28 rounded border px-2" /></td><td className="p-3"><input type="number" min="0" step="0.01" value={item.gst_rate} readOnly={false} onChange={(event) => updateItem(index, "gst_rate", event.target.value)} className="h-9 w-24 rounded border px-2" /></td><td className="p-3">{money(taxable)}</td><td className="p-3">{money(gst)}</td><td className="p-3 font-semibold">{money(taxable + gst)}</td><td className="p-3">{((source === "direct" && items.length > 1) || source === "indent") && <button type="button" onClick={() => { setItems((current) => current.filter((_, itemIndex) => itemIndex !== index)); if (materialOpenIndex === index) { setMaterialOpenIndex(null); setMaterialMenuPosition(null); } }} className="text-xs font-semibold text-red-700">Remove</button>}</td></tr>; })}</tbody></table>
+                <table className="w-full min-w-[1800px] table-fixed text-left text-sm"><colgroup><col className="w-[280px]" /><col className="w-[240px]" /><col className="w-[180px]" /><col className="w-[120px]" /><col className="w-[120px]" /><col className="w-[130px]" /><col className="w-[110px]" /><col className="w-[130px]" /><col className="w-[130px]" /><col className="w-[140px]" /><col className="w-[100px]" /></colgroup><thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="p-3">Material / Item</th><th className="p-3">Description / Specification</th><th className="p-3">Make / Brand</th><th className="p-3">Quantity</th><th className="p-3">Unit</th><th className="p-3">Rate</th><th className="p-3">GST %</th><th className="p-3">Taxable</th><th className="p-3">GST Amount</th><th className="p-3">Total</th><th className="p-3">Action</th></tr></thead><tbody className="divide-y">{items.map((item, index) => { const taxable = Number(item.quantity || 0) * Number(item.unit_rate || 0); const gst = taxable * Number(item.gst_rate || 0) / 100; const search = item.item_name.trim().toLowerCase(); const matches = search ? (lookups.items || []).filter((material: any) => `${material.item_code || ""} ${material.item_name || ""}`.toLowerCase().includes(search)).slice(0, 8) : []; const linkedMaterial = item.isMaterialMasterLinked || Boolean(item.item_id) || Boolean(item.item_code && (lookups.items || []).some((material: any) => material.item_code === item.item_code)); const linkedUom = item.item_id ? (lookups.items || []).find((material: any) => material.id === item.item_id)?.default_uom?.uom_code : (lookups.items || []).find((material: any) => material.item_code === item.item_code)?.default_uom?.uom_code; return <tr key={`${item.source_requisition_line_key || "item"}-${index}`}><td className="relative z-10 p-3"><input ref={(element) => { materialInputRefs.current[index] = element; }} value={item.item_name} readOnly={source !== "direct"} onFocus={(event) => source === "direct" && (event.currentTarget.value.trim() ? openMaterialMenu(index, event.currentTarget) : (setMaterialOpenIndex(null), setMaterialMenuPosition(null)))} onBlur={() => window.setTimeout(() => { setMaterialOpenIndex(null); setMaterialMenuPosition(null); }, 150)} onChange={(event) => { updateItem(index, "item_name", event.target.value); setItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, item_id: undefined, item_code: undefined, isMaterialMasterLinked: false } : row)); if (event.target.value.trim()) openMaterialMenu(index, event.currentTarget); else { setMaterialOpenIndex(null); setMaterialMenuPosition(null); } }} placeholder={source === "direct" ? "Search material name or code..." : "Source-controlled material"} className="h-9 w-64 rounded border px-2 disabled:bg-slate-50" />{item.item_code && <small className="block text-xs text-slate-500">{item.item_code}</small>}{source === "direct" && materialMenuPosition?.index === index && <div data-material-menu="true" style={{ position: "fixed", left: materialMenuPosition.left, top: materialMenuPosition.top, width: materialMenuPosition.width }} className="z-[100] rounded-lg border bg-white p-1 shadow-xl"><div className="max-h-64 overflow-y-auto">{matches.map((material: any) => <button type="button" key={material.id} onMouseDown={(event) => event.preventDefault()} onClick={() => selectMaterial(index, material)} className="block w-full rounded px-3 py-2 text-left hover:bg-slate-50"><span className="block text-xs font-semibold text-slate-500">{material.item_code || "No code"}</span><span className="block text-sm font-semibold">{material.item_name}</span></button>)}{matches.length === 0 && search && <p className="px-3 py-2 text-xs text-slate-500">No matching Material Master item.</p>}</div>{search && <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => useCustomItem(index)} className="w-full border-t px-3 py-2 text-left text-sm font-semibold text-slate-700">+ Use "{item.item_name}" as Custom / New Item</button>}</div>}</td><td className="p-3"><input value={item.description ?? item.specification ?? ""} readOnly={source !== "direct"} onChange={(event) => updateItem(index, "description", event.target.value)} className="h-9 w-52 rounded border px-2" /></td><td className="p-3"><input value={item.make || ""} readOnly={false} onChange={(event) => updateItem(index, "make", event.target.value)} className="h-9 w-40 rounded border px-2" placeholder="Select or enter Make / Brand" /></td><td className="p-3"><input type="number" min="0" step="0.001" max={source === "indent" ? indentRemainingQuantity(item) : undefined} value={item.quantity} onChange={(event) => updateItem(index, "quantity", event.target.value)} className="h-9 w-28 rounded border px-2" /></td><td className="p-3">{linkedMaterial ? <span className="inline-flex h-9 min-w-24 items-center rounded border bg-slate-50 px-3" title="Derived from Material Master">{linkedUom || item.uom || "—"}</span> : source === "direct" && !item.item_id ? <input value={item.uom || ""} onChange={(event) => updateItem(index, "uom", event.target.value)} placeholder="Unit" className="h-9 w-24 rounded border px-2" /> : item.uom || "—"}</td><td className="p-3"><input type="number" min="0" step="0.01" value={item.unit_rate} readOnly={false} onChange={(event) => updateItem(index, "unit_rate", event.target.value)} className="h-9 w-28 rounded border px-2" /></td><td className="p-3"><input type="number" min="0" step="0.01" value={item.gst_rate} readOnly={false} onChange={(event) => updateItem(index, "gst_rate", event.target.value)} className="h-9 w-24 rounded border px-2" /></td><td className="p-3">{money(taxable)}</td><td className="p-3">{money(gst)}</td><td className="p-3 font-semibold">{money(taxable + gst)}</td><td className="p-3">{((source === "direct" && items.length > 1) || source === "indent") && <button type="button" onClick={() => { setItems((current) => current.filter((_, itemIndex) => itemIndex !== index)); if (materialOpenIndex === index) { setMaterialOpenIndex(null); setMaterialMenuPosition(null); } }} className="text-xs font-semibold text-red-700">Remove</button>}</td></tr>; })}</tbody></table>
       </div>
     </section>
     <section className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -589,7 +755,7 @@ export default function NewPurchaseOrderPage() {
           {keyTerms.map((term, index) => <div className="mt-3 grid gap-2 md:grid-cols-[1fr_2fr_auto]" key={index}>{index < 4 ? <span className="flex min-h-10 items-center rounded-lg border bg-slate-50 px-3 text-sm font-semibold">{term.description}</span> : <input value={term.description} onChange={(event) => setKeyTerms((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, description: event.target.value } : row))} className="h-10 rounded-lg border px-3" placeholder="Description" />}<textarea value={term.terms} onChange={(event) => setKeyTerms((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, terms: event.target.value } : row))} className="min-h-10 rounded-lg border px-3 py-2" placeholder="Terms" />{index >= 4 && <button type="button" onClick={() => setKeyTerms((current) => current.filter((_, rowIndex) => rowIndex !== index))} className="text-xs font-semibold text-red-700">Remove</button>}</div>)}
         </section>
         <section className="rounded-2xl border bg-white p-5 shadow-sm">
-          <h2 className="font-semibold">Standard Terms and Conditions</h2><label className="mt-3 block text-sm font-semibold">Standard Terms Set *<select value={termsTemplateId} onChange={(event) => { setTermsTemplateId(event.target.value); setStandardTerms(""); }} disabled={!companyId || companyTerms.length === 0} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">{companyId ? "Select company terms set" : "Select a company first"}</option>{companyTerms.map((row: any) => <option key={row.id} value={row.id}>{row.template_name}{row.is_default ? " — Default" : ""}</option>)}</select></label><p className="mt-2 text-xs text-slate-500">{selectedTerms ? `${selectedTerms.template_name} is the selected company template. Approved sections are snapshotted with the Purchase Order.` : companyId ? "No company-specific standard terms configured for this company." : "Select a company to view standard terms."}</p>{selectedTerms ? <details className="mt-3 rounded-lg border p-3"><summary className="cursor-pointer text-sm font-semibold">View Terms</summary><div className="mt-3 space-y-3 text-sm">{(selectedTerms.sections || []).filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order).map((section: any) => <div key={section.id}><b>{section.heading}</b><p className="mt-1 whitespace-pre-wrap text-slate-600">{section.clause_body}</p></div>)}</div></details> : <p className="mt-3 text-xs text-slate-500">Approved wording must be configured by an administrator; no legal wording is invented here.</p>}<textarea value={standardTerms} onChange={(event) => setStandardTerms(event.target.value)} className="mt-3 min-h-24 w-full rounded-lg border p-3" placeholder="Additional authorized terms, if required." /></section>
+          <h2 className="font-semibold">Standard Terms and Conditions</h2><label className="mt-3 block text-sm font-semibold">Standard Terms Set *<select value={termsTemplateId} onChange={(event) => { setSavedTermsSnapshot(null); initialStructuredTermsRef.current = ""; initialTermsTextRef.current = ""; setTermsTemplateId(event.target.value); setStandardTerms(""); }} disabled={!companyId || companyTerms.length === 0} className="mt-1 h-10 w-full rounded-lg border px-3 font-normal"><option value="">{companyId ? "Select company terms set" : "Select a company first"}</option>{companyTerms.map((row: any) => <option key={row.id} value={row.id}>{row.template_name}{row.is_default ? " — Default" : ""}</option>)}</select></label><p className="mt-2 text-xs text-slate-500">{displayTermsTemplateName ? `${displayTermsTemplateName} is the saved company template. Approved sections are snapshotted with the Purchase Order.` : companyId ? "No company-specific standard terms configured for this company." : "Select a company to view standard terms."}</p>{displayTermsTemplateName ? <details className="mt-3 rounded-lg border p-3"><summary className="cursor-pointer font-semibold">View Terms</summary><div className="mt-3 space-y-3 text-sm">{displayTermsClauses.map((section: any, index: number) => <div key={section.id || `${section.heading}-${index}`}><p className="font-semibold">{section.heading}</p><p className="whitespace-pre-wrap text-slate-600">{section.clause_body}</p></div>)}</div></details> : null}<label className="mt-3 block text-sm font-semibold">Additional authorized terms<textarea value={standardTerms} onChange={(event) => setStandardTerms(event.target.value)} placeholder="Additional authorized terms, if required." className="mt-3 min-h-32 w-full rounded-lg border p-3" /></label></section>
       </div>
       <aside className="h-fit rounded-2xl border bg-slate-950 p-5 text-white shadow-sm"><h2 className="font-semibold">Order Summary</h2>
         <div className="mt-5 space-y-3 text-sm"><div className="flex justify-between"><span className="text-slate-300">Items Basic / Taxable</span><b>{money(totals.taxable)}</b></div><div className="flex justify-between"><span className="text-slate-300">GST</span><b>{money(totals.gst)}</b></div>{explicitCharges.map((charge, index) => <div className="flex justify-between" key={`${charge.name}-${index}`}><span className="text-slate-300">{charge.name}</span><b>{money(Number(charge.amount))}</b></div>)}<div className="flex justify-between border-t border-slate-700 pt-3 text-base"><span>Total Amount</span><b>{money(totals.total)}</b></div></div>
