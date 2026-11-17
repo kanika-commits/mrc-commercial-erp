@@ -531,8 +531,9 @@ export default function LabourDailyAttendancePage() {
     setSubmitSuccessMessage("");
     setMessage("");
     const backdated = filters.attendance_date < daysBefore(today(), 2);
-    const backdated_reason = backdated && !historicalAccess ? prompt("Reason for backdated attendance change") : "";
-    if (backdated && !historicalAccess && !backdated_reason) {
+    const explicitlyAuthorizedDate = Boolean(historicalAccess) || reopenedDate;
+    const backdated_reason = backdated && !explicitlyAuthorizedDate ? prompt("Reason for backdated attendance change") : "";
+    if (backdated && !explicitlyAuthorizedDate && !backdated_reason) {
       setMessage("A reason is required for backdated attendance changes.");
       return false;
     }
