@@ -909,7 +909,7 @@ export default function LabourDailyAttendancePage() {
             <p className="text-base font-bold">Attendance Sent Back</p>
             <div className="mt-2 grid gap-1 md:grid-cols-2">
               <p><span className="font-semibold">Reason:</span> {dateSummary.reason || "No reason recorded."}</p>
-              <p><span className="font-semibold">Sent Back By:</span> {dateSummary.reopened_by_name || dateSummary.reopened_by_email || "-"}</p>
+              <p><span className="font-semibold">Sent Back By:</span> {dateSummary.reopened_by_name || dateSummary.reopened_by_email || period?.reopened_by_name || period?.reopened_by_email || "Unavailable"}</p>
               <p><span className="font-semibold">Sent Back At:</span> {dateSummary.reopened_at ? new Date(dateSummary.reopened_at).toLocaleString("en-IN") : "-"}</p>
               <p><span className="font-semibold">Previously Submitted:</span> {dateSummary.submitted_at ? new Date(dateSummary.submitted_at).toLocaleString("en-IN") : "-"}</p>
             </div>

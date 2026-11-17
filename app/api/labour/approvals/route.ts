@@ -1979,7 +1979,13 @@ async function transitionStandardPeriod(access: any, request: Request, payload: 
     for (const period of periods) {
       const patch = {
       status: "reopened",
-      summary: standardSummaryWithDateStatus(period, workDate, "reopened", { reopened_at: now, reopened_by: access.auth.user.id, reason }),
+      summary: standardSummaryWithDateStatus(period, workDate, "reopened", {
+        reopened_at: now,
+        reopened_by: access.auth.user.id,
+        reopened_by_name: actorName(access),
+        reopened_by_email: access.auth.user.email || null,
+        reason,
+      }),
       transition_reason: reason,
       updated_at: now,
       reopened_at: now,
