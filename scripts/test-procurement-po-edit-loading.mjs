@@ -5,17 +5,14 @@ const page = fs.readFileSync("app/purchase/purchase-orders/new/page.tsx", "utf8"
 
 assert.match(page, /const \[lookupLoading, setLookupLoading\]/);
 assert.match(page, /const \[draftLoading, setDraftLoading\] = useState\(Boolean\(editId\)\)/);
-assert.match(page, /if \(draftLoading\) return <p[^>]*>Loading Draft Purchase Order/);
-assert.match(page, /function retainSelectedLookupOption/);
-assert.match(page, /setLookups\(\(current(?:: any)?\) => mergeDraftLookupOptions\(current, po\)\)/);
-assert.match(page, /draftLookupSelectionRef/);
-assert.match(page, /if \(lookupLoading\) return;/);
-assert.match(page, /setGstRegistrationId\(\(current\) => current \|\|/);
-assert.match(page, /setDeliveryContactId\(\(current\) => current \|\|/);
-assert.match(page, /setBillingContactId\(\(current\) => current \|\|/);
-assert.match(page, /setDeliveryLocationId\(\(current\) => current \|\|/);
-assert.match(page, /setTermsTemplateId\(\(current\) => current \|\|/);
-assert.match(page, /if \(draftLoading\) return/);
+assert.match(page, /if \(loading \|\| lookupLoading \|\| draftLoading\) return <p[^>]*>\{draftLoading \? "Loading Draft Purchase Order/);
+assert.match(page, /draftLoadRequestRef/);
+assert.match(page, /requestId !== draftLoadRequestRef\.current/);
+assert.match(page, /setGstRegistrationId\(\(current\) => gstBillingMasters\.some/);
+assert.match(page, /setDeliveryContactId\(\(current\) => siteContacts\.some/);
+assert.match(page, /setBillingContactId\(\(current\) => siteContacts\.some/);
+assert.match(page, /setDeliveryLocationId\(\(current\) => deliveryLocations\.some/);
+assert.match(page, /setTermsTemplateId\(\(current\) => companyTerms\.some/);
 
 const saved = {
   companyId: "company-saved",

@@ -92,6 +92,8 @@ export default function NewPurchaseOrderPage() {
   const [message, setMessage] = useState("");
   const errorRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
+  const [lookupLoading, setLookupLoading] = useState(true);
+  const [draftLoading, setDraftLoading] = useState(Boolean(editId));
   const [saving, setSaving] = useState(false);
   const [customDelivery, setCustomDelivery] = useState(false);
   const [materialOpenIndex, setMaterialOpenIndex] = useState<number | null>(null);
@@ -112,6 +114,7 @@ export default function NewPurchaseOrderPage() {
   const [creationRequestId] = useState(() => crypto.randomUUID());
   const previousCompanyIdRef = useRef(companyId);
   const originalPersistedItemIdsRef = useRef<string[]>([]);
+  const draftLoadRequestRef = useRef(0);
 
   const canAddVendors = can(access?.permissions || [], "vendors", "add");
   const canEditVendors = can(access?.permissions || [], "vendors", "edit");
@@ -124,18 +127,32 @@ export default function NewPurchaseOrderPage() {
   };
 
   useEffect(() => {
+    let active = true;
+    setLookupLoading(true);
     apiFetch("/api/procurement/purchase-orders/lookups")
-      .then(setLookups)
+      .then((value) => { if (active) setLookups(value); })
       .catch((error) => setMessage(error.message || "Failed to load Purchase Order options."))
-      .finally(() => setLoading(false));
+      .finally(() => { if (active) { setLookupLoading(false); setLoading(false); } });
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
-    if (!editId) return;
+    const requestId = ++draftLoadRequestRef.current;
+    let active = true;
+    setDraftLoading(Boolean(editId));
+    if (!editId) return () => { active = false; };
     termsTemplateChangedRef.current = false;
     hydratedTermsTemplateIdRef.current = "";
     setSavedTermsSnapshot(null);
+    setSource("direct"); setCompanyId(""); setSiteId(""); setVendorId(""); setPoDate(today());
+    setDelivery({ location: "", address: "", expected_date: "" });
+    setCommercial({ payment_terms: "", delivery_terms: "", purpose: "General Purchase", recovery_work_order_id: null, recovery_vendor_id: null });
+    setStandardTerms(""); setTermsTemplateId(""); setItems([{ item_name: "", quantity: "", unit_rate: "", gst_rate: "0" }]);
+    setAdditionalCharges([]); setKeyTerms(FIXED_KEY_TERM_HEADINGS.map((description) => ({ description, terms: "" })));
+    setBillingContactId(""); setDeliveryContactId(""); setDeliveryLocationId(""); setGstRegistrationId("");
+    setIndentLineKey(""); setSelectedIndentId(""); setExistingDocuments([]); setEditablePoStatus(null); setRevisionNo(null); setPreviousRevisionNumber("");
     Promise.all([apiFetch(`/api/procurement/purchase-orders/${editId}`), apiFetch(`/api/procurement/purchase-orders/${editId}/documents`)]).then(([result, documentResult]) => {
+      if (!active || requestId !== draftLoadRequestRef.current) return;
       const po = result.purchase_order;
       if (po.status !== "draft" && po.status !== "sent_back") throw new Error("Only editable Draft Purchase Orders can be opened here.");
       setEditablePoStatus(po.status);
@@ -168,8 +185,9 @@ export default function NewPurchaseOrderPage() {
       setItems((po.items || []).map((item: any) => ({ po_item_id: item.id, item_id: item.item_id, item_name: item.item_name_snapshot || "", item_code: item.item_code_snapshot, description: item.description_snapshot || item.specification_snapshot || "", specification: item.specification_snapshot, make: item.make_snapshot || "", quantity: String(item.quantity ?? ""), uom: item.uom_snapshot || "", unit_rate: String(item.unit_rate ?? ""), gst_rate: String(item.gst_rate ?? "0"), source_requisition_line_key: item.source_requisition_line_key, isMaterialMasterLinked: false })));
       originalPersistedItemIdsRef.current = (po.items || []).map((item: any) => String(item.id || item.po_item_id || "").trim().toLowerCase());
       setExistingDocuments(documentResult.documents || []);
-      setLoading(false);
-    }).catch((error) => { setMessage(error.message || "Failed to load the Draft Purchase Order."); setLoading(false); });
+      setDraftLoading(false);
+    }).catch((error) => { if (active && requestId === draftLoadRequestRef.current) { setMessage(error.message || "Failed to load the Draft Purchase Order."); setDraftLoading(false); } });
+    return () => { active = false; };
   }, [editId]);
 
   useEffect(() => {
@@ -482,7 +500,7 @@ export default function NewPurchaseOrderPage() {
     finally { setSaving(false); }
   }
 
-  if (loading) return <p className="text-sm text-slate-500">Loading Purchase Order options...</p>;
+  if (loading || lookupLoading || draftLoading) return <p className="text-sm text-slate-500">{draftLoading ? "Loading Draft Purchase Order..." : "Loading Purchase Order options..."}</p>;
   return <section className="mx-auto max-w-[1500px] space-y-5 pb-12">
     <header className="flex flex-wrap items-start justify-between gap-4"><div><Link href={editId ? `/purchase/purchase-orders/${editId}` : "/purchase/purchase-orders"} className="text-sm text-slate-500">← {editId ? "Purchase Order" : "Purchase Orders"}</Link><p className="mt-3 text-xs font-semibold uppercase tracking-widest text-amber-700">Purchase</p><h1 className="text-3xl font-bold text-slate-950">{revisionNo ? `Revision R-${revisionNo}` : editId ? "Edit Draft Purchase Order" : "Create Purchase Order"}</h1><p className="text-sm text-slate-500">{revisionNo ? `Previous Revision: ${previousRevisionNumber}` : editId ? "Update the existing Draft Purchase Order." : "Create a simple draft from a direct purchase or approved Material Indent."}</p></div></header>
     {message && <div ref={errorRef} className="scroll-mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert"><div className="flex items-start justify-between gap-3"><div>{message}{createdPoId && <p className="mt-2"><Link className="font-semibold underline" href={`/purchase/purchase-orders/${createdPoId}`}>Open the draft to retry attachments.</Link></p>}</div><button type="button" aria-label="Dismiss error" onClick={() => setMessage("")} className="shrink-0 text-lg font-semibold leading-none text-red-700" title="Dismiss error">×</button></div></div>}
