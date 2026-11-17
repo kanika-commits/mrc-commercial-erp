@@ -500,24 +500,24 @@ export default function LabourWorkersPage() {
         {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{error}</div>}
         {success && <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm font-semibold text-green-700">{success}</div>}
         <div className="rounded-lg border bg-white p-4 shadow-sm">
-          <div className="mb-4 grid gap-3 md:grid-cols-[1.4fr_1fr_1fr_1fr_0.8fr]">
-            <label className="flex h-11 items-center gap-2 rounded-lg border px-3 text-sm">
+          <div className="mb-4 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))]">
+            <label className="flex min-w-0 h-11 items-center gap-2 rounded-lg border px-3 text-sm sm:col-span-2 xl:col-span-1">
               <Search className="h-4 w-4 text-slate-400" />
-              <input value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} onKeyDown={(event) => event.key === "Enter" && (setPage(1), loadWorkers(filters, 1))} placeholder="Search code, name, father/husband, mobile or Aadhaar" className="flex-1 outline-none" />
+              <input value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} onKeyDown={(event) => event.key === "Enter" && (setPage(1), loadWorkers(filters, 1))} placeholder="Search code, name, father/husband, mobile or Aadhaar" className="min-w-0 flex-1 outline-none" />
             </label>
-            <select value={filters.contractor_profile_id} onChange={(event) => applyFilter({ contractor_profile_id: event.target.value })} className="h-11 rounded-lg border px-3 text-sm">
+            <select value={filters.contractor_profile_id} onChange={(event) => applyFilter({ contractor_profile_id: event.target.value })} className="min-w-0 w-full h-11 rounded-lg border px-3 text-sm">
               <option value="">All Contractors</option>
               {lookups.contractors.map((contractor: any) => <option key={contractor.id} value={contractor.id}>{contractor.vendors?.vendor_name || contractor.contractor_code}</option>)}
             </select>
-            <select value={filters.labour_trade_id} onChange={(event) => applyFilter({ labour_trade_id: event.target.value })} className="h-11 rounded-lg border px-3 text-sm">
+            <select value={filters.labour_trade_id} onChange={(event) => applyFilter({ labour_trade_id: event.target.value })} className="min-w-0 w-full h-11 rounded-lg border px-3 text-sm">
               <option value="">All Categories</option>
               {lookups.trades.map((trade: any) => <option key={trade.id} value={trade.id}>{trade.trade_name}</option>)}
             </select>
-            <select value={filters.site_id} onChange={(event) => applyFilter({ site_id: event.target.value })} className="h-11 rounded-lg border px-3 text-sm">
+            <select value={filters.site_id} onChange={(event) => applyFilter({ site_id: event.target.value })} className="min-w-0 w-full h-11 rounded-lg border px-3 text-sm">
               <option value="">All Sites</option>
               {lookups.sites.map((site: any) => <option key={site.id} value={site.id}>{site.site_name}</option>)}
             </select>
-            <select value={filters.status} onChange={(event) => applyFilter({ status: event.target.value })} className="h-11 rounded-lg border px-3 text-sm">
+            <select value={filters.status} onChange={(event) => applyFilter({ status: event.target.value })} className="min-w-0 w-full h-11 rounded-lg border px-3 text-sm">
               <option value="">All Status</option>
               {LABOUR_STATUSES.filter((status) => status !== "deleted").map((status) => <option key={status} value={status}>{labelFromCode(status)}</option>)}
             </select>
@@ -544,8 +544,8 @@ export default function LabourWorkersPage() {
               <button type="button" onClick={() => changePage(page + 1)} disabled={loading || page >= pagination.totalPages} className="rounded-lg border bg-white px-3 py-2 font-semibold disabled:cursor-not-allowed disabled:opacity-50">Next</button>
             </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
+          <div className="w-full overflow-x-auto overscroll-x-contain">
+            <table className="min-w-[1180px] text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                 <tr>
                   <th className="w-16 px-3 py-3">S. No.</th>
@@ -591,7 +591,7 @@ export default function LabourWorkersPage() {
                     <td className="px-3 py-3">{worker.current_company_name || "Not Deployed"}</td>
                     <td className="px-3 py-3">{worker.current_site_name || "Not Deployed"}</td>
                     <td className="px-3 py-3">{worker.mobile_number || "-"}</td>
-                    <td className="px-3 py-3">
+                    <td className="whitespace-nowrap px-3 py-3">
                       {canEdit ? (
                         <select value={worker.status} onChange={(event) => changeWorkerStatus(worker, event.target.value)} className="h-9 rounded-lg border bg-white px-2 text-xs font-semibold">
                           {LABOUR_STATUSES.filter((status) => status === "active" || status === "inactive").map((status) => <option key={status} value={status}>{labelFromCode(status)}</option>)}
@@ -600,8 +600,8 @@ export default function LabourWorkersPage() {
                         <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold">{labelFromCode(worker.status)}</span>
                       )}
                     </td>
-                    <td className="px-3 py-3">
-                      <div className="flex flex-wrap gap-2">
+                    <td className="whitespace-nowrap px-3 py-3">
+                      <div className="flex flex-nowrap gap-2">
                         <Link href={`/labour/workers/${worker.id}`} className="inline-flex items-center gap-1 rounded-md border px-3 py-1.5" onClick={() => recordClientAuditEvent({ eventType: "view_record", entityType: "labour_worker", recordId: worker.id, source: "labour_workers_register" })}><Eye className="h-4 w-4" /> View</Link>
                         {canDelete && <button type="button" onClick={() => deleteWorker(worker)} className="inline-flex items-center gap-1 rounded-md border border-red-200 px-3 py-1.5 text-red-600"><Trash2 className="h-4 w-4" /> Delete</button>}
                       </div>
