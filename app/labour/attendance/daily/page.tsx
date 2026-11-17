@@ -149,7 +149,8 @@ export default function LabourDailyAttendancePage() {
   const dateSummary = period?.summary?.date_statuses?.[filters.attendance_date] || {};
   const reopenedDate = dateSummary.status === "reopened";
   const selectedDateStatus = period?.server_date_status || dateSummary.status || "draft";
-  const historicalDateOpen = Boolean(historicalAccess) || reopenedDate;
+  const serverReopenedDate = selectedDateStatus === "reopened";
+  const historicalDateOpen = Boolean(historicalAccess) || serverReopenedDate
   const supportingPdfNeedsReason = filters.attendance_date < daysBefore(todayDate, 2) && !historicalDateOpen;
   const submittedSnapshot = ["submitted", "finalized", "approved"].includes(selectedDateStatus);
   const readOnly = submittedSnapshot || Boolean(
@@ -534,9 +535,9 @@ export default function LabourDailyAttendancePage() {
     setSubmitSuccessMessage("");
     setMessage("");
     const backdated = filters.attendance_date < daysBefore(today(), 2);
-    const explicitlyAuthorizedDate = Boolean(historicalAccess) || reopenedDate;
-    const backdated_reason = backdated && !explicitlyAuthorizedDate ? prompt("Reason for backdated attendance change") : "";
-    if (backdated && !explicitlyAuthorizedDate && !backdated_reason) {
+    const reopenedByServer = selectedDateStatus === "reopened";
+    const backdated_reason = backdated && !historicalAccess && !reopenedByServer ? prompt("Reason for backdated attendance change") : "";
+    if (backdated && !historicalAccess && !reopenedByServer && !backdated_reason) {
       setMessage("A reason is required for backdated attendance changes.");
       return false;
     }

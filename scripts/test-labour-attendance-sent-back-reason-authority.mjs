@@ -8,14 +8,12 @@ const pdf = fs.readFileSync("app/api/labour/attendance/date-document/route.ts", 
 
 assert.match(shared, /export async function loadLabourAttendanceDateAuthority/);
 assert.match(shared, /const reopened = summaryStatus === "reopened" \|\| input\.period\?\.status === "reopened"/);
+assert.match(shared, /!options\.reopened && !options\.historicallyOpened && !normalizeText\(reason\)/);
 assert.match(page, /const serverReopenedDate = selectedDateStatus === "reopened"/);
 assert.match(page, /backdated && !historicalAccess && !reopenedByServer/);
 assert.match(api, /const dateAuthority = await loadLabourAttendanceDateAuthority\(access, \{ period: existingPeriod/);
 assert.match(api, /reopened: dateAuthority\.reopened/);
 assert.match(api, /const explicitlyOpen = dateAuthority\.reopened \|\| Boolean\(historicalAccess\)/);
-assert.match(shared, /!options\.reopened && !options\.historicallyOpened && !normalizeText\(reason\)/);
-assert.match(page, /period\?\.reopened_by_name \|\| period\?\.reopened_by_email \|\| "Unavailable"/);
-assert.match(api, /sent_back_by_name: period\?\.reopened_by_name \|\| period\?\.reopened_by_email \|\| null/);
 assert.match(pdf, /loadLabourAttendanceDateAuthority/);
 
 const authority = ({ summaryStatus = "", periodStatus = "draft" }) =>

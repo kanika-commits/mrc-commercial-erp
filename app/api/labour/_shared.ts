@@ -957,7 +957,7 @@ export function actorCanEditAttendanceDate(
     return { error: "Labour attendance can be edited only for today, yesterday or the day before yesterday." };
   }
   if (!olderThanNormalWindow) return { ok: true };
-  if (!options.historicallyOpened && !normalizeText(reason)) return { error: "Backdated attendance reason is required." };
+  if (!options.reopened && !options.historicallyOpened && !normalizeText(reason)) return { error: "Backdated attendance reason is required." };
   return { ok: true };
 }
 

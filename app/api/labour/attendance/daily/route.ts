@@ -727,9 +727,9 @@ export async function POST(request: Request) {
     const contractorProfileIds = contractorCheck.profileIds;
 
     const existingPeriod = await loadExistingAttendancePeriod(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate });
-    const reopenedDate = existingPeriod?.summary?.date_statuses?.[attendanceDate]?.status === "reopened" || existingPeriod?.status === "reopened";
-    const historicalAccess = await getActiveHistoricalAttendanceAccess(access, { organizationId, companyId, siteId, attendanceDate, attendanceType: "labour" });
-    const dateAccess = actorCanEditAttendanceDate(access, attendanceDate, backdatedReason, { reopened: reopenedDate, historicallyOpened: Boolean(historicalAccess) && !reopenedDate });
+    const dateAuthority = await loadLabourAttendanceDateAuthority(access, { period: existingPeriod, organizationId, companyId, siteId, attendanceDate });
+    const historicalAccess = dateAuthority.historicalAccess;
+    const dateAccess = actorCanEditAttendanceDate(access, attendanceDate, backdatedReason, { reopened: dateAuthority.reopened, historicallyOpened: Boolean(historicalAccess) && !dateAuthority.reopened });
     if ("error" in dateAccess) return jsonError(dateAccess.error || "You cannot edit attendance for this date.", 403);
     const originResult = await resolveAttendanceSystemForPeriod(access, { period: existingPeriod, organizationId, companyId, siteId, contractorProfileId, attendanceDate });
     if ("error" in originResult) return jsonError(originResult.error, originResult.status);
@@ -738,7 +738,6 @@ export async function POST(request: Request) {
       return jsonError("This attendance period belongs to Site-In & Engineer Daily Labour. Use Engineer Daily Labour for this existing record.", 403);
     }
     const period = originResult.period || await findOrCreateAttendancePeriod(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate, originatingAttendanceSystem: "standard" });
-    const dateAuthority = await loadLabourAttendanceDateAuthority(access, { period, organizationId, companyId, siteId, attendanceDate });
     if (dateAuthority.submittedSnapshotLocked) return jsonError("Attendance for this date has already been submitted. Reopen the date before making changes.", 403);
     const explicitlyOpen = dateAuthority.reopened || Boolean(historicalAccess);
     const lockBlocker = explicitlyOpen
