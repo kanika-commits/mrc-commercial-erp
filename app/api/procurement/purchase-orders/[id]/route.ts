@@ -218,6 +218,8 @@ export async function PUT(
           master_selection: body.master_selection || {},
           commercial: persistedCommercial,
           standard_terms: text(body.standard_terms),
+          standard_terms_template_id: text(body.standard_terms_template_id),
+          standard_terms_sections: Array.isArray(body.standard_terms_sections) ? body.standard_terms_sections : [],
           items,
           ...(expectedOriginalItemIds
             ? { expected_original_item_ids: expectedOriginalItemIds }

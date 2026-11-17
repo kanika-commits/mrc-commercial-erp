@@ -32,6 +32,15 @@ function normalizeKeyTerm(term: any) {
   return { description: String(term?.description ?? term?.label ?? ""), terms: String(term?.terms ?? term?.value ?? "") };
 }
 
+function buildEditedStructuredTermsSnapshot(template: any, text: string): string | null {
+  if (!template?.id || !text.trim()) return null;
+  const sections = (template.sections || []).filter((section: any) => section.status === undefined || section.status === "active").sort((a: any, b: any) => Number(a.sort_order || 0) - Number(b.sort_order || 0));
+  const source = text.trim();
+  const matches = sections.map((section: any) => ({ section, heading: String(section.heading || "").trim(), index: source.toLocaleLowerCase().indexOf(String(section.heading || "").trim().toLocaleLowerCase()) }));
+  if (!sections.length || matches.some((match: any) => !match.heading || match.index < 0) || matches.some((match: any, index: number) => index > 0 && match.index <= matches[index - 1].index)) return null;
+  return JSON.stringify({ template_id: template.id, template_name: template.template_name, clauses: matches.map((match: any, index: number) => ({ ...(match.section.id ? { id: match.section.id } : {}), heading: match.heading, clause_body: source.slice(match.index + match.heading.length, index + 1 < matches.length ? matches[index + 1].index : source.length).trim(), sort_order: Number.isFinite(Number(match.section.sort_order)) ? Number(match.section.sort_order) : index })) });
+}
+
 function normalizeSavedKeyTerms(savedTerms: any[]) {
   const saved = Array.isArray(savedTerms) ? savedTerms.map(normalizeKeyTerm) : [];
   const used = new Set<number>();
@@ -69,6 +78,11 @@ export default function NewPurchaseOrderPage() {
   const [commercial, setCommercial] = useState<{ payment_terms: string; delivery_terms: string; purpose?: string; recovery_work_order_id?: string | null; recovery_vendor_id?: string | null }>({ payment_terms: "", delivery_terms: "", purpose: "General Purchase", recovery_work_order_id: null, recovery_vendor_id: null });
   const [standardTerms, setStandardTerms] = useState("");
   const [termsTemplateId, setTermsTemplateId] = useState("");
+  const [savedTermsSnapshot, setSavedTermsSnapshot] = useState<any>(null);
+  const initialStructuredTermsRef = useRef("");
+  const initialTermsTextRef = useRef("");
+  const termsTemplateChangedRef = useRef(false);
+  const hydratedTermsTemplateIdRef = useRef("");
   const [billingContactId, setBillingContactId] = useState("");
   const [deliveryContactId, setDeliveryContactId] = useState("");
   const [deliveryLocationId, setDeliveryLocationId] = useState("");
@@ -118,6 +132,9 @@ export default function NewPurchaseOrderPage() {
 
   useEffect(() => {
     if (!editId) return;
+    termsTemplateChangedRef.current = false;
+    hydratedTermsTemplateIdRef.current = "";
+    setSavedTermsSnapshot(null);
     Promise.all([apiFetch(`/api/procurement/purchase-orders/${editId}`), apiFetch(`/api/procurement/purchase-orders/${editId}/documents`)]).then(([result, documentResult]) => {
       const po = result.purchase_order;
       if (po.status !== "draft" && po.status !== "sent_back") throw new Error("Only editable Draft Purchase Orders can be opened here.");
@@ -136,7 +153,18 @@ export default function NewPurchaseOrderPage() {
       setAdditionalCharges(Array.isArray(po.commercial_snapshot?.additional_charges) ? po.commercial_snapshot.additional_charges.map((charge: any) => ({ name: String(charge.name || ""), amount: String(charge.amount ?? "") })) : []);
       setKeyTerms(normalizeSavedKeyTerms(po.commercial_snapshot?.key_terms || []));
       const parsedTerms = parsePurchaseOrderStandardTerms(po.standard_terms_snapshot);
-      setStandardTerms(parsedTerms?.kind === "structured" ? parsedTerms.clauses.map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n") : parsedTerms?.text || "");
+      if (parsedTerms?.kind === "structured") {
+        initialStructuredTermsRef.current = String(po.standard_terms_snapshot || "");
+        initialTermsTextRef.current = parsedTerms.clauses.map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n");
+        try { setSavedTermsSnapshot(JSON.parse(initialStructuredTermsRef.current)); } catch { setSavedTermsSnapshot(null); }
+        const savedTemplateId = (() => { try { return JSON.parse(initialStructuredTermsRef.current)?.template_id; } catch { return null; } })();
+        if (savedTemplateId) { hydratedTermsTemplateIdRef.current = String(savedTemplateId); setTermsTemplateId(String(savedTemplateId)); }
+        setStandardTerms(initialTermsTextRef.current);
+      } else {
+        initialStructuredTermsRef.current = "";
+        initialTermsTextRef.current = parsedTerms?.text || "";
+        setStandardTerms(initialTermsTextRef.current);
+      }
       setItems((po.items || []).map((item: any) => ({ po_item_id: item.id, item_id: item.item_id, item_name: item.item_name_snapshot || "", item_code: item.item_code_snapshot, description: item.description_snapshot || item.specification_snapshot || "", specification: item.specification_snapshot, make: item.make_snapshot || "", quantity: String(item.quantity ?? ""), uom: item.uom_snapshot || "", unit_rate: String(item.unit_rate ?? ""), gst_rate: String(item.gst_rate ?? "0"), source_requisition_line_key: item.source_requisition_line_key, isMaterialMasterLinked: false })));
       originalPersistedItemIdsRef.current = (po.items || []).map((item: any) => String(item.id || item.po_item_id || "").trim().toLowerCase());
       setExistingDocuments(documentResult.documents || []);
@@ -247,6 +275,10 @@ export default function NewPurchaseOrderPage() {
   }, [vendorId]);
   const companyTerms = useMemo(() => (lookups.terms_templates || []).filter((row: any) => row.company_id === companyId && row.status === "active"), [lookups.terms_templates, companyId]);
   const selectedTerms = companyTerms.find((row: any) => row.id === termsTemplateId) || null;
+  useEffect(() => {
+    if (!editId || !termsTemplateId || !hydratedTermsTemplateIdRef.current) return;
+    if (termsTemplateId !== hydratedTermsTemplateIdRef.current) termsTemplateChangedRef.current = true;
+  }, [editId, termsTemplateId]);
   useEffect(() => {
     if (previousCompanyIdRef.current !== companyId) {
       setTermsTemplateId("");
@@ -425,7 +457,12 @@ export default function NewPurchaseOrderPage() {
     try {
       const deliveryPayload = { expected_date: delivery.expected_date, location: selectedDeliveryLocation.location_name, address: deliveryAddressFor(selectedDeliveryLocation), delivery_location_id: selectedDeliveryLocation.id, site_contact_id: selectedDeliveryContact.id };
       const identity = revisionNo && revisionIdentityRef.current ? revisionIdentityRef.current : null;
-      const body = { source_type: identity?.source || source, company_id: identity?.companyId || companyId, site_id: identity?.siteId || siteId, vendor_id: identity?.vendorId || vendorId, po_date: poDate, source_requisition_id: identity?.requisitionId || selectedIndent?.requisition_id || params.get("requisition_id") || null, expected_original_item_ids: editId ? [...originalPersistedItemIdsRef.current] : undefined, items: items.map((item) => ({ ...item, po_item_id: item.po_item_id || undefined, item_id: item.item_id || undefined, unit_rate: Number(item.unit_rate), quantity: Number(item.quantity), gst_rate: Number(item.gst_rate), make_snapshot: item.make })), master_selection: { gst_registration_id: selectedGstBilling.id, billing_contact_id: selectedBillingContact.id, delivery_location_id: selectedDeliveryLocation.id, delivery_contact_id: selectedDeliveryContact.id }, delivery: deliveryPayload, commercial: { ...commercial, additional_charges: explicitCharges.map((charge) => ({ name: charge.name.trim(), amount: Number(charge.amount) })) }, standard_terms: standardTerms, standard_terms_template_id: selectedTerms?.id || null, standard_terms_sections: selectedTerms?.sections?.filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order) || [], key_terms: keyTerms.map(normalizeKeyTerm) };
+      const explicitTemplateChange = termsTemplateChangedRef.current;
+      const savedStructured = parsePurchaseOrderStandardTerms(initialStructuredTermsRef.current);
+      const savedText = savedStructured?.kind === "structured" ? savedStructured.clauses.map((clause) => `${clause.heading}\n${clause.clause_body}`).join("\n\n") : "";
+      const termsTemplateForSave = explicitTemplateChange ? selectedTerms : (savedTermsSnapshot && selectedTerms?.id === savedTermsSnapshot.template_id ? selectedTerms : selectedTerms);
+      const standardTermsSnapshot = editId && !explicitTemplateChange && savedStructured?.kind === "structured" && standardTerms === savedText ? initialStructuredTermsRef.current : buildEditedStructuredTermsSnapshot(termsTemplateForSave, standardTerms) || standardTerms;
+      const body = { source_type: identity?.source || source, company_id: identity?.companyId || companyId, site_id: identity?.siteId || siteId, vendor_id: identity?.vendorId || vendorId, po_date: poDate, source_requisition_id: identity?.requisitionId || selectedIndent?.requisition_id || params.get("requisition_id") || null, expected_original_item_ids: editId ? [...originalPersistedItemIdsRef.current] : undefined, items: items.map((item) => ({ ...item, po_item_id: item.po_item_id || undefined, item_id: item.item_id || undefined, unit_rate: Number(item.unit_rate), quantity: Number(item.quantity), gst_rate: Number(item.gst_rate), make_snapshot: item.make })), master_selection: { gst_registration_id: selectedGstBilling.id, billing_contact_id: selectedBillingContact.id, delivery_location_id: selectedDeliveryLocation.id, delivery_contact_id: selectedDeliveryContact.id }, delivery: deliveryPayload, commercial: { ...commercial, additional_charges: explicitCharges.map((charge) => ({ name: charge.name.trim(), amount: Number(charge.amount) })) }, standard_terms: standardTermsSnapshot, standard_terms_template_id: termsTemplateForSave?.id || savedTermsSnapshot?.template_id || null, standard_terms_sections: termsTemplateForSave?.sections?.filter((section: any) => section.status === "active").sort((a: any, b: any) => a.sort_order - b.sort_order) || [], key_terms: keyTerms.map(normalizeKeyTerm) };
       (body as any).creation_request_id = creationRequestId;
       if (editId) {
         await apiFetch(`/api/procurement/purchase-orders/${editId}`, { method: "PUT", body: JSON.stringify(body) });

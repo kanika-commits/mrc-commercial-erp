@@ -184,7 +184,23 @@ begin
         and d.effective_from <= p_attendance_date
         and (d.effective_to is null or d.effective_to >= p_attendance_date)
         and (w.date_of_joining is null or w.date_of_joining <= p_attendance_date)
-        and (w.date_of_exit is null or w.date_of_exit >= p_attendance_date))
+        and (w.date_of_exit is null or w.date_of_exit >= p_attendance_date)
+        and (
+          w.status = 'active'
+          or exists (
+            select 1
+            from public.erp_audit_logs worker_status_audit
+            where worker_status_audit.organization_id = v_period.organization_id
+              and worker_status_audit.module_code = 'labour_workers'
+              and worker_status_audit.entity_type = 'labour_worker'
+              and worker_status_audit.record_id = w.id
+              and worker_status_audit.new_values->>'status' = 'inactive'
+              and coalesce(
+                nullif(worker_status_audit.new_values->>'effective_date', '')::date,
+                (worker_status_audit.created_at at time zone 'Asia/Kolkata')::date
+              ) > p_attendance_date
+          )
+        ))
     );
 
   select count(*), count(*) filter (where derived_status = 'present'), count(*) filter (where derived_status = 'absent'), count(*) filter (where derived_status = 'half_day'), count(*) filter (where derived_status = 'incomplete'), coalesce(sum(coalesce(overtime_minutes, 0)), 0), coalesce(sum(coalesce(bonus_minutes, 0)), 0)

@@ -470,9 +470,9 @@ export async function loadEligibleDeployments(access: LabourAccess, input: {
     if (!worker) return false;
     const historicalDate = input.allowHistoricallyInactiveWorker && input.attendanceDate < todayInIst();
     if (!historicalDate && worker.status !== "active") return false;
-    if (worker.status !== "active") {
+    if (worker.status !== "active" && !input.deploymentIds) {
       const inactiveEffectiveDate = inactiveEffectiveDates.get(deployment.labour_worker_id);
-      if (inactiveEffectiveDate && input.attendanceDate >= inactiveEffectiveDate) return false;
+      if (!inactiveEffectiveDate || input.attendanceDate >= inactiveEffectiveDate) return false;
     }
     if (!historicalDate && !input.ignoreWorkerCreatedAt && worker.created_at) {
       const registrationDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date(worker.created_at));
