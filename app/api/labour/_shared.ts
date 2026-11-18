@@ -399,6 +399,7 @@ export async function loadEligibleDeployments(access: LabourAccess, input: {
   manpowerWorkOrderId?: string | null;
   tradeId?: string | null;
   deploymentIds?: string[] | null;
+  ignoreCompanySite?: boolean;
   ignoreWorkerCreatedAt?: boolean;
   allowHistoricallyInactiveWorker?: boolean;
 }) {
@@ -415,10 +416,9 @@ export async function loadEligibleDeployments(access: LabourAccess, input: {
       labour_trades(id, trade_name, trade_code)
     `)
     .eq("organization_id", input.organizationId)
-    .eq("company_id", input.companyId)
-    .eq("site_id", input.siteId)
     .in("status", ["active", "ended"])
     .order("effective_from", { ascending: false });
+  if (!input.ignoreCompanySite) query = query.eq("company_id", input.companyId).eq("site_id", input.siteId);
 
   if (input.deploymentIds) {
     if (!input.deploymentIds.length) return [];
@@ -518,6 +518,58 @@ export async function loadFrozenAttendanceDeploymentIds(access: LabourAccess, pe
     .not("deployment_id", "is", null);
   if (attendanceError) throw attendanceError;
   return Array.from(new Set((attendanceRows || []).map((row: any) => row.deployment_id).filter(Boolean))) as string[];
+}
+
+export async function loadAttendanceDeploymentsForDate(access: LabourAccess, input: {
+  period: any;
+  organizationId: string;
+  companyId: string;
+  siteId: string;
+  contractorProfileId?: string | null;
+  attendanceDate: string;
+  status: string;
+}) {
+  const frozenDeploymentIds = await loadFrozenAttendanceDeploymentIds(access, input.period, input.attendanceDate, input.status);
+  const frozen = await loadEligibleDeployments(access, {
+    organizationId: input.organizationId,
+    companyId: input.companyId,
+    siteId: input.siteId,
+    contractorProfileId: input.contractorProfileId || null,
+    attendanceDate: input.attendanceDate,
+    deploymentIds: frozenDeploymentIds,
+    ignoreWorkerCreatedAt: !frozenDeploymentIds,
+    allowHistoricallyInactiveWorker: true,
+  });
+  if (input.status !== "reopened" || !frozenDeploymentIds) return { deployments: frozen, frozenDeploymentIds: frozenDeploymentIds || null };
+  const current = await loadEligibleDeployments(access, {
+    organizationId: input.organizationId,
+    companyId: input.companyId,
+    siteId: input.siteId,
+    contractorProfileId: input.contractorProfileId || null,
+    attendanceDate: input.attendanceDate,
+    ignoreWorkerCreatedAt: true,
+    allowHistoricallyInactiveWorker: true,
+  });
+  const currentAcrossSites = await loadEligibleDeployments(access, {
+    organizationId: input.organizationId,
+    companyId: input.companyId,
+    siteId: input.siteId,
+    contractorProfileId: input.contractorProfileId || null,
+    attendanceDate: input.attendanceDate,
+    ignoreWorkerCreatedAt: true,
+    allowHistoricallyInactiveWorker: true,
+    ignoreCompanySite: true,
+  });
+  const transferredWorkerIds = new Set((currentAcrossSites || [])
+    .filter((deployment: any) => deployment.company_id !== input.companyId || deployment.site_id !== input.siteId)
+    .map((deployment: any) => deployment.labour_worker_id));
+  const byWorkerId = new Map<string, any>((frozen || [])
+    .filter((deployment: any) => !transferredWorkerIds.has(deployment.labour_worker_id))
+    .map((deployment: any) => [deployment.labour_worker_id, deployment]));
+  for (const deployment of current || []) {
+    if (!byWorkerId.has(deployment.labour_worker_id)) byWorkerId.set(deployment.labour_worker_id, deployment);
+  }
+  return { deployments: Array.from(byWorkerId.values()), frozenDeploymentIds };
 }
 
 export async function loadAttendanceRowsForWorkers(access: LabourAccess, input: {
@@ -650,6 +702,45 @@ export async function getDayLock(access: LabourAccess, input: {
   const { data, error } = await query.maybeSingle();
   if (error) throw error;
   return data;
+}
+
+export async function loadLabourTransferAttendanceBlocker(access: LabourAccess, input: {
+  organizationId: string;
+  companyId: string;
+  siteId: string;
+  contractorProfileId?: string | null;
+  attendanceDate: string;
+}) {
+  const dayLock = await getDayLock(access, input);
+  if (dayLock?.is_locked) return `Attendance for site ${input.siteId} on ${input.attendanceDate} is locked. Send it back and reopen it before transferring this worker.`;
+  const periodMonth = input.attendanceDate.slice(0, 7) + "-01";
+  let periodQuery = access.admin
+    .from("labour_attendance_periods")
+    .select("id,status,summary")
+    .eq("organization_id", input.organizationId)
+    .eq("company_id", input.companyId)
+    .eq("site_id", input.siteId)
+    .eq("period_month", periodMonth);
+  periodQuery = input.contractorProfileId
+    ? periodQuery.eq("contractor_profile_id", input.contractorProfileId)
+    : periodQuery.is("contractor_profile_id", null);
+  const { data: period, error: periodError } = await periodQuery.maybeSingle();
+  if (periodError) throw periodError;
+  if (!period) return null;
+  const dateStatus = normalizeText(period.summary?.date_statuses?.[input.attendanceDate]?.status) || period.status;
+  if (["finalized", "approved"].includes(dateStatus)) return `Attendance for site ${input.siteId} on ${input.attendanceDate} is finalized. Send it back and reopen it before transferring this worker.`;
+  if (dateStatus === "reopened" || period.status === "reopened") return null;
+  const { data: submitted, error: submittedError } = await access.admin
+    .from("labour_attendance_submission_versions")
+    .select("id")
+    .eq("period_id", period.id)
+    .eq("attendance_date", input.attendanceDate)
+    .eq("status", "submitted")
+    .limit(1)
+    .maybeSingle();
+  if (submittedError) throw submittedError;
+  if (submitted) return `Attendance for site ${input.siteId} on ${input.attendanceDate} is submitted. Send it back and reopen it before transferring this worker.`;
+  return null;
 }
 
 export async function getActiveUnlockWindow(access: LabourAccess, input: {

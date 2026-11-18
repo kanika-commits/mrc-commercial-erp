@@ -12,7 +12,7 @@ import {
   loadMusterSiteHrBlocker,
   isGlobalOrSuperAdmin,
   loadEligibleDeployments,
-  loadFrozenAttendanceDeploymentIds,
+  loadAttendanceDeploymentsForDate,
   loadLabourAttendanceDateAuthority,
   loadAttendanceRowsForWorkers,
   requireLabourPermission,
@@ -534,8 +534,9 @@ export async function GET(request: Request) {
       ? await loadSubmittedSnapshotRows(access, period, dateAuthority.latestSubmitted)
       : null;
     const dateStatusForPopulation = selectedStatus;
-    const frozenDeploymentIds = submittedSnapshotRows ? [] : await loadFrozenAttendanceDeploymentIds(access, period, attendanceDate, dateStatusForPopulation);
-    const population = await loadStandardPopulation(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate, deploymentIds: frozenDeploymentIds, ignoreWorkerCreatedAt: !frozenDeploymentIds });
+    const population = submittedSnapshotRows
+      ? { deployments: [] }
+      : await loadAttendanceDeploymentsForDate(access, { period, organizationId, companyId, siteId, contractorProfileId, attendanceDate, status: dateStatusForPopulation });
     const [dayLock, policy] = await Promise.all([
       getDayLock(access, { organizationId, companyId, siteId, contractorProfileId, attendanceDate }),
       getActiveAttendancePolicy(access, { organizationId, companyId, siteId }),
@@ -721,17 +722,12 @@ export async function POST(request: Request) {
     const changes = Array.isArray(payload.rows) ? payload.rows : [];
     if (!changes.length) return jsonError("No attendance changes to save.", 400);
     const populationStatus = dateAuthority.status;
-    const frozenDeploymentIds = await loadFrozenAttendanceDeploymentIds(access, period, attendanceDate, populationStatus);
-    const population = await loadStandardPopulation(access, {
-      organizationId,
-      companyId,
-      siteId,
-      contractorProfileId,
-      attendanceDate,
-      deploymentIds: frozenDeploymentIds,
-      ignoreWorkerCreatedAt: !frozenDeploymentIds,
-    });
+    const population = await loadAttendanceDeploymentsForDate(access, { period, organizationId, companyId, siteId, contractorProfileId, attendanceDate, status: populationStatus });
     const deploymentByWorker = new Map((population.deployments || []).map((deployment: any) => [deployment.labour_worker_id, deployment]));
+    const frozenWorkerIds = new Set((population.deployments || [])
+      .filter((deployment: any) => (population.frozenDeploymentIds || []).includes(deployment.id))
+      .map((deployment: any) => deployment.labour_worker_id));
+    const rosterAdditions = (population.deployments || []).filter((deployment: any) => !frozenWorkerIds.has(deployment.labour_worker_id));
     const workerIds = changes.map((change: any) => text(change.labour_worker_id)).filter(Boolean) as string[];
     const existingRows = await loadAttendanceRowsForWorkers(access, {
       periodId: period.id,
@@ -899,6 +895,19 @@ export async function POST(request: Request) {
       description: `Saved labour attendance for ${attendanceDate}.`,
       newValues: { saved_rows: savedCount, contractor_profile_id: contractorProfileId },
     });
+    if (dateAuthority.reopened && rosterAdditions.length) {
+      await audit(access, request, {
+        moduleCode: "labour_attendance",
+        action: "update",
+        entityType: "labour_attendance_period",
+        recordId: period.id,
+        organizationId,
+        companyId,
+        siteId,
+        description: `Added ${rosterAdditions.length} newly eligible worker(s) to the reopened attendance roster for ${attendanceDate}.`,
+        newValues: { attendance_date: attendanceDate, roster_additions: rosterAdditions.map((deployment: any) => ({ deployment_id: deployment.id, labour_worker_id: deployment.labour_worker_id, effective_from: deployment.effective_from })) },
+      });
+    }
     return NextResponse.json({ saved: savedCount });
   } catch (error: any) {
     if (String(error?.message || "").includes("Attendance for this date has already been submitted.")) {

@@ -20,7 +20,7 @@ assert.doesNotMatch(shared, /summaryStatus === "reopened" \|\| input\.period\?\.
 assert.match(dailyApi, /loadLabourAttendanceDateAuthority/, "Daily attendance API must use authoritative snapshot-backed state");
 assert.match(dailyApi, /submittedSnapshotLocked[\s\S]+Attendance for this date has already been submitted\. Reopen the date before making changes\./, "Save must reject submitted dates unless reopened");
 assert.match(dailyApi, /const selectedStatus = dateAuthority\.status/, "Daily read/save status must not rely only on period summary");
-assert.match(dailyApi, /loadFrozenAttendanceDeploymentIds\(access, period, attendanceDate, dateStatusForPopulation\)/, "Submitted/finalized dates still hydrate frozen deployment population");
+assert.match(dailyApi, /loadAttendanceDeploymentsForDate\(access, \{ period, organizationId, companyId, siteId, contractorProfileId, attendanceDate, status: dateStatusForPopulation \}\)/, "Daily dates hydrate through the authoritative population helper");
 assert.match(dailyApi, /const dateAuthority = await loadLabourAttendanceDateAuthority\(access, \{ period: existingPeriod/, "Daily save must resolve exact server date authority before the generic date guard");
 assert.match(dailyApi, /reopened: dateAuthority\.reopened/, "Daily save must pass server-confirmed reopen authority to the date guard");
 

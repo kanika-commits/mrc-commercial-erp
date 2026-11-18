@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { actorFields, applyCompanySiteScope, audit, getActiveHistoricalAttendanceAccess, isGlobalOrSuperAdmin, jsonError, loadAttendanceRowsForWorkers, loadEligibleDeployments, loadFrozenAttendanceDeploymentIds, loadLabourAttendanceDateAuthority, originatingAttendanceSystem, requireLabourPermission } from "@/app/api/labour/_shared";
+import { actorFields, applyCompanySiteScope, audit, getActiveHistoricalAttendanceAccess, isGlobalOrSuperAdmin, jsonError, loadAttendanceRowsForWorkers, loadAttendanceDeploymentsForDate, loadLabourAttendanceDateAuthority, originatingAttendanceSystem, requireLabourPermission } from "@/app/api/labour/_shared";
 import { applyOrganizationScope } from "@/lib/serverOrganizationScope";
 import { daysBefore, isoDate, todayInIst } from "@/lib/labour/operations";
 import { hasActiveSiteHrAssignment } from "@/lib/serverSiteHr";
@@ -39,17 +39,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       }
       if (dateAuthority.submittedSnapshotLocked) return jsonError("Attendance for this date has already been submitted. Reopen the date before making changes.", 403);
       const selectedStatus = dateAuthority.status;
-      const frozenDeploymentIds = await loadFrozenAttendanceDeploymentIds(access, period, attendanceDate, selectedStatus);
-      const deployments = await loadEligibleDeployments(access, {
-        organizationId: period.organization_id,
-        companyId: period.company_id,
-        siteId: period.site_id,
-        contractorProfileId: period.contractor_profile_id,
-        attendanceDate,
-        deploymentIds: frozenDeploymentIds,
-        ignoreWorkerCreatedAt: !frozenDeploymentIds,
-        allowHistoricallyInactiveWorker: true,
-      });
+      const population = await loadAttendanceDeploymentsForDate(access, { period, organizationId: period.organization_id, companyId: period.company_id, siteId: period.site_id, contractorProfileId: period.contractor_profile_id, attendanceDate, status: selectedStatus });
+      const deployments = population.deployments;
       const workerIds = Array.from(new Set(deployments.map((deployment: any) => deployment.labour_worker_id).filter(Boolean))) as string[];
       const attendanceRows = await loadAttendanceRowsForWorkers(access, {
         periodId: period.id,
@@ -64,11 +55,20 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         const row: any = attendanceByWorker.get(deployment.labour_worker_id);
         const worker = Array.isArray(deployment.labour_workers) ? deployment.labour_workers[0] : deployment.labour_workers;
         if (row && typeof row.first_half_present === "boolean" && typeof row.second_half_present === "boolean") return [];
+        const missingFields = [
+          !row ? "attendance row" : null,
+          row && typeof row.first_half_present !== "boolean" ? "First Shift" : null,
+          row && typeof row.second_half_present !== "boolean" ? "Second Shift" : null,
+        ].filter(Boolean);
         return [{
           labour_worker_id: deployment.labour_worker_id,
           labour_code: worker?.labour_code || "-",
           worker_name: worker?.worker_name || "-",
           reason: row ? "incomplete_half" : "missing_attendance",
+          missing_fields: missingFields,
+          saved_status: row?.status || null,
+          ot_hours: row?.overtime_minutes == null ? null : Number(row.overtime_minutes) / 60,
+          bonus_hours: row?.bonus_minutes == null ? null : Number(row.bonus_minutes) / 60,
         }];
       });
       if (incompleteWorkers.length) {
@@ -83,7 +83,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           complete_count: workerIds.length - incompleteWorkers.length,
           missing_worker_count: missingWorkerCount,
           incomplete_half_count: incompleteHalfCount,
-          affected_workers: incompleteWorkers.slice(0, 10),
+          affected_workers: incompleteWorkers,
         }, { status: 409 });
       }
       if (!["draft", "reopened"].includes(selectedStatus)) return jsonError("Only draft attendance can be submitted for this date.");
@@ -133,6 +133,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     });
     return NextResponse.json({ submitted: true });
   } catch (error: any) {
-    return jsonError(error.message || "Failed to submit attendance period.", 500);
+    const message = error.message || "Failed to submit attendance period.";
+    if (/^Attendance is incomplete for \d+ labourers\.?$/i.test(message)) {
+      return jsonError(message, 409);
+    }
+    return jsonError(message, 500);
   }
 }

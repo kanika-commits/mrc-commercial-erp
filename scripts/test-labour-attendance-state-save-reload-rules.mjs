@@ -221,7 +221,7 @@ assert.match(attendanceApi, /function summaryStatus\(first: "present" \| "absent
 assert.doesNotMatch(attendanceApi, /standard-attendance-save|debugSaveTrace|console\.info/, "Server save diagnostics must not leave temporary debug tracing");
 assert.doesNotMatch(attendancePage, /standard-attendance-save|debugSaveDraftTrace|console\.info/, "Client save diagnostics must not leave temporary debug tracing");
 assert.match(attendanceApi, /\["submitted", "finalized", "approved"\]\.includes\(selectedStatus\) && dateAuthority\.latestSubmitted/, "Snapshot hydration must only take over for submitted-like dates");
-assert.match(attendanceApi, /loadStandardPopulation\(access, \{[\s\S]+contractorProfileId/, "Draft load/save population must remain contractor aware");
+assert.match(attendanceApi, /loadAttendanceDeploymentsForDate\(access, \{ period, organizationId, companyId, siteId, contractorProfileId, attendanceDate, status:/, "Draft load/save population must remain contractor aware");
 assert.match(labourShared, /if \(input\.contractorProfileId\) query = query\.eq\("contractor_profile_id", input\.contractorProfileId\)/, "Eligible deployment loading must enforce selected contractor server-side");
 assert.match(attendanceApi, /dateAuthority\.submittedSnapshotLocked/, "Historical access alone must not reopen a submitted snapshot");
 
@@ -247,7 +247,7 @@ assert.match(attendancePage, /confirmedSavedCount !== expectedSavedCount/, "Save
 assert.match(attendancePage, /Attendance save could not be confirmed\. Expected \$\{expectedSavedCount\} rows, server confirmed/, "Saved-count mismatch must show a clear unconfirmed-save message");
 assert.match(attendancePage, /savedWorkerIds\.forEach\(\(workerId\) => next\.delete\(workerId\)\)/, "Successful Save Draft must clear only the confirmed worker IDs");
 assert.match(attendancePage, /catch \{\s*setMessage\("Attendance save could not be confirmed\. Your unsaved changes have been kept\."\)/, "Malformed save responses must preserve dirty state");
-assert.match(attendancePage, /setMessage\(`Saved \$\{payload\.saved\} attendance rows\.`\);[\s\S]+setSubmitError\(""\);[\s\S]+setSubmitSuccessMessage\(""\);/, "Confirmed Save Draft must clear stale submitted-error banners");
+assert.match(attendancePage, /setMessage\(`Saved \$\{payload\.saved\} attendance rows\.\$\{unsavedEligibleCount[\s\S]+setSubmitError\(""\);[\s\S]+setSubmitSuccessMessage\(""\);/, "Confirmed Save Draft must clear stale submitted-error banners");
 assert.match(attendancePage, /setSubmitError\(""\);[\s\S]+setRows\(\[\]\)/, "Fresh load must clear stale submit errors");
 assert.match(attendancePage, /const changesHardContext = "company_id" in patch \|\| "site_id" in patch \|\| "attendance_date" in patch/, "Only Company, Site and Attendance Date must be hard loaded-context filters");
 assert.match(attendancePage, /function applyFilterChange[\s\S]+if \(changesHardContext\) \{[\s\S]+setSubmitError\(""\);[\s\S]+setRows\(\[\]\)/, "Changing the hard load context must clear stale submit errors and rows");

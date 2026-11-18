@@ -3,6 +3,7 @@ import {
   audit,
   jsonError,
   loadScopedWorker,
+  loadLabourTransferAttendanceBlocker,
   requireLabourPermission,
   type LabourAccess,
   validateTrade,
@@ -195,6 +196,20 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (openError) throw openError;
     if (openDeployment && effectiveFrom <= openDeployment.effective_from) {
       return jsonError("New deployment must start after the current deployment start date.");
+    }
+    const affectedSites = [
+      openDeployment && { companyId: openDeployment.company_id, siteId: openDeployment.site_id, contractorProfileId: openDeployment.contractor_profile_id },
+      { companyId, siteId, contractorProfileId },
+    ].filter(Boolean) as Array<{ companyId: string; siteId: string; contractorProfileId: string | null }>;
+    for (const affectedSite of affectedSites.filter((site, index, all) => all.findIndex((candidate) => candidate.companyId === site.companyId && candidate.siteId === site.siteId) === index)) {
+      const attendanceBlocker = await loadLabourTransferAttendanceBlocker(access, {
+        organizationId: worker.organization_id,
+        companyId: affectedSite.companyId,
+        siteId: affectedSite.siteId,
+        contractorProfileId: affectedSite.contractorProfileId,
+        attendanceDate: effectiveFrom,
+      });
+      if (attendanceBlocker) return jsonError(attendanceBlocker, 409);
     }
 
     let overlapQuery = access.admin
