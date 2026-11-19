@@ -249,7 +249,12 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     let previousRevisionData: any = null;
     const revisionPdfRequested = Number(data.revision_no || 0) > 0 && Boolean(data.previous_revision_id);
     if ((comparisonRequested || revisionPdfRequested) && revisionPdfRequested) {
-      const previousResult = await admin.from("procurement_purchase_orders").select("*, items:procurement_purchase_order_items(*)").eq("id", data.previous_revision_id).eq("organization_id", data.organization_id).maybeSingle();
+      let previousQuery: any = applyOrganizationAccess(
+        admin.from("procurement_purchase_orders").select("*, items:procurement_purchase_order_items(*)").eq("id", data.previous_revision_id).eq("organization_id", data.organization_id).maybeSingle(),
+        auth,
+      );
+      previousQuery = previousQuery && applyCompanySiteAccess(previousQuery, auth);
+      const previousResult = previousQuery ? await previousQuery : { data: null, error: null };
       if (previousResult.error) throw previousResult.error;
       if (!previousResult.data) throw new Error("Previous Purchase Order revision was not found.");
       previousRevisionData = previousResult.data;

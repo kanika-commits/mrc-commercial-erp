@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { adminClient, applyOrganizationAccess, jsonError, requireProcurementAny, requireProcurementPermission, text } from "@/lib/serverProcurementAccess";
+import { adminClient, applyCompanySiteAccess, applyOrganizationAccess, jsonError, requireProcurementAny, requireProcurementPermission, text } from "@/lib/serverProcurementAccess";
 import { safeObjectKey } from "@/lib/storage/privateStorage";
 import { recordAuditEvent } from "@/lib/auditEvent";
 
@@ -177,10 +177,12 @@ export async function DELETE(request: Request) {
       }
       let templateVersions: any[] = [];
       if (kind === "po_template" || kind === "po_template_version") {
-        const references = await admin.from("procurement_purchase_orders").select("id", { count: "exact", head: true }).eq("template_version_id", id);
+        let referencesQuery: any = applyCompanySiteAccess(applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id", { count: "exact", head: true }).eq("template_version_id", id), auth), auth);
+        const references = referencesQuery ? await referencesQuery : { count: 0, error: null };
         if (references.error) throw references.error;
         if (kind === "po_template_version") {
-          const direct = await admin.from("procurement_purchase_orders").select("id", { count: "exact", head: true }).eq("template_id", id);
+          let directQuery: any = applyCompanySiteAccess(applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id", { count: "exact", head: true }).eq("template_id", id), auth), auth);
+          const direct = directQuery ? await directQuery : { count: 0, error: null };
           if (direct.error) throw direct.error;
           if ((references.count || 0) + (direct.count || 0) > 0) return jsonError("This PO template version is used by a Purchase Order and cannot be deleted. Inactivate it instead.", 409);
         } else {
@@ -188,9 +190,11 @@ export async function DELETE(request: Request) {
           if (template.error) throw template.error;
           templateVersions = template.data || [];
           const versionIds = templateVersions.map((version: any) => version.id);
-          const versionReferences = versionIds.length ? await admin.from("procurement_purchase_orders").select("id", { count: "exact", head: true }).in("template_version_id", versionIds) : { count: 0, error: null };
+          let versionReferencesQuery: any = versionIds.length ? applyCompanySiteAccess(applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id", { count: "exact", head: true }).in("template_version_id", versionIds), auth), auth) : null;
+          const versionReferences = versionReferencesQuery ? await versionReferencesQuery : { count: 0, error: null };
           if (versionReferences.error) throw versionReferences.error;
-          const direct = await admin.from("procurement_purchase_orders").select("id", { count: "exact", head: true }).eq("template_id", id);
+          let directQuery: any = applyCompanySiteAccess(applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id", { count: "exact", head: true }).eq("template_id", id), auth), auth);
+          const direct = directQuery ? await directQuery : { count: 0, error: null };
           if (direct.error) throw direct.error;
           if ((direct.count || 0) + (versionReferences.count || 0) > 0) return jsonError("This PO template is used by a Purchase Order and cannot be deleted. Inactivate it instead.", 409);
         }
@@ -199,19 +203,22 @@ export async function DELETE(request: Request) {
         const children = await admin.from("site_delivery_locations").select("id", { count: "exact", head: true }).eq("billing_address_id", id).in("status", ["active", "inactive"]);
         if (children.error) throw children.error;
         if ((children.count || 0) > 0) return jsonError("This GSTIN / Billing Address has delivery addresses. Remove or reassign them before deleting it.", 409);
-        const references = await admin.from("procurement_purchase_orders").select("id", { count: "exact", head: true }).filter("delivery_snapshot->>billing_address_id", "eq", id);
+        let referencesQuery: any = applyCompanySiteAccess(applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id", { count: "exact", head: true }).filter("delivery_snapshot->>billing_address_id", "eq", id), auth), auth);
+        const references = referencesQuery ? await referencesQuery : { count: 0, error: null };
         if (references.error && references.error.code !== "42703") throw references.error;
         if ((references.count || 0) > 0) return jsonError("This address is already used in Purchase Orders and cannot be deleted. Inactivate it instead.", 409);
       }
       if (String(kind) === "delivery_location") {
-        const references = await admin.from("procurement_purchase_orders").select("id", { count: "exact", head: true }).filter("delivery_snapshot->>delivery_location_id", "eq", id);
+        let referencesQuery: any = applyCompanySiteAccess(applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id", { count: "exact", head: true }).filter("delivery_snapshot->>delivery_location_id", "eq", id), auth), auth);
+        const references = referencesQuery ? await referencesQuery : { count: 0, error: null };
         if (references.error && references.error.code !== "42703") throw references.error;
         if ((references.count || 0) > 0) return jsonError("This delivery address is already used in Purchase Orders and cannot be deleted. Inactivate it instead.", 409);
       }
       if (kind === "site_contact") {
         const contact = "row" in owned ? owned.row : null;
         if (contact?.is_default && contact?.status === "active") return jsonError("Default contact cannot be deleted. Set another contact as default first.", 409);
-        const references = await admin.from("procurement_purchase_orders").select("id", { count: "exact", head: true }).filter("delivery_snapshot->>delivery_contact_id", "eq", id);
+        let referencesQuery: any = applyCompanySiteAccess(applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id", { count: "exact", head: true }).filter("delivery_snapshot->>delivery_contact_id", "eq", id), auth), auth);
+        const references = referencesQuery ? await referencesQuery : { count: 0, error: null };
         if (references.error && references.error.code !== "42703") throw references.error;
         if ((references.count || 0) > 0) return jsonError("This Site Contact is already used in Purchase Orders and cannot be deleted. Inactivate it instead.", 409);
       }

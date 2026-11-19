@@ -30,7 +30,8 @@ async function load(request: Request, id: string, action: string) {
   data.company = companyResult.data;
   let revisionHistory: any[] = [data];
   if (data.revision_family_id) {
-    const familyQuery = applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id,po_number,revision_no,status,revision_family_id,previous_revision_id,superseded_by_revision_id,created_at,submitted_at,approved_at,company_id,site_id,vendor_id").eq("revision_family_id", data.revision_family_id).order("revision_no", { ascending: false }), auth);
+    let familyQuery: any = applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id,po_number,revision_no,status,revision_family_id,previous_revision_id,superseded_by_revision_id,created_at,submitted_at,approved_at,company_id,site_id,vendor_id").eq("revision_family_id", data.revision_family_id).order("revision_no", { ascending: false }), auth);
+    familyQuery = familyQuery && applyCompanySiteAccess(familyQuery, auth);
     if (familyQuery) {
       const familyResult = await familyQuery;
       if (familyResult.error) throw familyResult.error;

@@ -21,13 +21,21 @@ export async function GET(request: Request) {
     if (error) throw error;
     const purchaseOrders = data || [];
     const ids = purchaseOrders.map((row: any) => row.id).filter(Boolean);
+    const previousIds = purchaseOrders.map((row: any) => row.previous_revision_id).filter(Boolean);
+    let previousQuery: any = previousIds.length
+      ? applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id,po_number").in("id", previousIds), auth)
+      : null;
+    previousQuery = previousQuery && applyCompanySiteAccess(previousQuery, auth);
+    const previousRows = previousQuery ? await previousQuery : { data: [], error: null };
+    if (previousRows.error) throw previousRows.error;
+    const previousById = new Map((previousRows.data || []).map((row: any) => [row.id, row]));
     const { data: events, error: eventError } = ids.length
       ? await admin.from("procurement_purchase_order_events").select("purchase_order_id,event_type,actor_name,actor_email,created_at").in("purchase_order_id", ids).in("event_type", ["submit", "submitted_for_approval", "resubmitted"]).order("created_at", { ascending: false })
       : { data: [], error: null };
     if (eventError) throw eventError;
     const latestSubmission = new Map<string, any>();
     for (const event of events || []) if (!latestSubmission.has(event.purchase_order_id)) latestSubmission.set(event.purchase_order_id, event);
-    return NextResponse.json({ purchase_orders: purchaseOrders.map((row: any) => ({ ...row, submission_event: latestSubmission.get(row.id) || null })) });
+    return NextResponse.json({ purchase_orders: purchaseOrders.map((row: any) => ({ ...row, previous: previousById.get(row.previous_revision_id) || null, submission_event: latestSubmission.get(row.id) || null })) });
   } catch (error: any) {
     return jsonError(error.message || "Failed to load Purchase Order approvals.", 500);
   }

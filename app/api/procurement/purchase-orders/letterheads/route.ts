@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { NextResponse } from "next/server";
-import { adminClient, applyOrganizationAccess, jsonError, requireProcurementPermission, text } from "@/lib/serverProcurementAccess";
+import { adminClient, applyCompanySiteAccess, applyOrganizationAccess, jsonError, requireProcurementPermission, text } from "@/lib/serverProcurementAccess";
 import { createPrivateStorageAdapter, safeObjectKey } from "@/lib/storage/privateStorage";
 import { recordAuditEvent } from "@/lib/auditEvent";
 
@@ -92,7 +92,8 @@ export async function DELETE(request: Request) {
       if (!letterhead || !scoped(access, letterhead.organization_id, letterhead.company_id)) return jsonError("Letterhead is outside your access.", 403);
       if (letterhead.status === "active" || letterhead.is_default) return jsonError("Only an inactive, non-default Letterhead can be removed.", 409);
       if ((letterhead.versions || []).length) return jsonError("This Letterhead still has versions and cannot be removed.", 409);
-      const references = await admin.from("procurement_purchase_orders").select("id,po_number,delivery_snapshot").eq("organization_id", letterhead.organization_id).eq("company_id", letterhead.company_id);
+      let referencesQuery: any = applyCompanySiteAccess(applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id,po_number,delivery_snapshot").eq("organization_id", letterhead.organization_id).eq("company_id", letterhead.company_id), access), access);
+      const references = referencesQuery ? await referencesQuery : { data: [], error: null };
       if (references.error) throw references.error;
       if ((references.data || []).some((po: any) => snapshotReferences(po.delivery_snapshot, letterhead, null))) return jsonError("This Letterhead is referenced by a Purchase Order and cannot be removed.", 409);
       const deleted = await admin.from("procurement_company_letterheads").delete().eq("id", letterhead.id).eq("status", "inactive").eq("is_default", false).select("id").maybeSingle();
@@ -105,7 +106,8 @@ export async function DELETE(request: Request) {
     if (!version || !scoped(access, version.letterhead.organization_id, version.letterhead.company_id)) return jsonError("Letterhead version is outside your access.", 403);
     if (version.version_status !== "draft") return jsonError("Only an unused Draft Letterhead version can be deleted. Deactivate Ready or Active records instead.", 409);
     if (version.letterhead.is_default) return jsonError("Choose another default Letterhead before deleting this one.", 409);
-    const references = await admin.from("procurement_purchase_orders").select("id,po_number,delivery_snapshot").eq("organization_id", version.letterhead.organization_id).eq("company_id", version.letterhead.company_id);
+    let referencesQuery: any = applyCompanySiteAccess(applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id,po_number,delivery_snapshot").eq("organization_id", version.letterhead.organization_id).eq("company_id", version.letterhead.company_id), access), access);
+    const references = referencesQuery ? await referencesQuery : { data: [], error: null };
     if (references.error) throw references.error;
     if ((references.data || []).some((po: any) => snapshotReferences(po.delivery_snapshot, version.letterhead, version))) return jsonError("This Letterhead is frozen into a Purchase Order and cannot be deleted. Deactivate it instead.", 409);
     const versions = await admin.from("procurement_company_letterhead_versions").select("id").eq("letterhead_id", version.letterhead.id);
@@ -117,7 +119,8 @@ export async function DELETE(request: Request) {
     if (onlyVersion) {
       const remaining = await admin.from("procurement_company_letterhead_versions").select("id").eq("letterhead_id", version.letterhead.id).limit(1);
       if (remaining.error) throw remaining.error;
-      const referencesAfterDelete = await admin.from("procurement_purchase_orders").select("id,delivery_snapshot").eq("organization_id", version.letterhead.organization_id).eq("company_id", version.letterhead.company_id);
+      let referencesAfterDeleteQuery: any = applyCompanySiteAccess(applyOrganizationAccess(admin.from("procurement_purchase_orders").select("id,delivery_snapshot").eq("organization_id", version.letterhead.organization_id).eq("company_id", version.letterhead.company_id), access), access);
+      const referencesAfterDelete = referencesAfterDeleteQuery ? await referencesAfterDeleteQuery : { data: [], error: null };
       if (referencesAfterDelete.error) throw referencesAfterDelete.error;
       const stillReferenced = (referencesAfterDelete.data || []).some((po: any) => snapshotReferences(po.delivery_snapshot, version.letterhead, version));
       if (remaining.data?.length || stillReferenced || version.letterhead.status === "active" || version.letterhead.is_default) return jsonError("The Draft version was deleted, but its Letterhead could not be safely removed because a protected dependency remains.", 409);
