@@ -11,6 +11,8 @@ const pdf = read("app/api/procurement/purchase-orders/[id]/pdf/route.ts");
 const detail = read("app/api/procurement/purchase-orders/[id]/route.ts");
 const masterData = read("app/api/procurement/purchase-orders/master-data/route.ts");
 const tracking = read("app/api/procurement/goods-receipts/purchase-orders/[id]/route.ts");
+const trackingList = read("app/api/procurement/goods-receipts/route.ts");
+const receiptDetail = read("app/api/procurement/goods-receipts/[id]/route.ts");
 
 for (const [name, source] of [
   ["approvals", approvals],
@@ -27,5 +29,10 @@ expect(pdf.includes("previousQuery = previousQuery && applyCompanySiteAccess(pre
 expect(detail.includes("familyQuery = familyQuery && applyCompanySiteAccess(familyQuery, auth)"), "Detail revision history must be site-scoped.");
 expect(tracking.includes("applyCompanySiteAccess"), "Purchase Order Tracking must retain server-side site scope.");
 expect(tracking.includes("loadFamilyReceiptTotals"), "Purchase Order Tracking must use its PO-specific revision runtime.");
+expect(tracking.includes("company:companies!procurement_purchase_orders_company_id_fkey"), "Tracking detail must use the explicit PO company relationship.");
+expect(trackingList.includes("company:companies!procurement_goods_receipts_company_id_fkey"), "Tracking list must use the explicit GRN company relationship.");
+expect(trackingList.includes("company:companies!procurement_purchase_orders_company_id_fkey"), "Tracking list must use the explicit PO company relationship.");
+expect(!trackingList.match(/company:companies\((?!.*!)/), "Tracking list must not use an ambiguous company embed.");
+expect(receiptDetail.includes("company:companies!procurement_goods_receipts_company_id_fkey"), "Goods Receipt detail must use the explicit GRN company relationship.");
 
 console.log("PO related revision/site-scope rules passed");
