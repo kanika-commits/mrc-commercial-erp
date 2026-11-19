@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Eye, RefreshCw } from "lucide-react";
 import AlertMessage from "@/components/AlertMessage";
 import { apiFetch } from "@/components/hr/hrClient";
+import { useAccessContext } from "@/components/AccessContext";
+import { can, hasGlobalAccess } from "@/lib/accessControl";
 
 function money(value: unknown) { return `Rs ${Number(value || 0).toLocaleString("en-IN")}`; }
 function qty(value: unknown) { return Number(value || 0).toLocaleString("en-IN", { maximumFractionDigits: 3 }); }
@@ -14,13 +16,17 @@ function poStatus(status: unknown) { return String(status || "").replace(/_/g, "
 type SelectOption = [string, string];
 
 export default function GoodsReceiptsPage() {
+  const { access, loading: accessLoading } = useAccessContext();
+  const canView = hasGlobalAccess(access) || can(access?.permissions || [], "procurement_goods_receipts", "view");
   const PAGE_SIZE = 10;
   const [rows, setRows] = useState<any[]>([]);
   const [message, setMessage] = useState("");
   const [filters, setFilters] = useState({ search: "", company: "all", site: "all", vendor: "all", poStatus: "all", receiptStatus: "all", from: "", to: "" });
   const [page, setPage] = useState(1);
   const load = async () => { try { const result = await apiFetch("/api/procurement/goods-receipts"); setRows(result.receipt_register || []); } catch (error: any) { setMessage(error.message || "Failed to load Purchase Order Tracking."); } };
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { if (!accessLoading && canView) void load(); }, [accessLoading, canView]);
+  if (accessLoading) return <section className="p-6 text-sm text-slate-500">Checking Purchase Order Tracking access...</section>;
+  if (!canView) return <section className="space-y-3 rounded-xl border bg-white p-6"><h1 className="text-xl font-semibold">Purchase Order Tracking unavailable</h1><p className="text-sm text-slate-600">You do not have view access to Purchase Order Tracking.</p></section>;
   function updateFilters(next: typeof filters) { setFilters(next); setPage(1); }
   const options = useMemo(() => {
     const companies = new Map<string, string>();

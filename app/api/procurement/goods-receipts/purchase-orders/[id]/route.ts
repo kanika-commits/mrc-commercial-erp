@@ -4,6 +4,7 @@ import {
   applyCompanySiteAccess,
   applyOrganizationAccess,
   jsonError,
+  requireProcurementPermission,
   requireProcurementAny,
 } from "@/lib/serverProcurementAccess";
 import {
@@ -31,11 +32,7 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
-    const access = await requireProcurementAny(request, [
-      { moduleCode: MODULE, actionCode: "view" },
-      { moduleCode: MODULE, actionCode: "add" },
-      { moduleCode: MODULE, actionCode: "approve" },
-    ]);
+    const access = await requireProcurementPermission(request, MODULE, "view");
     if ("response" in access) return access.response;
     const admin = adminClient();
     const id = (await context.params).id;

@@ -7,7 +7,7 @@ function receiptStatus(items: any[], draftCount: number) { const receivedAll = i
 
 export async function GET(request: Request) {
   try {
-    const access = await requireProcurementAny(request, [{ moduleCode: MODULE, actionCode: "view" }, { moduleCode: MODULE, actionCode: "add" }, { moduleCode: MODULE, actionCode: "approve" }]);
+    const access = await requireProcurementPermission(request, MODULE, "view");
     if ("response" in access) return access.response;
     const admin = adminClient();
     let query: any = applyOrganizationAccess(admin.from("procurement_goods_receipts").select("*, company:companies!procurement_goods_receipts_company_id_fkey(id,company_name), site:sites(id,site_name), purchase_order:procurement_purchase_orders(id,po_number,vendor_name_snapshot,status)").order("created_at", { ascending: false }), access);
