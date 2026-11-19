@@ -5,6 +5,8 @@ import { ArrowLeft, Eye, PlayCircle, Plus } from "lucide-react";
 import { useParams } from "next/navigation";
 import AlertMessage from "@/components/AlertMessage";
 import { apiFetch } from "@/components/hr/hrClient";
+import { useAccessContext } from "@/components/AccessContext";
+import { can, hasGlobalAccess } from "@/lib/accessControl";
 
 function qty(value: unknown) { return Number(value || 0).toLocaleString("en-IN", { maximumFractionDigits: 3 }); }
 function money(value: unknown) { return `Rs ${Number(value || 0).toLocaleString("en-IN")}`; }
@@ -13,10 +15,14 @@ function poStatus(status: unknown) { return String(status || "").replace(/_/g, "
 function grnStatus(status: string) { return status === "finalized" ? "Finalized" : "Draft"; }
 
 export default function GoodsReceiptPurchaseOrderHistoryPage() {
+  const { access, loading: accessLoading } = useAccessContext();
+  const canView = hasGlobalAccess(access) || can(access?.permissions || [], "procurement_goods_receipts", "view");
   const { id } = useParams<{ id: string }>();
   const [data, setData] = useState<any>(null);
   const [message, setMessage] = useState("");
-  useEffect(() => { apiFetch(`/api/procurement/goods-receipts/purchase-orders/${id}`).then(setData).catch((error: any) => setMessage(error.message)); }, [id]);
+  useEffect(() => { if (!accessLoading && canView) apiFetch(`/api/procurement/goods-receipts/purchase-orders/${id}`).then(setData).catch((error: any) => setMessage(error.message)); }, [accessLoading, canView, id]);
+  if (accessLoading) return <section className="p-6 text-sm text-slate-500">Checking Purchase Order Tracking access...</section>;
+  if (!canView) return <section className="space-y-3 rounded-xl border bg-white p-6"><Link href="/store/goods-receipts" className="text-sm font-semibold text-slate-600">Back to Purchase Order Tracking</Link><h1 className="text-xl font-semibold">Purchase Order Tracking unavailable</h1><p className="text-sm text-slate-600">You do not have view access to Purchase Order Tracking.</p></section>;
   if (!data) return <section className="space-y-4"><Link href="/store/goods-receipts" className="inline-flex items-center gap-2 text-sm font-semibold text-slate-600"><ArrowLeft className="h-4 w-4" />Back to Purchase Order Tracking</Link><AlertMessage type="error" message={message} onClose={() => setMessage("")} /><p className="text-sm text-slate-500">{message ? "" : "Loading Purchase Order tracking..."}</p></section>;
   const po = data.purchase_order;
   const draftReceipt = (data.grns || []).find((grn: any) => grn.status === "draft");
