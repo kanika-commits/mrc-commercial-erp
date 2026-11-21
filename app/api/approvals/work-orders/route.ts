@@ -59,7 +59,7 @@ export async function GET(request: Request) {
         )
         // Drafts remain editable and enter this queue only after submission.
         // Keep legacy null statuses and case-insensitive submitted/pending rows.
-        .or("approval_status.is.null,approval_status.ilike.pending")
+        .eq("approval_status", "pending")
         .order("created_at", { ascending: false }),
       organizationScope,
     );
@@ -80,16 +80,16 @@ export async function GET(request: Request) {
       ? await safeQuery(
           admin
             .from("erp_audit_logs")
-            .select("record_id,description,created_at,created_by_name,created_by_email,action")
+            .select("record_id,description,created_at,created_by_name,created_by_email,action,new_values")
             .eq("entity_type", "work_order")
-            .eq("action", "reject")
+            .in("action", ["reject", "send_back"])
             .in("record_id", workOrderIds)
             .order("created_at", { ascending: false }),
         )
       : [];
     const latestSendBackComments: Record<string, any> = {};
     for (const row of auditRows) {
-      if (row.record_id && !latestSendBackComments[row.record_id]) {
+      if (row.record_id && (row.action === "send_back" || row.new_values?.__audit?.canonical_action === "send_back") && !latestSendBackComments[row.record_id]) {
         latestSendBackComments[row.record_id] = {
           comment: row.description,
           created_at: row.created_at,

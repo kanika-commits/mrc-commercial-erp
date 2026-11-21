@@ -28,6 +28,7 @@ type WorkOrder = {
   wo_value: number | string | null;
   gst_percent: number | string | null;
   approval_status: string | null;
+  sent_back_comment?: string | null;
   approved_by_name: string | null;
   approved_by_email: string | null;
   approved_at: string | null;
@@ -1076,6 +1077,7 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
                       >
                         {String(wo.approval_status || "").toLowerCase() === "draft" ? "Draft — Not submitted" : titleCase(wo.approval_status)}
                       </span>
+                      {String(wo.approval_status || "").toLowerCase() === "sent_back" && wo.sent_back_comment && <p className="mt-2 max-w-[260px] text-xs text-red-700">↳ {wo.sent_back_comment}</p>}
                     </td>
                     <td className="px-6 py-5 align-top">
                       <div className="max-w-[180px] truncate text-sm font-medium text-slate-800">

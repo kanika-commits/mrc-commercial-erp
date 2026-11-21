@@ -699,6 +699,13 @@ export async function PATCH(
       if (approvalStatus === "draft" || approvalStatus !== "pending") {
         return NextResponse.json({ error: "Only submitted pending Work Orders can be sent back." }, { status: 409 });
       }
+      const { error: sendBackError } = await admin
+        .from("work_orders")
+        .update({ approval_status: "sent_back" })
+        .eq("id", id)
+        .eq("organization_id", scopedWorkOrder.workOrder.organization_id)
+        .eq("approval_status", "pending");
+      if (sendBackError) throw sendBackError;
       try {
         await recordAuditEvent(admin, permission.user, {
           organizationId: scopedWorkOrder.workOrder.organization_id,
@@ -898,14 +905,17 @@ export async function PATCH(
         );
       }
 
-      if (!pending && !approved) {
+      const sentBack = approvalStatus === "sent_back";
+      if (!pending && !approved && !sentBack) {
         return NextResponse.json(
           { error: "This Work Order cannot be edited in its current approval state." },
           { status: 409 },
         );
       }
 
-      const permission = pending
+      const permission = sentBack
+        ? await requirePermission(request, MODULE_CODE, "edit")
+        : pending
         ? await requireAnyPermission(request, [
             { moduleCode: "wo_approval", actionCode: "edit" },
             { moduleCode: "wo_approval", actionCode: "upload" },
@@ -938,7 +948,7 @@ export async function PATCH(
         }
       }
 
-      const allowedTextFields = pending
+      const allowedTextFields = pending || sentBack
         ? ["description", "wo_type", "wo_date", "wo_value", "gst_percent"]
         : ["description", "wo_type", "status", "wo_date", "wo_value", "gst_percent"];
 
@@ -1043,7 +1053,7 @@ export async function PATCH(
 
       let actionUser = permission.user;
 
-      if (pending && Object.keys(updatePayload).length > 0) {
+      if ((pending || sentBack) && Object.keys(updatePayload).length > 0) {
         const editPermission = await requirePermission(request, "wo_approval", "edit");
 
         if ("response" in editPermission) {

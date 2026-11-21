@@ -232,7 +232,7 @@ function applyWorkOrderScope(
   pilotOnly = false,
 ) {
   const lifecycleFilter = pilotOnly
-    ? "and(approval_status.in.(draft,pending,approved),status.eq.active),status.ilike.suspended,status.ilike.cancelled,approval_status.ilike.suspended,approval_status.ilike.cancelled"
+    ? "and(approval_status.in.(draft,pending,approved,sent_back),status.eq.active),status.ilike.suspended,status.ilike.cancelled,approval_status.ilike.suspended,approval_status.ilike.cancelled"
     : "and(approval_status.ilike.approved,status.eq.active),status.ilike.suspended,status.ilike.cancelled,approval_status.ilike.suspended,approval_status.ilike.cancelled";
   let next = query.or(lifecycleFilter);
   next = applyOrganizationScope(next, organizationScope);
@@ -987,14 +987,22 @@ export async function GET(request: Request) {
             documentCountMap: new Map<string, number>(),
           });
 
-    const [[companiesResult, sitesResult], vendorMap, documentResult] = await Promise.all([
+    const [[companiesResult, sitesResult], vendorMap, documentResult, auditResult] = await Promise.all([
       companySitePromise,
       loadVendorsForWorkOrders(admin, workOrderIds),
       documentPromise,
+      pilotOnly && workOrderIds.length
+        ? admin.from("erp_audit_logs").select("record_id,description,created_at,action,new_values").in("action", ["reject", "send_back"]).eq("entity_type", "work_order").in("record_id", workOrderIds).order("created_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
     ]);
 
     if (companiesResult.error) throw companiesResult.error;
     if (sitesResult.error) throw sitesResult.error;
+    if (auditResult.error) throw auditResult.error;
+    const latestSendBackComments = new Map<string, string>();
+    for (const audit of auditResult.data || []) {
+      if (audit.record_id && (audit.action === "send_back" || audit.new_values?.__audit?.canonical_action === "send_back") && !latestSendBackComments.has(audit.record_id)) latestSendBackComments.set(audit.record_id, audit.description || "");
+    }
 
     const companyMap = new Map((companiesResult.data || []).map((row) => [row.id, row]));
     const siteMap = new Map((sitesResult.data || []).map((row) => [row.id, row]));
@@ -1006,7 +1014,7 @@ export async function GET(request: Request) {
         vendorMap,
         documentResult.documentsMap,
         documentResult.documentCountMap,
-      ),
+      ).map((row: any) => ({ ...row, sent_back_comment: latestSendBackComments.get(row.id) || null })),
       total,
       page,
       page_size: pageSize,

@@ -8,12 +8,13 @@ export async function loadAuthorizedWorkOrderDraft(request: Request, id: string)
   if ("response" in auth) return { response: auth.response } as const;
   const admin = adminClient();
   const scope = await loadActorOrganizationScope(admin, auth);
-  let query: any = admin.from("work_orders").select("*").eq("id", id).eq("approval_status", "draft").not("creation_request_id", "is", null);
+  let query: any = admin.from("work_orders").select("*").eq("id", id).in("approval_status", ["draft", "sent_back"]).not("creation_request_id", "is", null);
   query = applyOrganizationScope(query, scope);
   if (!query) return { response: NextResponse.json({ error: "Work Order draft was not found." }, { status: 404 }) } as const;
   const { data, error } = await query.maybeSingle();
   if (error) throw error;
   if (!data || !isInOrganizationScope(scope, data.organization_id)) return { response: NextResponse.json({ error: "Work Order draft was not found." }, { status: 404 }) } as const;
+  if (data.approval_status === "sent_back" && data.created_by && data.created_by !== auth.user.id) return { response: NextResponse.json({ error: "Only the Work Order creator can edit a sent-back Work Order." }, { status: 403 }) } as const;
   let assignmentsQuery: any = admin.from("user_access_assignments").select("organization_id,company_id,site_id").eq("user_id", auth.user.id);
   if (scope !== null) assignmentsQuery = assignmentsQuery.in("organization_id", scope);
   const assignments = await assignmentsQuery;
