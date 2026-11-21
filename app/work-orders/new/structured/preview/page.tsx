@@ -25,7 +25,7 @@ export default function WorkOrderPilotPreviewPage() {
     }
     let cancelled = false;
     setAvailability({ state: "loading", message: "Checking Work Order availability…" });
-    apiFetch(`/api/work-orders/pilot/availability?vendor_id=${encodeURIComponent(draft.payload.vendor_id)}&wo_type=${encodeURIComponent(draft.payload.wo_type)}`)
+    apiFetch(`/api/work-orders/pilot/availability?vendor_id=${encodeURIComponent(draft.payload.vendor_id)}&company_id=${encodeURIComponent(draft.payload.company_id)}&site_id=${encodeURIComponent(draft.payload.site_id)}&wo_type=${encodeURIComponent(draft.payload.wo_type)}${draftId ? `&draft_id=${encodeURIComponent(draftId)}` : ""}`)
       .then((result: any) => {
         if (cancelled) return;
         if (result?.available === false) setAvailability({ state: "blocked", message: result.message || "This vendor already has an active Work Order of this type. Create a revision instead." });

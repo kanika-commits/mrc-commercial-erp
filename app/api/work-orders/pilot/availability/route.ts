@@ -75,6 +75,8 @@ export async function GET(request: Request) {
     stage = "work_order_validation_rpc";
     const { data: duplicate, error: duplicateError } = await admin.rpc("validate_work_order_pilot_creation", {
       p_organization_id: company.organization_id,
+      p_company_id: company.id,
+      p_site_id: site.id,
       p_vendor_id: vendor.id,
       p_work_order_type: workOrderType,
     });

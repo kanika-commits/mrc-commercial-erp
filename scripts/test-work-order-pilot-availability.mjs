@@ -13,9 +13,7 @@ assert.match(api, /vendor_id/);
 assert.match(api, /canonicalType/);
 assert.match(api, /available: true/);
 assert.match(api, /available: false/);
-assert.match(api, /rpc\("validate_work_order_pilot_creation", \{[\s\S]*p_organization_id: company\.organization_id,[\s\S]*p_vendor_id: vendor\.id,[\s\S]*p_work_order_type: workOrderType/);
-assert.doesNotMatch(api, /p_company_id: company\.id/);
-assert.doesNotMatch(api, /p_site_id: site\.id/);
+assert.match(api, /rpc\("validate_work_order_pilot_creation", \{[\s\S]*p_organization_id: company\.organization_id,[\s\S]*p_company_id: company\.id,[\s\S]*p_site_id: site\.id,[\s\S]*p_vendor_id: vendor\.id,[\s\S]*p_work_order_type: workOrderType/);
 assert.match(api, /Create a revision of that Work Order instead/);
 assert.match(api, /company\.organization_id !== vendor\.organization_id/);
 assert.match(api, /site\.organization_id !== vendor\.organization_id/);
@@ -40,6 +38,9 @@ assert.match(form, /disabled=\{saving \|\| \(!revisionId && availability\.state 
 assert.match(form, /if \(!revisionId && availability\.state !== "available"\)/);
 
 assert.match(preview, /api\/work-orders\/pilot\/availability/);
+assert.match(preview, /company_id=\$\{encodeURIComponent\(draft\.payload\.company_id\)\}/);
+assert.match(preview, /site_id=\$\{encodeURIComponent\(draft\.payload\.site_id\)\}/);
+assert.match(preview, /draft_id=\$\{encodeURIComponent\(draftId\)\}/);
 assert.match(preview, /availability\.state === "blocked"/);
 assert.match(preview, /availability\.state !== "available"/);
 
