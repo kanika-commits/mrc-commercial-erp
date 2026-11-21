@@ -22,8 +22,8 @@ assert.match(route, /applyOrganizationScope\(admin\.from\("companies"/);
 assert.match(route, /applyOrganizationScope\(admin\.from\("sites"/);
 assert.match(route, /admin\.rpc\("validate_work_order_pilot_creation"/);
 assert.match(route, /p_organization_id: company\.organization_id/);
-assert.match(route, /p_company_id: company\.id/);
-assert.match(route, /p_site_id: site\.id/);
+assert.doesNotMatch(route, /p_company_id: company\.id/);
+assert.doesNotMatch(route, /p_site_id: site\.id/);
 assert.match(route, /p_vendor_id: vendor\.id/);
 assert.doesNotMatch(route, /\.eq\("pilot_vendor_id", vendorId\)/);
 

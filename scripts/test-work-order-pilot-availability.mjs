@@ -13,7 +13,9 @@ assert.match(api, /vendor_id/);
 assert.match(api, /canonicalType/);
 assert.match(api, /available: true/);
 assert.match(api, /available: false/);
-assert.match(api, /rpc\("validate_work_order_pilot_creation", \{[\s\S]*p_organization_id: company\.organization_id,[\s\S]*p_company_id: company\.id,[\s\S]*p_site_id: site\.id,[\s\S]*p_vendor_id: vendor\.id,[\s\S]*p_work_order_type: workOrderType/);
+assert.match(api, /rpc\("validate_work_order_pilot_creation", \{[\s\S]*p_organization_id: company\.organization_id,[\s\S]*p_vendor_id: vendor\.id,[\s\S]*p_work_order_type: workOrderType/);
+assert.doesNotMatch(api, /p_company_id: company\.id/);
+assert.doesNotMatch(api, /p_site_id: site\.id/);
 assert.match(api, /Create a revision of that Work Order instead/);
 assert.match(api, /company\.organization_id !== vendor\.organization_id/);
 assert.match(api, /site\.organization_id !== vendor\.organization_id/);
@@ -45,7 +47,9 @@ assert.match(preview, /availability\.state === "blocked"/);
 assert.match(preview, /availability\.state !== "available"/);
 
 assert.match(create, /validate_work_order_pilot_creation/);
-assert.match(create, /p_vendor_id: vendor\.id/);
+assert.match(create, /p_organization_id: company\.organization_id, p_vendor_id: vendor\.id, p_work_order_type: woType/);
+assert.doesNotMatch(create, /p_company_id: company\.id/);
+assert.doesNotMatch(create, /p_site_id: site\.id/);
 assert.match(create, /p_work_order_type: woType/);
 
 console.log("Pilot availability contract checks passed.");

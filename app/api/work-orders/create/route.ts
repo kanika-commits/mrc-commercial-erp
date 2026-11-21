@@ -78,7 +78,7 @@ export async function POST(request: Request) {
     const siteAllowed = globalAccess || (access.sites || []).length === 0 || access.sites.includes(site.id);
     if (!activeOrganizationId || !isInOrganizationScope(scope, company.organization_id) || company.organization_id !== activeOrganizationId || company.organization_id !== site.organization_id || company.organization_id !== vendor.organization_id || !companyAllowed || !siteAllowed) return NextResponse.json({ error: "Selected records are outside the active authorized organization scope." }, { status: 403 });
     if (woType === "Daily Wage") {
-      const { data: duplicate, error: duplicateError } = await admin.rpc("validate_work_order_pilot_creation", { p_organization_id: company.organization_id, p_company_id: company.id, p_site_id: site.id, p_vendor_id: vendor.id, p_work_order_type: woType });
+      const { data: duplicate, error: duplicateError } = await admin.rpc("validate_work_order_pilot_creation", { p_organization_id: company.organization_id, p_vendor_id: vendor.id, p_work_order_type: woType });
       if (duplicateError) throw duplicateError;
       if (duplicate?.existing_work_order_id) return NextResponse.json({ error: `A live Daily Wage Work Order already exists for this vendor: ${duplicate.existing_wo_number || duplicate.existing_work_order_id}.` }, { status: 409 });
     }

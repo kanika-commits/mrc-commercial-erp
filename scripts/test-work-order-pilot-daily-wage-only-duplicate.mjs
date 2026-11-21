@@ -12,12 +12,13 @@ assert.match(migration, /company_id = p_company_id and site_id = p_site_id/);
 assert.match(migration, /pg_advisory_xact_lock/);
 for (const status of ["rejected", "cancelled", "canceled", "voided"]) assert.match(migration, new RegExp(status));
 assert.match(create, /validate_work_order_pilot_creation/);
-assert.match(create, /p_company_id: company\.id/);
-assert.match(create, /p_site_id: site\.id/);
+assert.match(create, /p_organization_id: company\.organization_id, p_vendor_id: vendor\.id, p_work_order_type: woType/);
+assert.doesNotMatch(create, /p_company_id: company\.id/);
+assert.doesNotMatch(create, /p_site_id: site\.id/);
 assert.match(create, /if \(woType === "Daily Wage"\)[\s\S]+duplicate\?\.existing_work_order_id/);
 assert.match(availability, /workOrderType !== "Daily Wage"/);
-assert.match(availability, /p_company_id: company\.id/);
-assert.match(availability, /p_site_id: site\.id/);
+assert.doesNotMatch(availability, /p_company_id: company\.id/);
+assert.doesNotMatch(availability, /p_site_id: site\.id/);
 assert.match(availability, /validate_work_order_pilot_creation/);
 assert.match(availability, /already has a Daily Wage Work Order/);
 
