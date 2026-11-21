@@ -69,13 +69,15 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   // Reuse the scope that authorized the draft load.  Re-resolving it here
   // can disagree with the draft's organization context and incorrectly turn
   // an otherwise authorized preview autosave into a 403.
-  const siteBelongsToCompany = site?.company_id == null || site?.company_id === company?.id;
   const draftOrganizationId = result.data.organization_id;
   const activeOrganizationId = resolveWriteOrganizationId(result.scope, draftOrganizationId);
   const selectionsBelongToDraft = company?.organization_id === draftOrganizationId
     && site?.organization_id === draftOrganizationId
     && vendor?.organization_id === draftOrganizationId;
-  if (!company || !site || !vendor || !siteBelongsToCompany || !selectionsBelongToDraft || !activeOrganizationId || !isInOrganizationScope(result.scope, draftOrganizationId)) return NextResponse.json({ error: "Selected records are outside the active authorized organization scope." }, { status: 403 });
+  // Sites are organization-scoped in the existing Work Order flow and may be
+  // shared by companies.  The saved draft and every selected record must still
+  // resolve to the draft organization and the actor's authorized scope.
+  if (!company || !site || !vendor || !selectionsBelongToDraft || !activeOrganizationId || !isInOrganizationScope(result.scope, draftOrganizationId)) return NextResponse.json({ error: "Selected records are outside the active authorized organization scope." }, { status: 403 });
   const ids = type === "Daily Wage" ? [] : Array.from(new Set(items.map((item: any) => text(item.item_master_id)).filter(Boolean)));
   if (type !== "Daily Wage" && ids.length !== items.length) return NextResponse.json({ error: "Each line must use a canonical Work Order Item Master item." }, { status: 400 });
   const mastersResult = ids.length ? await result.admin.from("work_order_item_masters").select("id,organization_id,item_header,description,unit,mode_of_measurement,status").in("id", ids).eq("organization_id", company.organization_id).eq("status", "active") : { data: [], error: null };
