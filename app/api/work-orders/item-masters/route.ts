@@ -42,6 +42,48 @@ export async function POST(request: Request) {
   } catch (error: any) { return jsonError(error.message || "Could not create Work Order Item Master.", 500); }
 }
 
+export async function PATCH(request: Request) {
+  try {
+    const auth = await requireProcurementPermission(request, ITEM_MODULE, "edit");
+    if ("response" in auth) return auth.response;
+    const body = await request.json().catch(() => ({}));
+    const id = text(body.id);
+    const itemHeader = text(body.item_header);
+    const description = text(body.description) || null;
+    const unit = text(body.unit);
+    const mode = text(body.mode_of_measurement);
+    if (!id) return jsonError("Item id is required.", 400);
+    if (!itemHeader || !unit || !mode) return jsonError("Item Header, Unit, and Mode of Measurement are required.", 400);
+
+    const admin = adminClient();
+    const scope = await loadActorOrganizationScope(admin, auth);
+    const organizationId = resolveWriteOrganizationId(scope);
+    if (!organizationId) return jsonError("Your account is not scoped to one organization.", 403);
+
+    const { data, error } = await admin
+      .from("work_order_item_masters")
+      .update({
+        item_header: itemHeader,
+        description,
+        unit,
+        mode_of_measurement: mode,
+        updated_by: auth.user.id,
+        updated_by_name: auth.user.user_metadata?.full_name || auth.user.email,
+        updated_by_email: auth.user.email || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .eq("organization_id", organizationId)
+      .neq("status", "deleted")
+      .select("id,organization_id,item_header,description,unit,mode_of_measurement,status")
+      .maybeSingle();
+    if (error?.code === "23505") return jsonError("A Work Order Item Master with this header already exists.", 409);
+    if (error) throw error;
+    if (!data) return jsonError("Item was not found in your organization.", 404);
+    return NextResponse.json({ item: data });
+  } catch (error: any) { return jsonError(error.message || "Could not update Work Order Item Master.", 500); }
+}
+
 export async function DELETE(request: Request) {
   try {
     const auth = await requireProcurementPermission(request, ITEM_MODULE, "delete");
