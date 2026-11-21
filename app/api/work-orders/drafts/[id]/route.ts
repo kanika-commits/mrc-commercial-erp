@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { PDFDocument } from "pdf-lib";
 import { readWorkOrderDraftSelections } from "@/lib/workOrderDraftSelections";
 import { loadAuthorizedWorkOrderDraft } from "@/lib/serverWorkOrderDraft";
-import { isInOrganizationScope } from "@/lib/serverOrganizationScope";
+import { isInOrganizationScope, resolveWriteOrganizationId } from "@/lib/serverOrganizationScope";
 
 const text = (value: unknown) => String(value ?? "").trim();
 const types = new Set(["Consultant", "Contractor (Labour)", "Contractor (SITC)", "Daily Wage", "Rental"]);
@@ -70,7 +70,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   // can disagree with the draft's organization context and incorrectly turn
   // an otherwise authorized preview autosave into a 403.
   const siteBelongsToCompany = site?.company_id == null || site?.company_id === company?.id;
-  if (!company || !site || !vendor || !siteBelongsToCompany || company.organization_id !== site.organization_id || company.organization_id !== vendor.organization_id || !isInOrganizationScope(result.scope, company.organization_id)) return NextResponse.json({ error: "Selected records are outside the active authorized organization scope." }, { status: 403 });
+  const draftOrganizationId = result.data.organization_id;
+  const activeOrganizationId = resolveWriteOrganizationId(result.scope, draftOrganizationId);
+  const selectionsBelongToDraft = company?.organization_id === draftOrganizationId
+    && site?.organization_id === draftOrganizationId
+    && vendor?.organization_id === draftOrganizationId;
+  if (!company || !site || !vendor || !siteBelongsToCompany || !selectionsBelongToDraft || !activeOrganizationId || !isInOrganizationScope(result.scope, draftOrganizationId)) return NextResponse.json({ error: "Selected records are outside the active authorized organization scope." }, { status: 403 });
   const ids = type === "Daily Wage" ? [] : Array.from(new Set(items.map((item: any) => text(item.item_master_id)).filter(Boolean)));
   if (type !== "Daily Wage" && ids.length !== items.length) return NextResponse.json({ error: "Each line must use a canonical Work Order Item Master item." }, { status: 400 });
   const mastersResult = ids.length ? await result.admin.from("work_order_item_masters").select("id,organization_id,item_header,description,unit,mode_of_measurement,status").in("id", ids).eq("organization_id", company.organization_id).eq("status", "active") : { data: [], error: null };
