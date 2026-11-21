@@ -196,7 +196,8 @@ export default function NewWorkOrderPage() {
     }
     let cancelled = false;
     setAvailability({ state: "loading", message: "Checking Work Order availability…" });
-    requestWithTimeout(`/api/work-orders/pilot/availability?vendor_id=${encodeURIComponent(form.vendor_id)}&company_id=${encodeURIComponent(form.company_id)}&site_id=${encodeURIComponent(form.site_id)}&wo_type=${encodeURIComponent(form.wo_type)}`, "Work Order availability check")
+    const draftParam = draftId ? `&draft_id=${encodeURIComponent(draftId)}` : "";
+    requestWithTimeout(`/api/work-orders/pilot/availability?vendor_id=${encodeURIComponent(form.vendor_id)}&company_id=${encodeURIComponent(form.company_id)}&site_id=${encodeURIComponent(form.site_id)}&wo_type=${encodeURIComponent(form.wo_type)}${draftParam}`, "Work Order availability check")
       .then((result: any) => {
         if (cancelled) return;
         if (result?.available === false) setAvailability({ state: "blocked", message: result.message || "This vendor already has an active Work Order of this type. Create a revision instead." });
@@ -206,7 +207,7 @@ export default function NewWorkOrderPage() {
         if (!cancelled) setAvailability({ state: "error", message: error.message || "Availability could not be verified. Try again before continuing." });
       });
     return () => { cancelled = true; };
-  }, [form.vendor_id, form.company_id, form.site_id, form.wo_type, revisionId]);
+  }, [form.vendor_id, form.company_id, form.site_id, form.wo_type, revisionId, draftId]);
 
   const sites = lookups.sites;
   const terms = useMemo(() => {
