@@ -85,6 +85,7 @@ type WorkOrderDocument = {
   file_path: string | null;
   signed_url?: string | null;
   signed_url_error?: string | null;
+  drive_sync_key?: string | null;
 };
 
 type SelectionMap = Record<string, boolean>;
@@ -116,6 +117,11 @@ function cleanValue(...values: Array<string | null | undefined>) {
 function reviewedPackageName(woNumber: string | null | undefined) {
   const safeNumber = String(woNumber || "work-order").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "work-order";
   return `${safeNumber}.reviewed-package.pdf`;
+}
+
+function approvedPdfName(woNumber: string | null | undefined) {
+  const safeNumber = String(woNumber || "work-order").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "work-order";
+  return `${safeNumber}.pdf`;
 }
 
 export default function WorkOrdersPageRoute() {
@@ -398,6 +404,9 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
       const packageBlob = await response.blob();
       const packageUrl = URL.createObjectURL(packageBlob);
       setLoadedReviewedPackages((previous) => ({ ...previous, [workOrder.id]: packageUrl }));
+      if (["approved", "issued"].includes(String(workOrder.approval_status || "").toLowerCase())) {
+        await loadDocumentsForWorkOrder(workOrder.id);
+      }
     } catch (reviewError: any) {
       setError(reviewError.message || "Could not load Work Order package.");
     } finally {
@@ -988,10 +997,10 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
                           const isDraft = String(wo.approval_status || "").toLowerCase() === "draft";
                           return (
                             <div className="space-y-2 text-sm">
-                              <div className="font-semibold text-slate-800">{isDraft ? "Saved draft PDF" : "1 package"}</div>
+                              <div className="font-semibold text-slate-800">{isDraft ? "Saved draft PDF" : "Official approved PDF"}</div>
                               {loadedReviewedPackages[wo.id] ? (
-                                <a href={loadedReviewedPackages[wo.id]} download={reviewedPackageName(wo.wo_number)} target="_blank" rel="noreferrer" className="font-semibold text-[#00658b] hover:underline">
-                                  {isDraft ? "Open saved draft PDF" : reviewedPackageName(wo.wo_number)}
+                                <a href={loadedReviewedPackages[wo.id]} download={isDraft ? reviewedPackageName(wo.wo_number) : approvedPdfName(wo.wo_number)} target="_blank" rel="noreferrer" className="font-semibold text-[#00658b] hover:underline">
+                                  {isDraft ? "Open saved draft PDF" : `Open ${approvedPdfName(wo.wo_number)}`}
                                 </a>
                               ) : (
                                 <button type="button" onClick={() => void (isDraft ? loadDraftPackage(wo) : loadReviewedPackage(wo))} disabled={loadingReviewedPackages[wo.id]} className="font-semibold text-[#00658b] hover:underline disabled:opacity-50">
@@ -999,6 +1008,12 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
                                 </button>
                               )}
                               {isDraft && loadedDocumentsByWorkOrder[wo.id]?.length === 0 && <div className="text-xs text-slate-500">No supporting documents</div>}
+                              {!isDraft && loadedDocumentsByWorkOrder[wo.id]?.filter((document) => document.drive_sync_key !== "pilot-generated-pdf").map((document) => (
+                                <div key={document.id} className="flex max-w-[300px] items-center gap-2 text-xs">
+                                  <span className="truncate text-slate-600">Source attachment: {document.file_name || "Work Order file"}</span>
+                                  {document.signed_url && <a href={document.signed_url} target="_blank" rel="noreferrer" className="shrink-0 font-semibold text-[#00658b] hover:underline">Open</a>}
+                                </div>
+                              ))}
                             </div>
                           );
                         }

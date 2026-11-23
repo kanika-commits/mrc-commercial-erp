@@ -32,7 +32,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         : companyIds.length === 0 || companyIds.includes(order.company_id);
       if (!inAssignedScope) return NextResponse.json({ error: "Work Order was not found." }, { status: 404 });
     }
-    if (order.creation_request_id) {
+    const approved = ["approved", "issued"].includes(String(order.approval_status || order.status || "").toLowerCase());
+    if (order.creation_request_id && !approved) {
       const { data: artifact, error: artifactError } = await admin
         .from("work_order_documents")
         .select("file_path, file_url, file_name")
