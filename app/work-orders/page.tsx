@@ -89,7 +89,7 @@ type WorkOrderDocument = {
 };
 
 type SelectionMap = Record<string, boolean>;
-type SortField = "wo_number" | "vendor_name" | "wo_value" | "status" | "approval_status" | "wo_date";
+type SortField = "wo_number" | "vendor_name" | "wo_value" | "status" | "approval_status" | "created_at" | "wo_date";
 
 function workOrderViewHref(wo: Pick<WorkOrder, "id" | "approval_status" | "creation_request_id">, pilotOnly: boolean) {
   const approvalStatus = String(wo.approval_status || "").trim().toLowerCase();
@@ -370,8 +370,8 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
   const [loadedReviewedPackages, setLoadedReviewedPackages] = useState<Record<string, string>>({});
   const [loadingReviewedPackages, setLoadingReviewedPackages] = useState<Record<string, boolean>>({});
   const [packageErrorsByWorkOrder, setPackageErrorsByWorkOrder] = useState<Record<string, string>>({});
-  const [sortField, setSortField] = useState<SortField>("wo_number");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [sortField, setSortField] = useState<SortField>("created_at");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [message, setMessage] = useState("");
   const [canDelete, setCanDelete] = useState(false);
   const [deleteWorkOrder, setDeleteWorkOrder] = useState<WorkOrder | null>(null);
@@ -885,7 +885,8 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
                 <option value="wo_value">WO Value</option>
                 <option value="status">Status</option>
                 <option value="approval_status">Approval Status</option>
-                <option value="wo_date">WO Date / Created Date</option>
+                <option value="created_at">Created At</option>
+                <option value="wo_date">WO Date</option>
               </select>
             </label>
             <label className="flex items-center gap-2 text-xs font-medium text-slate-700">

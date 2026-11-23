@@ -655,6 +655,8 @@ function applySqlSort(query: any, field: string, direction: "asc" | "desc") {
       return query.order("status", { ascending });
     case "approval_status":
       return query.order("approval_status", { ascending });
+    case "created_at":
+      return query.order("created_at", { ascending }).order("id", { ascending });
     case "wo_date":
       return query.order("wo_date", { ascending }).order("created_at", { ascending });
     case "wo_number":
