@@ -54,21 +54,6 @@ const workOrderTermText = (input: unknown) => pdfText(input)
 // currency formatting unchanged, but use an encodable PDF-only representation
 // for dynamic text that may contain the rupee symbol.
 const pdfText = (input: unknown) => value(input).replace(/₹/g, "INR");
-const formatPdfTimestamp = (input: unknown) => {
-  const raw = value(input);
-  if (!raw) return "—";
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return raw;
-  return parsed.toLocaleString("en-IN", {
-    timeZone: "Asia/Kolkata",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-};
 export type WorkOrderRedline = { kind: "unchanged" | "changed" | "added" | "deleted"; value: unknown; previous?: unknown; runs?: Array<{ text: string; color: "black" | "red"; strike?: boolean }> };
 
 export function structuredTermsFromSnapshot(input: unknown): any[] | null {
@@ -491,6 +476,7 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
 
   newPage();
   const company = display(row.company?.company_name || row.company_name);
+  const delivery = row.delivery_snapshot || {};
   draw(revisionMeta ? `Revised Work Order R${revisionMeta.revisionNumber}` : "Work Order", LEFT + (CONTENT - textWidth(revisionMeta ? `Revised Work Order R${revisionMeta.revisionNumber}` : "Work Order", 18)) / 2, y, 18, true); y -= 28;
   if (revisionMeta) { const noticeLines = wrap(revisionMeta.notice, CONTENT, BODY_SIZE); ensure(noticeLines.length * LEADING + 8); noticeLines.forEach((line) => { draw(line, LEFT, y, BODY_SIZE, true); y -= LEADING; }); y -= 8; }
   block(["Vendor Details", "Work Order Details"], [
@@ -499,7 +485,6 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
       ? `Work Order No: ${display(row.po_number || row.wo_number)}\nOriginal Work Order Date: ${date(row.original_wo_date)}\nWO Revision Applicable Date: ${date(row.wo_date)}\nCompany: ${company}\nSite: ${display(row.site?.site_name || row.site_name)}`
       : `Work Order No: ${display(row.po_number || row.wo_number)}\nDate: ${date(row.po_date || row.wo_date)}\nCompany: ${company}\nSite: ${display(row.site?.site_name || row.site_name)}`,
   ], [{}, { "Work Order No": "wo_number", Date: "wo_date", "WO Revision Applicable Date": "wo_date", Company: "company_id", Site: "site_id" }]);
-  const delivery = row.delivery_snapshot || {};
   const billing = { ...(row.billing_snapshot || {}), ...(delivery.gst_billing || {}), ...(delivery.billing_address || {}) };
   const shipping = delivery.delivery_location || row.delivery_snapshot || {};
   block(["Billing Address", "Shipping / Delivery Address"], [
@@ -621,10 +606,10 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
   const signatureText = (input: unknown) => value(input) || "—";
   const creatorName = signatureText(row.created_by_name || row.created_by_email);
   const creatorEmail = signatureText(row.created_by_email);
-  const creatorAt = row.created_at ? formatPdfTimestamp(row.created_at) : signatureText(row.created_at_display);
+  const creatorAt = row.created_at ? new Date(row.created_at).toLocaleString("en-IN") : signatureText(row.created_at_display);
   const approverName = signatureText(row.approved_by_name || row.approved_by_email || row.approval_signature_block?.employeeName);
-  const approverTitle = signatureText(row.approval_signature_block?.designation || row.approval_signature_block?.title || row.approval_signature_block?.jobTitle);
-  const approverCompany = signatureText(row.company?.company_name || row.company_name);
+  const approverCompany = signatureText(row.approval_signature_block?.company || row.company?.company_name || row.company_name);
+  const approverDesignation = signatureText(row.approval_signature_block?.displayTitle || row.approval_signature_block?.designation);
   const vendorLines = [
     ["Vendor Acceptance", true, 9],
     ["I hereby accept the terms and conditions of this Work Order and confirm acceptance on behalf of the Vendor.", false, 8],
@@ -641,7 +626,7 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
     [`For: ${approverCompany}`, false, 8],
     ["Signature:", false, 8],
     [`Name: ${approverName}`, false, 8],
-    [`Designation: ${approverTitle}`, false, 8],
+    [`Designation: ${approverDesignation}`, false, 8],
   ] : [
     ["Created By", true, 9],
     [`Name: ${creatorName}`, false, 8],
@@ -669,7 +654,18 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
   page.drawLine({ start: { x: dividerX, y: signatureBottom }, end: { x: dividerX, y: signatureTop }, thickness: 0.6, color: BORDER });
   const drawSignatureLines = (lines: Array<[string, boolean, number]>, x: number) => lines.forEach(([text, strong, size], index) => { if (text) draw(text, x, signatureTop - signaturePadding - 8 - index * signatureLineHeight, size, strong); });
   drawSignatureLines(leftSignatureLines, leftX);
-  drawSignatureLines(rightSignatureLines, rightX);
-  if (approvalSignatureImage) page.drawImage(approvalSignatureImage, { x: rightX, y: signatureBottom + signaturePadding + 8, width: signatureImageWidth, height: signatureImageHeight });
+  if (approvalSignatureImage && approved) {
+    let offset = 0;
+    rightSignatureLines.forEach(([text, strong, size], index) => {
+      const lineY = signatureTop - signaturePadding - 8 - index * signatureLineHeight - offset;
+      if (text) draw(text, rightX, lineY, size, strong);
+      if (index === 2) {
+        page.drawImage(approvalSignatureImage, { x: rightX, y: lineY - signatureImageHeight - 3, width: signatureImageWidth, height: signatureImageHeight });
+        offset += signatureImageHeight + 6;
+      }
+    });
+  } else {
+    drawSignatureLines(rightSignatureLines, rightX);
+  }
   return Buffer.from(await pdf.save());
 }

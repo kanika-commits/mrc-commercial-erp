@@ -19,12 +19,12 @@ assert.match(page, /Draft\/reviewed PDF/);
 assert.match(page, /Source attachments/);
 assert.match(page, /packageErrorsByWorkOrder/);
 assert.match(docs, /drive_sync_key/);
-assert.match(approved, /!\["approved", "issued"\]\.includes/);
+assert.match(approved, /\["approved", "issued"\]\.includes/);
 assert.match(approved, /no configured usable signature asset/);
 assert.match(renderer, /\["Approved By", true, 9\]/);
 assert.match(renderer, /`For: \$\{approverCompany\}`/);
 assert.match(renderer, /\["Signature:", false, 8\]/);
-assert.match(renderer, /`Designation: \$\{approverTitle\}`/);
+assert.match(renderer, /`Designation: \$\{approverDesignation\}`/);
 assert.doesNotMatch(renderer, /Approved At: \$\{approverAt\}/);
 
 console.log("Work Order PDF/Drive release contract passed.");

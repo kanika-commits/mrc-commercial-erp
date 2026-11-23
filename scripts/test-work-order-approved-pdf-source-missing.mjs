@@ -6,8 +6,8 @@ const route = fs.readFileSync("app/api/work-orders/[id]/generated-pdf/route.ts",
 const forms = fs.readFileSync("app/work-orders/page.tsx", "utf8");
 
 assert.doesNotMatch(renderer, /refusing to regenerate a different package/);
-assert.match(renderer, /drive_sync_key === "pilot-reviewed-pdf"/);
-assert.match(renderer, /!\["approved", "issued"\]\.includes\(String\(order\?\.approval_status/);
+assert.match(renderer, /!\["pilot-generated-pdf", "pilot-reviewed-pdf"\]\.includes\(row\.drive_sync_key\)/);
+assert.match(renderer, /\["approved", "issued"\]\.includes\(String\(order\.approval_status/);
 assert.match(route, /String\(order\.approval_status \|\| ""\)\.toLowerCase\(\) !== "approved"/);
 assert.match(route, /renderApprovedWorkOrderPdfById\(admin, id\)/);
 assert.match(forms, /isApprovedWorkOrder\(wo\)/);

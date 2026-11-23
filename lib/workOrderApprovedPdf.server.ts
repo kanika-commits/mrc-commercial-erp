@@ -2,8 +2,8 @@ import { PDFDocument } from "pdf-lib";
 import { adminClient } from "@/lib/serverProcurementAccess";
 import { getEmployeeSignatureBlock } from "@/lib/hr/employeeSignature";
 import { loadWorkOrderLetterheadAssets, renderWorkOrderPdf, structuredTermsFromSnapshot } from "@/lib/workOrderPdfRenderer.server";
-import { appendWorkOrderSupportingPdfs } from "@/lib/workOrderSupportingDocuments.server";
 import { addWorkOrderDraftWatermark, addWorkOrderPackagePageNumbers } from "@/lib/workOrderPdfPackage.server";
+import { appendWorkOrderSupportingPdfs } from "@/lib/workOrderSupportingDocuments.server";
 
 const value = (input: unknown) => String(input ?? "").trim();
 
@@ -32,7 +32,7 @@ export async function renderApprovedWorkOrderPdfById(
   id: string,
 ) {
   const [orderResult, linesResult, documentsResult] = await Promise.all([
-    admin.from("work_orders").select("id,organization_id,company_id,site_id,wo_number,wo_date,wo_type,status,approval_status,created_by,created_by_name,created_by_email,created_at,approved_by,approved_by_name,approved_by_email,approved_at,total_basic_amount,total_gst_amount,total_amount,standard_terms_snapshot,work_order_key_terms,letterhead_snapshot,delivery_snapshot,creation_request_id").eq("id", id).maybeSingle(),
+    admin.from("work_orders").select("id,organization_id,company_id,site_id,pilot_vendor_id,wo_number,wo_date,wo_type,status,approval_status,created_by,created_by_name,created_by_email,created_at,approved_by,approved_by_name,approved_by_email,approved_at,total_basic_amount,total_gst_amount,total_amount,standard_terms_snapshot,work_order_key_terms,letterhead_snapshot,delivery_snapshot,creation_request_id").eq("id", id).maybeSingle(),
     admin.from("work_order_items").select("item_header_snapshot,description_snapshot,additional_description_snapshot,unit_snapshot,mode_of_measurement_snapshot,quantity,unit_rate,gst_percent,basic_amount,gst_amount,line_total,sort_order").eq("work_order_id", id).order("sort_order"),
     admin.from("work_order_documents").select("id,file_name,file_url,file_path,uploaded_at,drive_sync_key").eq("work_order_id", id).order("uploaded_at", { ascending: true }),
   ]);
@@ -41,19 +41,6 @@ export async function renderApprovedWorkOrderPdfById(
   if (documentsResult.error) throw documentsResult.error;
   const order = orderResult.data;
   if (!order) throw new Error("Work Order was not found.");
-  const siteResult = await admin.from("sites").select("site_name").eq("id", order.site_id).eq("organization_id", order.organization_id).maybeSingle();
-  if (siteResult.error) throw siteResult.error;
-  const reviewedDocument = (documentsResult.data || []).find((row: any) => row.drive_sync_key === "pilot-reviewed-pdf");
-  if (reviewedDocument && !["approved", "issued"].includes(String(order?.approval_status || order?.status || "").toLowerCase())) {
-    const path = value(reviewedDocument.file_path);
-    if (!path || path.startsWith("https://")) throw new Error("The reviewed Work Order PDF artifact is not available from private Work Order storage.");
-    const downloaded = await admin.storage.from("work-order-documents").download(path.replace(/^\/+/, ""));
-    if (downloaded.error || !downloaded.data) throw downloaded.error || new Error("The reviewed Work Order PDF artifact could not be downloaded.");
-    const bytes = Buffer.from(await downloaded.data.arrayBuffer());
-    const pdf = await PDFDocument.load(bytes);
-    if (pdf.getPageCount() < 1) throw new Error("The reviewed Work Order PDF artifact has no pages.");
-    return bytes;
-  }
   const companyResult = await admin.from("companies").select("id,organization_id,company_name,status").eq("id", order.company_id).eq("organization_id", order.organization_id).eq("status", "active").maybeSingle();
   if (companyResult.error) throw companyResult.error;
 
@@ -68,12 +55,32 @@ export async function renderApprovedWorkOrderPdfById(
     throw new Error("Approved Work Order cannot be filed as signed: the approver has no configured usable signature asset.");
   }
   const delivery = order.delivery_snapshot || {};
-  const company = { company_name: delivery.gst_billing?.legal_name || delivery.gst_billing?.trade_name || companyResult.data?.company_name || "" };
-  const vendorSnapshot = delivery.vendor_snapshot || {};
-  const primaryVendorContact = (vendorSnapshot.contacts || []).find((contact: any) => contact?.is_primary) || (vendorSnapshot.contacts || [])[0] || {};
-  const resolvedVendorSnapshot = { ...vendorSnapshot, address: vendorSnapshot.address || [vendorSnapshot.address_line1, vendorSnapshot.address_line2, vendorSnapshot.city, vendorSnapshot.state, vendorSnapshot.pincode].filter(Boolean).join(", "), contact_person: vendorSnapshot.contact_person || vendorSnapshot.contact_name || primaryVendorContact.contact_name || "", phone: vendorSnapshot.phone || vendorSnapshot.mobile || primaryVendorContact.contact_number || primaryVendorContact.mobile || "", email: vendorSnapshot.email || primaryVendorContact.email || "" };
+  const selection = delivery.master_selection || {};
+  const vendorId = delivery.vendor_snapshot?.vendor_id || order.pilot_vendor_id || null;
+  const [vendorResult, vendorContactsResult, gstResult, billingResult, deliveryResult, siteResult] = await Promise.all([
+    vendorId ? admin.from("vendors").select("id,vendor_name,address,gstin,pan").eq("id", vendorId).eq("organization_id", order.organization_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    vendorId ? admin.from("vendor_contacts").select("id,contact_name,contact_number,email,designation,is_primary").eq("vendor_id", vendorId).eq("organization_id", order.organization_id).order("is_primary", { ascending: false }).order("created_at") : Promise.resolve({ data: [], error: null }),
+    selection.gst_registration_id ? admin.from("company_gst_registrations").select("id,gstin,legal_name,trade_name,state,state_code,registration_type").eq("id", selection.gst_registration_id).eq("organization_id", order.organization_id).eq("company_id", order.company_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    selection.billing_address_id ? admin.from("company_billing_addresses").select("id,gstin,address_line1,address_line2,city,state,pincode,contact_name,mobile,email").eq("id", selection.billing_address_id).eq("organization_id", order.organization_id).eq("company_id", order.company_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    selection.delivery_location_id ? admin.from("site_delivery_locations").select("id,location_name,address,address_line1,address_line2,city,state,pincode,gstin,contact_name,mobile,email").eq("id", selection.delivery_location_id).eq("organization_id", order.organization_id).eq("company_id", order.company_id).eq("site_id", order.site_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    admin.from("sites").select("id,site_name").eq("id", order.site_id).eq("organization_id", order.organization_id).maybeSingle(),
+  ]);
+  if (vendorResult.error || vendorContactsResult.error || gstResult.error || billingResult.error || deliveryResult.error || siteResult.error) throw vendorResult.error || vendorContactsResult.error || gstResult.error || billingResult.error || deliveryResult.error || siteResult.error;
+  const vendorSnapshot = { ...(delivery.vendor_snapshot || {}), ...(vendorResult.data || {}) };
+  const primaryVendorContact = (vendorContactsResult.data || []).find((contact: any) => contact?.is_primary) || (vendorContactsResult.data || [])[0] || {};
+  const snapshotBilling = { ...(delivery.gst_billing || {}), ...(delivery.billing_address || {}) };
+  const snapshotDelivery = { ...(delivery.delivery_location || {}) };
+  const resolvedBilling = { ...snapshotBilling, ...(gstResult.data || {}), ...(billingResult.data || {}) };
+  const resolvedDelivery = { ...snapshotDelivery, ...(deliveryResult.data || {}) };
+  const company = { company_name: resolvedBilling.legal_name || resolvedBilling.trade_name || companyResult.data?.company_name || "" };
+  const resolvedVendorSnapshot = {
+    ...vendorSnapshot,
+    contact_person: vendorSnapshot.contact_person || vendorSnapshot.contact_name || primaryVendorContact.contact_name || "",
+    phone: vendorSnapshot.phone || vendorSnapshot.mobile || primaryVendorContact.contact_number || "",
+    email: vendorSnapshot.email || primaryVendorContact.email || "",
+  };
   const standardTermsClauses = structuredTermsFromSnapshot(order.standard_terms_snapshot);
-  const site = { site_name: siteResult.data?.site_name || delivery.delivery_location?.site_name || delivery.delivery_location?.location_name || "" };
+  const site = { site_name: siteResult.data?.site_name || "" };
   const bytes = await renderWorkOrderPdf({
     ...order,
     approved_by: approverId,
@@ -85,6 +92,7 @@ export async function renderApprovedWorkOrderPdfById(
     company,
     site,
     vendor_snapshot: resolvedVendorSnapshot,
+    delivery_snapshot: { ...delivery, gst_billing: resolvedBilling, billing_address: resolvedBilling, delivery_location: resolvedDelivery, billing_contact: delivery.billing_contact || billingResult.data || {}, delivery_contact: delivery.delivery_contact || deliveryResult.data || {} },
     standard_terms_clauses: standardTermsClauses || undefined,
     items: (linesResult.data || []).map((item: any) => ({
       ...item,
@@ -96,13 +104,12 @@ export async function renderApprovedWorkOrderPdfById(
       total_amount: item.line_total,
     })),
   }, await loadWorkOrderLetterheadAssets(order.letterhead_snapshot, order.letterhead_snapshot?.letterhead_id, order.company_id));
-  const protectedPdf = ["approved", "issued"].includes(String(order.approval_status || order.status || "").toLowerCase())
-    ? bytes
-    : await addWorkOrderDraftWatermark(bytes);
   const supportingFiles: File[] = [];
   for (const document of (documentsResult.data || []).filter((row: any) => !["pilot-generated-pdf", "pilot-reviewed-pdf"].includes(row.drive_sync_key))) {
     const path = value(document.file_path);
-    if (!path || path.startsWith("https://drive.google.com/") || path.startsWith("https://docs.google.com/")) throw new Error(`Supporting document ${value(document.file_name) || document.id} is not available from Work Order storage for review.`);
+    if (!path || path.startsWith("https://drive.google.com/") || path.startsWith("https://docs.google.com/")) {
+      throw new Error(`Supporting document ${value(document.file_name) || document.id} is not available from Work Order storage for review.`);
+    }
     const downloaded = await admin.storage.from("work-order-documents").download(path.replace(/^\/+/, ""));
     if (downloaded.error || !downloaded.data) throw downloaded.error || new Error(`Supporting document ${value(document.file_name) || document.id} could not be downloaded for review.`);
     const fileName = value(document.file_name) || "supporting-document";
@@ -110,8 +117,11 @@ export async function renderApprovedWorkOrderPdfById(
     const mimeType = lower.endsWith(".pdf") ? "application/pdf" : lower.endsWith(".png") ? "image/png" : lower.endsWith(".jpg") || lower.endsWith(".jpeg") ? "image/jpeg" : "application/octet-stream";
     supportingFiles.push(new File([await downloaded.data.arrayBuffer()], fileName, { type: mimeType }));
   }
-  const packagedPdf = supportingFiles.length ? await appendWorkOrderSupportingPdfs(protectedPdf, supportingFiles) : protectedPdf;
-  return addWorkOrderPackagePageNumbers(packagedPdf);
+  const packagedPdf = supportingFiles.length ? await appendWorkOrderSupportingPdfs(bytes, supportingFiles) : bytes;
+  const protectedPdf = ["approved", "issued"].includes(String(order.approval_status || order.status || "").toLowerCase())
+    ? packagedPdf
+    : await addWorkOrderDraftWatermark(packagedPdf);
+  return addWorkOrderPackagePageNumbers(protectedPdf);
 }
 
 export function workOrderPdfFileName(woNumber: unknown) {

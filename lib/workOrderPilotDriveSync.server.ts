@@ -1,7 +1,9 @@
 import { createWorkOrderDriveFolder, listDriveFolderFiles, uploadDriveFile } from "@/src/lib/googleDrive";
 import { renderApprovedWorkOrderPdfById, workOrderPdfFileName } from "@/lib/workOrderApprovedPdf.server";
+import { assertOrganizationDocumentScope } from "@/lib/platformOrganizationStorage";
 
 const DOCUMENT_BUCKET = "work-order-documents";
+const ORGANIZATION_DOCUMENT_BUCKET = "organization-work-order-documents";
 const STALE_SYNC_MS = 10 * 60 * 1000;
 
 const isDriveUrl = (value: unknown) => /^https:\/\/(drive|docs)\.google\.com\//.test(String(value || "").trim());
@@ -16,6 +18,15 @@ function storagePath(document: any) {
   const marker = `/storage/v1/object/public/${DOCUMENT_BUCKET}/`;
   const index = raw.indexOf(marker);
   return index >= 0 ? decodeURIComponent(raw.slice(index + marker.length)) : raw.replace(/^\/+/, "");
+}
+
+export function assertConfiguredPilotDocument(organizationId: string, workOrderId: string, document: any) {
+  assertOrganizationDocumentScope(organizationId, document?.organization_id, organizationId);
+  if (document?.work_order_id !== workOrderId) throw new Error("Pilot Work Order document is linked to a different Work Order.");
+  if (isDriveUrl(document?.file_url)) return "";
+  const path = clean(document?.file_path || document?.file_url);
+  if (!path) throw new Error("Pilot Work Order document has no storage path.");
+  return path;
 }
 
 async function existingDriveFile(admin: any, folderId: string, fileName: string) {
@@ -55,9 +66,6 @@ async function claimSync(admin: any, workOrderId: string) {
 
 export async function syncPilotWorkOrderToDrive(admin: any, workOrderId: string) {
   let claim;
-  let pdfFiled = false;
-  let metadataPersisted = false;
-  let supportingDocumentsFiled = false;
   try {
     claim = await claimSync(admin, workOrderId);
   } catch (error: any) {
@@ -65,47 +73,59 @@ export async function syncPilotWorkOrderToDrive(admin: any, workOrderId: string)
     return { status: "unavailable", error: message };
   }
   if (claim.kind !== "claimed") return { status: claim.kind === "done" ? "succeeded" : claim.kind === "skip" ? "skipped" : "running" };
+  let pdfFiled = false;
+  let metadataPersisted = false;
+  let supportingDocumentsFiled = false;
   try {
-    const { data: folder, error: folderError } = await admin.from("work_order_drive_folders").select("drive_folder_id,ra_bills_folder_id,invoices_folder_id,debit_notes_folder_id,contractor_docs_folder_id").eq("work_order_id", workOrderId).maybeSingle();
+    const organizationId = String(claim.current?.organization_id || "");
+    if (!organizationId) throw new Error("Pilot Work Order organization could not be resolved.");
+    const { data: folder, error: folderError } = await admin.from("work_order_drive_folders").select("id,organization_id,drive_folder_id,drive_folder_name,ra_bills_folder_id,invoices_folder_id,debit_notes_folder_id,contractor_docs_folder_id").eq("work_order_id", workOrderId).maybeSingle();
     if (folderError) throw folderError;
     let folderId = folder?.drive_folder_id;
-    let contractorDocsFolderId = folder?.contractor_docs_folder_id || "";
-    if (!folderId || !folder?.ra_bills_folder_id || !folder?.invoices_folder_id || !folder?.debit_notes_folder_id || !folder?.contractor_docs_folder_id) {
+    const hasCompleteHierarchy = Boolean(folder?.drive_folder_id && folder?.ra_bills_folder_id && folder?.invoices_folder_id && folder?.debit_notes_folder_id && folder?.contractor_docs_folder_id);
+    if (!hasCompleteHierarchy) {
       const { data: orderForFolder, error: orderForFolderError } = await admin.from("work_orders").select("id,organization_id,company_id,site_id,wo_number").eq("id", workOrderId).single();
       if (orderForFolderError) throw orderForFolderError;
       const createdFolder = await createWorkOrderDriveFolder(orderForFolder.wo_number);
       const { error: folderSaveError } = await admin.from("work_order_drive_folders").upsert({ organization_id: orderForFolder.organization_id, work_order_id: workOrderId, drive_folder_id: createdFolder.folder_id, drive_folder_name: createdFolder.folder_name, ra_bills_folder_id: createdFolder.ra_bills_folder_id, invoices_folder_id: createdFolder.invoices_folder_id, debit_notes_folder_id: createdFolder.debit_notes_folder_id, contractor_docs_folder_id: createdFolder.contractor_docs_folder_id }, { onConflict: "work_order_id" });
       if (folderSaveError) throw folderSaveError;
       folderId = createdFolder.folder_id;
-      contractorDocsFolderId = createdFolder.contractor_docs_folder_id;
     }
 
+    const { data: currentFolder, error: currentFolderError } = await admin.from("work_order_drive_folders").select("organization_id,drive_folder_id,contractor_docs_folder_id").eq("work_order_id", workOrderId).maybeSingle();
+    if (currentFolderError) throw currentFolderError;
+    if (!currentFolder?.drive_folder_id) throw new Error("Work Order Drive folder is not linked.");
+
     const pdf = await renderApprovedWorkOrderPdfById(admin, workOrderId);
-    const { data: order, error: orderError } = await admin.from("work_orders").select("id,wo_number,organization_id").eq("id", workOrderId).single();
+    const { data: order, error: orderError } = await admin.from("work_orders").select("id,wo_number,organization_id,approved_at").eq("id", workOrderId).eq("organization_id", organizationId).single();
     if (orderError) throw orderError;
     const pdfName = workOrderPdfFileName(order.wo_number);
     const pdfFile = await uploadOrReuse(admin, folderId, pdfName, pdf);
     pdfFiled = true;
-    const { error: pdfUpdateError } = await admin.from("work_orders").update({ generated_pdf_file_id: pdfFile.file_id, generated_pdf_file_url: pdfFile.file_url, generated_pdf_uploaded_at: new Date().toISOString(), generated_pdf_upload_key: `work-order:${workOrderId}:generated-pdf` }).eq("id", workOrderId).eq("organization_id", order.organization_id);
+    const { error: pdfUpdateError } = await admin.from("work_orders").update({ generated_pdf_file_id: pdfFile.file_id, generated_pdf_file_url: pdfFile.file_url, generated_pdf_uploaded_at: new Date().toISOString(), generated_pdf_upload_key: `work-order:${workOrderId}:generated-pdf` }).eq("id", workOrderId).eq("organization_id", organizationId);
     if (pdfUpdateError) throw pdfUpdateError;
     const pdfDocument = { organization_id: order.organization_id, work_order_id: workOrderId, file_name: pdfFile.file_name || pdfName, file_url: pdfFile.file_url, file_path: pdfFile.file_id, uploaded_at: new Date().toISOString(), drive_sync_key: "pilot-generated-pdf", drive_sync_status: "succeeded", drive_sync_error: null };
     const { data: existingPdfDocument, error: existingPdfDocumentError } = await admin.from("work_order_documents").select("id").eq("work_order_id", workOrderId).eq("drive_sync_key", "pilot-generated-pdf").maybeSingle();
     if (existingPdfDocumentError) throw existingPdfDocumentError;
-    const { error: pdfDocumentError } = existingPdfDocument ? await admin.from("work_order_documents").update(pdfDocument).eq("id", existingPdfDocument.id) : await admin.from("work_order_documents").insert(pdfDocument);
+    const { error: pdfDocumentError } = existingPdfDocument
+      ? await admin.from("work_order_documents").update(pdfDocument).eq("id", existingPdfDocument.id)
+      : await admin.from("work_order_documents").insert(pdfDocument);
     if (pdfDocumentError) throw pdfDocumentError;
     metadataPersisted = true;
 
-    const { data: documents, error: documentsError } = await admin.from("work_order_documents").select("id,organization_id,work_order_id,file_name,file_url,file_path,uploaded_at,drive_sync_key,mime_type").eq("work_order_id", workOrderId).eq("organization_id", order.organization_id).order("uploaded_at", { ascending: true });
+    const { data: documents, error: documentsError } = await admin.from("work_order_documents").select("id,organization_id,work_order_id,file_name,file_url,file_path,uploaded_at,drive_sync_key").eq("work_order_id", workOrderId).eq("organization_id", organizationId).order("uploaded_at", { ascending: true });
     if (documentsError) throw documentsError;
     for (const [index, document] of (documents || []).filter((row: any) => !["pilot-generated-pdf", "pilot-reviewed-pdf"].includes(row.drive_sync_key)).entries()) {
+      assertConfiguredPilotDocument(organizationId, workOrderId, document);
       if (isDriveUrl(document.file_url)) continue;
       const path = storagePath(document);
       if (!path) throw new Error(`Supporting document ${document.file_name || index + 1} has no storage path.`);
-      const downloaded = await admin.storage.from(DOCUMENT_BUCKET).download(path);
+      const bucket = path.startsWith(`${organizationId}/`) ? ORGANIZATION_DOCUMENT_BUCKET : DOCUMENT_BUCKET;
+      const downloaded = await admin.storage.from(bucket).download(path);
       if (downloaded.error || !downloaded.data) throw downloaded.error || new Error(`Supporting document ${document.file_name || index + 1} could not be downloaded.`);
       const fileName = `Supporting ${String(index + 1).padStart(2, "0")} - ${safeName(document.file_name || "document.pdf")}`;
       const mimeType = clean(document.mime_type) || (String(document.file_name || "").toLowerCase().endsWith(".pdf") ? "application/pdf" : "application/octet-stream");
-      await uploadOrReuse(admin, contractorDocsFolderId || folderId, fileName, Buffer.from(await downloaded.data.arrayBuffer()), mimeType);
+      await uploadOrReuse(admin, currentFolder.contractor_docs_folder_id || folderId, fileName, Buffer.from(await downloaded.data.arrayBuffer()), mimeType);
     }
     supportingDocumentsFiled = true;
     const { error: successError } = await admin.from("work_orders").update({ pilot_drive_sync_status: "succeeded", pilot_drive_sync_error: null, pilot_drive_sync_completed_at: new Date().toISOString() }).eq("id", workOrderId);
@@ -114,6 +134,13 @@ export async function syncPilotWorkOrderToDrive(admin: any, workOrderId: string)
   } catch (error: any) {
     const message = error?.message || "Pilot Work Order Drive sync failed.";
     await admin.from("work_orders").update({ pilot_drive_sync_status: "failed", pilot_drive_sync_error: message }).eq("id", workOrderId);
-    return { status: pdfFiled ? "partial" : "failed", error: message, pdf_filed: pdfFiled, metadata_persisted: metadataPersisted, supporting_documents_filed: supportingDocumentsFiled, retryable: true };
+    return {
+      status: pdfFiled ? "partial" : "failed",
+      error: message,
+      pdf_filed: pdfFiled,
+      metadata_persisted: metadataPersisted,
+      supporting_documents_filed: supportingDocumentsFiled,
+      retryable: true,
+    };
   }
 }

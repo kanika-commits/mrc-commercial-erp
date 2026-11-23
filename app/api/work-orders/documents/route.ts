@@ -5,6 +5,7 @@ import {
   isInOrganizationScope,
   loadActorOrganizationScope,
 } from "@/lib/serverOrganizationScope";
+import { resolveWorkOrderStorage, assertOrganizationDocumentScope } from "@/lib/platformOrganizationStorage";
 
 const DOCUMENT_BUCKET = "work-order-documents";
 
@@ -128,6 +129,9 @@ export async function GET(request: Request) {
       );
     }
 
+    const storageByOrganization = new Map<string, Awaited<ReturnType<typeof resolveWorkOrderStorage>>>();
+    for (const workOrder of workOrders || []) storageByOrganization.set(workOrder.organization_id, await resolveWorkOrderStorage(admin, workOrder.organization_id));
+
     const { data: documents, error } = await admin
       .from("work_order_documents")
       .select("id, organization_id, work_order_id, file_name, file_url, file_path, uploaded_at, drive_sync_key")
@@ -138,7 +142,11 @@ export async function GET(request: Request) {
 
     const signedDocuments = await Promise.all(
       (documents || []).map(async (document) => {
+        const storageMode = storageByOrganization.get(workOrders?.find((row) => row.id === document.work_order_id)?.organization_id || document.organization_id);
+        if (!storageMode) throw new Error("Work Order storage configuration could not be resolved.");
+        if (storageMode.mode === "configured") assertOrganizationDocumentScope(document.organization_id, document.organization_id, storageMode.config.organization_id);
         if (isGoogleDriveUrl(document.file_url)) {
+          if (storageMode.mode === "configured") throw new Error("Configured Supabase Storage Work Orders cannot use a Drive document.");
           return {
             ...document,
             signed_url: document.file_url,
@@ -152,7 +160,7 @@ export async function GET(request: Request) {
 
         if (path) {
           const { data, error: signedError } = await admin.storage
-            .from(DOCUMENT_BUCKET)
+            .from(storageMode.mode === "configured" ? "organization-work-order-documents" : DOCUMENT_BUCKET)
             .createSignedUrl(path, 60 * 10);
 
           signed_url = data?.signedUrl || null;
