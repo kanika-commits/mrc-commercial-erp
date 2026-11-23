@@ -83,6 +83,7 @@ type WorkOrderDocument = {
   work_order_id: string;
   file_name: string | null;
   file_path: string | null;
+  drive_sync_key?: string | null;
   signed_url?: string | null;
   signed_url_error?: string | null;
 };
@@ -116,6 +117,14 @@ function cleanValue(...values: Array<string | null | undefined>) {
 function reviewedPackageName(woNumber: string | null | undefined) {
   const safeNumber = String(woNumber || "work-order").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "work-order";
   return `${safeNumber}.reviewed-package.pdf`;
+}
+
+function officialPackageName(woNumber: string | null | undefined) {
+  return `${String(woNumber || "work-order").trim() || "work-order"}.pdf`;
+}
+
+function isApprovedWorkOrder(workOrder: Pick<WorkOrder, "approval_status">) {
+  return String(workOrder.approval_status || "").trim().toLowerCase() === "approved";
 }
 
 export default function WorkOrdersPageRoute() {
@@ -357,8 +366,10 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
   const [loadingDocumentsByWorkOrder, setLoadingDocumentsByWorkOrder] = useState<
     Record<string, boolean>
   >({});
+  const [documentErrorsByWorkOrder, setDocumentErrorsByWorkOrder] = useState<Record<string, string>>({});
   const [loadedReviewedPackages, setLoadedReviewedPackages] = useState<Record<string, string>>({});
   const [loadingReviewedPackages, setLoadingReviewedPackages] = useState<Record<string, boolean>>({});
+  const [packageErrorsByWorkOrder, setPackageErrorsByWorkOrder] = useState<Record<string, string>>({});
   const [sortField, setSortField] = useState<SortField>("wo_number");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [message, setMessage] = useState("");
@@ -388,6 +399,11 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
   async function loadReviewedPackage(workOrder: WorkOrder) {
     try {
       setLoadingReviewedPackages((previous) => ({ ...previous, [workOrder.id]: true }));
+      setPackageErrorsByWorkOrder((previous) => {
+        const next = { ...previous };
+        delete next[workOrder.id];
+        return next;
+      });
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) throw new Error("Unable to open Work Order package: missing auth session.");
       const response = await fetch(`/api/work-orders/${workOrder.id}/generated-pdf`, { headers: { Authorization: `Bearer ${session.access_token}` } });
@@ -398,8 +414,9 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
       const packageBlob = await response.blob();
       const packageUrl = URL.createObjectURL(packageBlob);
       setLoadedReviewedPackages((previous) => ({ ...previous, [workOrder.id]: packageUrl }));
+      void loadDocumentsForWorkOrder(workOrder.id);
     } catch (reviewError: any) {
-      setError(reviewError.message || "Could not load Work Order package.");
+      setPackageErrorsByWorkOrder((previous) => ({ ...previous, [workOrder.id]: reviewError.message || "Could not load Work Order package." }));
     } finally {
       setLoadingReviewedPackages((previous) => ({ ...previous, [workOrder.id]: false }));
     }
@@ -437,7 +454,11 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
       ...previous,
       [workOrderId]: true,
     }));
-    setError(null);
+    setDocumentErrorsByWorkOrder((previous) => {
+      const next = { ...previous };
+      delete next[workOrderId];
+      return next;
+    });
 
     try {
       const {
@@ -467,7 +488,7 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
         [workOrderId]: (result.documents || []) as WorkOrderDocument[],
       }));
     } catch (documentError: any) {
-      setError(documentError.message || "Could not load Work Order documents.");
+      setDocumentErrorsByWorkOrder((previous) => ({ ...previous, [workOrderId]: documentError.message || "Could not load Work Order documents." }));
     } finally {
       setLoadingDocumentsByWorkOrder((previous) => ({
         ...previous,
@@ -985,20 +1006,39 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
                           Number(wo.document_count ?? loadedDocuments?.length ?? 0) || 0;
 
                         if (pilotOnly) {
-                          const isDraft = String(wo.approval_status || "").toLowerCase() === "draft";
+                          const isApproved = isApprovedWorkOrder(wo);
+                          const isDraft = !isApproved;
                           return (
                             <div className="space-y-2 text-sm">
-                              <div className="font-semibold text-slate-800">{isDraft ? "Saved draft PDF" : "1 package"}</div>
+                              <div className="font-semibold text-slate-800">{isDraft ? "Draft/reviewed PDF" : "Official approved PDF"}</div>
                               {loadedReviewedPackages[wo.id] ? (
-                                <a href={loadedReviewedPackages[wo.id]} download={reviewedPackageName(wo.wo_number)} target="_blank" rel="noreferrer" className="font-semibold text-[#00658b] hover:underline">
-                                  {isDraft ? "Open saved draft PDF" : reviewedPackageName(wo.wo_number)}
-                                </a>
+                                <div>
+                                  <a href={loadedReviewedPackages[wo.id]} download={isApproved ? officialPackageName(wo.wo_number) : reviewedPackageName(wo.wo_number)} target="_blank" rel="noreferrer" className="font-semibold text-[#00658b] hover:underline">
+                                    {isApproved ? officialPackageName(wo.wo_number) : "Open saved draft PDF"}
+                                  </a>
+                                  {loadingDocumentsByWorkOrder[wo.id] ? <div className="mt-2 text-xs text-slate-500">Loading source attachments…</div> : null}
+                                  {documentErrorsByWorkOrder[wo.id] ? <div className="mt-2 text-xs text-red-700" role="alert">Source attachments unavailable: {documentErrorsByWorkOrder[wo.id]}</div> : null}
+                                  {loadedDocumentsByWorkOrder[wo.id]?.filter((document) => document.drive_sync_key !== (isApproved ? "pilot-generated-pdf" : "pilot-reviewed-pdf")).length ? (
+                                    <div className="mt-2 space-y-1 border-t border-slate-200 pt-2">
+                                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Source attachments</div>
+                                      {loadedDocumentsByWorkOrder[wo.id].filter((document) => document.drive_sync_key !== (isApproved ? "pilot-generated-pdf" : "pilot-reviewed-pdf")).map((document) => (
+                                        <button key={document.id} type="button" onClick={() => openDocument(document)} className="block max-w-[240px] truncate text-left text-xs font-semibold text-[#00658b] hover:underline">
+                                          {document.file_name || "Open source attachment"}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : packageErrorsByWorkOrder[wo.id] ? (
+                                <div className="space-y-1 text-xs text-red-700" role="alert">
+                                  <p>{isDraft ? "Draft PDF unavailable: " : "Approved PDF unavailable: "}{packageErrorsByWorkOrder[wo.id]}</p>
+                                  <button type="button" onClick={() => void loadReviewedPackage(wo)} disabled={loadingReviewedPackages[wo.id]} className="font-semibold text-[#00658b] hover:underline disabled:opacity-50">Retry this Work Order</button>
+                                </div>
                               ) : (
-                                <button type="button" onClick={() => void (isDraft ? loadDraftPackage(wo) : loadReviewedPackage(wo))} disabled={loadingReviewedPackages[wo.id]} className="font-semibold text-[#00658b] hover:underline disabled:opacity-50">
+                                <button type="button" onClick={() => void loadReviewedPackage(wo)} disabled={loadingReviewedPackages[wo.id]} className="font-semibold text-[#00658b] hover:underline disabled:opacity-50">
                                   {loadingReviewedPackages[wo.id] ? "Loading package…" : "Load documents"}
                                 </button>
                               )}
-                              {isDraft && loadedDocumentsByWorkOrder[wo.id]?.length === 0 && <div className="text-xs text-slate-500">No supporting documents</div>}
                             </div>
                           );
                         }

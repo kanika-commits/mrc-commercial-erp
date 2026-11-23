@@ -11,23 +11,24 @@ assert.match(approvalRoute, /requirePermission\(request, "wo_approval", "approve
 assert.match(approvalRoute, /approval_status: "approved"/);
 assert.match(approvalRoute, /syncPilotWorkOrderToDrive\(admin, id\)/);
 assert.match(approvalRoute, /drive_sync: driveSync/);
-
-assert.match(sync, /creation_request_id/);
-assert.match(sync, /if \(!identity \|\| !identity\.creation_request_id\) return \{ kind: "skip"/);
+assert.doesNotMatch(sync, /identity\.creation_request_id/);
 assert.match(sync, /identity\.approval_status[^\n]*approved/);
 assert.match(sync, /createWorkOrderDriveFolder\(orderForFolder\.wo_number\)/);
 assert.match(sync, /listDriveFolderFiles/);
 assert.match(sync, /uploadDriveFile/);
 assert.match(sync, /workOrderPdfFileName/);
 assert.match(sync, /pilot-generated-pdf/);
-assert.match(sync, /pilot-supporting-\$\{String\(index \+ 1\)\.padStart\(4, "0"\)\}/);
 assert.match(sync, /Supporting \$\{String\(index \+ 1\)\.padStart\(2, "0"\)\}/);
 assert.match(sync, /pilot_drive_sync_status: "running"/);
 assert.match(sync, /pilot_drive_sync_status: "succeeded"/);
 assert.match(sync, /pilot_drive_sync_status: "failed"/);
 assert.match(sync, /pilot_drive_sync_status === "running"/);
 assert.match(sync, /eq\("pilot_drive_sync_started_at", current\.pilot_drive_sync_started_at\)/);
-assert.match(sync, /onConflict: "work_order_id,drive_sync_key"/);
+assert.match(sync, /eq\("drive_sync_key", "pilot-generated-pdf"\)/);
+assert.match(sync, /status: pdfFiled \? "partial" : "failed"/);
+assert.match(sync, /metadata_persisted: metadataPersisted/);
+assert.match(sync, /supporting_documents_filed: supportingDocumentsFiled/);
+assert.match(sync, /retryable: true/);
 assert.match(sync, /status: "unavailable"/);
 
 assert.match(migration, /add column if not exists pilot_drive_sync_status/);

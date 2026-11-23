@@ -19,7 +19,7 @@ assert.match(page, /Edit Draft/);
 assert.match(page, /Submit for Approval/);
 assert.match(page, /\/api\/work-orders\/drafts\/\$\{encodeURIComponent\(draftId\)\}\/preview/);
 assert.match(page, /data-testid="work-order-draft-pdf"/);
-assert.match(draftApi, /approval_status", "draft"/);
+assert.match(draftApi, /loadAuthorizedWorkOrderDraft\(request/);
 assert.match(draftHelper, /requirePermission\(request, "work_orders", "edit"\)/);
 assert.match(previewApi, /loadAuthorizedWorkOrderDraft\(request/);
 assert.match(previewApi, /Content-Disposition.*inline/);

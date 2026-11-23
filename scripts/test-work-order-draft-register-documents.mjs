@@ -6,9 +6,11 @@ const reviewedRoute = fs.readFileSync("app/api/work-orders/[id]/generated-pdf/ro
 
 assert.match(page, /function loadDraftPackage\(workOrder: WorkOrder\)/);
 assert.match(page, /\/api\/work-orders\/drafts\/\$\{encodeURIComponent\(workOrder\.id\)\}\/preview/);
-assert.match(page, /isDraft = String\(wo\.approval_status \|\| ""\)\.toLowerCase\(\) === "draft"/);
-assert.match(page, /isDraft \? loadDraftPackage\(wo\) : loadReviewedPackage\(wo\)/);
-assert.match(page, /No supporting documents/);
-assert.match(reviewedRoute, /pilot-reviewed-pdf/);
+assert.match(page, /isApprovedWorkOrder\(wo\)/);
+assert.match(page, /Official approved PDF/);
+assert.match(page, /Draft\/reviewed PDF/);
+assert.match(page, /Source attachments/);
+assert.match(reviewedRoute, /addWorkOrderDraftWatermark/);
+assert.match(reviewedRoute, /renderWorkOrderPdf\(/);
 
 console.log("Work Order draft register documents check passed");

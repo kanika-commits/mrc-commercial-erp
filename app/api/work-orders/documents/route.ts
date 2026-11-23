@@ -130,7 +130,7 @@ export async function GET(request: Request) {
 
     const { data: documents, error } = await admin
       .from("work_order_documents")
-      .select("id, organization_id, work_order_id, file_name, file_url, file_path, uploaded_at")
+      .select("id, organization_id, work_order_id, file_name, file_url, file_path, uploaded_at, drive_sync_key")
       .in("work_order_id", workOrderIds)
       .order("uploaded_at", { ascending: false });
 
