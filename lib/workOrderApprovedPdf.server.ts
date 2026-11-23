@@ -54,7 +54,6 @@ export async function renderApprovedWorkOrderPdfById(
     if (pdf.getPageCount() < 1) throw new Error("The reviewed Work Order PDF artifact has no pages.");
     return bytes;
   }
-  if (order.creation_request_id) throw new Error("The reviewed Work Order PDF artifact is missing; refusing to regenerate a different package.");
   const companyResult = await admin.from("companies").select("id,organization_id,company_name,status").eq("id", order.company_id).eq("organization_id", order.organization_id).eq("status", "active").maybeSingle();
   if (companyResult.error) throw companyResult.error;
 
