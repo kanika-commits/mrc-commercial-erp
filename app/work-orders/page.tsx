@@ -1018,10 +1018,10 @@ export function WorkOrdersPage({ pilotOnly = false }: { pilotOnly?: boolean }) {
                                   </a>
                                   {loadingDocumentsByWorkOrder[wo.id] ? <div className="mt-2 text-xs text-slate-500">Loading source attachments…</div> : null}
                                   {documentErrorsByWorkOrder[wo.id] ? <div className="mt-2 text-xs text-red-700" role="alert">Source attachments unavailable: {documentErrorsByWorkOrder[wo.id]}</div> : null}
-                                  {loadedDocumentsByWorkOrder[wo.id]?.filter((document) => document.drive_sync_key !== (isApproved ? "pilot-generated-pdf" : "pilot-reviewed-pdf")).length ? (
+                                  {!isApproved && loadedDocumentsByWorkOrder[wo.id]?.filter((document) => document.drive_sync_key !== "pilot-reviewed-pdf").length ? (
                                     <div className="mt-2 space-y-1 border-t border-slate-200 pt-2">
                                       <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Source attachments</div>
-                                      {loadedDocumentsByWorkOrder[wo.id].filter((document) => document.drive_sync_key !== (isApproved ? "pilot-generated-pdf" : "pilot-reviewed-pdf")).map((document) => (
+                                      {loadedDocumentsByWorkOrder[wo.id].filter((document) => document.drive_sync_key !== "pilot-reviewed-pdf").map((document) => (
                                         <button key={document.id} type="button" onClick={() => openDocument(document)} className="block max-w-[240px] truncate text-left text-xs font-semibold text-[#00658b] hover:underline">
                                           {document.file_name || "Open source attachment"}
                                         </button>
