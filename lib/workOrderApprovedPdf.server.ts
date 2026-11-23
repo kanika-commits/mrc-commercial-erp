@@ -41,8 +41,11 @@ export async function renderApprovedWorkOrderPdfById(
   if (documentsResult.error) throw documentsResult.error;
   const order = orderResult.data;
   if (!order) throw new Error("Work Order was not found.");
+  const approved = ["approved", "issued"].includes(String(order.approval_status || order.status || "").toLowerCase());
+  const siteResult = await admin.from("sites").select("site_name").eq("id", order.site_id).eq("organization_id", order.organization_id).maybeSingle();
+  if (siteResult.error) throw siteResult.error;
   const reviewedDocument = (documentsResult.data || []).find((row: any) => row.drive_sync_key === "pilot-reviewed-pdf");
-  if (reviewedDocument) {
+  if (reviewedDocument && !approved) {
     const path = value(reviewedDocument.file_path);
     if (!path || path.startsWith("https://")) throw new Error("The reviewed Work Order PDF artifact is not available from private Work Order storage.");
     const downloaded = await admin.storage.from("work-order-documents").download(path.replace(/^\/+/, ""));
@@ -52,7 +55,7 @@ export async function renderApprovedWorkOrderPdfById(
     if (pdf.getPageCount() < 1) throw new Error("The reviewed Work Order PDF artifact has no pages.");
     return bytes;
   }
-  if (order.creation_request_id) throw new Error("The reviewed Work Order PDF artifact is missing; refusing to regenerate a different package.");
+  if (order.creation_request_id && !approved) throw new Error("The reviewed Work Order PDF artifact is missing; it is required for this draft/pending Work Order and cannot be regenerated from an incomplete source.");
   const companyResult = await admin.from("companies").select("id,organization_id,company_name,status").eq("id", order.company_id).eq("organization_id", order.organization_id).eq("status", "active").maybeSingle();
   if (companyResult.error) throw companyResult.error;
 
@@ -63,13 +66,16 @@ export async function renderApprovedWorkOrderPdfById(
   const approvalSignature = ["approved", "issued"].includes(String(order.approval_status || order.status || "").toLowerCase())
     ? await loadApprovalSignature(admin, approverId)
     : { block: null, asset: null };
+  if (["approved", "issued"].includes(String(order.approval_status || order.status || "").toLowerCase()) && (!approvalSignature.block?.storageBucket || !approvalSignature.block.storageKey || !approvalSignature.asset)) {
+    throw new Error("Approved Work Order cannot be filed as signed: the approver has no configured usable signature asset.");
+  }
   const delivery = order.delivery_snapshot || {};
   const company = { company_name: delivery.gst_billing?.legal_name || delivery.gst_billing?.trade_name || companyResult.data?.company_name || "" };
   const vendorSnapshot = delivery.vendor_snapshot || {};
   const primaryVendorContact = (vendorSnapshot.contacts || []).find((contact: any) => contact?.is_primary) || (vendorSnapshot.contacts || [])[0] || {};
-  const resolvedVendorSnapshot = { ...vendorSnapshot, contact_person: vendorSnapshot.contact_person || vendorSnapshot.contact_name || primaryVendorContact.contact_name || "", phone: vendorSnapshot.phone || vendorSnapshot.mobile || primaryVendorContact.contact_number || primaryVendorContact.mobile || "", email: vendorSnapshot.email || primaryVendorContact.email || "" };
+  const resolvedVendorSnapshot = { ...vendorSnapshot, address: vendorSnapshot.address || [vendorSnapshot.address_line1, vendorSnapshot.address_line2, vendorSnapshot.city, vendorSnapshot.state, vendorSnapshot.pincode].filter(Boolean).join(", "), contact_person: vendorSnapshot.contact_person || vendorSnapshot.contact_name || primaryVendorContact.contact_name || "", phone: vendorSnapshot.phone || vendorSnapshot.mobile || primaryVendorContact.contact_number || primaryVendorContact.mobile || "", email: vendorSnapshot.email || primaryVendorContact.email || "" };
   const standardTermsClauses = structuredTermsFromSnapshot(order.standard_terms_snapshot);
-  const site = { site_name: delivery.delivery_location?.location_name || "" };
+  const site = { site_name: siteResult.data?.site_name || delivery.delivery_location?.site_name || delivery.delivery_location?.location_name || "" };
   const bytes = await renderWorkOrderPdf({
     ...order,
     approved_by: approverId,
@@ -92,11 +98,11 @@ export async function renderApprovedWorkOrderPdfById(
       total_amount: item.line_total,
     })),
   }, await loadWorkOrderLetterheadAssets(order.letterhead_snapshot, order.letterhead_snapshot?.letterhead_id, order.company_id));
-  const protectedPdf = ["approved", "issued"].includes(String(order.approval_status || order.status || "").toLowerCase())
+  const protectedPdf = approved
     ? bytes
     : await addWorkOrderDraftWatermark(bytes);
   const supportingFiles: File[] = [];
-  for (const document of (documentsResult.data || []).filter((row: any) => row.drive_sync_key !== "pilot-generated-pdf")) {
+  for (const document of (documentsResult.data || []).filter((row: any) => !["pilot-generated-pdf", "pilot-reviewed-pdf"].includes(row.drive_sync_key))) {
     const path = value(document.file_path);
     if (!path || path.startsWith("https://drive.google.com/") || path.startsWith("https://docs.google.com/")) throw new Error(`Supporting document ${value(document.file_name) || document.id} is not available from Work Order storage for review.`);
     const downloaded = await admin.storage.from("work-order-documents").download(path.replace(/^\/+/, ""));

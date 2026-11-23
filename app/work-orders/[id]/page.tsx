@@ -1158,7 +1158,36 @@ function downloadWOLedger(workOrderId: string) {
     Work Order Files
   </h3>
 
-  {workOrder.creation_request_id ? (
+  {String(workOrder.approval_status || workOrder.status || "").toLowerCase() === "approved" ? (
+    <div className="space-y-3">
+      {reviewedPackageUrl ? (
+        <a href={reviewedPackageUrl} download={`${String(workOrder.wo_number || "work-order")}.pdf`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm font-semibold text-sky-700 hover:underline">
+          <Download className="h-4 w-4" />
+          Official approved PDF
+        </a>
+      ) : (
+        <button type="button" onClick={loadReviewedPackage} disabled={loadingReviewPdf} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60">
+          {loadingReviewPdf ? "Loading approved PDF..." : "Open official approved PDF"}
+        </button>
+      )}
+      {!documentsLoaded ? (
+        <button type="button" onClick={loadDocuments} disabled={loadingDocuments} className="block text-sm font-semibold text-slate-700 underline disabled:opacity-60">
+          {loadingDocuments ? "Loading source attachments..." : "Load source attachments"}
+        </button>
+      ) : documents.filter((document) => document.drive_sync_key !== "pilot-generated-pdf").length === 0 ? (
+        <p className="text-sm text-slate-500">No source attachments.</p>
+      ) : (
+        <div className="space-y-2">
+          {documents.filter((document) => document.drive_sync_key !== "pilot-generated-pdf").map((document) => (
+            <div key={document.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2">
+              <span className="text-sm font-medium text-slate-800">Source attachment: {document.file_name || "Attached file"}</span>
+              {document.signed_url ? <a href={document.signed_url} target="_blank" rel="noreferrer" className="text-sm font-semibold text-sky-700 hover:underline">Open source</a> : <span className="text-sm text-amber-700">File link unavailable</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  ) : workOrder.creation_request_id ? (
     reviewedPackageUrl ? (
       <div className="space-y-2">
         <p className="text-sm font-semibold text-slate-800">1 package</p>
