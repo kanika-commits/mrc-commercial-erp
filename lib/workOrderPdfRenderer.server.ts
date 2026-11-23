@@ -623,8 +623,8 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
   const creatorEmail = signatureText(row.created_by_email);
   const creatorAt = row.created_at ? formatPdfTimestamp(row.created_at) : signatureText(row.created_at_display);
   const approverName = signatureText(row.approved_by_name || row.approved_by_email || row.approval_signature_block?.employeeName);
-  const approverEmail = signatureText(row.approved_by_email);
-  const approverAt = row.approved_at ? formatPdfTimestamp(row.approved_at) : "—";
+  const approverTitle = signatureText(row.approval_signature_block?.designation || row.approval_signature_block?.title || row.approval_signature_block?.jobTitle);
+  const approverCompany = signatureText(row.company?.company_name || row.company_name);
   const vendorLines = [
     ["Vendor Acceptance", true, 9],
     ["I hereby accept the terms and conditions of this Work Order and confirm acceptance on behalf of the Vendor.", false, 8],
@@ -638,9 +638,10 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
   ] as Array<[string, boolean, number]>;
   const internalLines = (approved ? [
     ["Approved By", true, 9],
+    [`For: ${approverCompany}`, false, 8],
+    ["Signature:", false, 8],
     [`Name: ${approverName}`, false, 8],
-    [`Email: ${approverEmail}`, false, 8],
-    [`Approved At: ${approverAt}`, false, 8],
+    [`Designation: ${approverTitle}`, false, 8],
   ] : [
     ["Created By", true, 9],
     [`Name: ${creatorName}`, false, 8],
