@@ -232,7 +232,7 @@ export default function PurchaseOrderDetailPage() {
     footer: "/letterheads/mrc-infracon-footer.png",
   } : null;
 
-  return <section className="space-y-6">
+  return <section className="mx-auto w-full max-w-[1440px] space-y-6 px-4 py-5 sm:px-6 lg:px-8">
     <header className="flex flex-wrap items-start justify-between gap-4">
       <div>
         <Link href="/purchase/purchase-orders" className="text-sm text-slate-500">← Purchase Orders</Link>

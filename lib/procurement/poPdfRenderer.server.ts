@@ -472,8 +472,9 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
       const summaryLines = summaryCells.map((cell, index) => {
         const runs = (index === 1 ? amountRuns : labelRuns) as any[] | null;
         const columnIndex = index === 0 ? widths.length - 2 : widths.length - 1;
-        if (runs) return runs.flatMap((run: any) => wrap(run.text, Math.max(8, Math.floor((widths[columnIndex] - CELL_PAD_X * 2) / (7 * 0.52)))));
-        return wrap(cell, Math.max(8, Math.floor((widths[columnIndex] - CELL_PAD_X * 2) / (7 * 0.52))));
+        const maxWidth = Math.max(8, widths[columnIndex] - CELL_PAD_X * 2);
+        if (runs) return runs.flatMap((run: any) => wrapToPointWidth(run.text, maxWidth, 7, termsTextWidth));
+        return wrapToPointWidth(cell, maxWidth, 7, termsTextWidth);
       });
       const summaryHeight = Math.max(17, Math.max(...summaryLines.map((items) => items.length)) * 9 + ITEM_PAD_TOP + ITEM_PAD_BOTTOM);
       if (y - summaryHeight < bodyBottomY) { newPage(); render(headers, true); }
@@ -483,24 +484,27 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
         const amountX = totalsLabelX + widths[totalsLabelIndex];
       const labelText = summaryCells[0];
       const emphasized = labelText === "Total Basic Amount" || labelText === "GST" || labelText === "Total Amount";
+      const summaryBaseline = (lines: string[], lineIndex: number) => y - (summaryHeight - lines.length * 9) / 2 - 9 * 0.78 - lineIndex * 9;
       if (label === "Total Amount") tableFill(LEFT, y - summaryHeight, tableRight - LEFT, summaryHeight, "0.93 0.95 0.97");
       if (labelRuns) labelRuns.forEach((run: any) => run.color === "red" ? drawRedline(run.text, totalsLabelX + CELL_PAD_X, y - summaryHeight + 9 * 0.78, 7, run.strike, emphasized) : draw(run.text, totalsLabelX + CELL_PAD_X, y - summaryHeight + 9 * 0.78, 7, emphasized, Boolean(run.strike)));
-      else for (const [lineIndex, lineText] of summaryLines[0].entries()) addedOrRemoved ? drawRedline(lineText, totalsLabelX + CELL_PAD_X, y - summaryHeight + (summaryHeight - summaryLines[0].length * 9) / 2 + 9 * 0.78 - lineIndex * 9, 7, addedOrRemoved === "removed", emphasized) : drawAligned(lineText, totalsLabelX, widths[totalsLabelIndex], y - summaryHeight + (summaryHeight - summaryLines[0].length * 9) / 2 + 9 * 0.78 - lineIndex * 9, 7, "left", emphasized);
+      else for (const [lineIndex, lineText] of summaryLines[0].entries()) addedOrRemoved ? drawRedline(lineText, totalsLabelX + CELL_PAD_X, summaryBaseline(summaryLines[0], lineIndex), 7, addedOrRemoved === "removed", emphasized) : drawAligned(lineText, totalsLabelX, widths[totalsLabelIndex], summaryBaseline(summaryLines[0], lineIndex), 7, "left", emphasized);
       const chargeKey = labelText === "Freight" ? "" : String(labelText);
       const chargeDiff = beforeCharges.get(chargeKey) || afterCharges.get(chargeKey);
       const changedCharge = chargeDiff?.state === "changed";
       const changedFreight = false;
       if (changedFreight) {
-        const yy = y - summaryHeight + 9 * 0.78;
-        drawRedline(money(freightBefore), amountX, yy, 7, true);
-        drawRedline(money(freightAfter), amountX, yy - 9, 7, false);
+        drawRedline(money(freightBefore), amountX, summaryBaseline(summaryLines[1], 0), 7, true);
+        drawRedline(money(freightAfter), amountX, summaryBaseline(summaryLines[1], 1), 7, false);
       } else if (changedCharge && chargeDiff.before && chargeDiff.after) {
-        const yy = y - summaryHeight + 9 * 0.78;
-        drawRedline(money(chargeDiff.before.amount), amountX, yy, 7, true);
-        drawRedline(money(chargeDiff.after.amount), amountX, yy - 9, 7, false);
-      } else if (amountRuns) amountRuns.forEach((run: any, runIndex: number) => { const width = textWidth(String(run.text), 7); const xx = amountX + widths[widths.length - 1] - CELL_PAD_X - width; const yy = y - summaryHeight + (summaryHeight - summaryLines[1].length * 9) / 2 + 9 * 0.78 - runIndex * 9; run.color === "red" ? drawRedline(run.text, xx, yy, 7, run.strike, false) : draw(run.text, xx, yy, 7, false, Boolean(run.strike)); });
-      else if (addedOrRemoved) for (const [lineIndex, lineText] of summaryLines[1].entries()) drawRedline(lineText, amountX, y - summaryHeight + (summaryHeight - summaryLines[1].length * 9) / 2 + 9 * 0.78 - lineIndex * 9, 7, addedOrRemoved === "removed", false);
-      else for (const [lineIndex, lineText] of summaryLines[1].entries()) drawAligned(lineText, amountX, widths[widths.length - 1], y - summaryHeight + (summaryHeight - summaryLines[1].length * 9) / 2 + 9 * 0.78 - lineIndex * 9, 7, "right", label === "Total Amount");
+        drawRedline(money(chargeDiff.before.amount), amountX, summaryBaseline(summaryLines[1], 0), 7, true);
+        drawRedline(money(chargeDiff.after.amount), amountX, summaryBaseline(summaryLines[1], 1), 7, false);
+      } else if (amountRuns) amountRuns.forEach((run: any, runIndex: number) => { const width = textWidth(String(run.text), 7); const xx = amountX + widths[widths.length - 1] - CELL_PAD_X - width; const yy = summaryBaseline(summaryLines[1], runIndex); run.color === "red" ? drawRedline(run.text, xx, yy, 7, run.strike, false) : draw(run.text, xx, yy, 7, false, Boolean(run.strike)); });
+      else if (addedOrRemoved) for (const [lineIndex, lineText] of summaryLines[1].entries()) {
+        const valueWidth = textWidth(lineText, 7);
+        const alignedX = amountX + widths[amountIndex] - CELL_PAD_X - valueWidth;
+        drawRedline(lineText, alignedX, summaryBaseline(summaryLines[1], lineIndex), 7, addedOrRemoved === "removed", false);
+      }
+      else for (const [lineIndex, lineText] of summaryLines[1].entries()) drawAligned(lineText, amountX, widths[widths.length - 1], summaryBaseline(summaryLines[1], lineIndex), 7, "right", label === "Total Amount");
       drawOuterRowBorders(y, summaryHeight);
       tableLine(totalsLabelX, y - summaryHeight, totalsLabelX, y);
       tableLine(amountX, y - summaryHeight, amountX, y);
