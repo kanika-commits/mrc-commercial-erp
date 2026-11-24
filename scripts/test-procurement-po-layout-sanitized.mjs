@@ -10,6 +10,7 @@ const root = process.cwd();
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "po-layout-"));
 const require = createRequire(import.meta.url);
 const pdfLib = require.resolve("pdf-lib");
+const { PDFDocument, StandardFonts } = require("pdf-lib");
 const sources = {
   renderer: "lib/procurement/poPdfRenderer.server.ts",
   terms: "lib/procurement/standardTerms.ts",
@@ -35,6 +36,9 @@ assert.match(route, /const finalPdf = await numberPackage\(protectedPdf, poPacka
 assert.match(route, /const label = `\$\{index \+ 1\} of \$\{pages\.length\}`/);
 assert.match(page, /max-w-\[1440px\].*px-4.*lg:px-8/);
 assert.match(renderer, /amountX \+ widths\[amountIndex\] - CELL_PAD_X - valueWidth/);
+assert.match(renderer, /const boundaries = widths\.reduce/);
+assert.match(renderer, /wrapToPointWidth\(cell, maxWidth, 7, termsTextWidth\)/);
+assert.equal([24, 125, 42, 28, 34, 52, 64, 82, 60].reduce((sum, width) => sum + width, 0), 511);
 
 const fixture = {
   id: "sanitized-po-layout",
@@ -52,9 +56,13 @@ const fixture = {
     key_terms: [{ id: "payment", label: "Payment", value: "30 days" }],
   },
   standard_terms_snapshot: JSON.stringify({ template_id: "fixture", clauses: Array.from({ length: 30 }, (_, index) => ({ heading: `Fixture clause ${index + 1}`, clause_body: `This sanitized term is intentionally long enough to verify that pagination remains clean for clause ${index + 1}.`, sort_order: index })) }),
-  items: [{ item_name_snapshot: "Fixture item", specification_snapshot: "Fixture specification", make_snapshot: "Fixture make", quantity: 1, uom_snapshot: "Nos", unit_rate: 100000, gst_rate: 18, gst_amount: 18000, total_amount: 118000 }],
-  total_basic_amount: 100000,
-  total_gst_amount: 18000,
+  items: [
+    { item_name_snapshot: "Fixture item with a deliberately long material description that must remain inside its own Material / Description cell", specification_snapshot: "Long specification text with dimensions, performance requirements, and installation notes that should wrap cleanly", make_snapshot: "GREENHECK", quantity: 42, uom_snapshot: "Nos", unit_rate: 123456789, gst_rate: 18, gst_amount: 9333333, total_amount: 61222275 },
+    { item_name_snapshot: "Second fixture item", specification_snapshot: "Secondary long description for cell-boundary coverage", make_snapshot: "EDGETECH", quantity: 7, uom_snapshot: "Set", unit_rate: 9876543, gst_rate: 18, gst_amount: 1244444, total_amount: 70388845 },
+    { item_name_snapshot: "Third fixture item", specification_snapshot: "Third long description for exact make-name coverage", make_snapshot: "KLIMAFLEX", quantity: 3, uom_snapshot: "Set", unit_rate: 8765432, gst_rate: 18, gst_amount: 473333, total_amount: 26733329 },
+  ],
+  total_basic_amount: 5864197419,
+  total_gst_amount: 1055555555,
   total_freight_amount: 0,
 };
 
@@ -71,5 +79,20 @@ for (const match of result.pdf.toString("latin1").matchAll(/stream\r?\n([\s\S]*?
 const text = streams.join("\n");
 const outputPdf = path.join(os.tmpdir(), "po-layout-sanitized.pdf");
 fs.writeFileSync(outputPdf, result.pdf);
-for (const expected of ["SERVICE CHARGE", "FOR EXTENDED SITE", "COMMISSIONING", "SUPPORT ACROSS", "52,51,000.00", "SAN/PO/0001", "Fixture clause 30"]) assert.ok(text.includes(expected), `sanitized PDF missing ${expected}`);
+const metricsPdf = await PDFDocument.create();
+const metricsFont = await metricsPdf.embedFont(StandardFonts.Helvetica);
+const itemBoundaries = [42, 66, 191, 233, 261, 295, 347, 411, 493, 553];
+const itemTextOps = [...streams[0].matchAll(/BT \/F[12] ([\d.]+) Tf ([\d.]+) ([\d.]+) Td \((.*?)\) Tj ET/g)]
+  .map((match) => ({ size: Number(match[1]), x: Number(match[2]), y: Number(match[3]), value: match[4] }))
+  .filter((op) => op.y <= 420 && op.y >= 200);
+assert.ok(itemTextOps.length > 0, "sanitized PDF did not expose item-table text operations");
+for (const op of itemTextOps) {
+  const cellIndex = itemBoundaries.findIndex((left, index) => op.x >= left && op.x < itemBoundaries[index + 1]);
+  assert.ok(cellIndex >= 0, `item-table text starts outside a cell: x=${op.x}`);
+  const right = itemBoundaries[cellIndex + 1];
+  const renderedWidth = metricsFont.widthOfTextAtSize(op.value, op.size);
+  assert.ok(op.x >= itemBoundaries[cellIndex] + 3, `item-table text crosses left padding: ${op.value}`);
+  assert.ok(op.x + renderedWidth <= right - 3, `item-table text crosses right boundary: ${op.value}`);
+}
+for (const expected of ["SERVICE CHARGE", "FOR EXTENDED SITE", "COMMISSIONING", "SUPPORT ACROSS", "52,51,000.00", "SAN/PO/0001", "Fixture clause 30", "GREENHECK", "EDGETECH", "KLIMAFLEX", "12,34,56"]) assert.ok(text.includes(expected), `sanitized PDF missing ${expected}`);
 console.log(`PO sanitized layout fixture: PASS (pages=${result.pageCount}, bytes=${result.pdf.length}, output=${outputPdf})`);

@@ -149,7 +149,58 @@ function termIndent(value: string) {
 
 function textWidth(value: string, size: number) { return value.length * size * 0.52; }
 
-function wrapToPointWidth(value: unknown, maxWidth: number, size: number, measure = textWidth) { return String(value ?? "").split(/\r?\n/).flatMap((line) => { const words = line.split(/\s+/).filter(Boolean); if (!words.length) return [""]; const lines: string[] = []; let current = ""; for (const word of words) { const candidate = (current + " " + word).trim(); if (measure(candidate, size) > maxWidth && current) { lines.push(current); current = word; } else current = candidate; } if (current) lines.push(current); return lines; }); }
+function wrapToPointWidth(value: unknown, maxWidth: number, size: number, measure = textWidth) {
+  return String(value ?? "").split(/\r?\n/).flatMap((line) => {
+    const words = line.split(/\s+/).filter(Boolean);
+    if (!words.length) return [""];
+    const lines: string[] = [];
+    let current = "";
+    const pushLongWord = (word: string) => {
+      let chunk = "";
+      for (const character of word) {
+        const candidate = chunk + character;
+        if (measure(candidate, size) > maxWidth && chunk) {
+          lines.push(chunk);
+          chunk = character;
+        } else {
+          chunk = candidate;
+        }
+      }
+      if (chunk) current = chunk;
+    };
+    for (const word of words) {
+      if (measure(word, size) > maxWidth) {
+        if (current) { lines.push(current); current = ""; }
+        pushLongWord(word);
+        continue;
+      }
+      const candidate = (current + " " + word).trim();
+      if (measure(candidate, size) > maxWidth && current) { lines.push(current); current = ""; pushLongWord(word); } else current = candidate;
+    }
+    if (current) lines.push(current);
+    return lines;
+  });
+}
+
+function wrapMakeToPointWidth(value: unknown, maxWidth: number, size: number, measure = textWidth) {
+  return String(value ?? "").split(/\r?\n/).flatMap((line) => {
+    const words = line.split(/\s+/).filter(Boolean);
+    if (!words.length) return [{ value: "", size }];
+    const lines: Array<{ value: string; size: number }> = [];
+    let current = "";
+    for (const word of words) {
+      if (measure(word, size) > maxWidth) {
+        if (current) { lines.push({ value: current, size }); current = ""; }
+        lines.push({ value: word, size: Math.max(1, size * maxWidth / measure(word, size)) });
+        continue;
+      }
+      const candidate = (current + " " + word).trim();
+      if (measure(candidate, size) > maxWidth && current) { lines.push({ value: current, size }); current = word; } else current = candidate;
+    }
+    if (current) lines.push({ value: current, size });
+    return lines;
+  });
+}
 
 type TermsLevel = "main" | "roman" | "alpha" | "body";
 
@@ -280,7 +331,7 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
     drawRedline(newValue, x + textWidth(String(oldValue ?? ""), size) + 5, yy, size, false);
   };
   const drawAligned = (value: string, cellX: number, cellW: number, yy: number, size: number, align: "left" | "center" | "right" = "left", bold = false, strike = false) => {
-    const width = textWidth(value, size);
+    const width = termsTextWidth(value, size);
     if (align === "right") {
       draw(value, Math.max(cellX + CELL_PAD_X, cellX + cellW - CELL_PAD_X - width), yy, size, bold, strike);
       return;
@@ -401,23 +452,24 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
     const headers = row.work_order_render ? ["S.No.", "Item / Description", "Qty", "Unit", "Basic Rate", "GST", "Amount"] : ["S.No.", "Material / Description", "Make", "Qty", "Unit", "Rate", "Basic Amount", "GST", "Amount"];
     const aligns: Array<"left" | "center" | "right"> = row.work_order_render ? ["center", "left", "center", "center", "right", "right", "right"] : ["center", "left", "left", "center", "center", "right", "right", "right", "right"];
     const headerAligns: Array<"left" | "center" | "right"> = row.work_order_render ? ["center", "left", "center", "center", "center", "center", "center"] : ["center", "left", "left", "center", "center", "center", "center", "center", "center"];
-    const tableRight = LEFT + widths.reduce((sum, width) => sum + width, 0);
+    const boundaries = widths.reduce<number[]>((result, width) => [...result, result[result.length - 1] + width], [LEFT]);
+    const tableRight = boundaries[boundaries.length - 1];
     const drawOuterRowBorders = (top: number, height: number) => {
       tableLine(LEFT, top, tableRight, top, true);
       tableLine(LEFT, top - height, tableRight, top - height, true);
       tableLine(LEFT, top - height, LEFT, top, true);
       tableLine(tableRight, top - height, tableRight, top, true);
     };
-    const render = (cells: Array<string | Array<{ value: string; red?: boolean; strike?: boolean }>>, bold = false, summary = false) => {
+    const render = (cells: Array<string | Array<{ value: string; red?: boolean; strike?: boolean; size?: number }>>, bold = false, summary = false) => {
       const lines = cells.map((cell, i) => {
-        const maxWidth = Math.max(8, Math.floor((widths[i] - CELL_PAD_X * 2) / (7 * 0.52)));
-        if (typeof cell === "string") return wrap(cell, maxWidth).map((value) => ({ value, red: false, strike: false }));
-        return cell.flatMap((run) => wrap(run.value, maxWidth).map((value) => ({ value, red: run.red, strike: run.strike })));
+        const maxWidth = Math.max(8, widths[i] - CELL_PAD_X * 2);
+        const wrapCell = (value: string) => !row.work_order_render && i === 2 ? wrapMakeToPointWidth(value, maxWidth, 7, termsTextWidth) : wrapToPointWidth(value, maxWidth, 7, termsTextWidth).map((wrapped) => ({ value: wrapped, size: 7 }));
+        if (typeof cell === "string") return wrapCell(cell).map((wrapped) => ({ value: wrapped.value, red: false, strike: false, size: wrapped.size }));
+        return cell.flatMap((run) => wrapCell(run.value).map((wrapped) => ({ value: wrapped.value, red: run.red, strike: run.strike, size: wrapped.size })));
       });
       const h = summary ? Math.max(17, Math.max(...lines.map((items) => items.length)) * 9 + ITEM_PAD_TOP + ITEM_PAD_BOTTOM) : Math.max(...lines.map((items) => items.length)) * 9 + ITEM_PAD_TOP + ITEM_PAD_BOTTOM;
       if (y - h < bodyBottomY) { newPage(); line(LEFT, y, RIGHT, y); if (!summary) render(headers, true); }
       if (bold && !summary) tableFill(LEFT, y - h, tableRight - LEFT, h);
-      let x = LEFT;
       for (let i = 0; i < cells.length; i += 1) {
         const lineHeight = 9;
         const textBlockHeight = lines[i].length * lineHeight;
@@ -426,25 +478,24 @@ export async function makePdf(row: any, creator: any, approver: any, resolved: {
           const yy = firstBaseline - index * lineHeight;
           const align = bold ? headerAligns[i] : aligns[i];
           const value = item.value;
-          const valueWidth = textWidth(value, 7);
-          const alignedX = align === "right" ? x + widths[i] - CELL_PAD_X - valueWidth : align === "center" ? x + (widths[i] - valueWidth) / 2 : x + CELL_PAD_X;
-          if (item.red) drawRedline(value, alignedX, yy, 7, Boolean(item.strike), bold);
-          else drawAligned(value, x, widths[i], yy, 7, align, bold, Boolean(item.strike));
+          const cellX = boundaries[i];
+          const fontSize = item.size || 7;
+          const valueWidth = termsTextWidth(value, fontSize);
+          const alignedX = align === "right" ? cellX + widths[i] - CELL_PAD_X - valueWidth : align === "center" ? cellX + (widths[i] - valueWidth) / 2 : cellX + CELL_PAD_X;
+          if (item.red) drawRedline(value, alignedX, yy, fontSize, Boolean(item.strike), bold);
+          else drawAligned(value, cellX, widths[i], yy, fontSize, align, bold, Boolean(item.strike));
         });
-        x += widths[i];
       }
       if (!summary) {
         drawOuterRowBorders(y, h);
-        let boundary = LEFT;
-        for (const width of widths) {
-          boundary += width;
+        for (const boundary of boundaries.slice(1)) {
           tableLine(boundary, y - h, boundary, y);
         }
       } else {
         drawOuterRowBorders(y, h);
         const totalsLabelIndex = widths.length - 2;
-        const amountX = LEFT + widths.slice(0, totalsLabelIndex + 1).reduce((sum, width) => sum + width, 0);
-        const totalsLabelX = amountX - widths[totalsLabelIndex];
+        const amountX = boundaries[totalsLabelIndex + 1];
+        const totalsLabelX = boundaries[totalsLabelIndex];
         tableLine(totalsLabelX, y - h, totalsLabelX, y);
         tableLine(amountX, y - h, amountX, y);
       }
