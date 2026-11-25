@@ -998,7 +998,13 @@ export async function audit(access: LabourAccess, request: Request, input: {
   await insertErpAuditLog(access.admin, access.auth.user, input, request);
 }
 
-export function actorFields(auth: ServerPermissionContext, prefix: "created" | "updated" | "uploaded" = "created") {
+type ActorFields<Prefix extends string> = {
+  [Key in `${Prefix}_by` | `${Prefix}_by_name` | `${Prefix}_by_email`]: string | null;
+};
+
+export function actorFields(auth: ServerPermissionContext, prefix?: "created"): ActorFields<"created">;
+export function actorFields<Prefix extends string>(auth: ServerPermissionContext, prefix: Prefix): ActorFields<Prefix>;
+export function actorFields(auth: ServerPermissionContext, prefix = "created") {
   const name = auth.user.user_metadata?.full_name || auth.user.user_metadata?.name || auth.user.email || "Unknown User";
   return {
     [`${prefix}_by`]: auth.user.id,

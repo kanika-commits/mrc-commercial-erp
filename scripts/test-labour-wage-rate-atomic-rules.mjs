@@ -3,8 +3,13 @@ import fs from "node:fs";
 
 const route = fs.readFileSync(new URL("../app/api/labour/workers/[id]/wage-rates/route.ts", import.meta.url), "utf8");
 const detailPage = fs.readFileSync(new URL("../app/labour/workers/[id]/page.tsx", import.meta.url), "utf8");
+const shared = fs.readFileSync(new URL("../app/api/labour/_shared.ts", import.meta.url), "utf8");
 const migration = fs.readFileSync(new URL("../supabase/migrations/202611240002_labour_wage_rate_atomic_update.sql", import.meta.url), "utf8");
 
+assert.match(shared, /type ActorFields<Prefix extends string> = \{[\s\S]+\[Key in `\$\{Prefix\}_by` \| `\$\{Prefix\}_by_name` \| `\$\{Prefix\}_by_email`\]: string \| null;/, "Actor fields use a prefix-accurate mapped return type");
+assert.match(shared, /actorFields\(auth: ServerPermissionContext, prefix\?: "created"\): ActorFields<"created">/, "Created actor fields have an explicit return type");
+assert.match(shared, /actorFields<Prefix extends string>\(auth: ServerPermissionContext, prefix: Prefix\): ActorFields<Prefix>/, "Variable actor prefixes retain their typed keys");
+assert.doesNotMatch(shared, /actorFields[\s\S]{0,500}as any/, "Actor field typing does not silence the compiler with any");
 assert.match(detailPage, /async function saveRateChange\(nextRateForm = rateForm\)/, "Rate save accepts the current form value explicitly");
 assert.match(detailPage, /<input type=\"date\" value=\{rateForm\.effective_from\}/, "Rate form stores the selected ISO date from the date input");
 assert.doesNotMatch(detailPage, /setRateForm\(nextRateForm\);\s*return saveRateChange\(nextRateForm\)/, "The release does not import the unrelated Manage Work workflow");

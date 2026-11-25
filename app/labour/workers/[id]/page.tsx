@@ -608,7 +608,7 @@ export default function LabourWorkerDetailPage() {
           <div className="mt-5 flex justify-end gap-2">
             <button onClick={closeDeploymentForm} className="rounded-lg border px-4 py-2 text-sm font-semibold">Cancel</button>
             {deploymentOperation === "deployment" && canChangeDeployment && <button onClick={saveDeployment} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white">{worker.status === "inactive" ? "Activate Labour" : currentDeployment ? "Save Transfer" : "Create Deployment"}</button>}
-            {deploymentOperation === "rate" && canChangeRate && <button onClick={saveRateChange} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white">Update Daily Rate</button>}
+            {deploymentOperation === "rate" && canChangeRate && <button onClick={() => void saveRateChange()} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white">Update Daily Rate</button>}
           </div>
         </div>
       </div>}
