@@ -2737,7 +2737,7 @@ export async function POST(request: Request) {
     if (existing && !EDITABLE_STATUSES.includes(existing.status)) return jsonError("This Labour package is already locked for approval.", 403);
     const version = (existing?.submission_version || 0) + 1;
     const now = new Date().toISOString();
-    const patch = {
+    const submissionBase = {
       organization_id: context.organizationId,
       company_id: context.companyId,
       site_id: context.siteId,
@@ -2753,12 +2753,13 @@ export async function POST(request: Request) {
       last_transition: existing ? "site_hr_resubmit" : "site_hr_submit",
       last_transition_at: now,
       snapshot,
-      ...(existing ? actorFields(access.auth, "updated") : actorFields(access.auth, "created")),
       updated_at: now,
     };
+    const updatePayload = { ...submissionBase, ...actorFields(access.auth, "updated") };
+    const insertPayload = { ...submissionBase, ...actorFields(access.auth, "created") };
     const { data: submission, error } = existing
-      ? await access.admin.from("labour_daily_submissions").update(patch).eq("id", existing.id).select("*").single()
-      : await access.admin.from("labour_daily_submissions").insert(patch).select("*").single();
+      ? await access.admin.from("labour_daily_submissions").update(updatePayload).eq("id", existing.id).select("*").single()
+      : await access.admin.from("labour_daily_submissions").insert(insertPayload).select("*").single();
     if (error) throw error;
     const { error: workSubmitError } = await access.admin.from("labour_daily_work_logs").update({ status: "submitted", submitted_by: access.auth.user.id, submitted_by_name: actorName(access), submitted_by_email: access.auth.user.email || null, submitted_at: now, updated_at: now, ...actorFields(access.auth, "updated") })
       .eq("organization_id", context.organizationId).eq("company_id", context.companyId).eq("site_id", context.siteId).eq("contractor_profile_id", context.contractorProfileId).eq("work_date", context.workDate).eq("status", "draft");
