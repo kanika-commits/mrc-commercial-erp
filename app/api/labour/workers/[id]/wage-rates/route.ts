@@ -86,14 +86,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       return jsonError("Wage rate dates overlap an existing wage rate.");
     }
 
-    if (closePreviousRate) {
-      const { error: closeError } = await access.admin
-        .from("labour_wage_rates")
-        .update({ effective_to: previousDay(effectiveFrom), updated_at: new Date().toISOString(), ...actorFields(access.auth, "updated") })
-        .eq("id", closePreviousRate.id);
-      if (closeError) throw closeError;
-    }
-
     const { data: deployment, error: deploymentError } = await access.admin
       .from("labour_deployments")
       .select("id, contractor_profile_id, company_id, site_id, work_order_id, labour_trade_id, skill_level")
@@ -116,7 +108,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       skill_level: text(payload.skill_level) || deployment?.skill_level || worker.skill_level,
       wage_type: wageType,
       base_rate: baseRate,
-      overtime_rate_type: null,
+      overtime_rate_type: "hourly",
       overtime_rate: null,
       weekly_off_paid: Boolean(payload.weekly_off_paid),
       holiday_paid: Boolean(payload.holiday_paid),
@@ -126,8 +118,34 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       reason,
       ...actorFields(access.auth, "created"),
     };
-    const { data, error } = await access.admin.from("labour_wage_rates").insert(insertPayload).select("id").single();
+    const { data: wageRateId, error } = await access.admin.rpc("update_labour_wage_rate_atomic", {
+      p_close_previous_rate_id: closePreviousRate?.id || null,
+      p_close_previous_to: closePreviousRate ? previousDay(effectiveFrom) : null,
+      p_organization_id: insertPayload.organization_id,
+      p_labour_worker_id: insertPayload.labour_worker_id,
+      p_deployment_id: insertPayload.deployment_id,
+      p_contractor_profile_id: insertPayload.contractor_profile_id,
+      p_company_id: insertPayload.company_id,
+      p_site_id: insertPayload.site_id,
+      p_work_order_id: insertPayload.work_order_id,
+      p_trade_id: insertPayload.trade_id,
+      p_skill_level: insertPayload.skill_level,
+      p_wage_type: insertPayload.wage_type,
+      p_base_rate: insertPayload.base_rate,
+      p_overtime_rate_type: insertPayload.overtime_rate_type,
+      p_overtime_rate: insertPayload.overtime_rate,
+      p_weekly_off_paid: insertPayload.weekly_off_paid,
+      p_holiday_paid: insertPayload.holiday_paid,
+      p_effective_from: insertPayload.effective_from,
+      p_effective_to: insertPayload.effective_to,
+      p_status: insertPayload.status,
+      p_reason: insertPayload.reason,
+      p_actor_id: insertPayload.created_by,
+      p_actor_name: insertPayload.created_by_name,
+      p_actor_email: insertPayload.created_by_email,
+    });
     if (error) throw error;
+    const data = { id: wageRateId };
     await audit(access, request, {
       moduleCode: "labour_wage_rates",
       action: "create",

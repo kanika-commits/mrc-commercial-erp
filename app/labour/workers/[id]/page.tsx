@@ -299,12 +299,12 @@ export default function LabourWorkerDetailPage() {
     if (worker.status === "inactive" && activationSource === "registration") router.push("/labour/workers/new");
   }
 
-  async function saveRateChange() {
+  async function saveRateChange(nextRateForm = rateForm) {
     setDeploymentError("");
     setSuccess("");
-    if (!rateForm.effective_from) return setDeploymentError("Effective From is required.");
-    if (!/^\d+$/.test(rateForm.base_rate) || Number(rateForm.base_rate) <= 0) return setDeploymentError("New Daily Rate must be a positive whole rupee amount.");
-    const reason = rateForm.reason.trim();
+    if (!nextRateForm.effective_from) return setDeploymentError("Effective From is required.");
+    if (!/^\d+$/.test(nextRateForm.base_rate) || Number(nextRateForm.base_rate) <= 0) return setDeploymentError("New Daily Rate must be a positive whole rupee amount.");
+    const reason = nextRateForm.reason.trim();
     if (!reason) return setDeploymentError("Reason is required.");
     if (reason.length < 10) return setDeploymentError("Reason must be at least 10 characters.");
     const response = await fetch(`/api/labour/workers/${params.id}/wage-rates`, {
@@ -312,8 +312,8 @@ export default function LabourWorkerDetailPage() {
       headers: { "content-type": "application/json", Authorization: `Bearer ${await token()}` },
       body: JSON.stringify({
         wage_type: "daily",
-        base_rate: rateForm.base_rate,
-        effective_from: rateForm.effective_from,
+        base_rate: nextRateForm.base_rate,
+        effective_from: nextRateForm.effective_from,
         reason,
         deployment_id: currentDeployment?.id || null,
         trade_id: currentDeployment?.labour_trade_id || worker.labour_trade_id || null,
