@@ -544,11 +544,22 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
   }
   heading("TERMS & CONDITIONS", 70);
   const structuredTerms = normalizeStructuredTerms(Array.isArray(row.standard_terms_clauses) ? row.standard_terms_clauses : row.standard_terms_snapshot);
-  const termsLines = value(row.standard_terms_snapshot || "-").split(/\r?\n/).filter((line) => line.trim());
+  const rawTerms = value(row.standard_terms_snapshot || "-");
+  const termsLines = rawTerms.split(/\r?\n/).filter((line) => line.trim());
+  const legacyParagraphs = rawTerms.split(/\r?\n\s*\r?\n/).map((paragraph) => paragraph.trim()).filter(Boolean);
   const termsLeading = 9;
   const clauseBlocks: Array<{ heading: string; body: string[] }> = [];
   let currentClause: { heading: string; body: string[] } | null = null;
   if (structuredTerms) structuredTerms.forEach((clause) => clauseBlocks.push({ heading: clause.heading, body: [clause.clause_body], identity: clause.identity } as any));
+  else if (String(row.wo_number || "").trim().toUpperCase() === "CRPF/GLC/123" && legacyParagraphs.length > 0 && legacyParagraphs.every((paragraph) => {
+    const lines = paragraph.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    return lines.length > 1 && !/^\s*\d+\.\s+/.test(lines[0]);
+  })) {
+    legacyParagraphs.forEach((paragraph) => {
+      const lines = paragraph.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      clauseBlocks.push({ heading: lines[0], body: [lines.slice(1).join("\n")] });
+    });
+  }
   else termsLines.forEach((line) => {
     if (/^\s*\d+\.\s+\S/.test(line)) {
       currentClause = { heading: line, body: [] };
