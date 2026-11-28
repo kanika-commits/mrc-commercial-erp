@@ -72,7 +72,7 @@ export async function renderApprovedWorkOrderPdfById(
   const snapshotDelivery = { ...(delivery.delivery_location || {}) };
   const resolvedBilling = { ...snapshotBilling, ...(gstResult.data || {}), ...(billingResult.data || {}) };
   const resolvedDelivery = { ...snapshotDelivery, ...(deliveryResult.data || {}) };
-  const company = { company_name: resolvedBilling.legal_name || resolvedBilling.trade_name || companyResult.data?.company_name || "" };
+  const company = { company_name: companyResult.data?.company_name || resolvedBilling.legal_name || resolvedBilling.trade_name || "" };
   const resolvedVendorSnapshot = {
     ...vendorSnapshot,
     contact_person: vendorSnapshot.contact_person || vendorSnapshot.contact_name || primaryVendorContact.contact_name || "",

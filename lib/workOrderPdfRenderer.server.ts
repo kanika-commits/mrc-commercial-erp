@@ -619,7 +619,7 @@ export async function renderWorkOrderPdf(row: any, assets: WorkOrderLetterheadAs
   const creatorEmail = signatureText(row.created_by_email);
   const creatorAt = row.created_at ? new Date(row.created_at).toLocaleString("en-IN") : signatureText(row.created_at_display);
   const approverName = signatureText(row.approved_by_name || row.approved_by_email || row.approval_signature_block?.employeeName);
-  const approverCompany = signatureText(row.approval_signature_block?.company || row.company?.company_name || row.company_name);
+  const approverCompany = signatureText(row.company?.company_name || row.company_name || row.approval_signature_block?.company);
   const approverDesignation = signatureText(row.approval_signature_block?.displayTitle || row.approval_signature_block?.designation);
   const vendorLines = [
     ["Vendor Acceptance", true, 9],
