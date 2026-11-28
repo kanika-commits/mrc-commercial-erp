@@ -95,6 +95,7 @@ export default function LabourWorkerDetailPage() {
   const { access } = useAccessContext();
   const permissions = access?.permissions || [];
   const global = hasGlobalAccess(access);
+  const isPlatformOwner = access?.roleCodes.includes("platform_owner") || false;
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -265,10 +266,10 @@ export default function LabourWorkerDetailPage() {
     await load();
   }
 
-  async function saveDeployment() {
+  async function saveDeployment(includeRateChange = false) {
     setDeploymentError("");
     setSuccess("");
-    if (currentDeployment && deploymentForm.effective_from && deploymentForm.effective_from <= currentDeployment.effective_from) {
+    if (currentDeployment && deploymentForm.effective_from && deploymentForm.effective_from <= currentDeployment.effective_from && !(worker.status === "inactive" && isPlatformOwner)) {
       return setDeploymentError(`Transfer date must be after ${formatDate(currentDeployment.effective_from)}.`);
     }
     if (currentDeployment && deploymentForm.deployment_reason.trim().length < 10) {
@@ -277,6 +278,7 @@ export default function LabourWorkerDetailPage() {
     if (worker.status === "inactive" && !deploymentForm.deployment_reason.trim()) {
       return setDeploymentError("Reactivation Reason is required.");
     }
+    if (worker.status === "inactive" && isPlatformOwner && !window.confirm("This worker is inactive. Continuing will reactivate them and create an assignment/history entry. Existing history will be preserved. Continue?")) return;
     if (deploymentForm.commercial_model === "daily_wage") {
       if (!/^\d+(\.\d+)?$/.test(deploymentForm.wage_rate) || Number(deploymentForm.wage_rate) <= 0) {
         return setDeploymentError("Daily Rate must be a positive number.");
@@ -294,7 +296,7 @@ export default function LabourWorkerDetailPage() {
     const response = await fetch(`/api/labour/workers/${params.id}/deployments`, {
       method: "POST",
       headers: { "content-type": "application/json", Authorization: `Bearer ${await token()}` },
-      body: JSON.stringify(deploymentForm),
+      body: JSON.stringify({ ...deploymentForm, include_rate_change: includeRateChange }),
     });
     const payload = await parsePayload(response);
     if (!response.ok) return setDeploymentError(payload.error || "Failed to save deployment.");
@@ -353,8 +355,11 @@ export default function LabourWorkerDetailPage() {
       if (assignmentChanged || nextRate !== currentRate) return setDeploymentError("Status and assignment/rate changes cannot be saved together. Save the assignment first, then change status.");
       return deactivateWorker();
     }
-    if (worker.status === "inactive" || !currentDeployment) return saveDeployment();
-    if (assignmentChanged && nextRate !== currentRate) return setDeploymentError("Assignment and rate changes cannot be saved together. Save the assignment first, then update the rate.");
+    if (worker.status === "inactive" || !currentDeployment) return saveDeployment(isPlatformOwner && nextRate !== currentRate);
+    if (assignmentChanged && nextRate !== currentRate) {
+      if (!isPlatformOwner) return setDeploymentError("Assignment and rate changes cannot be saved together. Save the assignment first, then update the rate.");
+      return saveDeployment(true);
+    }
     if (assignmentChanged) return saveDeployment();
     if (nextRate !== currentRate) {
       if (deploymentForm.commercial_model !== "daily_wage") return setDeploymentError("Rate changes are supported only for Daily Wage deployments.");
@@ -485,7 +490,7 @@ export default function LabourWorkerDetailPage() {
           </div>
           <div className="flex flex-wrap gap-2">
             {worker.current_contractor_profile_id && <Link href={`/labour/contractors/${worker.current_contractor_profile_id}`} className="inline-flex h-11 items-center rounded-lg border bg-white px-4 text-sm font-semibold">Open Contractor</Link>}
-            {(canDeploy || (canEdit && worker.status === "active")) && <button onClick={openDeploymentForm} className="inline-flex h-11 items-center gap-2 rounded-lg border bg-white px-4 text-sm font-semibold"><Plus className="h-4 w-4" />Manage Work</button>}
+            {((canDeploy && (worker.status !== "inactive" || isPlatformOwner)) || (canEdit && worker.status === "active")) && <button onClick={openDeploymentForm} className="inline-flex h-11 items-center gap-2 rounded-lg border bg-white px-4 text-sm font-semibold"><Plus className="h-4 w-4" />Manage Work</button>}
             {canEdit && <Link href={`/labour/workers/${worker.id}/edit`} className="inline-flex h-11 items-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white"><Pencil className="h-4 w-4" /> Edit Personal Info</Link>}
             {canDelete && <button type="button" onClick={() => deleteWorker(worker)} className="inline-flex h-11 items-center gap-2 rounded-lg border border-red-200 bg-white px-4 text-sm font-semibold text-red-600"><Trash2 className="h-4 w-4" /> Delete</button>}
           </div>
@@ -610,6 +615,7 @@ export default function LabourWorkerDetailPage() {
           <div className="mb-4 flex items-start justify-between gap-3">
             <div>
               <h2 className="text-xl font-semibold">Manage Work</h2><p className="mt-1 text-sm text-slate-500">Manage assignment, daily rate, transfer, deactivation, or reactivation while preserving work history.</p>
+              {worker.status === "inactive" && isPlatformOwner && <div role="alert" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-900">This worker is inactive. Saving will reactivate the worker and create an assignment/history entry. Existing deployment and wage history will be preserved.</div>}
               {currentDeployment && <p className="mt-1 text-sm text-slate-500">Current deployment started on {formatDate(currentDeployment.effective_from)}. New deployment must start after {formatDate(currentDeployment.effective_from)}.</p>}
             </div>
             {worker.status !== "inactive" && <button onClick={closeDeploymentForm} className="rounded-lg border px-3 py-2 text-sm font-semibold">Cancel</button>}
@@ -633,7 +639,7 @@ export default function LabourWorkerDetailPage() {
           </div>}
           <div className="mt-5 flex justify-end gap-2">
             <button onClick={closeDeploymentForm} className="rounded-lg border px-4 py-2 text-sm font-semibold">Cancel</button>
-            {(canChangeDeployment || canEdit) && <button onClick={() => void saveManageWork()} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white">Save</button>}
+            {((canChangeDeployment && (worker.status !== "inactive" || isPlatformOwner)) || canEdit) && <button onClick={() => void saveManageWork()} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white">Save</button>}
           </div>
         </div>
       </div>}

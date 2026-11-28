@@ -102,6 +102,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const { id } = await context.params;
     const worker = await loadScopedWorker(access, id);
     if (!worker) return jsonError("Labourer not found.", 404);
+    const isPlatformOwner = access.auth.roleCodes.includes("platform_owner");
 
     const payload = await request.json().catch(() => ({}));
     const companyId = text(payload.company_id);
@@ -114,6 +115,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const labourTradeId = text(payload.labour_trade_id) || text(payload.trade_id);
     const contractorProfileId = text(payload.contractor_profile_id) || worker.current_contractor_profile_id;
     const isReactivation = worker.status === "inactive";
+    const includeRateChange = payload.include_rate_change === true;
+
+    if (isReactivation && !isPlatformOwner) return jsonError("Only a Platform Owner can reactivate an inactive labourer.", 403);
+    if (includeRateChange && !isPlatformOwner) return jsonError("Only a Platform Owner can save assignment and rate changes together.", 403);
+    const useAtomicManage = isPlatformOwner && (isReactivation || includeRateChange);
 
     if (!companyId || !siteId || !effectiveFrom) return jsonError("Company, site and effective date are required.");
     if (isReactivation && !contractorProfileId) return jsonError("Contractor is required to reactivate a labourer.");
@@ -194,7 +200,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       .is("effective_to", null)
       .maybeSingle();
     if (openError) throw openError;
-    if (openDeployment && effectiveFrom <= openDeployment.effective_from) {
+    if (openDeployment && effectiveFrom <= openDeployment.effective_from && !useAtomicManage) {
       return jsonError("New deployment must start after the current deployment start date.");
     }
     const affectedSites = [
@@ -221,9 +227,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       .or(`effective_to.is.null,effective_to.gte.${effectiveFrom}`)
       .limit(1);
     if (openDeployment?.id) overlapQuery = overlapQuery.neq("id", openDeployment.id);
-    const { data: overlapping, error: overlapError } = await overlapQuery.maybeSingle();
-    if (overlapError) throw overlapError;
-    if (overlapping) return jsonError("Another deployment already exists for the selected effective date.");
+    if (!useAtomicManage) {
+      const { data: overlapping, error: overlapError } = await overlapQuery.maybeSingle();
+      if (overlapError) throw overlapError;
+      if (overlapping) return jsonError("Another deployment already exists for the selected effective date.");
+    }
     const deploymentReason = text(payload.deployment_reason);
     if (openDeployment && (!deploymentReason || deploymentReason.trim().length < 10)) {
       return jsonError("Transfer reason must be at least 10 characters.");
@@ -248,6 +256,43 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       status: text(payload.effective_to) ? "ended" : "active",
       deployment_reason: deploymentReason,
     };
+
+    if (useAtomicManage) {
+      const { data: managed, error: managedError } = await access.admin.rpc("manage_labour_work_atomic", {
+        p_worker_id: id,
+        p_organization_id: worker.organization_id,
+        p_assignment: insertPayload,
+        p_rate_change: includeRateChange ? {
+          base_rate: Number(payload.wage_rate),
+          effective_from: effectiveFrom,
+          effective_to: null,
+          wage_type: "daily",
+          reason: deploymentReason,
+          deployment_id: null,
+          trade_id: insertPayload.labour_trade_id,
+          work_order_id: insertPayload.work_order_id,
+        } : null,
+        p_actor_id: access.auth.user.id,
+        p_actor_name: access.auth.user.user_metadata?.full_name || access.auth.user.user_metadata?.name || access.auth.user.email || "Unknown User",
+        p_actor_email: access.auth.user.email || null,
+      });
+      if (managedError) throw managedError;
+      const managedResult = (managed && typeof managed === "object" && !Array.isArray(managed)) ? managed : { deployment_id: managed };
+      await audit(access, request, {
+        moduleCode: "labour_deployments",
+        action: openDeployment ? "update" : "create",
+        entityType: "labour_deployment",
+        recordId: managedResult.deployment_id,
+        parentEntityType: "labour_worker",
+        parentRecordId: id,
+        organizationId: worker.organization_id,
+        companyId,
+        siteId,
+        description: isReactivation ? "Reactivated labourer with Platform Owner confirmation." : "Updated labour assignment and wage rate atomically.",
+        newValues: { ...insertPayload, include_rate_change: includeRateChange, wage_rate_id: managedResult.wage_rate_id || null },
+      } as any);
+      return NextResponse.json(managedResult);
+    }
 
     const rpcName = isReactivation ? "reactivate_labour_deployment" : "transfer_labour_deployment";
     const rpcArgs = {
